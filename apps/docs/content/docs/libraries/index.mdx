@@ -1,0 +1,83 @@
+---
+title: Compose with libraries
+description: Use the focused ConsultChimps TypeScript packages without the CLI.
+icon: Blocks
+---
+
+The CLI is intentionally thin. File discovery, table operations, workbook
+adapters, and PDF operations live in focused packages that can be reused in a
+server, desktop app, workflow runner, or another CLI.
+
+## Package map
+
+| Package                  | Responsibility                                     |
+| ------------------------ | -------------------------------------------------- |
+| `@consultchimps/core`    | Shared result contracts and structured errors      |
+| `@consultchimps/files`   | File discovery and safe output handling            |
+| `@consultchimps/tabular` | Runtime-neutral tables and union operations        |
+| `@consultchimps/xlsx`    | Excel workbook reading, writing, and consolidation |
+| `@consultchimps/pdf`     | PDF splitting and merging                          |
+
+## Discover inputs
+
+```ts
+import { discoverFiles } from "@consultchimps/files";
+
+const workbooks = await discoverFiles(
+  ["January.xlsx", "regional/", "late/*.xlsx"],
+  { extensions: [".xlsx"] },
+);
+```
+
+The result contains unique, absolute, sorted paths.
+
+## Union in-memory tables
+
+```ts
+import { unionTables, type Table } from "@consultchimps/tabular";
+
+const tables: Table[] = [
+  {
+    columns: ["Client", "Amount"],
+    rows: [{ Client: "Acme", Amount: 1200 }],
+    source: { file: "north.xlsx", sheet: "Revenue", firstDataRow: 2 },
+  },
+  {
+    columns: ["client", "Status"],
+    rows: [{ client: "Globex", Status: "Open" }],
+    source: { file: "south.xlsx", sheet: "Revenue", firstDataRow: 2 },
+  },
+];
+
+const combined = unionTables(tables);
+```
+
+The output columns are `Client`, `Amount`, `Status`, and the three provenance
+columns. Case-insensitive headers are aligned without changing the original
+spelling of the first header encountered.
+
+## Handle structured failures
+
+```ts
+import {
+  isConsultChimpsError,
+  type OperationResult,
+} from "@consultchimps/core";
+import { splitPdf } from "@consultchimps/pdf";
+
+async function run(): Promise<OperationResult | undefined> {
+  try {
+    return await splitPdf("report.pdf", "outputs/pages");
+  } catch (error) {
+    if (isConsultChimpsError(error)) {
+      console.error(error.code, error.details);
+      return;
+    }
+
+    throw error;
+  }
+}
+```
+
+Known errors carry a stable `code`, a human-readable message, optional
+structured details, and the original cause when available.

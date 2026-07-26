@@ -1,50 +1,50 @@
-# chimpcons
+# ConsultChimps
 
 Composable, local-first operations tools for consultants.
 
-`chimpcons` turns common document and data chores into deterministic TypeScript
-modules that can run from a library, CLI, desktop application, server, or
-automation. AI may assist with ambiguous work later, but the core tools do not
-require Codex or any hosted service.
+`consultchimps` turns common document and data chores into deterministic
+TypeScript modules that can run from a library, CLI, desktop application,
+server, or automation. AI may assist with ambiguous work later, but the core
+tools do not require Codex or any hosted service.
 
 ## Initial tools
 
-| Tool                   | Command                        | Status  |
-| ---------------------- | ------------------------------ | ------- |
-| Excel consolidation    | `chimpcons sheets consolidate` | Working |
-| PDF page splitting     | `chimpcons pdf split`          | Working |
-| PDF document merging   | `chimpcons pdf merge`          | Working |
-| Dataset inspection     | `chimpcons data inspect`       | Planned |
-| Dataset reconciliation | `chimpcons data reconcile`     | Planned |
+| Tool                   | Command                            | Status  |
+| ---------------------- | ---------------------------------- | ------- |
+| Excel consolidation    | `consultchimps sheets consolidate` | Working |
+| PDF page splitting     | `consultchimps pdf split`          | Working |
+| PDF document merging   | `consultchimps pdf merge`          | Working |
+| Dataset inspection     | `consultchimps data inspect`       | Planned |
+| Dataset reconciliation | `consultchimps data reconcile`     | Planned |
 
 ## Packages
 
-| Package              | Responsibility                                   |
-| -------------------- | ------------------------------------------------ |
-| `@chimpcons/core`    | Shared errors, artifacts, and operation results  |
-| `@chimpcons/files`   | Input discovery and safe output-path handling    |
-| `@chimpcons/tabular` | Runtime-neutral table model and union operations |
-| `@chimpcons/xlsx`    | Excel workbook input and output                  |
-| `@chimpcons/pdf`     | PDF split and merge operations                   |
-| `chimpcons`          | Command-line interface                           |
+| Package                  | Responsibility                                   |
+| ------------------------ | ------------------------------------------------ |
+| `@consultchimps/core`    | Shared errors, artifacts, and operation results  |
+| `@consultchimps/files`   | Input discovery and safe output-path handling    |
+| `@consultchimps/tabular` | Runtime-neutral table model and union operations |
+| `@consultchimps/xlsx`    | Excel workbook input and output                  |
+| `@consultchimps/pdf`     | PDF split and merge operations                   |
+| `consultchimps`          | Command-line interface                           |
 
 ## Quick start
 
 Requirements:
 
-- Node.js 20.19 or newer
+- Node.js 24 or newer
 - pnpm 11
 
 ```bash
 pnpm install
 pnpm build
 
-pnpm chimpcons sheets consolidate "inputs/**/*.xlsx" \
+pnpm consultchimps sheets consolidate "inputs/**/*.xlsx" \
   --output outputs/consolidated.xlsx
 
-pnpm chimpcons pdf split report.pdf --output outputs/pages
+pnpm consultchimps pdf split report.pdf --output outputs/pages
 
-pnpm chimpcons pdf merge "inputs/**/*.pdf" \
+pnpm consultchimps pdf merge "inputs/**/*.pdf" \
   --output outputs/combined.pdf
 ```
 
@@ -67,6 +67,12 @@ case-insensitive header name, and adds `_source_file`, `_source_sheet`, and
 ```bash
 pnpm install
 pnpm check
+```
+
+The Fumadocs guide lives in `apps/docs`:
+
+```bash
+pnpm docs:dev
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow and

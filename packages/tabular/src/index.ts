@@ -1,4 +1,4 @@
-import { ChimpconsError } from "@chimpcons/core";
+import { ConsultChimpsError } from "@consultchimps/core";
 
 export type CellValue = string | number | boolean | null;
 export type TableRow = Record<string, CellValue>;
@@ -54,7 +54,7 @@ export function unionTables(
   options: UnionTablesOptions = {},
 ): Table {
   if (tables.length === 0) {
-    throw new ChimpconsError(
+    throw new ConsultChimpsError(
       "TABLES_EMPTY",
       "At least one table is required for a union.",
     );
@@ -77,7 +77,7 @@ export function unionTables(
     for (const column of Object.values(sourceColumns)) {
       const key = columnKey(column);
       if (outputColumnByKey.has(key)) {
-        throw new ChimpconsError(
+        throw new ConsultChimpsError(
           "TABLE_SOURCE_COLUMN_COLLISION",
           `Source column "${column}" already exists in the input data.`,
           { details: { column } },

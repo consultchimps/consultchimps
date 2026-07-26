@@ -1,7 +1,7 @@
 {
-  "name": "@chimpcons/tabular",
+  "name": "@consultchimps/tabular",
   "version": "0.1.0",
-  "description": "Runtime-neutral table operations for chimpcons.",
+  "description": "Runtime-neutral table operations for ConsultChimps.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -24,10 +24,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@chimpcons/core": "workspace:*"
+    "@consultchimps/core": "workspace:*"
   },
   "engines": {
-    "node": ">=20.19"
+    "node": ">=24"
   },
   "publishConfig": {
     "access": "public"
