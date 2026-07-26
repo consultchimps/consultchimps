@@ -57,7 +57,7 @@ the workbook adapter brings its internal ConsultChimps dependencies with it:
 npm install @consultchimps/xlsx
 ```
 
-All packages are public on npm under the `consultchimps` name and
+All published packages are public on npm under the `consultchimps` name and
 `@consultchimps` organization scope.
 
 ## Run from source
