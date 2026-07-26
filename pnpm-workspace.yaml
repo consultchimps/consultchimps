@@ -6,3 +6,6 @@ allowBuilds:
   esbuild: true
   sharp: true
   unrs-resolver: true
+
+overrides:
+  esbuild: 0.28.1
