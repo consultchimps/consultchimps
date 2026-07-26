@@ -1,4 +1,8 @@
 dist
 coverage
+.next
+.source
+.playwright-cli
+out
 node_modules
 pnpm-lock.yaml

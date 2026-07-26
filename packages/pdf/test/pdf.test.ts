@@ -9,7 +9,7 @@ import { mergePdfs, splitPdf } from "../src/index.js";
 
 describe("PDF operations", () => {
   it("splits and merges documents without changing page count", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "chimpcons-pdf-"));
+    const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-pdf-"));
 
     try {
       const input = path.join(directory, "source.pdf");

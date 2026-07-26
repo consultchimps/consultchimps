@@ -1,5 +1,5 @@
 {
-  "name": "chimpcons",
+  "name": "consultchimps",
   "version": "0.1.0",
   "description": "Composable operations tools for consultants.",
   "license": "Apache-2.0",
@@ -10,30 +10,25 @@
   },
   "type": "module",
   "bin": {
-    "chimpcons": "./dist/index.js"
-  },
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
+    "consultchimps": "./dist/index.js"
   },
   "files": [
     "dist"
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean",
+    "prepack": "pnpm build",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@chimpcons/core": "workspace:*",
-    "@chimpcons/files": "workspace:*",
-    "@chimpcons/pdf": "workspace:*",
-    "@chimpcons/xlsx": "workspace:*",
+    "@consultchimps/core": "workspace:*",
+    "@consultchimps/files": "workspace:*",
+    "@consultchimps/pdf": "workspace:*",
+    "@consultchimps/xlsx": "workspace:*",
     "commander": "14.0.3"
   },
   "engines": {
-    "node": ">=20.19"
+    "node": "24.x"
   },
   "publishConfig": {
     "access": "public",

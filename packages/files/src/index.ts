@@ -1,7 +1,7 @@
 import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { ChimpconsError } from "@chimpcons/core";
+import { ConsultChimpsError } from "@consultchimps/core";
 import fg from "fast-glob";
 
 export interface DiscoverFilesOptions {
@@ -29,7 +29,7 @@ export async function discoverFiles(
   options: DiscoverFilesOptions = {},
 ): Promise<string[]> {
   if (inputs.length === 0) {
-    throw new ChimpconsError(
+    throw new ConsultChimpsError(
       "FILES_NO_INPUTS",
       "At least one input path or pattern is required.",
     );
@@ -76,7 +76,7 @@ export async function discoverFiles(
     .sort((left, right) => left.localeCompare(right));
 
   if (files.length === 0) {
-    throw new ChimpconsError(
+    throw new ConsultChimpsError(
       "FILES_NOT_FOUND",
       "No files matched the supplied inputs.",
       {
@@ -115,7 +115,7 @@ export async function ensureOutputAvailable(
     return absolutePath;
   }
 
-  throw new ChimpconsError(
+  throw new ConsultChimpsError(
     "FILES_OUTPUT_EXISTS",
     `Output already exists: ${absolutePath}`,
     {
@@ -134,7 +134,7 @@ export function refuseInputOverwrite(
   );
 
   if (resolvedInputs.has(resolvedOutput)) {
-    throw new ChimpconsError(
+    throw new ConsultChimpsError(
       "FILES_INPUT_OVERWRITE",
       `Refusing to overwrite an input file: ${resolvedOutput}`,
       { details: { outputPath: resolvedOutput } },

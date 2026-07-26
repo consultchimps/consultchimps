@@ -1,7 +1,7 @@
 {
-  "name": "@chimpcons/xlsx",
+  "name": "@consultchimps/xlsx",
   "version": "0.1.0",
-  "description": "Excel workbook adapters and consolidation for chimpcons.",
+  "description": "Excel workbook adapters and consolidation for ConsultChimps.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -21,18 +21,20 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean",
+    "prepack": "pnpm build",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@chimpcons/core": "workspace:*",
-    "@chimpcons/files": "workspace:*",
-    "@chimpcons/tabular": "workspace:*",
+    "@consultchimps/core": "workspace:*",
+    "@consultchimps/files": "workspace:*",
+    "@consultchimps/tabular": "workspace:*",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "engines": {
-    "node": ">=20.19"
+    "node": "24.x"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   }
 }
