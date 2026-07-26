@@ -30,7 +30,7 @@
     "@chimpcons/files": "workspace:*",
     "@chimpcons/pdf": "workspace:*",
     "@chimpcons/xlsx": "workspace:*",
-    "commander": "14.0.3"
+    "commander": "15.0.0"
   },
   "engines": {
     "node": ">=20.19"
