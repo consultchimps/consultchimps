@@ -7,6 +7,9 @@ TypeScript modules that can run from a library, CLI, desktop application,
 server, or automation. AI may assist with ambiguous work later, but the core
 tools do not require Codex or any hosted service.
 
+Documentation:
+[consultchimps-docs.vercel.app](https://consultchimps-docs.vercel.app)
+
 ## Initial tools
 
 | Tool                   | Command                            | Status  |
@@ -54,8 +57,8 @@ the workbook adapter brings its internal ConsultChimps dependencies with it:
 npm install @consultchimps/xlsx
 ```
 
-The package names are configured in this repository but are not registered on
-npm until the first release is published.
+All published packages are public on npm under the `consultchimps` name and
+`@consultchimps` organization scope.
 
 ## Run from source
 
