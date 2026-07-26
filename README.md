@@ -28,12 +28,38 @@ tools do not require Codex or any hosted service.
 | `@consultchimps/pdf`     | PDF split and merge operations                   |
 | `consultchimps`          | Command-line interface                           |
 
-## Quick start
+## Install
 
 Requirements:
 
-- Node.js 24 or newer
-- pnpm 11
+- Node.js 24
+
+Run the CLI without keeping a global installation:
+
+```bash
+npx consultchimps@latest --help
+```
+
+Or install it globally:
+
+```bash
+npm install --global consultchimps
+consultchimps --help
+```
+
+Applications should install only the library boundary they need. For example,
+the workbook adapter brings its internal ConsultChimps dependencies with it:
+
+```bash
+npm install @consultchimps/xlsx
+```
+
+The package names are configured in this repository but are not registered on
+npm until the first release is published.
+
+## Run from source
+
+Development requires pnpm 11:
 
 ```bash
 pnpm install
@@ -74,6 +100,16 @@ The Fumadocs guide lives in `apps/docs`:
 ```bash
 pnpm docs:dev
 ```
+
+## Deploy the guide
+
+Import this repository into Vercel and set the project Root Directory to
+`apps/docs`. Keep **Include source files outside of the Root Directory** enabled
+so Vercel can use the workspace lockfile. Vercel then reads
+`apps/docs/vercel.ts`, installs with pnpm, builds the Next.js application, and
+uses Node.js 24 from `apps/docs/package.json`.
+
+No environment variables are required for the documentation site.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow and
 [SECURITY.md](SECURITY.md) for reporting vulnerabilities.

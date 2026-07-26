@@ -11,20 +11,25 @@
   "type": "module",
   "packageManager": "pnpm@11.10.0",
   "engines": {
-    "node": ">=24"
+    "node": "24.x"
   },
   "scripts": {
     "build": "pnpm -r --if-present build",
-    "check": "pnpm format:check && pnpm lint && pnpm build && pnpm typecheck && pnpm test",
+    "changeset": "changeset",
+    "check": "pnpm format:check && pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm package:check",
     "consultchimps": "node packages/cli/dist/index.js",
     "docs:dev": "pnpm --filter @consultchimps/docs dev",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint --flag unstable_native_nodejs_ts_config . && pnpm -r --if-present lint",
+    "package:check": "node scripts/check-packages.ts",
+    "release": "changeset publish",
     "test": "vitest run",
-    "typecheck": "pnpm -r --if-present typecheck"
+    "typecheck": "pnpm -r --if-present typecheck",
+    "version-packages": "changeset version && pnpm install --lockfile-only"
   },
   "devDependencies": {
+    "@changesets/cli": "2.31.1",
     "@eslint/js": "10.0.1",
     "@types/node": "26.1.1",
     "eslint": "10.8.0",

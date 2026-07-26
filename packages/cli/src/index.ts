@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -13,6 +14,10 @@ import { Command } from "commander";
 
 interface GlobalOptions {
   json?: boolean;
+}
+
+interface PackageMetadata {
+  version: string;
 }
 
 interface ConsolidateOptions {
@@ -64,10 +69,14 @@ function printResult(result: OperationResult, json: boolean): void {
 }
 
 const program = new Command();
+const packageMetadata = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+) as PackageMetadata;
+
 program
   .name("consultchimps")
   .description("Composable, local-first operations tools for consultants.")
-  .version("0.1.0")
+  .version(packageMetadata.version)
   .option("--json", "print machine-readable JSON");
 
 const sheets = program
