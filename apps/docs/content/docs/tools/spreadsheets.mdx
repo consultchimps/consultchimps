@@ -1,0 +1,123 @@
+---
+title: Consolidate spreadsheets
+description:
+  Combine one or many Excel workbooks and worksheets into a single table.
+icon: TableProperties
+---
+
+The spreadsheet consolidator discovers `.xlsx` files, reads each selected
+worksheet as a table, unions columns by case-insensitive header name, and writes
+one formatted workbook.
+
+## Basic usage
+
+```bash
+pnpm consultchimps sheets consolidate "inputs/**/*.xlsx" \
+  --output outputs/consolidated.xlsx
+```
+
+You can mix files, folders, and glob patterns:
+
+```bash
+pnpm consultchimps sheets consolidate \
+  January.xlsx \
+  regional-returns/ \
+  "late-submissions/*.xlsx" \
+  --output outputs/q1-master.xlsx
+```
+
+Inputs are resolved to absolute paths, deduplicated, filtered to `.xlsx`, and
+sorted before processing.
+
+## How columns are matched
+
+Header matching ignores surrounding whitespace and letter case. These headers
+therefore become one output column:
+
+```text
+Client
+ client
+CLIENT
+```
+
+The first spelling encountered becomes the output header. Missing values are
+written as blank cells. Duplicate headers inside one worksheet gain a numeric
+suffix, and blank headers become `column_1`, `column_2`, and so on.
+
+## Keep provenance
+
+By default, every output row includes:
+
+| Column          | Meaning                                      |
+| --------------- | -------------------------------------------- |
+| `_source_file`  | Original workbook filename                   |
+| `_source_sheet` | Original worksheet name                      |
+| `_source_row`   | One-based row number in the source worksheet |
+
+Remove these fields only when the output must match a fixed schema:
+
+```bash
+pnpm consultchimps sheets consolidate inputs/ \
+  --output outputs/clean.xlsx \
+  --no-source
+```
+
+## Select worksheets
+
+Visible, non-empty worksheets are included by default.
+
+```bash
+pnpm consultchimps sheets consolidate inputs/ \
+  --sheet Revenue Pipeline \
+  --output outputs/commercial.xlsx
+```
+
+Worksheet matching is case-insensitive. Include hidden worksheets with
+`--hidden`.
+
+## Choose a header row
+
+The first row containing a value is treated as the header. Override that
+behavior for workbooks with title blocks:
+
+```bash
+pnpm consultchimps sheets consolidate inputs/ \
+  --header-row 4 \
+  --output outputs/consolidated.xlsx
+```
+
+`--header-row` is one-based, matching the row number shown in Excel.
+
+## Output controls
+
+```bash
+pnpm consultchimps sheets consolidate inputs/ \
+  --output outputs/consolidated.xlsx \
+  --output-sheet "Client master" \
+  --force
+```
+
+- `--output-sheet` changes the destination worksheet name.
+- `--force` replaces an existing output file.
+- The output table receives an autofilter and practical column widths.
+- The command refuses to use any input workbook as its output.
+
+## TypeScript API
+
+```ts
+import { consolidateWorkbooks } from "@consultchimps/xlsx";
+
+const result = await consolidateWorkbooks(
+  ["north.xlsx", "south.xlsx"],
+  "outputs/master.xlsx",
+  {
+    addSourceColumns: true,
+    headerRow: 2,
+    outputSheetName: "Master",
+    overwrite: false,
+    sheets: ["Revenue"],
+  },
+);
+
+console.log(result.metrics.outputRows);
+```

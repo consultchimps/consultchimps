@@ -1,13 +1,13 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { ChimpconsError, type OperationResult } from "@chimpcons/core";
+import { ConsultChimpsError, type OperationResult } from "@consultchimps/core";
 import {
   ensureDirectory,
   ensureOutputAvailable,
   ensureParentDirectory,
   refuseInputOverwrite,
-} from "@chimpcons/files";
+} from "@consultchimps/files";
 import { PDFDocument } from "pdf-lib";
 
 export interface PdfWriteOptions {
@@ -25,7 +25,7 @@ async function loadPdf(filePath: string): Promise<PDFDocument> {
     const bytes = await readFile(absolutePath);
     return await PDFDocument.load(bytes);
   } catch (error) {
-    throw new ChimpconsError(
+    throw new ConsultChimpsError(
       "PDF_READ_FAILED",
       `Could not read PDF: ${absolutePath}`,
       {
@@ -47,7 +47,7 @@ export async function splitPdf(
   const pageCount = sourceDocument.getPageCount();
 
   if (pageCount === 0) {
-    throw new ChimpconsError(
+    throw new ConsultChimpsError(
       "PDF_NO_PAGES",
       "The input PDF contains no pages.",
       {
@@ -75,7 +75,7 @@ export async function splitPdf(
     const outputDocument = await PDFDocument.create();
     const [page] = await outputDocument.copyPages(sourceDocument, [index]);
     if (!page) {
-      throw new ChimpconsError(
+      throw new ConsultChimpsError(
         "PDF_PAGE_COPY_FAILED",
         `Could not copy page ${index + 1}.`,
       );
@@ -106,7 +106,7 @@ export async function mergePdfs(
   options: PdfWriteOptions = {},
 ): Promise<OperationResult> {
   if (inputPaths.length === 0) {
-    throw new ChimpconsError(
+    throw new ConsultChimpsError(
       "PDF_NO_INPUTS",
       "At least one input PDF is required.",
     );

@@ -26,7 +26,7 @@ async function createWorkbook(
 
 describe("consolidateWorkbooks", () => {
   it("combines worksheets with different column order and provenance", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "chimpcons-xlsx-"));
+    const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
 
     try {
       const first = path.join(directory, "north.xlsx");

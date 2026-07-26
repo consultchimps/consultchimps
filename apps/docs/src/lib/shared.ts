@@ -1,0 +1,10 @@
+export const appName = "ConsultChimps";
+export const docsRoute = "/docs";
+export const docsImageRoute = "/og/docs";
+export const docsContentRoute = "/llms.mdx/docs";
+
+export const gitConfig = {
+  user: "rashoodz",
+  repo: "chimpcons",
+  branch: "main",
+};

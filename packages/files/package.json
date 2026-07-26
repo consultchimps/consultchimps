@@ -1,7 +1,7 @@
 {
-  "name": "@chimpcons/files",
+  "name": "@consultchimps/files",
   "version": "0.1.0",
-  "description": "File discovery and safe output handling for chimpcons.",
+  "description": "File discovery and safe output handling for ConsultChimps.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -24,11 +24,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@chimpcons/core": "workspace:*",
+    "@consultchimps/core": "workspace:*",
     "fast-glob": "3.3.3"
   },
   "engines": {
-    "node": ">=20.19"
+    "node": ">=24"
   },
   "publishConfig": {
     "access": "public"
