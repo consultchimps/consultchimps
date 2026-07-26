@@ -27,7 +27,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: chimpcons version
+      label: ConsultChimps version
     validations:
       required: true
   - type: input
