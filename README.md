@@ -69,6 +69,9 @@ pnpm install
 pnpm check
 ```
 
+The verification suite builds the distributable CLI and runs command-level tests
+against generated Excel and PDF fixtures in addition to package-level tests.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow and
 [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 

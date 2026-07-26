@@ -32,6 +32,10 @@
     "@chimpcons/xlsx": "workspace:*",
     "commander": "14.0.3"
   },
+  "devDependencies": {
+    "pdf-lib": "1.17.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
   "engines": {
     "node": ">=20.19"
   },
