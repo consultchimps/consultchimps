@@ -1,0 +1,25 @@
+name: Feature request
+description: Propose a reusable operation or workflow
+title: "feature: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Operational problem
+      description: Describe the repetitive work and who experiences it.
+    validations:
+      required: true
+  - type: textarea
+    id: inputs
+    attributes:
+      label: Inputs and outputs
+      description: Describe expected input formats, outputs, and edge cases.
+    validations:
+      required: true
+  - type: textarea
+    id: reuse
+    attributes:
+      label: Reusable modules
+      description: Which existing operations could this compose or extend?

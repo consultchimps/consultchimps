@@ -1,0 +1,42 @@
+{
+  "name": "chimpcons",
+  "version": "0.1.0",
+  "description": "Composable operations tools for consultants.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rashoodz/chimpcons.git",
+    "directory": "packages/cli"
+  },
+  "type": "module",
+  "bin": {
+    "chimpcons": "./dist/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@chimpcons/core": "workspace:*",
+    "@chimpcons/files": "workspace:*",
+    "@chimpcons/pdf": "workspace:*",
+    "@chimpcons/xlsx": "workspace:*",
+    "commander": "14.0.3"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

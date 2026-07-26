@@ -1,0 +1,36 @@
+{
+  "name": "@chimpcons/files",
+  "version": "0.1.0",
+  "description": "File discovery and safe output handling for chimpcons.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rashoodz/chimpcons.git",
+    "directory": "packages/files"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@chimpcons/core": "workspace:*",
+    "fast-glob": "3.3.3"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
