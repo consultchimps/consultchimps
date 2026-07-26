@@ -1,0 +1,96 @@
+---
+title: Getting started
+description: Install the CLI or individual libraries with npm.
+icon: Rocket
+---
+
+## Requirements
+
+- Node.js 24
+
+## Try the CLI
+
+Run a command without keeping a global installation:
+
+```bash
+npx consultchimps@latest --help
+```
+
+For regular terminal use, install the executable globally:
+
+```bash
+npm install --global consultchimps
+consultchimps --help
+```
+
+For a repository-local CLI version, install it as a development dependency:
+
+```bash
+npm install --save-dev consultchimps
+npx consultchimps --help
+```
+
+<Callout type="warn" title="First release pending">
+  These install commands become active after `consultchimps` is published for
+  the first time. Until then, use the workspace instructions below.
+</Callout>
+
+## Install a library
+
+Install the narrowest package that owns the operation you need:
+
+```bash
+npm install @consultchimps/xlsx
+```
+
+```ts
+import { consolidateWorkbooks } from "@consultchimps/xlsx";
+
+const result = await consolidateWorkbooks(
+  ["inputs/january.xlsx", "inputs/february.xlsx"],
+  "outputs/consolidated.xlsx",
+);
+```
+
+The adapter package declares its required ConsultChimps packages, so npm
+installs `core`, `files`, and `tabular` automatically. Use `@consultchimps/pdf`
+for PDF operations.
+
+## Install the workspace
+
+```bash
+git clone https://github.com/rashoodz/chimpcons.git
+cd chimpcons
+pnpm install
+pnpm build
+```
+
+## Run your first operation
+
+```bash
+pnpm consultchimps pdf split report.pdf --output outputs/report-pages
+```
+
+The CLI refuses to replace existing output files unless you explicitly pass
+`--force`.
+
+## Open the documentation locally
+
+```bash
+pnpm docs:dev
+```
+
+Then open [http://localhost:3000](http://localhost:3000).
+
+## Machine-readable output
+
+Add the global `--json` option before a command when another process will
+consume the result:
+
+```bash
+pnpm consultchimps --json pdf merge "inputs/**/*.pdf" \
+  --output outputs/combined.pdf
+```
+
+Successful operations return their artifacts, warnings, and metrics as JSON.
+Known ConsultChimps errors include a stable error code and structured details.

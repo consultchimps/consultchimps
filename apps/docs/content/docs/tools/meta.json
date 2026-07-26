@@ -1,0 +1,6 @@
+{
+  "title": "Tools",
+  "icon": "Wrench",
+  "defaultOpen": true,
+  "pages": ["spreadsheets", "pdf-split", "pdf-merge"]
+}

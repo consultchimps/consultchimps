@@ -1,0 +1,71 @@
+---
+title: Field manual
+description: Durable, local-first operations tools for consultants.
+icon: BookOpen
+---
+
+ConsultChimps turns recurring document and data chores into deterministic tools.
+Use the command-line interface when you need an answer now, or import the
+focused TypeScript packages when you are building a repeatable workflow.
+
+<Callout title="Built for client work">
+  Inputs are immutable by default, outputs include provenance, and the core
+  operations do not require a hosted service.
+</Callout>
+
+## Start with a tool
+
+<Cards>
+  <Card
+    title="Consolidate spreadsheets"
+    description="Combine visible, non-empty worksheets into one auditable Excel table."
+    href="./tools/spreadsheets"
+    icon="TableProperties"
+  />
+  <Card
+    title="Split a PDF"
+    description="Write every page to a predictably named PDF."
+    href="./tools/pdf-split"
+    icon="Scissors"
+  />
+  <Card
+    title="Merge PDFs"
+    description="Assemble PDFs in resolved input order."
+    href="./tools/pdf-merge"
+    icon="Files"
+  />
+  <Card
+    title="Compose with libraries"
+    description="Import the file, table, workbook, and PDF modules directly."
+    href="./libraries"
+    icon="Blocks"
+  />
+</Cards>
+
+## The operating model
+
+Every operation returns the same result shape:
+
+```ts
+interface OperationResult {
+  operation: string;
+  artifacts: Array<{
+    kind: "file" | "directory";
+    path: string;
+    mediaType?: string;
+  }>;
+  warnings: string[];
+  metrics: Record<string, number>;
+}
+```
+
+That gives a person useful terminal feedback and gives an automation stable,
+machine-readable output.
+
+## Design principles
+
+- **Local-first:** client files remain on the machine running the operation.
+- **Immutable inputs:** the toolkit refuses to overwrite source files.
+- **Composable modules:** each capability is useful without the CLI.
+- **Explicit provenance:** consolidated rows can retain file, sheet, and row.
+- **Replaceable intelligence:** future OCR or AI providers remain optional.

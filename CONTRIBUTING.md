@@ -4,7 +4,7 @@ Thank you for helping make consultant operations less repetitive.
 
 ## Set up
 
-1. Install Node.js 20.19 or newer and pnpm 11.
+1. Install Node.js 24 and pnpm 11.
 2. Fork and clone the repository.
 3. Run `pnpm install`.
 4. Create a focused branch from `main`.
@@ -26,5 +26,46 @@ imperative, and explain the change.
 
 Prefer extending an existing reusable package. Create a new package only when
 the capability has a distinct runtime or dependency boundary. Operations should
-return structured results and throw `ChimpconsError` with a stable error code
-for expected failures.
+return structured results and throw `ConsultChimpsError` with a stable error
+code for expected failures.
+
+## Package changes and releases
+
+Add a Changeset when a pull request changes a published package:
+
+```bash
+pnpm changeset
+```
+
+Choose the smallest valid semantic-version bump and describe the public impact.
+Documentation, tests, and repository-only maintenance do not require a
+Changeset. After changes land on `main`, the Release PR workflow collects the
+Changesets into one version pull request.
+
+Before the first publish:
+
+1. Create the `consultchimps` organization on npm and grant the publisher access
+   to the `@consultchimps` scope.
+2. Create a protected GitHub environment named `npm`.
+3. Add a granular npm publishing token as the `NPM_TOKEN` environment secret.
+4. Run the **Publish packages** workflow from `main`.
+5. Configure npm Trusted Publishing for each package with GitHub owner
+   `rashoodz`, repository `chimpcons`, workflow `publish.yml`, and environment
+   `npm`.
+6. Delete `NPM_TOKEN`; subsequent publishes authenticate with short-lived OIDC
+   credentials and generate provenance.
+
+The publish workflow runs `pnpm package:check` before publishing. This creates
+all six tarballs in a temporary directory, installs them into a clean consumer
+project, imports every library, and runs the packaged CLI.
+
+For later releases, merge the generated version pull request and manually run
+the **Publish packages** workflow after reviewing its package versions and
+changelogs.
+
+## Documentation deployment
+
+The Vercel project must use `apps/docs` as its Root Directory. Leave **Include
+source files outside of the Root Directory** enabled so the deployment can read
+the root pnpm workspace and lockfile. The checked-in `vercel.ts` contains the
+remaining build configuration; the site does not need secrets.

@@ -1,15 +1,23 @@
 #!/usr/bin/env node
 
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { isChimpconsError, type OperationResult } from "@chimpcons/core";
-import { discoverFiles } from "@chimpcons/files";
-import { mergePdfs, splitPdf } from "@chimpcons/pdf";
-import { consolidateWorkbooks } from "@chimpcons/xlsx";
+import {
+  isConsultChimpsError,
+  type OperationResult,
+} from "@consultchimps/core";
+import { discoverFiles } from "@consultchimps/files";
+import { mergePdfs, splitPdf } from "@consultchimps/pdf";
+import { consolidateWorkbooks } from "@consultchimps/xlsx";
 import { Command } from "commander";
 
 interface GlobalOptions {
   json?: boolean;
+}
+
+interface PackageMetadata {
+  version: string;
 }
 
 interface ConsolidateOptions {
@@ -61,10 +69,14 @@ function printResult(result: OperationResult, json: boolean): void {
 }
 
 const program = new Command();
+const packageMetadata = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+) as PackageMetadata;
+
 program
-  .name("chimpcons")
+  .name("consultchimps")
   .description("Composable, local-first operations tools for consultants.")
-  .version("0.1.0")
+  .version(packageMetadata.version)
   .option("--json", "print machine-readable JSON");
 
 const sheets = program
@@ -136,14 +148,14 @@ pdf
 try {
   await program.parseAsync(process.argv);
 } catch (error) {
-  if (isChimpconsError(error)) {
+  if (isConsultChimpsError(error)) {
     const details = program.opts<GlobalOptions>().json
       ? `\n${JSON.stringify({ code: error.code, details: error.details }, null, 2)}`
       : "";
-    process.stderr.write(`chimpcons: ${error.message}${details}\n`);
+    process.stderr.write(`consultchimps: ${error.message}${details}\n`);
   } else {
     const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`chimpcons: ${message}\n`);
+    process.stderr.write(`consultchimps: ${message}\n`);
   }
   process.exitCode = 1;
 }

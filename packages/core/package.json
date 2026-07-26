@@ -1,7 +1,7 @@
 {
-  "name": "@chimpcons/core",
+  "name": "@consultchimps/core",
   "version": "0.1.0",
-  "description": "Shared contracts and errors for chimpcons operations.",
+  "description": "Shared contracts and errors for ConsultChimps operations.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -21,12 +21,14 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean",
+    "prepack": "pnpm build",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
-    "node": ">=20.19"
+    "node": "24.x"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   }
 }

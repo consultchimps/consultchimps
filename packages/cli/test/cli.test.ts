@@ -20,7 +20,9 @@ interface CliResult {
 }
 
 async function createTemporaryDirectory(): Promise<string> {
-  const directory = await mkdtemp(path.join(tmpdir(), "chimpcons-cli-test-"));
+  const directory = await mkdtemp(
+    path.join(tmpdir(), "consultchimps-cli-test-"),
+  );
   temporaryDirectories.push(directory);
   await mkdir(path.join(directory, "inputs"));
   await mkdir(path.join(directory, "outputs"));
@@ -93,7 +95,7 @@ afterEach(async () => {
   );
 });
 
-describe("chimpcons CLI", () => {
+describe("consultchimps CLI", () => {
   it("consolidates workbook globs through the built command", async () => {
     const directory = await createTemporaryDirectory();
     const inputs = path.join(directory, "inputs");

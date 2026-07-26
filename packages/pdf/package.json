@@ -1,7 +1,7 @@
 {
-  "name": "@chimpcons/pdf",
+  "name": "@consultchimps/pdf",
   "version": "0.1.0",
-  "description": "PDF page operations for chimpcons.",
+  "description": "PDF page operations for ConsultChimps.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -21,17 +21,19 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean",
+    "prepack": "pnpm build",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@chimpcons/core": "workspace:*",
-    "@chimpcons/files": "workspace:*",
+    "@consultchimps/core": "workspace:*",
+    "@consultchimps/files": "workspace:*",
     "pdf-lib": "1.17.1"
   },
   "engines": {
-    "node": ">=20.19"
+    "node": "24.x"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   }
 }

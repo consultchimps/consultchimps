@@ -13,27 +13,29 @@ export interface OperationResult {
   metrics: Record<string, number>;
 }
 
-export interface ChimpconsErrorOptions {
+export interface ConsultChimpsErrorOptions {
   cause?: unknown;
   details?: Record<string, unknown>;
 }
 
-export class ChimpconsError extends Error {
+export class ConsultChimpsError extends Error {
   readonly code: string;
   readonly details: Record<string, unknown> | undefined;
 
   constructor(
     code: string,
     message: string,
-    options: ChimpconsErrorOptions = {},
+    options: ConsultChimpsErrorOptions = {},
   ) {
     super(message, { cause: options.cause });
-    this.name = "ChimpconsError";
+    this.name = "ConsultChimpsError";
     this.code = code;
     this.details = options.details;
   }
 }
 
-export function isChimpconsError(error: unknown): error is ChimpconsError {
-  return error instanceof ChimpconsError;
+export function isConsultChimpsError(
+  error: unknown,
+): error is ConsultChimpsError {
+  return error instanceof ConsultChimpsError;
 }
