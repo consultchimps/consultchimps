@@ -1,0 +1,59 @@
+---
+title: Merge PDFs
+description: Combine PDF files into one document in resolved input order.
+icon: Files
+---
+
+## Basic usage
+
+```bash
+pnpm consultchimps pdf merge "inputs/**/*.pdf" \
+  --output outputs/combined.pdf
+```
+
+Files discovered from paths, directories, and globs are deduplicated and sorted.
+Every page from the first resolved PDF is copied before the pages from the next.
+
+## Control the order explicitly
+
+For a hand-curated pack, pass files in the desired naming order:
+
+```bash
+pnpm consultchimps pdf merge \
+  "pack/01-cover.pdf" \
+  "pack/02-summary.pdf" \
+  "pack/03-appendix.pdf" \
+  --output outputs/client-pack.pdf
+```
+
+<Callout type="warn" title="Ordering">
+  Discovery produces a locale-sorted path list. Prefix filenames with `01-`,
+  `02-`, and so on when the order carries meaning.
+</Callout>
+
+## Output safety
+
+- The destination directory is created when needed.
+- Existing output is rejected unless `--force` is present.
+- An input file can never also be the output file.
+- A missing or unreadable source produces a structured error.
+
+```bash
+pnpm consultchimps pdf merge pack/ \
+  --output outputs/client-pack.pdf \
+  --force
+```
+
+## TypeScript API
+
+```ts
+import { mergePdfs } from "@consultchimps/pdf";
+
+const result = await mergePdfs(
+  ["01-cover.pdf", "02-summary.pdf", "03-appendix.pdf"],
+  "outputs/client-pack.pdf",
+  { overwrite: false },
+);
+
+console.log(result.metrics.pages);
+```

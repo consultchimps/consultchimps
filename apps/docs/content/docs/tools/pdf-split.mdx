@@ -1,0 +1,63 @@
+---
+title: Split a PDF
+description: Write every page of a PDF to a separate, predictably named file.
+icon: Scissors
+---
+
+## Basic usage
+
+```bash
+pnpm consultchimps pdf split report.pdf
+```
+
+Without an output option, pages are written beside the input:
+
+```text
+report-pages/
+├── report-page-001.pdf
+├── report-page-002.pdf
+└── report-page-003.pdf
+```
+
+Page numbers are zero-padded to at least three digits so alphabetical and page
+order stay aligned.
+
+## Choose the destination and prefix
+
+```bash
+pnpm consultchimps pdf split report.pdf \
+  --output outputs/exhibits \
+  --prefix exhibit
+```
+
+This writes `exhibit-page-001.pdf`, `exhibit-page-002.pdf`, and so on.
+
+## Existing files
+
+The operation checks every planned output before writing the first page. If any
+target already exists, it stops without partially replacing the set.
+
+Pass `--force` only when replacement is intentional:
+
+```bash
+pnpm consultchimps pdf split report.pdf \
+  --output outputs/exhibits \
+  --force
+```
+
+## TypeScript API
+
+```ts
+import { splitPdf } from "@consultchimps/pdf";
+
+const result = await splitPdf("report.pdf", "outputs/pages", {
+  filenamePrefix: "report",
+  overwrite: false,
+});
+
+for (const artifact of result.artifacts) {
+  console.log(artifact.path);
+}
+```
+
+The operation returns the number of pages and output files in `result.metrics`.

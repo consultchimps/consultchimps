@@ -2,6 +2,10 @@
 node_modules/
 dist/
 coverage/
+.next/
+.source/
+.playwright-cli/
+out/
 *.tsbuildinfo
 
 # Local configuration and secrets

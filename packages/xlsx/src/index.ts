@@ -1,19 +1,19 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { ChimpconsError, type OperationResult } from "@chimpcons/core";
+import { ConsultChimpsError, type OperationResult } from "@consultchimps/core";
 import {
   ensureOutputAvailable,
   ensureParentDirectory,
   refuseInputOverwrite,
-} from "@chimpcons/files";
+} from "@consultchimps/files";
 import {
   type CellValue,
   type Table,
   type TableRow,
   unionTables,
   uniqueHeaders,
-} from "@chimpcons/tabular";
+} from "@consultchimps/tabular";
 import * as XLSX from "xlsx";
 
 export interface ReadWorkbookOptions {
@@ -69,7 +69,7 @@ function findHeaderRow(
 ): number | undefined {
   if (configuredRow !== undefined) {
     if (!Number.isInteger(configuredRow) || configuredRow < 1) {
-      throw new ChimpconsError(
+      throw new ConsultChimpsError(
         "XLSX_INVALID_HEADER_ROW",
         "The header row must be a positive integer.",
         { details: { configuredRow } },
@@ -184,7 +184,7 @@ export async function readWorkbookTables(
       type: "buffer",
     });
   } catch (error) {
-    throw new ChimpconsError(
+    throw new ConsultChimpsError(
       "XLSX_READ_FAILED",
       `Could not read workbook: ${absolutePath}`,
       {
@@ -231,7 +231,7 @@ export async function writeTable(
   options: WriteTableOptions = {},
 ): Promise<string> {
   if (table.columns.length === 0) {
-    throw new ChimpconsError(
+    throw new ConsultChimpsError(
       "XLSX_NO_COLUMNS",
       "Cannot write a table with no columns.",
     );
@@ -268,9 +268,9 @@ export async function writeTable(
 
   const workbook = XLSX.utils.book_new();
   workbook.Props = {
-    Author: "chimpcons",
+    Author: "ConsultChimps",
     CreatedDate: new Date(0),
-    LastAuthor: "chimpcons",
+    LastAuthor: "ConsultChimps",
     ModifiedDate: new Date(0),
   };
   XLSX.utils.book_append_sheet(
@@ -295,7 +295,7 @@ export async function consolidateWorkbooks(
   options: ConsolidateWorkbooksOptions = {},
 ): Promise<OperationResult> {
   if (inputPaths.length === 0) {
-    throw new ChimpconsError(
+    throw new ConsultChimpsError(
       "XLSX_NO_INPUTS",
       "At least one workbook is required.",
     );
@@ -309,7 +309,7 @@ export async function consolidateWorkbooks(
   ).flat();
 
   if (tables.length === 0) {
-    throw new ChimpconsError(
+    throw new ConsultChimpsError(
       "XLSX_NO_TABLES",
       "No visible, non-empty worksheets were found in the input workbooks.",
     );

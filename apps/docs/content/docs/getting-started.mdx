@@ -1,0 +1,57 @@
+---
+title: Getting started
+description: Run ConsultChimps locally with Node.js 24 and pnpm.
+icon: Rocket
+---
+
+## Requirements
+
+- Node.js 24 or newer
+- pnpm 11
+
+ConsultChimps currently runs from source while the first npm release is being
+prepared.
+
+## Install the workspace
+
+```bash
+git clone https://github.com/rashoodz/chimpcons.git
+cd chimpcons
+pnpm install
+pnpm build
+```
+
+## Run your first operation
+
+```bash
+pnpm consultchimps pdf split report.pdf --output outputs/report-pages
+```
+
+The CLI refuses to replace existing output files unless you explicitly pass
+`--force`.
+
+## Open the documentation locally
+
+```bash
+pnpm docs:dev
+```
+
+Then open [http://localhost:3000](http://localhost:3000).
+
+## Machine-readable output
+
+Add the global `--json` option before a command when another process will
+consume the result:
+
+```bash
+pnpm consultchimps --json pdf merge "inputs/**/*.pdf" \
+  --output outputs/combined.pdf
+```
+
+Successful operations return their artifacts, warnings, and metrics as JSON.
+Known ConsultChimps errors include a stable error code and structured details.
+
+<Callout type="info" title="After the npm release">
+  The intended global installation will be `npm install --global consultchimps`,
+  or `bun add --global consultchimps`.
+</Callout>

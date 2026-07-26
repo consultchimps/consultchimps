@@ -1,5 +1,5 @@
 {
-  "name": "chimpcons-workspace",
+  "name": "consultchimps-workspace",
   "version": "0.1.0",
   "private": true,
   "description": "Durable, composable operations tools for consultants.",
@@ -11,15 +11,16 @@
   "type": "module",
   "packageManager": "pnpm@11.10.0",
   "engines": {
-    "node": ">=20.19"
+    "node": ">=24"
   },
   "scripts": {
     "build": "pnpm -r --if-present build",
     "check": "pnpm format:check && pnpm lint && pnpm build && pnpm typecheck && pnpm test",
-    "chimpcons": "node packages/cli/dist/index.js",
+    "consultchimps": "node packages/cli/dist/index.js",
+    "docs:dev": "pnpm --filter @consultchimps/docs dev",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "eslint .",
+    "lint": "eslint --flag unstable_native_nodejs_ts_config . && pnpm -r --if-present lint",
     "test": "vitest run",
     "typecheck": "pnpm -r --if-present typecheck"
   },
