@@ -95,6 +95,9 @@ pnpm install
 pnpm check
 ```
 
+The verification suite builds the distributable CLI and runs command-level tests
+against generated Excel and PDF fixtures in addition to package-level tests.
+
 The Fumadocs guide lives in `apps/docs`:
 
 ```bash
