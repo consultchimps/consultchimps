@@ -5,6 +5,7 @@ coverage/
 .next/
 .source/
 .playwright-cli/
+.vercel/
 out/
 *.tsbuildinfo
 

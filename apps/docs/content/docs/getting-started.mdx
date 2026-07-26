@@ -1,16 +1,60 @@
 ---
 title: Getting started
-description: Run ConsultChimps locally with Node.js 24 and pnpm.
+description: Install the CLI or individual libraries with npm.
 icon: Rocket
 ---
 
 ## Requirements
 
-- Node.js 24 or newer
-- pnpm 11
+- Node.js 24
 
-ConsultChimps currently runs from source while the first npm release is being
-prepared.
+## Try the CLI
+
+Run a command without keeping a global installation:
+
+```bash
+npx consultchimps@latest --help
+```
+
+For regular terminal use, install the executable globally:
+
+```bash
+npm install --global consultchimps
+consultchimps --help
+```
+
+For a repository-local CLI version, install it as a development dependency:
+
+```bash
+npm install --save-dev consultchimps
+npx consultchimps --help
+```
+
+<Callout type="warn" title="First release pending">
+  These install commands become active after `consultchimps` is published for
+  the first time. Until then, use the workspace instructions below.
+</Callout>
+
+## Install a library
+
+Install the narrowest package that owns the operation you need:
+
+```bash
+npm install @consultchimps/xlsx
+```
+
+```ts
+import { consolidateWorkbooks } from "@consultchimps/xlsx";
+
+const result = await consolidateWorkbooks(
+  ["inputs/january.xlsx", "inputs/february.xlsx"],
+  "outputs/consolidated.xlsx",
+);
+```
+
+The adapter package declares its required ConsultChimps packages, so npm
+installs `core`, `files`, and `tabular` automatically. Use `@consultchimps/pdf`
+for PDF operations.
 
 ## Install the workspace
 
@@ -50,8 +94,3 @@ pnpm consultchimps --json pdf merge "inputs/**/*.pdf" \
 
 Successful operations return their artifacts, warnings, and metrics as JSON.
 Known ConsultChimps errors include a stable error code and structured details.
-
-<Callout type="info" title="After the npm release">
-  The intended global installation will be `npm install --global consultchimps`,
-  or `bun add --global consultchimps`.
-</Callout>
