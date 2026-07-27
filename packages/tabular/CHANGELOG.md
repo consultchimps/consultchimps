@@ -1,0 +1,9 @@
+# @consultchimps/tabular
+
+## 0.2.0
+
+### Minor Changes
+
+- 7958e80: Add reusable table grouping and an Excel split-by-column API and CLI
+  command with deterministic filenames, blank-row controls, and safe output
+  preflight.
