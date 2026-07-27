@@ -38,6 +38,24 @@ Options:
   -f, --force               replace an existing output file
 ```
 
+## Spreadsheet splitting
+
+```text
+consultchimps sheets split [options] <input>
+
+Required:
+  -c, --column <name>       column header used to split rows
+
+Options:
+  -o, --output <directory>  output directory (default: <input>-split)
+  --sheet <name>            worksheet to split
+  --header-row <number>     one-based header row
+  --hidden                  allow a selected hidden worksheet
+  --skip-blank              omit rows whose split-column value is blank
+  --prefix <name>           output filename prefix
+  -f, --force               replace existing output files
+```
+
 ## PDF splitting
 
 ```text

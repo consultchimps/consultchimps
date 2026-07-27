@@ -27,6 +27,21 @@ export interface UnionTablesOptions {
     | undefined;
 }
 
+export interface GroupTableByColumnOptions {
+  includeBlank?: boolean | undefined;
+}
+
+export interface TableGroup {
+  table: Table;
+  value: CellValue;
+}
+
+export interface GroupTableByColumnResult {
+  column: string;
+  groups: TableGroup[];
+  skippedRows: number;
+}
+
 const DEFAULT_SOURCE_COLUMNS = {
   file: "_source_file",
   sheet: "_source_sheet",
@@ -47,6 +62,101 @@ export function uniqueHeaders(values: Array<string | null>): string[] {
     occurrences.set(key, occurrence);
     return occurrence === 1 ? base : `${base}_${occurrence}`;
   });
+}
+
+function isBlankValue(value: CellValue): boolean {
+  return value === null || (typeof value === "string" && value.trim() === "");
+}
+
+function groupKey(value: CellValue): string {
+  if (value === null) {
+    return "null";
+  }
+
+  return `${typeof value}:${String(value)}`;
+}
+
+export function groupTableByColumn(
+  table: Table,
+  column: string,
+  options: GroupTableByColumnOptions = {},
+): GroupTableByColumnResult {
+  const requestedColumnKey = columnKey(column);
+  const matchedColumn = table.columns.find(
+    (candidate) => columnKey(candidate) === requestedColumnKey,
+  );
+
+  if (!matchedColumn) {
+    throw new ConsultChimpsError(
+      "TABLE_COLUMN_NOT_FOUND",
+      `Column "${column}" was not found in the table.`,
+      {
+        details: {
+          availableColumns: table.columns,
+          column,
+        },
+      },
+    );
+  }
+
+  const includeBlank = options.includeBlank ?? true;
+  const groups = new Map<
+    string,
+    {
+      rowIndexes: number[];
+      value: CellValue;
+    }
+  >();
+  let skippedRows = 0;
+
+  table.rows.forEach((row, rowIndex) => {
+    const rawValue = row[matchedColumn] ?? null;
+    const value = isBlankValue(rawValue) ? null : rawValue;
+
+    if (value === null && !includeBlank) {
+      skippedRows += 1;
+      return;
+    }
+
+    const key = groupKey(value);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.rowIndexes.push(rowIndex);
+      return;
+    }
+
+    groups.set(key, {
+      rowIndexes: [rowIndex],
+      value,
+    });
+  });
+
+  return {
+    column: matchedColumn,
+    groups: [...groups.values()].map(({ rowIndexes, value }) => {
+      const groupedTable: Table = {
+        columns: [...table.columns],
+        rows: rowIndexes.map((rowIndex) => ({
+          ...table.rows[rowIndex],
+        })),
+      };
+
+      if (table.source) {
+        groupedTable.source = { ...table.source };
+      }
+      if (table.sourceRows) {
+        groupedTable.sourceRows = rowIndexes.map(
+          (rowIndex) => table.sourceRows?.[rowIndex] ?? rowIndex + 2,
+        );
+      }
+
+      return {
+        table: groupedTable,
+        value,
+      };
+    }),
+    skippedRows,
+  };
 }
 
 export function unionTables(
