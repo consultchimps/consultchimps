@@ -46,6 +46,27 @@ Worksheet and column matching ignore letter case. `--header-row` is one-based,
 matching the row number displayed by Excel. Add `--hidden` when intentionally
 selecting a hidden worksheet.
 
+## Use a named Excel Table
+
+If the worksheet contains titles, notes, formulas, or multiple data blocks,
+split a named Excel Table instead of treating the worksheet's complete used
+range as one table:
+
+```bash
+pnpm consultchimps sheets split clients.xlsx \
+  --table ClientData \
+  --column Region \
+  --output outputs/by-region
+```
+
+Table-name matching ignores letter case. The splitter reads only the structured
+table's columns and data rows, excludes its totals row, and ignores every cell
+outside the table range.
+
+Excel Tables define their own headers, so `--header-row` cannot be combined with
+`--table`. You may add `--sheet` as an extra worksheet constraint, and
+`--hidden` is still required when the selected table is on a hidden worksheet.
+
 ## Blank values
 
 Blank cells are included by default in a `blank` workbook so rows are not
@@ -104,10 +125,10 @@ const result = await splitWorkbookByColumn(
   {
     column: "Region",
     filenamePrefix: "client-region",
-    headerRow: 1,
     includeBlank: true,
     overwrite: false,
     sheet: "Active clients",
+    table: "ClientData",
   },
 );
 
@@ -115,4 +136,6 @@ console.log(result.metrics.outputFiles);
 ```
 
 The format-neutral grouping primitive is also available from
-`@consultchimps/tabular` as `groupTableByColumn`.
+`@consultchimps/tabular` as `groupTableByColumn`. Use `readWorkbookExcelTables`
+from `@consultchimps/xlsx` when an application needs to inspect all visible,
+non-empty structured tables before choosing one.

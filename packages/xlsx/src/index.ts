@@ -25,10 +25,21 @@ import {
 } from "@consultchimps/tabular";
 import * as XLSX from "xlsx";
 
+import {
+  type ExcelTableDefinition,
+  readExcelTableDefinitions,
+} from "./excel-tables.js";
+
 export interface ReadWorkbookOptions {
   headerRow?: number | undefined;
   includeHiddenSheets?: boolean | undefined;
   sheets?: string[] | undefined;
+}
+
+export interface ReadWorkbookExcelTablesOptions {
+  includeHiddenSheets?: boolean | undefined;
+  sheets?: string[] | undefined;
+  tables?: string[] | undefined;
 }
 
 export interface ConsolidateWorkbooksOptions extends ReadWorkbookOptions {
@@ -45,6 +56,12 @@ export interface SplitWorkbookByColumnOptions {
   includeHiddenSheets?: boolean | undefined;
   overwrite?: boolean | undefined;
   sheet?: string | undefined;
+  table?: string | undefined;
+}
+
+export interface WorkbookExcelTable extends Table {
+  excelTableName: string;
+  excelTableRange: string;
 }
 
 export interface WriteTableOptions {
@@ -251,6 +268,93 @@ function worksheetToTable(
   };
 }
 
+function excelTableToTable(
+  filePath: string,
+  definition: ExcelTableDefinition,
+  worksheet: XLSX.WorkSheet,
+): WorkbookExcelTable | undefined {
+  let range: XLSX.Range;
+  try {
+    range = XLSX.utils.decode_range(definition.range);
+  } catch (error) {
+    throw new ConsultChimpsError(
+      "XLSX_INVALID_EXCEL_TABLE",
+      `Excel Table "${definition.name}" has an invalid range.`,
+      {
+        cause: error,
+        details: {
+          range: definition.range,
+          sheet: definition.sheet,
+          table: definition.name,
+        },
+      },
+    );
+  }
+
+  const rangeColumnCount = range.e.c - range.s.c + 1;
+  if (rangeColumnCount !== definition.columns.length) {
+    throw new ConsultChimpsError(
+      "XLSX_INVALID_EXCEL_TABLE",
+      `Excel Table "${definition.name}" has inconsistent column metadata.`,
+      {
+        details: {
+          columnCount: definition.columns.length,
+          range: definition.range,
+          rangeColumnCount,
+          sheet: definition.sheet,
+          table: definition.name,
+        },
+      },
+    );
+  }
+
+  const columns = uniqueHeaders(
+    definition.columns.map((column) => column || null),
+  );
+  const firstDataRowIndex = range.s.r + (definition.headerRow ? 1 : 0);
+  const lastDataRowIndex = range.e.r - (definition.totalsRow ? 1 : 0);
+  const rows: TableRow[] = [];
+  const sourceRows: number[] = [];
+
+  for (
+    let rowIndex = firstDataRowIndex;
+    rowIndex <= lastDataRowIndex;
+    rowIndex += 1
+  ) {
+    const values = columns.map((_, index) =>
+      cellToPrimitive(getCell(worksheet, rowIndex, range.s.c + index)),
+    );
+
+    if (values.every((value) => value === null || value === "")) {
+      continue;
+    }
+
+    const row: TableRow = {};
+    columns.forEach((column, index) => {
+      row[column] = values[index] ?? null;
+    });
+    rows.push(row);
+    sourceRows.push(rowIndex + 1);
+  }
+
+  if (rows.length === 0) {
+    return undefined;
+  }
+
+  return {
+    columns,
+    excelTableName: definition.name,
+    excelTableRange: definition.range,
+    rows,
+    sourceRows,
+    source: {
+      file: path.basename(filePath),
+      firstDataRow: firstDataRowIndex + 1,
+      sheet: definition.sheet,
+    },
+  };
+}
+
 function isVisibleSheet(workbook: XLSX.WorkBook, sheetName: string): boolean {
   const metadata = workbook.Workbook?.Sheets?.find(
     (sheet) => sheet.name === sheetName,
@@ -305,6 +409,74 @@ export async function readWorkbookTables(
       worksheet,
       options.headerRow,
     );
+    if (table) {
+      tables.push(table);
+    }
+  }
+
+  return tables;
+}
+
+export async function readWorkbookExcelTables(
+  filePath: string,
+  options: ReadWorkbookExcelTablesOptions = {},
+): Promise<WorkbookExcelTable[]> {
+  const absolutePath = path.resolve(filePath);
+  let workbook: XLSX.WorkBook;
+  let definitions: ExcelTableDefinition[];
+
+  try {
+    const workbookBytes = await readFile(absolutePath);
+    workbook = XLSX.read(workbookBytes, {
+      cellDates: true,
+      dense: false,
+      type: "buffer",
+    });
+    definitions = await readExcelTableDefinitions(workbookBytes);
+  } catch (error) {
+    throw new ConsultChimpsError(
+      "XLSX_READ_FAILED",
+      `Could not read workbook: ${absolutePath}`,
+      {
+        cause: error,
+        details: { filePath: absolutePath },
+      },
+    );
+  }
+
+  const selectedSheets = options.sheets
+    ? new Set(options.sheets.map((sheet) => sheet.toLocaleLowerCase()))
+    : undefined;
+  const selectedTables = options.tables
+    ? new Set(options.tables.map((table) => table.toLocaleLowerCase()))
+    : undefined;
+  const tables: WorkbookExcelTable[] = [];
+
+  for (const definition of definitions) {
+    if (
+      !options.includeHiddenSheets &&
+      !isVisibleSheet(workbook, definition.sheet)
+    ) {
+      continue;
+    }
+    if (
+      selectedSheets &&
+      !selectedSheets.has(definition.sheet.toLocaleLowerCase())
+    ) {
+      continue;
+    }
+    if (
+      selectedTables &&
+      !selectedTables.has(definition.name.toLocaleLowerCase())
+    ) {
+      continue;
+    }
+
+    const worksheet = workbook.Sheets[definition.sheet];
+    if (!worksheet) {
+      continue;
+    }
+    const table = excelTableToTable(absolutePath, definition, worksheet);
     if (table) {
       tables.push(table);
     }
@@ -437,22 +609,57 @@ export async function splitWorkbookByColumn(
   options: SplitWorkbookByColumnOptions,
 ): Promise<OperationResult> {
   const absoluteInput = path.resolve(inputPath);
-  const tables = await readWorkbookTables(absoluteInput, {
-    headerRow: options.headerRow,
-    includeHiddenSheets: options.includeHiddenSheets,
-    sheets: options.sheet ? [options.sheet] : undefined,
-  });
+  if (options.table && options.headerRow !== undefined) {
+    throw new ConsultChimpsError(
+      "XLSX_SPLIT_TABLE_HEADER_ROW",
+      "The headerRow option cannot be used with an Excel Table; the table defines its own headers.",
+      {
+        details: {
+          headerRow: options.headerRow,
+          table: options.table,
+        },
+      },
+    );
+  }
+
+  const availableExcelTables = options.table
+    ? await readWorkbookExcelTables(absoluteInput, {
+        includeHiddenSheets: options.includeHiddenSheets,
+        sheets: options.sheet ? [options.sheet] : undefined,
+      })
+    : [];
+  const tables = options.table
+    ? availableExcelTables.filter(
+        (table) =>
+          table.excelTableName.toLocaleLowerCase() ===
+          options.table?.toLocaleLowerCase(),
+      )
+    : await readWorkbookTables(absoluteInput, {
+        headerRow: options.headerRow,
+        includeHiddenSheets: options.includeHiddenSheets,
+        sheets: options.sheet ? [options.sheet] : undefined,
+      });
 
   if (tables.length === 0) {
+    const selectedSource = options.table
+      ? `Excel Table "${options.table}"`
+      : options.sheet
+        ? `Worksheet "${options.sheet}"`
+        : undefined;
     throw new ConsultChimpsError(
       "XLSX_SPLIT_NO_TABLE",
-      options.sheet
-        ? `Worksheet "${options.sheet}" was not found or has no data rows.`
+      selectedSource
+        ? `${selectedSource} was not found or has no data rows.`
         : "No visible, non-empty worksheet was found in the input workbook.",
       {
         details: {
+          availableTables: availableExcelTables.map((table) => ({
+            name: table.excelTableName,
+            sheet: table.source?.sheet,
+          })),
           inputPath: absoluteInput,
           sheet: options.sheet,
+          table: options.table,
         },
       },
     );
