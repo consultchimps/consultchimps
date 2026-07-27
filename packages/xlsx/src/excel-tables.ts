@@ -23,7 +23,9 @@ export interface ExcelTableDefinition {
   name: string;
   range: string;
   sheet: string;
+  tablePart: string;
   totalsRow: boolean;
+  worksheetPart: string;
 }
 
 function attribute(tag: SaxesTagNS, localName: string): string | undefined {
@@ -97,8 +99,15 @@ function parseTableDefinition(
   xml: string,
   fileName: string,
   sheet: string,
+  tablePart: string,
+  worksheetPart: string,
 ): ExcelTableDefinition {
-  let definition: Omit<ExcelTableDefinition, "columns" | "sheet"> | undefined;
+  let definition:
+    | Omit<
+        ExcelTableDefinition,
+        "columns" | "sheet" | "tablePart" | "worksheetPart"
+      >
+    | undefined;
   const columns: string[] = [];
 
   parseXml(xml, fileName, (tag) => {
@@ -133,7 +142,13 @@ function parseTableDefinition(
     throw new Error(`Excel Table "${definition.name}" has no columns.`);
   }
 
-  return { ...definition, columns, sheet };
+  return {
+    ...definition,
+    columns,
+    sheet,
+    tablePart,
+    worksheetPart,
+  };
 }
 
 function relationshipsPath(partPath: string): string {
@@ -222,6 +237,8 @@ export async function readExcelTableDefinitions(
           await requiredText(archive, tablePart),
           tablePart,
           sheet.name,
+          tablePart,
+          sheetPart,
         ),
       );
     }

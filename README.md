@@ -81,6 +81,12 @@ pnpm consultchimps sheets split clients.xlsx \
   --column Region \
   --output outputs/by-region
 
+pnpm consultchimps sheets split clients.xlsx \
+  --table ClientData \
+  --column Region \
+  --preserve-workbook \
+  --output outputs/by-region
+
 pnpm consultchimps pdf split report.pdf --output outputs/pages
 
 pnpm consultchimps pdf merge "inputs/**/*.pdf" \
@@ -95,6 +101,8 @@ Excel splitting creates one workbook per distinct value in a selected column.
 Blank values are retained by default, filenames are portable, and all
 destinations are checked before any output is written. A named Excel Table can
 be selected to ignore titles, notes, totals, and other cells outside its range.
+Add `--preserve-workbook` to retain the complete source workbook and change only
+the selected table's rows.
 
 ## Design principles
 

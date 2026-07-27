@@ -40,6 +40,7 @@ interface SheetSplitOptions {
   hidden?: boolean;
   output?: string;
   prefix?: string;
+  preserveWorkbook?: boolean;
   sheet?: string;
   skipBlank?: boolean;
   table?: string;
@@ -137,6 +138,10 @@ sheets
   )
   .option("--header-row <number>", "one-based header row", positiveInteger)
   .option("--hidden", "allow a selected hidden worksheet")
+  .option(
+    "--preserve-workbook",
+    "copy the full workbook and replace only the selected Excel Table rows",
+  )
   .option("--skip-blank", "omit rows whose split-column value is blank")
   .option("--prefix <name>", "output filename prefix")
   .option("-f, --force", "replace existing output files")
@@ -165,6 +170,7 @@ sheets
       includeBlank: options.skipBlank !== true,
       includeHiddenSheets: options.hidden === true,
       overwrite: options.force === true,
+      preserveWorkbook: options.preserveWorkbook === true,
       sheet: options.sheet,
       table: options.table,
     });

@@ -144,6 +144,83 @@ describe("splitWorkbookByColumn", () => {
     ).toEqual([{ Amount: 20, Client: "B", Region: "South" }]);
   });
 
+  it("preserves the workbook and changes only the selected Excel Table rows", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "clients.xlsx");
+    const output = path.join(directory, "preserved");
+    await copyWorkbookWithExcelTable(input);
+
+    const inputArchive = await JSZip.loadAsync(await readFile(input));
+    const result = await splitWorkbookByColumn(input, output, {
+      column: "Region",
+      preserveWorkbook: true,
+      table: "ClientData",
+    });
+
+    expect(result.metrics).toMatchObject({
+      groups: 2,
+      inputRows: 3,
+      outputFiles: 2,
+      outputRows: 3,
+    });
+
+    const northPath = path.join(output, "clients-North.xlsx");
+    const southPath = path.join(output, "clients-South.xlsx");
+    const northTables = await readWorkbookExcelTables(northPath);
+    const southTables = await readWorkbookExcelTables(southPath);
+    expect(northTables).toMatchObject([
+      {
+        excelTableName: "ClientData",
+        excelTableRange: "B4:D7",
+        rows: [
+          { Amount: 10, Client: "A", Region: "North" },
+          { Amount: 30, Client: "C", Region: "North" },
+        ],
+        sourceRows: [5, 6],
+      },
+    ]);
+    expect(southTables).toMatchObject([
+      {
+        excelTableName: "ClientData",
+        excelTableRange: "B4:D6",
+        rows: [{ Amount: 20, Client: "B", Region: "South" }],
+        sourceRows: [5],
+      },
+    ]);
+
+    const northArchive = await JSZip.loadAsync(await readFile(northPath));
+    for (const part of [
+      "xl/styles.xml",
+      "xl/theme/theme1.xml",
+      "xl/workbook.xml",
+      "xl/worksheets/sheet1.xml",
+    ]) {
+      expect(await northArchive.file(part)?.async("text")).toBe(
+        await inputArchive.file(part)?.async("text"),
+      );
+    }
+
+    const northWorksheetXml = await northArchive
+      .file("xl/worksheets/sheet2.xml")!
+      .async("text");
+    expect(northWorksheetXml).toContain("Client allocation report");
+    expect(northWorksheetXml).toContain("Cells outside ClientData");
+    expect(northWorksheetXml).toContain('<x:mergeCell ref="A1:D2" />');
+    expect(northWorksheetXml).toContain(
+      '<x:c r="D6" s="6" t="n"><x:v>30</x:v></x:c>',
+    );
+    expect(northWorksheetXml).toContain(
+      '<x:c r="D7" s="6" t="n"><x:v>60</x:v></x:c>',
+    );
+    expect(northWorksheetXml).toContain('<x:c r="D8" s="6" />');
+
+    const northTableXml = await northArchive
+      .file("xl/tables/table1.xml")!
+      .async("text");
+    expect(northTableXml).toContain('ref="B4:D7"');
+    expect(northTableXml).toContain('name="TableStyleMedium2"');
+  });
+
   it("reports invalid Excel Table selections and header overrides", async () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "clients.xlsx");
@@ -166,6 +243,15 @@ describe("splitWorkbookByColumn", () => {
       }),
     ).rejects.toThrowError(
       /headerRow option cannot be used with an Excel Table/,
+    );
+
+    await expect(
+      splitWorkbookByColumn(input, path.join(directory, "preserve-sheet"), {
+        column: "Region",
+        preserveWorkbook: true,
+      }),
+    ).rejects.toThrowError(
+      /preserveWorkbook option requires a named Excel Table/,
     );
   });
 
