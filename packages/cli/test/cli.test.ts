@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import {
+  copyFile,
   mkdtemp,
   mkdir,
   readFile,
@@ -18,6 +19,9 @@ import * as XLSX from "xlsx";
 
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../dist/index.js", import.meta.url));
+const structuredTableFixture = fileURLToPath(
+  new URL("../../xlsx/test/fixtures/structured-table.xlsx", import.meta.url),
+);
 const temporaryDirectories: string[] = [];
 
 interface CliResult {
@@ -288,6 +292,53 @@ describe("consultchimps CLI", () => {
         "--force",
       ]),
     ).resolves.toMatchObject({ exitCode: 0 });
+  });
+
+  it("splits a named Excel Table through the built command", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "inputs", "clients.xlsx");
+    const output = path.join(directory, "outputs", "regions");
+    await copyFile(structuredTableFixture, input);
+
+    const command = await runCli([
+      "--json",
+      "sheets",
+      "split",
+      input,
+      "--table",
+      "ClientData",
+      "--column",
+      "Region",
+      "--output",
+      output,
+    ]);
+
+    expect(JSON.parse(command.stdout).metrics).toEqual({
+      groups: 2,
+      inputFiles: 1,
+      inputRows: 3,
+      outputFiles: 2,
+      outputRows: 3,
+      skippedRows: 0,
+    });
+    expect((await readdir(output)).sort()).toEqual([
+      "clients-North.xlsx",
+      "clients-South.xlsx",
+    ]);
+
+    const north = XLSX.read(
+      await readFile(path.join(output, "clients-North.xlsx")),
+      { type: "buffer" },
+    );
+    expect(
+      XLSX.utils.sheet_to_json(north.Sheets.Clients!, {
+        defval: null,
+        raw: true,
+      }),
+    ).toEqual([
+      { Amount: 10, Client: "A", Region: "North" },
+      { Amount: 30, Client: "C", Region: "North" },
+    ]);
   });
 
   it("splits and merges PDFs through the built command", async () => {

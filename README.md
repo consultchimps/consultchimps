@@ -76,6 +76,11 @@ pnpm consultchimps sheets split clients.xlsx \
   --column Region \
   --output outputs/by-region
 
+pnpm consultchimps sheets split clients.xlsx \
+  --table ClientData \
+  --column Region \
+  --output outputs/by-region
+
 pnpm consultchimps pdf split report.pdf --output outputs/pages
 
 pnpm consultchimps pdf merge "inputs/**/*.pdf" \
@@ -88,7 +93,8 @@ case-insensitive header name, and adds `_source_file`, `_source_sheet`, and
 
 Excel splitting creates one workbook per distinct value in a selected column.
 Blank values are retained by default, filenames are portable, and all
-destinations are checked before any output is written.
+destinations are checked before any output is written. A named Excel Table can
+be selected to ignore titles, notes, totals, and other cells outside its range.
 
 ## Design principles
 

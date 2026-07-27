@@ -1,4 +1,5 @@
 import {
+  copyFile,
   mkdir,
   mkdtemp,
   readFile,
@@ -8,13 +9,21 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
+import JSZip from "jszip";
 import { afterEach, describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 
-import { splitWorkbookByColumn } from "../src/index.js";
+import {
+  readWorkbookExcelTables,
+  splitWorkbookByColumn,
+} from "../src/index.js";
 
 const temporaryDirectories: string[] = [];
+const structuredTableFixture = fileURLToPath(
+  new URL("./fixtures/structured-table.xlsx", import.meta.url),
+);
 
 async function createTemporaryDirectory(): Promise<string> {
   const directory = await mkdtemp(
@@ -53,6 +62,35 @@ async function readRows(
   });
 }
 
+async function copyWorkbookWithExcelTable(
+  filePath: string,
+  hidden = false,
+): Promise<void> {
+  await copyFile(structuredTableFixture, filePath);
+  if (!hidden) {
+    return;
+  }
+
+  const archive = await JSZip.loadAsync(await readFile(filePath));
+  const workbookEntry = archive.file("xl/workbook.xml");
+  if (!workbookEntry) {
+    throw new Error("The structured-table fixture has no workbook part.");
+  }
+  const workbookXml = await workbookEntry.async("text");
+  const hiddenWorkbookXml = workbookXml.replace(
+    'name="Clients" sheetId="2"',
+    'name="Clients" state="hidden" sheetId="2"',
+  );
+  if (hiddenWorkbookXml === workbookXml) {
+    throw new Error("The Clients worksheet was not found in the fixture.");
+  }
+  archive.file("xl/workbook.xml", hiddenWorkbookXml);
+  await writeFile(
+    filePath,
+    await archive.generateAsync({ compression: "DEFLATE", type: "nodebuffer" }),
+  );
+}
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories
@@ -62,6 +100,108 @@ afterEach(async () => {
 });
 
 describe("splitWorkbookByColumn", () => {
+  it("splits a named Excel Table without including cells outside its range", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "clients.xlsx");
+    const output = path.join(directory, "split");
+    await copyWorkbookWithExcelTable(input);
+
+    const tables = await readWorkbookExcelTables(input);
+    expect(tables).toHaveLength(1);
+    expect(tables[0]).toMatchObject({
+      columns: ["Client", "Region", "Amount"],
+      excelTableName: "ClientData",
+      excelTableRange: "B4:D8",
+      source: {
+        file: "clients.xlsx",
+        firstDataRow: 5,
+        sheet: "Clients",
+      },
+      sourceRows: [5, 6, 7],
+    });
+
+    const result = await splitWorkbookByColumn(input, output, {
+      column: "Region",
+      table: "clientdata",
+    });
+
+    expect(result.metrics).toEqual({
+      groups: 2,
+      inputFiles: 1,
+      inputRows: 3,
+      outputFiles: 2,
+      outputRows: 3,
+      skippedRows: 0,
+    });
+    expect(
+      await readRows(path.join(output, "clients-North.xlsx"), "Clients"),
+    ).toEqual([
+      { Amount: 10, Client: "A", Region: "North" },
+      { Amount: 30, Client: "C", Region: "North" },
+    ]);
+    expect(
+      await readRows(path.join(output, "clients-South.xlsx"), "Clients"),
+    ).toEqual([{ Amount: 20, Client: "B", Region: "South" }]);
+  });
+
+  it("reports invalid Excel Table selections and header overrides", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "clients.xlsx");
+    await copyWorkbookWithExcelTable(input);
+
+    await expect(
+      splitWorkbookByColumn(input, path.join(directory, "missing"), {
+        column: "Region",
+        table: "MissingTable",
+      }),
+    ).rejects.toThrowError(
+      /Excel Table "MissingTable" was not found or has no data rows/,
+    );
+
+    await expect(
+      splitWorkbookByColumn(input, path.join(directory, "invalid-header"), {
+        column: "Region",
+        headerRow: 4,
+        table: "ClientData",
+      }),
+    ).rejects.toThrowError(
+      /headerRow option cannot be used with an Excel Table/,
+    );
+  });
+
+  it("requires an explicit opt-in for Excel Tables on hidden worksheets", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "clients.xlsx");
+    await copyWorkbookWithExcelTable(input, true);
+
+    expect(await readWorkbookExcelTables(input)).toEqual([]);
+    expect(
+      await readWorkbookExcelTables(input, { includeHiddenSheets: true }),
+    ).toHaveLength(1);
+
+    await expect(
+      splitWorkbookByColumn(input, path.join(directory, "default"), {
+        column: "Region",
+        table: "ClientData",
+      }),
+    ).rejects.toThrowError(
+      /Excel Table "ClientData" was not found or has no data rows/,
+    );
+
+    await expect(
+      splitWorkbookByColumn(input, path.join(directory, "included"), {
+        column: "Region",
+        includeHiddenSheets: true,
+        table: "ClientData",
+      }),
+    ).resolves.toMatchObject({
+      metrics: {
+        inputRows: 3,
+        outputFiles: 2,
+      },
+    });
+  });
+
   it("writes one workbook per typed value with safe, stable filenames", async () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "clients.xlsx");

@@ -49,12 +49,17 @@ Required:
 Options:
   -o, --output <directory>  output directory (default: <input>-split)
   --sheet <name>            worksheet to split
+  --table <name>            named Excel Table to split instead of the used range
   --header-row <number>     one-based header row
   --hidden                  allow a selected hidden worksheet
   --skip-blank              omit rows whose split-column value is blank
   --prefix <name>           output filename prefix
   -f, --force               replace existing output files
 ```
+
+`--table` limits input to an Excel structured table and ignores cells outside
+its range. Because the table defines its own headers, it cannot be combined with
+`--header-row`.
 
 ## PDF splitting
 
