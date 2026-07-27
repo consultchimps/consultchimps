@@ -668,7 +668,9 @@ export async function splitWorkbookByColumn(
   if (tables.length > 1) {
     throw new ConsultChimpsError(
       "XLSX_SPLIT_MULTIPLE_TABLES",
-      "The workbook contains multiple non-empty worksheets; choose one with the sheet option.",
+      options.table
+        ? `Excel Table "${options.table}" was found on multiple worksheets; choose one with the sheet option.`
+        : "The workbook contains multiple non-empty worksheets; choose one with the sheet option.",
       {
         details: {
           availableSheets: tables
