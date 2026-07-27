@@ -15,6 +15,7 @@ Documentation:
 | Tool                   | Command                            | Status  |
 | ---------------------- | ---------------------------------- | ------- |
 | Excel consolidation    | `consultchimps sheets consolidate` | Working |
+| Excel split by column  | `consultchimps sheets split`       | Working |
 | PDF page splitting     | `consultchimps pdf split`          | Working |
 | PDF document merging   | `consultchimps pdf merge`          | Working |
 | Dataset inspection     | `consultchimps data inspect`       | Planned |
@@ -71,6 +72,10 @@ pnpm build
 pnpm consultchimps sheets consolidate "inputs/**/*.xlsx" \
   --output outputs/consolidated.xlsx
 
+pnpm consultchimps sheets split clients.xlsx \
+  --column Region \
+  --output outputs/by-region
+
 pnpm consultchimps pdf split report.pdf --output outputs/pages
 
 pnpm consultchimps pdf merge "inputs/**/*.pdf" \
@@ -80,6 +85,10 @@ pnpm consultchimps pdf merge "inputs/**/*.pdf" \
 Excel consolidation reads every visible, non-empty worksheet, unions columns by
 case-insensitive header name, and adds `_source_file`, `_source_sheet`, and
 `_source_row` columns. Original files are never modified.
+
+Excel splitting creates one workbook per distinct value in a selected column.
+Blank values are retained by default, filenames are portable, and all
+destinations are checked before any output is written.
 
 ## Design principles
 

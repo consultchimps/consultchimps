@@ -1,0 +1,118 @@
+---
+title: Split a workbook by column
+description:
+  Create one Excel workbook for every distinct value in a selected column.
+icon: Rows3
+---
+
+The spreadsheet splitter reads one worksheet as a table, groups its rows by a
+column, and writes each group to a separate `.xlsx` file. The source workbook is
+never modified.
+
+## Basic usage
+
+```bash
+pnpm consultchimps sheets split clients.xlsx \
+  --column Region \
+  --output outputs/by-region
+```
+
+For a workbook containing `North`, `South`, and blank values in `Region`, the
+default output names are:
+
+```text
+clients-North.xlsx
+clients-South.xlsx
+clients-blank.xlsx
+```
+
+Each output contains the original headers, only the matching rows, an
+autofilter, and practical column widths.
+
+## Choose the worksheet and header
+
+When a workbook has more than one visible, non-empty worksheet, select the
+source explicitly:
+
+```bash
+pnpm consultchimps sheets split clients.xlsx \
+  --sheet "Active clients" \
+  --column Region \
+  --header-row 3 \
+  --output outputs/by-region
+```
+
+Worksheet and column matching ignore letter case. `--header-row` is one-based,
+matching the row number displayed by Excel. Add `--hidden` when intentionally
+selecting a hidden worksheet.
+
+## Blank values
+
+Blank cells are included by default in a `blank` workbook so rows are not
+silently discarded. Omit them explicitly when needed:
+
+```bash
+pnpm consultchimps sheets split clients.xlsx \
+  --column Region \
+  --skip-blank
+```
+
+The structured result reports the number of skipped rows, and the human-readable
+output prints a warning.
+
+## Safe filenames
+
+Output files use the source workbook name as their prefix. Override it with
+`--prefix`:
+
+```bash
+pnpm consultchimps sheets split clients.xlsx \
+  --column Region \
+  --prefix "client-region"
+```
+
+Characters that are unsafe on common filesystems are replaced with hyphens. When
+two distinct values produce the same safe filename, the later file gains a
+numeric suffix such as `client-region-North-West-2.xlsx`.
+
+Numbers, text, and booleans remain distinct groups even when their displayed
+text is the same. Group order follows the first appearance of each value in the
+worksheet.
+
+## Output safety
+
+The operation checks every destination before writing any workbook. It stops if
+an output already exists:
+
+```bash
+pnpm consultchimps sheets split clients.xlsx \
+  --column Region \
+  --output outputs/by-region \
+  --force
+```
+
+Use `--force` only when replacing the complete output set is intentional.
+
+## TypeScript API
+
+```ts
+import { splitWorkbookByColumn } from "@consultchimps/xlsx";
+
+const result = await splitWorkbookByColumn(
+  "clients.xlsx",
+  "outputs/by-region",
+  {
+    column: "Region",
+    filenamePrefix: "client-region",
+    headerRow: 1,
+    includeBlank: true,
+    overwrite: false,
+    sheet: "Active clients",
+  },
+);
+
+console.log(result.metrics.outputFiles);
+```
+
+The format-neutral grouping primitive is also available from
+`@consultchimps/tabular` as `groupTableByColumn`.
