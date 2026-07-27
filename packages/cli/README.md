@@ -31,6 +31,12 @@ consultchimps sheets split clients.xlsx \
   --column Region \
   --output outputs/by-region
 
+consultchimps sheets split clients.xlsx \
+  --table ClientData \
+  --column Region \
+  --preserve-workbook \
+  --output outputs/by-region
+
 consultchimps pdf split report.pdf --output outputs/pages
 
 consultchimps pdf merge "inputs/**/*.pdf" \

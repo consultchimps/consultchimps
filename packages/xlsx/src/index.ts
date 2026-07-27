@@ -29,6 +29,7 @@ import {
   type ExcelTableDefinition,
   readExcelTableDefinitions,
 } from "./excel-tables.js";
+import { preserveWorkbookWithFilteredExcelTable } from "./preserve-table-split.js";
 
 export interface ReadWorkbookOptions {
   headerRow?: number | undefined;
@@ -55,6 +56,7 @@ export interface SplitWorkbookByColumnOptions {
   includeBlank?: boolean | undefined;
   includeHiddenSheets?: boolean | undefined;
   overwrite?: boolean | undefined;
+  preserveWorkbook?: boolean | undefined;
   sheet?: string | undefined;
   table?: string | undefined;
 }
@@ -621,6 +623,18 @@ export async function splitWorkbookByColumn(
       },
     );
   }
+  if (options.preserveWorkbook && !options.table) {
+    throw new ConsultChimpsError(
+      "XLSX_SPLIT_PRESERVE_REQUIRES_TABLE",
+      "The preserveWorkbook option requires a named Excel Table.",
+      {
+        details: {
+          preserveWorkbook: options.preserveWorkbook,
+          table: options.table,
+        },
+      },
+    );
+  }
 
   const availableExcelTables = options.table
     ? await readWorkbookExcelTables(absoluteInput, {
@@ -708,6 +722,32 @@ export async function splitWorkbookByColumn(
     );
   }
 
+  const preservedWorkbookBytes = options.preserveWorkbook
+    ? await readFile(absoluteInput)
+    : undefined;
+  const preservedTableDefinition = preservedWorkbookBytes
+    ? (await readExcelTableDefinitions(preservedWorkbookBytes)).find(
+        (definition) =>
+          definition.name.toLocaleLowerCase() ===
+            options.table?.toLocaleLowerCase() &&
+          definition.sheet.toLocaleLowerCase() ===
+            table.source?.sheet?.toLocaleLowerCase(),
+      )
+    : undefined;
+  if (options.preserveWorkbook && !preservedTableDefinition) {
+    throw new ConsultChimpsError(
+      "XLSX_SPLIT_PRESERVE_TABLE_NOT_FOUND",
+      `Excel Table "${options.table}" could not be located in the workbook package.`,
+      {
+        details: {
+          inputPath: absoluteInput,
+          sheet: table.source?.sheet,
+          table: options.table,
+        },
+      },
+    );
+  }
+
   const absoluteOutputDirectory = path.resolve(outputDirectory);
   const inputBaseName = path.parse(absoluteInput).name;
   const filenamePrefix = safeFilenameSegment(
@@ -762,11 +802,22 @@ export async function splitWorkbookByColumn(
         transactionDirectory,
         `output-${String(index + 1).padStart(6, "0")}.xlsx`,
       );
-      stagedOutputs.push(
-        await writeTable(stagedOutput, group.table, {
-          sheetName: table.source?.sheet ?? "Split",
-        }),
-      );
+      if (preservedWorkbookBytes && preservedTableDefinition) {
+        await writeFile(
+          stagedOutput,
+          await preserveWorkbookWithFilteredExcelTable(preservedWorkbookBytes, {
+            definition: preservedTableDefinition,
+            sourceRows: group.table.sourceRows ?? [],
+          }),
+        );
+        stagedOutputs.push(stagedOutput);
+      } else {
+        stagedOutputs.push(
+          await writeTable(stagedOutput, group.table, {
+            sheetName: table.source?.sheet ?? "Split",
+          }),
+        );
+      }
     }
 
     for (const [index, outputPath] of outputPaths.entries()) {
