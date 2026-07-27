@@ -42,6 +42,7 @@ interface SheetSplitOptions {
   prefix?: string;
   sheet?: string;
   skipBlank?: boolean;
+  table?: string;
 }
 
 interface SplitOptions {
@@ -123,11 +124,17 @@ sheets
 
 sheets
   .command("split")
-  .description("write one Excel workbook per distinct value in a column")
+  .description(
+    "write one Excel workbook per distinct value in a worksheet or Excel Table column",
+  )
   .argument("<input>", "input .xlsx file")
   .requiredOption("-c, --column <name>", "column header used to split rows")
   .option("-o, --output <directory>", "output directory")
   .option("--sheet <name>", "worksheet to split")
+  .option(
+    "--table <name>",
+    "named Excel Table to split instead of the worksheet used range",
+  )
   .option("--header-row <number>", "one-based header row", positiveInteger)
   .option("--hidden", "allow a selected hidden worksheet")
   .option("--skip-blank", "omit rows whose split-column value is blank")
@@ -159,6 +166,7 @@ sheets
       includeHiddenSheets: options.hidden === true,
       overwrite: options.force === true,
       sheet: options.sheet,
+      table: options.table,
     });
     printResult(result, program.opts<GlobalOptions>().json === true);
   });

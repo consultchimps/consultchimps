@@ -28,6 +28,8 @@
     "@consultchimps/core": "workspace:*",
     "@consultchimps/files": "workspace:*",
     "@consultchimps/tabular": "workspace:*",
+    "jszip": "3.10.1",
+    "saxes": "6.0.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "engines": {
