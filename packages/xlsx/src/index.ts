@@ -1,4 +1,11 @@
-import { readFile, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 
 import { ConsultChimpsError, type OperationResult } from "@consultchimps/core";
@@ -103,6 +110,15 @@ function splitOutputPaths(
     usedFilenames.add(filename.toLocaleLowerCase());
     return path.join(outputDirectory, filename);
   });
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "ENOENT"
+  );
 }
 
 function cellToPrimitive(cell: XLSX.CellObject | undefined): CellValue {
@@ -498,27 +514,116 @@ export async function splitWorkbookByColumn(
   outputPaths.forEach((outputPath) =>
     refuseInputOverwrite(outputPath, [absoluteInput]),
   );
+  const existingOutputs = new Set<string>();
   await Promise.all(
-    outputPaths.map((outputPath) =>
-      ensureOutputAvailable(outputPath, {
+    outputPaths.map(async (outputPath) => {
+      try {
+        const outputStat = await stat(outputPath);
+        if (!outputStat.isFile()) {
+          throw new ConsultChimpsError(
+            "XLSX_SPLIT_OUTPUT_NOT_FILE",
+            `Output path exists but is not a file: ${outputPath}`,
+            { details: { outputPath } },
+          );
+        }
+        existingOutputs.add(outputPath);
+      } catch (error) {
+        if (!isMissingPathError(error)) {
+          throw error;
+        }
+      }
+
+      await ensureOutputAvailable(outputPath, {
         overwrite: options.overwrite,
-      }),
-    ),
+      });
+    }),
   );
   await ensureDirectory(absoluteOutputDirectory);
 
-  const outputs: string[] = [];
-  for (const [index, group] of grouped.groups.entries()) {
-    const outputPath = outputPaths[index];
-    if (!outputPath) {
-      continue;
+  const transactionDirectory = await mkdtemp(
+    path.join(absoluteOutputDirectory, ".consultchimps-split-"),
+  );
+  const stagedOutputs: string[] = [];
+  const committedOutputs: string[] = [];
+  const backups = new Map<string, string>();
+
+  try {
+    for (const [index, group] of grouped.groups.entries()) {
+      const stagedOutput = path.join(
+        transactionDirectory,
+        `output-${String(index + 1).padStart(6, "0")}.xlsx`,
+      );
+      stagedOutputs.push(
+        await writeTable(stagedOutput, group.table, {
+          sheetName: table.source?.sheet ?? "Split",
+        }),
+      );
     }
 
-    outputs.push(
-      await writeTable(outputPath, group.table, {
-        overwrite: options.overwrite,
-        sheetName: table.source?.sheet ?? "Split",
-      }),
+    for (const [index, outputPath] of outputPaths.entries()) {
+      const stagedOutput = stagedOutputs[index];
+      if (!stagedOutput) {
+        continue;
+      }
+
+      if (existingOutputs.has(outputPath)) {
+        const backupPath = path.join(
+          transactionDirectory,
+          `backup-${String(index + 1).padStart(6, "0")}.xlsx`,
+        );
+        await rename(outputPath, backupPath);
+        backups.set(outputPath, backupPath);
+      }
+
+      await rename(stagedOutput, outputPath);
+      committedOutputs.push(outputPath);
+    }
+  } catch (error) {
+    const rollbackErrors: unknown[] = [];
+
+    for (const outputPath of [...committedOutputs].reverse()) {
+      try {
+        await rm(outputPath, { force: true });
+        const backupPath = backups.get(outputPath);
+        if (backupPath) {
+          await rename(backupPath, outputPath);
+          backups.delete(outputPath);
+        }
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+
+    for (const [outputPath, backupPath] of backups) {
+      try {
+        await rename(backupPath, outputPath);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+
+    if (rollbackErrors.length > 0) {
+      throw new ConsultChimpsError(
+        "XLSX_SPLIT_ROLLBACK_FAILED",
+        "The split failed and one or more output files could not be restored.",
+        {
+          cause: error,
+          details: {
+            outputPaths,
+            rollbackErrors: rollbackErrors.map((rollbackError) =>
+              rollbackError instanceof Error
+                ? rollbackError.message
+                : String(rollbackError),
+            ),
+          },
+        },
+      );
+    }
+
+    throw error;
+  } finally {
+    await rm(transactionDirectory, { force: true, recursive: true }).catch(
+      () => undefined,
     );
   }
 
@@ -533,7 +638,7 @@ export async function splitWorkbookByColumn(
 
   return {
     operation: "sheets.split-by-column",
-    artifacts: outputs.map((output) => ({
+    artifacts: outputPaths.map((output) => ({
       kind: "file",
       mediaType:
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -544,7 +649,7 @@ export async function splitWorkbookByColumn(
       groups: grouped.groups.length,
       inputFiles: 1,
       inputRows: table.rows.length,
-      outputFiles: outputs.length,
+      outputFiles: outputPaths.length,
       outputRows: grouped.groups.reduce(
         (total, group) => total + group.table.rows.length,
         0,

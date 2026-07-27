@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -202,5 +209,40 @@ describe("splitWorkbookByColumn", () => {
     expect(result.warnings).toEqual([
       'Skipped 1 row with blank values in "Region".',
     ]);
+    expect(
+      await readRows(path.join(output, "clients-South.xlsx"), "Clients"),
+    ).toEqual([{ Client: "C", Region: "South" }]);
+    expect(
+      (await readdir(output)).some((filename) =>
+        filename.startsWith(".consultchimps-split-"),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects non-file destinations before creating any output", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "clients.xlsx");
+    const output = path.join(directory, "split");
+    await createWorkbook(input, [
+      [
+        "Clients",
+        [
+          ["Client", "Region"],
+          ["A", "North"],
+          ["B", "South"],
+        ],
+      ],
+    ]);
+    await mkdir(path.join(output, "clients-South.xlsx"), { recursive: true });
+
+    await expect(
+      splitWorkbookByColumn(input, output, {
+        column: "Region",
+        overwrite: true,
+      }),
+    ).rejects.toThrowError(/exists but is not a file/);
+    await expect(
+      readFile(path.join(output, "clients-North.xlsx")),
+    ).rejects.toThrow();
   });
 });
