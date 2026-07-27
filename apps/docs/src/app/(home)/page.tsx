@@ -145,7 +145,7 @@ export default function HomePage() {
           {tools.map(({ number, title, description, href, icon: Icon }) => (
             <Link className="tool-card" href={href} key={title}>
               <span className="tool-card__number">{number}</span>
-              <div>
+              <div className="tool-card__body">
                 <span className="tool-card__icon">
                   <Icon className="size-5" />
                 </span>
