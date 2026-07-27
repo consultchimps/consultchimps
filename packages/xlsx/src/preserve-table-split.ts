@@ -113,6 +113,20 @@ function tableCells(
   );
 }
 
+function contentOutsideCells(rowBody: string): string {
+  const fragments: string[] = [];
+  let cursor = 0;
+
+  for (const match of rowBody.matchAll(CELL_PATTERN)) {
+    const matchIndex = match.index;
+    fragments.push(rowBody.slice(cursor, matchIndex));
+    cursor = matchIndex + match[0].length;
+  }
+
+  fragments.push(rowBody.slice(cursor));
+  return fragments.join("");
+}
+
 function rewriteRow(
   rowXml: string | undefined,
   rowNumber: number,
@@ -145,7 +159,7 @@ function rewriteRow(
   const body = rowXml.endsWith("/>")
     ? ""
     : rowXml.slice(openingTag.length, -closingTag.length);
-  const nonCellBody = body.replace(CELL_PATTERN, "");
+  const nonCellBody = contentOutsideCells(body);
 
   return `${normalizedOpeningTag}${cells
     .map((cell) => cell.xml)
