@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { unionTables, uniqueHeaders, type Table } from "../src/index.js";
+import {
+  groupTableByColumn,
+  unionTables,
+  uniqueHeaders,
+  type Table,
+} from "../src/index.js";
 
 describe("uniqueHeaders", () => {
   it("fills blank headers and disambiguates duplicates", () => {
@@ -58,5 +63,68 @@ describe("unionTables", () => {
         _source_row: 7,
       },
     ]);
+  });
+});
+
+describe("groupTableByColumn", () => {
+  it("groups typed values in first-seen order and preserves provenance", () => {
+    const table: Table = {
+      columns: ["Client", "Region"],
+      rows: [
+        { Client: "A", Region: "North" },
+        { Client: "B", Region: 1 },
+        { Client: "C", Region: "North" },
+        { Client: "D", Region: "1" },
+        { Client: "E", Region: " " },
+      ],
+      source: { file: "clients.xlsx", firstDataRow: 2, sheet: "Clients" },
+      sourceRows: [2, 3, 4, 5, 6],
+    };
+
+    const result = groupTableByColumn(table, " region ");
+
+    expect(result.column).toBe("Region");
+    expect(result.skippedRows).toBe(0);
+    expect(result.groups.map((group) => group.value)).toEqual([
+      "North",
+      1,
+      "1",
+      null,
+    ]);
+    expect(result.groups[0]?.table.rows).toEqual([
+      { Client: "A", Region: "North" },
+      { Client: "C", Region: "North" },
+    ]);
+    expect(result.groups[0]?.table.sourceRows).toEqual([2, 4]);
+  });
+
+  it("can skip blank values without silently losing the row count", () => {
+    const result = groupTableByColumn(
+      {
+        columns: ["Client", "Region"],
+        rows: [
+          { Client: "A", Region: null },
+          { Client: "B", Region: "" },
+          { Client: "C", Region: "South" },
+        ],
+      },
+      "Region",
+      { includeBlank: false },
+    );
+
+    expect(result.groups.map((group) => group.value)).toEqual(["South"]);
+    expect(result.skippedRows).toBe(2);
+  });
+
+  it("reports the available columns when the requested column is missing", () => {
+    expect(() =>
+      groupTableByColumn(
+        {
+          columns: ["Client", "Region"],
+          rows: [{ Client: "A", Region: "North" }],
+        },
+        "Office",
+      ),
+    ).toThrowError(/Column "Office" was not found/);
   });
 });

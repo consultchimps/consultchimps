@@ -3,12 +3,14 @@ import path from "node:path";
 
 import { ConsultChimpsError, type OperationResult } from "@consultchimps/core";
 import {
+  ensureDirectory,
   ensureOutputAvailable,
   ensureParentDirectory,
   refuseInputOverwrite,
 } from "@consultchimps/files";
 import {
   type CellValue,
+  groupTableByColumn,
   type Table,
   type TableRow,
   unionTables,
@@ -28,9 +30,79 @@ export interface ConsolidateWorkbooksOptions extends ReadWorkbookOptions {
   overwrite?: boolean | undefined;
 }
 
+export interface SplitWorkbookByColumnOptions {
+  column: string;
+  filenamePrefix?: string | undefined;
+  headerRow?: number | undefined;
+  includeBlank?: boolean | undefined;
+  includeHiddenSheets?: boolean | undefined;
+  overwrite?: boolean | undefined;
+  sheet?: string | undefined;
+}
+
 export interface WriteTableOptions {
   overwrite?: boolean | undefined;
   sheetName?: string | undefined;
+}
+
+const UNSAFE_FILENAME_CHARACTERS = /[<>:"/\\|?*]+/gu;
+const WINDOWS_RESERVED_FILENAME =
+  /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu;
+
+function withoutControlCharacters(value: string): string {
+  return [...value]
+    .filter((character) => {
+      const codePoint = character.codePointAt(0);
+      return codePoint !== undefined && codePoint >= 32 && codePoint !== 127;
+    })
+    .join("");
+}
+
+function safeFilenameSegment(value: string, fallback: string): string {
+  const normalized = withoutControlCharacters(value.normalize("NFKC"))
+    .replace(UNSAFE_FILENAME_CHARACTERS, "-")
+    .replace(/\s+/gu, " ")
+    .replace(/-+/gu, "-")
+    .trim()
+    .replace(/[. ]+$/gu, "");
+  const limited = [...normalized]
+    .slice(0, 80)
+    .join("")
+    .replace(/[. ]+$/gu, "");
+  const safe = limited || fallback;
+
+  return WINDOWS_RESERVED_FILENAME.test(safe) ? `_${safe}` : safe;
+}
+
+function groupValueFilenameSegment(value: CellValue): string {
+  if (value === null) {
+    return "blank";
+  }
+
+  return safeFilenameSegment(String(value), "value");
+}
+
+function splitOutputPaths(
+  outputDirectory: string,
+  filenamePrefix: string,
+  values: CellValue[],
+): string[] {
+  const usedFilenames = new Set<string>();
+
+  return values.map((value) => {
+    const segment = groupValueFilenameSegment(value);
+    const base = `${filenamePrefix}-${segment}`;
+    let filename = `${base}.xlsx`;
+    let suffix = 2;
+
+    while (usedFilenames.has(filename.toLocaleLowerCase())) {
+      filename = `${base}-${suffix}.xlsx`;
+      suffix += 1;
+    }
+
+    usedFilenames.add(filename.toLocaleLowerCase());
+    return path.join(outputDirectory, filename);
+  });
 }
 
 function cellToPrimitive(cell: XLSX.CellObject | undefined): CellValue {
@@ -339,6 +411,145 @@ export async function consolidateWorkbooks(
       inputTables: tables.length,
       outputColumns: table.columns.length,
       outputRows: table.rows.length,
+    },
+  };
+}
+
+export async function splitWorkbookByColumn(
+  inputPath: string,
+  outputDirectory: string,
+  options: SplitWorkbookByColumnOptions,
+): Promise<OperationResult> {
+  const absoluteInput = path.resolve(inputPath);
+  const tables = await readWorkbookTables(absoluteInput, {
+    headerRow: options.headerRow,
+    includeHiddenSheets: options.includeHiddenSheets,
+    sheets: options.sheet ? [options.sheet] : undefined,
+  });
+
+  if (tables.length === 0) {
+    throw new ConsultChimpsError(
+      "XLSX_SPLIT_NO_TABLE",
+      options.sheet
+        ? `Worksheet "${options.sheet}" was not found or has no data rows.`
+        : "No visible, non-empty worksheet was found in the input workbook.",
+      {
+        details: {
+          inputPath: absoluteInput,
+          sheet: options.sheet,
+        },
+      },
+    );
+  }
+
+  if (tables.length > 1) {
+    throw new ConsultChimpsError(
+      "XLSX_SPLIT_MULTIPLE_TABLES",
+      "The workbook contains multiple non-empty worksheets; choose one with the sheet option.",
+      {
+        details: {
+          availableSheets: tables
+            .map((table) => table.source?.sheet)
+            .filter((sheet) => sheet !== undefined),
+          inputPath: absoluteInput,
+        },
+      },
+    );
+  }
+
+  const table = tables[0];
+  if (!table) {
+    throw new ConsultChimpsError(
+      "XLSX_SPLIT_NO_TABLE",
+      "No worksheet table was available to split.",
+      { details: { inputPath: absoluteInput } },
+    );
+  }
+
+  const grouped = groupTableByColumn(table, options.column, {
+    includeBlank: options.includeBlank,
+  });
+  if (grouped.groups.length === 0) {
+    throw new ConsultChimpsError(
+      "XLSX_SPLIT_NO_GROUPS",
+      `No output groups remain for column "${grouped.column}".`,
+      {
+        details: {
+          column: grouped.column,
+          includeBlank: options.includeBlank ?? true,
+          inputPath: absoluteInput,
+        },
+      },
+    );
+  }
+
+  const absoluteOutputDirectory = path.resolve(outputDirectory);
+  const inputBaseName = path.parse(absoluteInput).name;
+  const filenamePrefix = safeFilenameSegment(
+    options.filenamePrefix ?? inputBaseName,
+    "split",
+  );
+  const outputPaths = splitOutputPaths(
+    absoluteOutputDirectory,
+    filenamePrefix,
+    grouped.groups.map((group) => group.value),
+  );
+
+  outputPaths.forEach((outputPath) =>
+    refuseInputOverwrite(outputPath, [absoluteInput]),
+  );
+  await Promise.all(
+    outputPaths.map((outputPath) =>
+      ensureOutputAvailable(outputPath, {
+        overwrite: options.overwrite,
+      }),
+    ),
+  );
+  await ensureDirectory(absoluteOutputDirectory);
+
+  const outputs: string[] = [];
+  for (const [index, group] of grouped.groups.entries()) {
+    const outputPath = outputPaths[index];
+    if (!outputPath) {
+      continue;
+    }
+
+    outputs.push(
+      await writeTable(outputPath, group.table, {
+        overwrite: options.overwrite,
+        sheetName: table.source?.sheet ?? "Split",
+      }),
+    );
+  }
+
+  const warnings =
+    grouped.skippedRows > 0
+      ? [
+          `Skipped ${grouped.skippedRows} row${
+            grouped.skippedRows === 1 ? "" : "s"
+          } with blank values in "${grouped.column}".`,
+        ]
+      : [];
+
+  return {
+    operation: "sheets.split-by-column",
+    artifacts: outputs.map((output) => ({
+      kind: "file",
+      mediaType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      path: output,
+    })),
+    warnings,
+    metrics: {
+      groups: grouped.groups.length,
+      inputFiles: 1,
+      inputRows: table.rows.length,
+      outputFiles: outputs.length,
+      outputRows: grouped.groups.reduce(
+        (total, group) => total + group.table.rows.length,
+        0,
+      ),
+      skippedRows: grouped.skippedRows,
     },
   };
 }

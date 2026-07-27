@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -64,7 +71,7 @@ async function runCli(
 
 async function writeWorkbook(
   filePath: string,
-  sheets: Array<[string, Array<Array<string | number>>]>,
+  sheets: Array<[string, Array<Array<boolean | null | number | string>>]>,
   hiddenSheets: string[] = [],
 ): Promise<void> {
   const workbook = XLSX.utils.book_new();
@@ -188,6 +195,96 @@ describe("consultchimps CLI", () => {
         path.join(inputs, "*.xlsx"),
         "--output",
         output,
+        "--force",
+      ]),
+    ).resolves.toMatchObject({ exitCode: 0 });
+  });
+
+  it("splits one workbook into files grouped by a column", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "inputs", "clients.xlsx");
+    const output = path.join(directory, "outputs", "regions");
+    await writeWorkbook(input, [
+      [
+        "Clients",
+        [
+          ["Client", "Region", "Amount"],
+          ["A", "North", 10],
+          ["B", "South", 20],
+          ["C", "North", 30],
+          ["D", null, 40],
+        ],
+      ],
+    ]);
+
+    const command = await runCli([
+      "--json",
+      "sheets",
+      "split",
+      input,
+      "--column",
+      "Region",
+      "--output",
+      output,
+      "--prefix",
+      "client-region",
+    ]);
+    expect(JSON.parse(command.stdout).metrics).toEqual({
+      groups: 3,
+      inputFiles: 1,
+      inputRows: 4,
+      outputFiles: 3,
+      outputRows: 4,
+      skippedRows: 0,
+    });
+    expect((await readdir(output)).sort()).toEqual([
+      "client-region-North.xlsx",
+      "client-region-South.xlsx",
+      "client-region-blank.xlsx",
+    ]);
+
+    const north = XLSX.read(
+      await readFile(path.join(output, "client-region-North.xlsx")),
+      { type: "buffer" },
+    );
+    expect(
+      XLSX.utils.sheet_to_json(north.Sheets.Clients!, {
+        defval: null,
+        raw: true,
+      }),
+    ).toEqual([
+      { Amount: 10, Client: "A", Region: "North" },
+      { Amount: 30, Client: "C", Region: "North" },
+    ]);
+
+    const overwrite = await runCli(
+      [
+        "--json",
+        "sheets",
+        "split",
+        input,
+        "--column",
+        "Region",
+        "--output",
+        output,
+        "--prefix",
+        "client-region",
+      ],
+      1,
+    );
+    expect(overwrite.stderr).toContain("FILES_OUTPUT_EXISTS");
+    await expect(
+      runCli([
+        "--json",
+        "sheets",
+        "split",
+        input,
+        "--column",
+        "Region",
+        "--output",
+        output,
+        "--prefix",
+        "client-region",
         "--force",
       ]),
     ).resolves.toMatchObject({ exitCode: 0 });

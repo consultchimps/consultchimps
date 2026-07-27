@@ -1,7 +1,7 @@
 {
   "name": "@consultchimps/xlsx",
   "version": "0.1.0",
-  "description": "Excel workbook adapters and consolidation for ConsultChimps.",
+  "description": "Excel workbook adapters, consolidation, and splitting for ConsultChimps.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

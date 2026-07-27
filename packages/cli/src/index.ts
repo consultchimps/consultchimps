@@ -9,7 +9,10 @@ import {
 } from "@consultchimps/core";
 import { discoverFiles } from "@consultchimps/files";
 import { mergePdfs, splitPdf } from "@consultchimps/pdf";
-import { consolidateWorkbooks } from "@consultchimps/xlsx";
+import {
+  consolidateWorkbooks,
+  splitWorkbookByColumn,
+} from "@consultchimps/xlsx";
 import { Command } from "commander";
 
 interface GlobalOptions {
@@ -28,6 +31,17 @@ interface ConsolidateOptions {
   outputSheet?: string;
   sheet?: string[];
   source?: boolean;
+}
+
+interface SheetSplitOptions {
+  column: string;
+  force?: boolean;
+  headerRow?: number;
+  hidden?: boolean;
+  output?: string;
+  prefix?: string;
+  sheet?: string;
+  skipBlank?: boolean;
 }
 
 interface SplitOptions {
@@ -103,6 +117,48 @@ sheets
       outputSheetName: options.outputSheet,
       overwrite: options.force === true,
       sheets: options.sheet,
+    });
+    printResult(result, program.opts<GlobalOptions>().json === true);
+  });
+
+sheets
+  .command("split")
+  .description("write one Excel workbook per distinct value in a column")
+  .argument("<input>", "input .xlsx file")
+  .requiredOption("-c, --column <name>", "column header used to split rows")
+  .option("-o, --output <directory>", "output directory")
+  .option("--sheet <name>", "worksheet to split")
+  .option("--header-row <number>", "one-based header row", positiveInteger)
+  .option("--hidden", "allow a selected hidden worksheet")
+  .option("--skip-blank", "omit rows whose split-column value is blank")
+  .option("--prefix <name>", "output filename prefix")
+  .option("-f, --force", "replace existing output files")
+  .action(async (input: string, options: SheetSplitOptions) => {
+    const inputPaths = await discoverFiles([input], {
+      extensions: [".xlsx"],
+    });
+    if (inputPaths.length !== 1) {
+      throw new Error(
+        `Expected exactly one input workbook; found ${inputPaths.length}.`,
+      );
+    }
+
+    const inputPath = inputPaths[0];
+    if (!inputPath) {
+      throw new Error("No input workbook was found.");
+    }
+
+    const outputDirectory =
+      options.output ??
+      path.join(path.dirname(inputPath), `${path.parse(inputPath).name}-split`);
+    const result = await splitWorkbookByColumn(inputPath, outputDirectory, {
+      column: options.column,
+      filenamePrefix: options.prefix,
+      headerRow: options.headerRow,
+      includeBlank: options.skipBlank !== true,
+      includeHiddenSheets: options.hidden === true,
+      overwrite: options.force === true,
+      sheet: options.sheet,
     });
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
