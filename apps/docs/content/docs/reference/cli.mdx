@@ -52,6 +52,7 @@ Options:
   --table <name>            named Excel Table to split instead of the used range
   --header-row <number>     one-based header row
   --hidden                  allow a selected hidden worksheet
+  --preserve-workbook       retain the complete workbook and filter only the table
   --skip-blank              omit rows whose split-column value is blank
   --prefix <name>           output filename prefix
   -f, --force               replace existing output files
@@ -59,7 +60,9 @@ Options:
 
 `--table` limits input to an Excel structured table and ignores cells outside
 its range. Because the table defines its own headers, it cannot be combined with
-`--header-row`.
+`--header-row`. Add `--preserve-workbook` to keep every worksheet and the source
+formatting while replacing only the selected table's data rows. The preservation
+option requires `--table`.
 
 ## PDF splitting
 

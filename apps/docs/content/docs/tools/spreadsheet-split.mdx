@@ -67,6 +67,28 @@ Excel Tables define their own headers, so `--header-row` cannot be combined with
 `--table`. You may add `--sheet` as an extra worksheet constraint, and
 `--hidden` is still required when the selected table is on a hidden worksheet.
 
+### Preserve the complete workbook
+
+By default, the table splitter creates a compact workbook containing only the
+selected headers and matching rows. Add `--preserve-workbook` when each output
+should remain a full copy of the source workbook:
+
+```bash
+pnpm consultchimps sheets split clients.xlsx \
+  --table ClientData \
+  --column Region \
+  --preserve-workbook \
+  --output outputs/by-region
+```
+
+Each output keeps the original worksheets, styles, merged cells, column widths,
+notes, and content outside `ClientData`. Only the selected table is changed:
+matching rows are compacted at the top of its data area, its totals row is moved
+when present, and its structured range is resized to the matching rows.
+
+`--preserve-workbook` requires `--table`; it cannot be used when splitting a
+worksheet's complete used range.
+
 ## Blank values
 
 Blank cells are included by default in a `blank` workbook so rows are not
@@ -127,6 +149,7 @@ const result = await splitWorkbookByColumn(
     filenamePrefix: "client-region",
     includeBlank: true,
     overwrite: false,
+    preserveWorkbook: true,
     sheet: "Active clients",
     table: "ClientData",
   },

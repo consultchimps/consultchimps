@@ -17,6 +17,8 @@ import { PDFDocument } from "pdf-lib";
 import { afterEach, describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 
+import { readWorkbookExcelTables } from "@consultchimps/xlsx";
+
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../dist/index.js", import.meta.url));
 const structuredTableFixture = fileURLToPath(
@@ -339,6 +341,50 @@ describe("consultchimps CLI", () => {
       { Amount: 10, Client: "A", Region: "North" },
       { Amount: 30, Client: "C", Region: "North" },
     ]);
+  });
+
+  it("preserves the complete workbook while splitting an Excel Table", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "inputs", "clients.xlsx");
+    const output = path.join(directory, "outputs", "preserved-regions");
+    await copyFile(structuredTableFixture, input);
+
+    const command = await runCli([
+      "--json",
+      "sheets",
+      "split",
+      input,
+      "--table",
+      "ClientData",
+      "--column",
+      "Region",
+      "--preserve-workbook",
+      "--output",
+      output,
+    ]);
+
+    expect(JSON.parse(command.stdout).metrics).toMatchObject({
+      groups: 2,
+      outputFiles: 2,
+      outputRows: 3,
+    });
+    const northPath = path.join(output, "clients-North.xlsx");
+    expect(await readWorkbookExcelTables(northPath)).toMatchObject([
+      {
+        excelTableRange: "B4:D7",
+        rows: [
+          { Amount: 10, Client: "A", Region: "North" },
+          { Amount: 30, Client: "C", Region: "North" },
+        ],
+      },
+    ]);
+    const northWorkbook = XLSX.read(await readFile(northPath), {
+      type: "buffer",
+    });
+    expect(northWorkbook.SheetNames).toEqual(["Cover", "Clients"]);
+    expect(northWorkbook.Sheets.Clients?.G4?.v).toBe(
+      "Cells outside ClientData",
+    );
   });
 
   it("splits and merges PDFs through the built command", async () => {
