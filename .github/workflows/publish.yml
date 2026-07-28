@@ -1,6 +1,11 @@
 name: Publish packages
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/*/package.json"
   workflow_dispatch:
 
 permissions:
@@ -44,4 +49,4 @@ jobs:
         run: pnpm release
 
       - name: Push release tags
-        run: git push --follow-tags
+        run: git push origin --tags
