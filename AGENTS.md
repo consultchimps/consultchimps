@@ -1,0 +1,526 @@
+# AGENTS.md
+
+<!--
+This file gives coding agents repository-specific operating instructions.
+It is intentionally more prescriptive than the README: the README teaches
+people how to use ConsultChimps, while this file tells an agent how to change
+the repository safely and consistently.
+-->
+
+## Scope and precedence
+
+<!--
+An AGENTS.md file governs its directory and every directory below it. Keeping
+this file at the repository root gives the monorepo one shared baseline.
+-->
+
+- These instructions apply to the entire repository.
+- A more deeply nested `AGENTS.md`, if one is added later, may refine these
+  rules for its subtree but must not silently weaken repository-wide safety,
+  privacy, testing, or release requirements.
+- Follow explicit user instructions first, then the nearest applicable
+  `AGENTS.md`, then the repository documentation and established code patterns.
+- If two instructions genuinely conflict, stop and explain the conflict before
+  making a consequential or difficult-to-reverse change.
+
+## Project mission
+
+<!--
+The mission is an architectural constraint. A convenient implementation is
+still wrong if it makes a core operation nondeterministic, cloud-dependent, or
+unsafe for confidential consulting data.
+-->
+
+ConsultChimps provides deterministic, local-first operations tools for
+consultants. Core functionality must work without Codex, AI models, telemetry,
+or hosted services.
+
+Every change must preserve these principles:
+
+- Deterministic behavior for identical inputs and options.
+- Local processing by default.
+- Immutable source files unless mutation is an explicit, documented operation.
+- Complete destination validation before writing any output.
+- Portable behavior across Windows, macOS, and Linux.
+- Structured results and stable, actionable errors.
+- Small composable operations instead of narrowly tailored one-off scripts.
+- No collection, transmission, or retention of client data.
+
+## Required toolchain
+
+<!--
+Pinned major versions reduce differences between local development, CI, and
+published packages. Read package.json and the lockfile before changing them.
+-->
+
+- Use Node.js 24.x.
+- Use pnpm 11.x through the repository's pinned `packageManager` declaration.
+- Run workspace commands from the repository root unless a command explicitly
+  requires a package directory.
+- Use the committed `pnpm-lock.yaml`; do not replace pnpm with npm or Yarn.
+- Keep dependencies exact unless the repository deliberately uses a range.
+- Do not change package-manager settings merely to work around a local machine.
+
+Standard setup:
+
+```bash
+pnpm install
+```
+
+Do not regenerate the lockfile without a dependency or package metadata change.
+If the lockfile changes unexpectedly, investigate and revert only that
+agent-created change before continuing.
+
+## Repository map and ownership
+
+<!--
+Package boundaries are public architectural boundaries, not just folders.
+Put behavior at the lowest reusable layer and keep the CLI as an adapter.
+-->
+
+| Path               | Responsibility                                                 |
+| ------------------ | -------------------------------------------------------------- |
+| `packages/core`    | Shared errors, artifacts, operation results, and contracts     |
+| `packages/files`   | Input discovery and safe output-path handling                  |
+| `packages/tabular` | Runtime-neutral table models and table operations              |
+| `packages/xlsx`    | Excel workbook reading, writing, consolidation, and splitting  |
+| `packages/pdf`     | PDF splitting and merging                                      |
+| `packages/cli`     | Command parsing, option mapping, and user-facing CLI output    |
+| `apps/docs`        | Next.js and Fumadocs documentation site                        |
+| `scripts`          | Repository-wide verification and packaging utilities           |
+| `.github`          | CI, security analysis, issue templates, and release automation |
+| `.changeset`       | Pending public package release notes and version intent        |
+
+When adding behavior:
+
+1. Put shared contracts and stable error types in `packages/core`.
+2. Put generic path discovery and destination safety in `packages/files`.
+3. Put format-independent row and column logic in `packages/tabular`.
+4. Put format-specific parsing and serialization in the relevant adapter.
+5. Keep `packages/cli` thin: parse arguments, call a library operation, and
+   render its structured result.
+6. Create a new package only when the capability has a genuinely distinct
+   runtime, dependency, or public API boundary.
+
+Do not:
+
+- Import CLI code from a library package.
+- Duplicate file-safety logic inside format adapters.
+- Add filesystem or process dependencies to `packages/tabular`.
+- Couple core operations to Commander, Next.js, a desktop shell, or a hosted
+  service.
+- Bypass a package's public exports by importing another package's private
+  source files.
+
+## Before making changes
+
+<!--
+Early inspection prevents agents from overwriting collaborator work or solving
+an already-fixed problem on an outdated branch.
+-->
+
+Before editing:
+
+1. Read the root `README.md`, `CONTRIBUTING.md`, and every applicable
+   `AGENTS.md`.
+2. Check `git status --short --branch`.
+3. Inspect relevant package manifests, source, tests, and public exports.
+4. Search for existing implementations and terminology before introducing new
+   abstractions.
+5. Confirm whether the worktree contains unrelated user changes.
+6. For branch-based work, update the intended base branch before creating the
+   feature branch.
+
+Preserve all changes you did not create. Never discard, overwrite, stage, or
+reformat unrelated work.
+
+## TypeScript and API conventions
+
+<!--
+The codebase publishes typed ESM packages. These rules protect consumers from
+accidental runtime coupling and unreviewed public API expansion.
+-->
+
+- Write TypeScript using ECMAScript modules.
+- Keep strict type safety; do not introduce `any` to bypass a design problem.
+- Prefer explicit exported interfaces for stable public inputs and results.
+- Keep internal helpers unexported unless consumers need them.
+- Use `import type` for type-only imports when appropriate.
+- Avoid default exports unless an existing framework convention requires one.
+- Prefer small pure functions for transformation and validation logic.
+- Make mutation obvious and locally contained.
+- Do not read environment variables or global process state inside reusable
+  operations unless that dependency is explicit in the API.
+- Do not add module-level side effects to library packages.
+- Preserve `sideEffects: false` semantics where declared.
+- Do not change public names, option meanings, result shapes, or error codes
+  without treating the change as a versioned public API change.
+
+Match the repository's formatting:
+
+- Double quotes.
+- Semicolons.
+- Trailing commas where supported.
+- Prettier-managed wrapping and whitespace.
+- Descriptive names over abbreviations.
+- Comments that explain intent, invariants, or non-obvious constraints—not a
+  line-by-line restatement of the code.
+
+Run Prettier rather than manually fighting its output.
+
+## Operation design
+
+<!--
+Operations may handle confidential and irreplaceable files. Planning writes
+before execution prevents partially completed jobs and accidental overwrites.
+-->
+
+Every file-producing operation should follow this sequence:
+
+1. Resolve and validate all inputs.
+2. Parse options and validate cross-option constraints.
+3. Determine every intended output path.
+4. Detect collisions between inputs, outputs, and existing files.
+5. Fail before writing if any destination is unsafe or ambiguous.
+6. Perform the operation.
+7. Return a structured `OperationResult` with metrics, artifacts, and warnings.
+
+Additional requirements:
+
+- Never modify an input file in place by default.
+- Refuse to replace existing outputs unless the caller explicitly enables
+  overwrite behavior.
+- Make overwrite behavior consistent between the library and CLI.
+- Use portable filenames and reject or sanitize invalid path components.
+- Preserve stable input ordering when order affects output.
+- Record source provenance where the operation supports it.
+- Treat blank values, hidden sheets, formulas, and metadata deliberately; do not
+  let library defaults decide important behavior accidentally.
+- Avoid leaving partial artifacts after a predictable validation failure.
+- Do not log document contents, row data, credentials, or full confidential
+  paths unnecessarily.
+
+## Errors and results
+
+<!--
+Stable error codes let the CLI, desktop apps, automation, and future adapters
+respond consistently without parsing human-readable strings.
+-->
+
+- Throw `ConsultChimpsError` for expected operational failures.
+- Give each expected failure a stable, namespaced error code.
+- Write human-readable messages that tell the user what failed and how to fix
+  it.
+- Put machine-readable context in error details.
+- Do not expose secrets or document contents in errors.
+- Do not catch an error merely to throw a less-informative generic error.
+- Let unexpected programming errors remain distinguishable from expected input
+  or filesystem errors.
+- Return `OperationResult` for successful operations.
+- Keep metrics deterministic and define their meaning in tests.
+- Report every created output as an artifact.
+- Use warnings for recoverable conditions, not hidden failures.
+
+## CLI requirements
+
+<!--
+The CLI is a public interface used directly by people and scripts. Help text,
+exit status, stdout, and stderr are all part of that interface.
+-->
+
+- Use Commander only for command structure, parsing, validation adapters, and
+  help rendering.
+- Map CLI options explicitly to library options.
+- Keep reusable business logic out of command actions.
+- Provide both short and long flags for frequently used options when clear,
+  especially `-o, --output`, `-c, --column`, and `-f, --force`.
+- Include realistic examples in help for new commands or non-obvious options.
+- Keep examples portable; quote glob patterns so shells do not expand them
+  inconsistently.
+- Send normal human-readable results to stdout.
+- Send errors to stderr and set a nonzero exit code.
+- Preserve `--json` as valid machine-readable JSON without surrounding prose.
+- Never mix diagnostics into JSON stdout.
+- Test the built CLI rather than importing its source entry point.
+
+When changing a command, verify at least:
+
+```bash
+node packages/cli/dist/index.js --help
+node packages/cli/dist/index.js <group> --help
+node packages/cli/dist/index.js <group> <command> --help
+```
+
+## Testing requirements
+
+<!--
+Tests are executable promises about document safety and output behavior. Prefer
+asserting observable results over implementation details.
+-->
+
+Add or update tests for every behavior change and bug fix.
+
+Test placement:
+
+- Core contract tests belong with `packages/core`.
+- File discovery and collision tests belong with `packages/files`.
+- Runtime-neutral data tests belong with `packages/tabular`.
+- Excel behavior belongs with `packages/xlsx`.
+- PDF behavior belongs with `packages/pdf`.
+- Argument parsing, help, exit status, stdout, stderr, and packaged command
+  behavior belong with `packages/cli`.
+
+Fixture rules:
+
+- Use generated fixtures when practical.
+- Repository fixtures must be synthetic, minimal, and safe to publish.
+- Never use client documents, production exports, emails, names, identifiers, or
+  copied confidential data.
+- Cover both successful output and expected failure paths.
+- Verify that failure paths do not overwrite sources or unrelated outputs.
+- For regressions, write a test that fails without the fix.
+
+Use platform-neutral assertions:
+
+- Build paths with `node:path`.
+- Do not assume `/` or `\` in user-facing behavior.
+- Do not assume case-sensitive filesystems.
+- Do not depend on filesystem enumeration order.
+- Avoid shell-specific test commands and expansion.
+
+## Verification ladder
+
+<!--
+The ladder keeps iteration fast while still requiring proportional confidence.
+Agents should start focused and expand verification before handoff.
+-->
+
+During implementation:
+
+```bash
+pnpm --filter <affected-package> typecheck
+pnpm test:run <relevant-test-file>
+```
+
+Before handoff, run the narrowest sufficient set plus all applicable checks:
+
+```bash
+pnpm format:check
+pnpm lint
+pnpm build
+pnpm typecheck
+pnpm test:run
+pnpm package:check
+```
+
+`pnpm check` runs the repository's complete verification sequence:
+
+```bash
+pnpm check
+```
+
+Expectations:
+
+- Run focused tests for the changed behavior.
+- Run type checking and linting for code changes.
+- Run the build for changes affecting package output or CLI behavior.
+- Run `pnpm package:check` for package metadata, exports, or publishability
+  changes.
+- Run the full `pnpm check` before a pull request when practical.
+- If an unrelated existing failure prevents a clean run, report the exact
+  command and failure. Do not claim the suite passed.
+- Do not weaken, skip, delete, or rewrite a failing test merely to obtain green
+  output.
+
+Documentation-only changes do not require a full package build unless they alter
+generated documentation, package metadata, examples that must execute, or
+instructions tied to changed behavior. They still require formatting and link or
+content review appropriate to the files changed.
+
+## Documentation
+
+<!--
+Users should not have to inspect source code to discover public behavior.
+Documentation and CLI help must evolve with the public interface.
+-->
+
+- Update the root README when installation, top-level commands, package
+  responsibilities, or development workflows change.
+- Update `apps/docs` for user-facing operations, options, recipes, and public
+  library APIs.
+- Update CLI help whenever command usage or options change.
+- Keep examples executable and consistent across README, docs, and CLI help.
+- Explain defaults, overwrite behavior, output locations, and destructive
+  implications.
+- Do not document planned behavior as available.
+- Use relative repository links where possible.
+- Keep terminology consistent: use `ConsultChimps` for the project and
+  `consultchimps` for the package and executable.
+
+## Dependencies
+
+<!--
+Every dependency increases install size, supply-chain exposure, maintenance
+work, and potential access to confidential files.
+-->
+
+Before adding a dependency:
+
+1. Confirm the platform or standard library cannot reasonably solve the need.
+2. Choose the narrowest package boundary that requires it.
+3. Review maintenance status, license, release history, and transitive scope.
+4. Pin it consistently with repository policy.
+5. Commit the resulting lockfile change.
+6. Add tests for the behavior the dependency enables.
+
+Do not add:
+
+- Analytics or telemetry SDKs.
+- Hosted-service clients for core operations.
+- Dependencies that upload or inspect user documents remotely.
+- A large framework for a small utility problem.
+- Duplicate libraries that solve an existing dependency's role.
+
+## Changesets and releases
+
+<!--
+Changesets separate implementation from release automation. A merged public
+change declares version intent; the release workflow later updates versions and
+changelogs.
+-->
+
+Add a Changeset when a pull request changes a published package's public
+behavior, API, CLI, packaged files, or runtime behavior.
+
+Use the smallest correct semantic-version bump:
+
+- `patch`: backward-compatible fixes and small improvements.
+- `minor`: backward-compatible new capabilities.
+- `major`: breaking changes.
+
+Changeset requirements:
+
+- Include every affected published package.
+- Describe the user-visible impact, not the implementation mechanics.
+- Do not manually edit generated release changelog entries in place of a
+  Changeset.
+- Do not add a Changeset for repository-only documentation, tests, CI
+  maintenance, or internal refactoring with no published impact.
+
+Never publish packages, create releases, modify npm authentication, or trigger
+release workflows unless the user explicitly requests that external action.
+
+## Git and pull requests
+
+<!--
+Small branches and focused commits make collaboration, review, rollback, and
+automated releases safer.
+-->
+
+- Start branch work from the latest intended base branch.
+- Use a focused, descriptive branch name.
+- Keep each commit cohesive.
+- Use concise imperative commit subjects.
+- Do not mix unrelated cleanup into a feature or fix.
+- Do not rewrite shared branch history unless explicitly authorized.
+- Never use destructive Git commands to discard work without explicit user
+  authorization.
+- Review `git diff --check` and `git status --short --branch` before committing.
+- Stage only files belonging to the requested change.
+- In the pull request, summarize behavior, list verification performed, and
+  disclose any remaining failures or limitations.
+- Do not merge until required checks pass unless the user explicitly authorizes
+  a documented exception.
+- After merge, synchronize local `main` and verify it matches `origin/main`.
+
+## Security and confidential data
+
+<!--
+Consulting tools routinely touch sensitive documents. Treat privacy rules as
+hard requirements even when test data appears harmless.
+-->
+
+Never commit or expose:
+
+- Client or confidential data.
+- Generated client outputs.
+- Credentials, tokens, passwords, cookies, or private keys.
+- `.env` files or machine-specific authentication configuration.
+- Real personal data used as a convenient test fixture.
+- Browser profiles, session stores, or package-manager credentials.
+- `node_modules`, build caches, or local editor state.
+
+Additional safeguards:
+
+- Do not print secrets in commands, logs, test snapshots, errors, or pull
+  request text.
+- Use credential managers and CI secret stores rather than checked-in values.
+- Minimize path and document metadata in logs.
+- Prefer synthetic identifiers such as `Client A`, `North`, and `100`.
+- Treat input files as untrusted.
+- Keep CodeQL and dependency scanning enabled.
+- Do not reduce security checks to make a pull request pass.
+
+## Cross-platform behavior
+
+<!--
+The project explicitly supports Windows, macOS, and Linux. Code that works only
+in the author's shell is incomplete.
+-->
+
+- Use Node APIs for path and filesystem behavior.
+- Use `path.join`, `path.resolve`, `path.parse`, and `path.relative` as
+  appropriate.
+- Do not construct paths by concatenating separators.
+- Do not assume a POSIX shell, GNU utility, drive letter, or case-sensitive
+  filesystem.
+- Quote glob examples so the application—not the shell—resolves them.
+- Avoid filenames invalid on Windows.
+- Account for reserved device names and trailing spaces or periods in generated
+  filenames.
+- Do not assume atomic filesystem operations behave identically across
+  platforms.
+- Make tests create and clean isolated temporary directories.
+- Diagnose platform-specific failures rather than disabling the affected test.
+
+## Generated files and cleanup
+
+<!--
+Generated artifacts can make reviews noisy and may accidentally contain input
+data. Keep only artifacts that are intentional repository assets.
+-->
+
+- Do not commit `dist`, `node_modules`, coverage output, temporary workbooks,
+  temporary PDFs, package tarballs, or local build caches unless the repository
+  explicitly tracks a particular generated artifact.
+- Write test outputs only to isolated temporary directories.
+- Clean up artifacts created by tests and verification.
+- Before recursive cleanup, resolve and verify the exact target directory.
+- Never delete a repository root, workspace root, home directory, or broad
+  computed path.
+
+## Completion checklist
+
+<!--
+This is the final audit. An agent should be able to answer every applicable
+item before claiming the task is complete.
+-->
+
+Before handing work back:
+
+- [ ] The requested behavior is implemented and no unrelated behavior changed.
+- [ ] Package boundaries and public exports remain intentional.
+- [ ] Inputs remain immutable by default.
+- [ ] Output paths and overwrite behavior are validated.
+- [ ] Expected failures use stable structured errors.
+- [ ] Tests cover the change and its important failure modes.
+- [ ] Formatting, linting, type checking, build, and tests were run as
+      applicable.
+- [ ] Public documentation and CLI help match the implementation.
+- [ ] A correct Changeset exists for every published-package change.
+- [ ] No client data, credentials, generated outputs, or local configuration
+      were added.
+- [ ] `git diff --check` passes.
+- [ ] `git status --short --branch` contains only intended changes.
+- [ ] The final report states what changed, what was verified, and any known
+      limitation or unrelated failure.
