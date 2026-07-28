@@ -434,9 +434,10 @@ automated releases safer.
 ### Pull request CI gate
 
 <!--
-CI normally starts only after a branch is pushed or a pull request is opened.
-Therefore, "wait for CI before the pull request" is not the right sequence:
-open the pull request first, then treat CI as a mandatory gate before merge.
+For this repository, CI starts when a pull request is opened or updated;
+push-triggered checks apply only to the configured branches. Therefore, "wait
+for CI before the pull request" is not the right sequence: open the pull request
+first, then treat CI as a mandatory gate before merge.
 -->
 
 For every pull request, follow this sequence:
@@ -478,9 +479,10 @@ Treat the CI gate strictly:
 - If GitHub reports conflicting status signals, inspect the required status
   checks, check runs, and latest head SHA before deciding the pull request is
   ready.
-- Merge with failing or incomplete required checks only when the user explicitly
-  authorizes that exception after being told exactly which checks are not green
-  and why. Record the exception in the pull request.
+- Merge with failing or incomplete required checks only under a documented
+  exception permitted by repository policy and branch protection, after the user
+  explicitly authorizes it with the exact non-green checks and rationale
+  recorded in the pull request.
 
 ## Security and confidential data
 
