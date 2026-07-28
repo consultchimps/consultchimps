@@ -429,9 +429,60 @@ automated releases safer.
 - Stage only files belonging to the requested change.
 - In the pull request, summarize behavior, list verification performed, and
   disclose any remaining failures or limitations.
-- Do not merge until required checks pass unless the user explicitly authorizes
-  a documented exception.
 - After merge, synchronize local `main` and verify it matches `origin/main`.
+
+### Pull request CI gate
+
+<!--
+For this repository, CI starts when a pull request is opened or updated;
+push-triggered checks apply only to the configured branches. Therefore, "wait
+for CI before the pull request" is not the right sequence: open the pull request
+first, then treat CI as a mandatory gate before merge.
+-->
+
+For every pull request, follow this sequence:
+
+1. Push the complete, locally verified branch.
+2. Open the pull request against the intended base branch.
+3. Confirm that the expected CI and security checks were created for the pull
+   request's latest head commit.
+4. Wait while any required check is queued, pending, or in progress.
+5. Refresh the pull request state after checks finish; do not rely on an earlier
+   status snapshot.
+6. If any required check fails, is cancelled, times out, or does not start,
+   inspect the check output and diagnose the cause.
+7. Fix failures on the same branch, rerun relevant local verification, push the
+   fix, and restart the CI wait for the new head commit.
+8. Merge only when all required checks for the latest head commit have completed
+   successfully and GitHub reports the pull request as mergeable.
+9. After merge, update local `main` and verify it matches `origin/main`.
+
+Treat the CI gate strictly:
+
+- Queued, pending, and in-progress checks are not passing checks.
+- A missing expected check is not implicit success; investigate why it was not
+  created.
+- A successful check from an older commit does not satisfy the gate after a new
+  push.
+- A cancelled, timed-out, action-required, or startup-failure result does not
+  satisfy the gate.
+- A skipped or neutral result is acceptable only when the workflow and branch
+  protection rules intentionally permit it.
+- Do not merge merely because local tests pass; local verification complements
+  CI but does not replace required repository checks.
+- Do not use administrator privileges, force merge, temporarily weaken branch
+  protection, disable a workflow, or rerun with reduced coverage to bypass the
+  gate.
+- Do not repeatedly rerun a failing check without investigating the failure.
+- If CI is slow, continue monitoring it and keep the user informed rather than
+  declaring the pull request complete.
+- If GitHub reports conflicting status signals, inspect the required status
+  checks, check runs, and latest head SHA before deciding the pull request is
+  ready.
+- Merge with failing or incomplete required checks only under a documented
+  exception permitted by repository policy and branch protection, after the user
+  explicitly authorizes it with the exact non-green checks and rationale
+  recorded in the pull request.
 
 ## Security and confidential data
 
