@@ -55,13 +55,15 @@ Before the first publish:
 6. Delete `NPM_TOKEN`; subsequent publishes authenticate with short-lived OIDC
    credentials and generate provenance.
 
-The publish workflow runs `pnpm package:check` before publishing. This creates
-all six tarballs in a temporary directory, installs them into a clean consumer
-project, imports every library, and runs the packaged CLI.
+The publish workflow runs `pnpm check` before publishing. This includes creating
+all six tarballs in a temporary directory, installing them into a clean consumer
+project, importing every library, and running the packaged CLI.
 
-For later releases, merge the generated version pull request and manually run
-the **Publish packages** workflow after reviewing its package versions and
-changelogs.
+For later releases, review and merge the generated version pull request. Its
+package-version changes automatically trigger the **Publish packages** workflow
+on `main`, which validates the repository, publishes unpublished versions with
+OIDC provenance, and pushes their release tags. Manual workflow dispatch remains
+available only as a recovery mechanism.
 
 ## Documentation deployment
 
