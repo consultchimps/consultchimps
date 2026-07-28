@@ -1,5 +1,18 @@
 # consultchimps
 
+## 0.3.0
+
+### Minor Changes
+
+- 0b3f5cd: Add an opt-in Excel Table split mode that preserves the complete
+  source workbook, including its worksheets, formatting, layout, and content
+  outside the selected table.
+
+### Patch Changes
+
+- Updated dependencies [0b3f5cd]
+  - @consultchimps/xlsx@0.3.0
+
 ## 0.2.0
 
 ### Minor Changes
