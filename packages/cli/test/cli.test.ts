@@ -109,6 +109,35 @@ afterEach(async () => {
 });
 
 describe("consultchimps CLI", () => {
+  it("shows output options in top-level and command help", async () => {
+    const topLevelHelp = await runCli(["--help"]);
+    expect(topLevelHelp.stdout).toContain(
+      'consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx',
+    );
+    expect(topLevelHelp.stdout).toContain(
+      "consultchimps pdf split report.pdf -o pages",
+    );
+
+    const sheetsHelp = await runCli(["sheets", "--help"]);
+    expect(sheetsHelp.stdout).toContain(
+      "consultchimps sheets split clients.xlsx -c Region -o by-region",
+    );
+
+    const consolidateHelp = await runCli(["sheets", "consolidate", "--help"]);
+    expect(consolidateHelp.stdout).toContain(
+      "-o, --output <path>    output .xlsx file",
+    );
+    expect(consolidateHelp.stdout).toContain("Examples:");
+
+    const pdfSplitHelp = await runCli(["pdf", "split", "--help"]);
+    expect(pdfSplitHelp.stdout).toContain(
+      "-o, --output <directory>  output directory",
+    );
+    expect(pdfSplitHelp.stdout).toContain(
+      "consultchimps pdf split report.pdf -o pages",
+    );
+  });
+
   it("consolidates workbook globs through the built command", async () => {
     const directory = await createTemporaryDirectory();
     const inputs = path.join(directory, "inputs");

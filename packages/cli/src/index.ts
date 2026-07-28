@@ -93,11 +93,33 @@ program
   .name("consultchimps")
   .description("Composable, local-first operations tools for consultants.")
   .version(packageMetadata.version)
-  .option("--json", "print machine-readable JSON");
+  .option("--json", "print machine-readable JSON")
+  .addHelpText(
+    "after",
+    `
+Quick start:
+  consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
+  consultchimps sheets split clients.xlsx -c Region -o by-region
+  consultchimps pdf split report.pdf -o pages
+  consultchimps pdf merge "inputs/*.pdf" -o combined.pdf
+
+Run consultchimps help <command> or append --help to a command for all options.
+`,
+  );
 
 const sheets = program
   .command("sheets")
-  .description("work with spreadsheet files");
+  .description("work with spreadsheet files")
+  .addHelpText(
+    "after",
+    `
+Examples:
+  consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
+  consultchimps sheets split clients.xlsx -c Region -o by-region
+
+Run consultchimps sheets help <command> for all command options.
+`,
+  );
 
 sheets
   .command("consolidate")
@@ -110,6 +132,14 @@ sheets
   .option("--no-source", "omit source file, sheet, and row columns")
   .option("--output-sheet <name>", "output worksheet name", "Consolidated")
   .option("-f, --force", "replace an existing output file")
+  .addHelpText(
+    "after",
+    `
+Examples:
+  consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
+  consultchimps sheets consolidate north.xlsx south.xlsx --output combined.xlsx
+`,
+  )
   .action(async (inputs: string[], options: ConsolidateOptions) => {
     const inputPaths = await discoverFiles(inputs, { extensions: [".xlsx"] });
     const result = await consolidateWorkbooks(inputPaths, options.output, {
@@ -145,6 +175,14 @@ sheets
   .option("--skip-blank", "omit rows whose split-column value is blank")
   .option("--prefix <name>", "output filename prefix")
   .option("-f, --force", "replace existing output files")
+  .addHelpText(
+    "after",
+    `
+Examples:
+  consultchimps sheets split clients.xlsx -c Region -o by-region
+  consultchimps sheets split clients.xlsx --table ClientData --column Region --preserve-workbook
+`,
+  )
   .action(async (input: string, options: SheetSplitOptions) => {
     const inputPaths = await discoverFiles([input], {
       extensions: [".xlsx"],
@@ -177,7 +215,19 @@ sheets
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
-const pdf = program.command("pdf").description("work with PDF files");
+const pdf = program
+  .command("pdf")
+  .description("work with PDF files")
+  .addHelpText(
+    "after",
+    `
+Examples:
+  consultchimps pdf split report.pdf -o pages
+  consultchimps pdf merge "inputs/*.pdf" -o combined.pdf
+
+Run consultchimps pdf help <command> for all command options.
+`,
+  );
 
 pdf
   .command("split")
@@ -186,6 +236,13 @@ pdf
   .option("-o, --output <directory>", "output directory")
   .option("--prefix <name>", "output filename prefix")
   .option("-f, --force", "replace existing output files")
+  .addHelpText(
+    "after",
+    `
+Example:
+  consultchimps pdf split report.pdf -o pages
+`,
+  )
   .action(async (input: string, options: SplitOptions) => {
     const [inputPath] = await discoverFiles([input], { extensions: [".pdf"] });
     if (!inputPath) {
@@ -207,6 +264,14 @@ pdf
   .argument("<inputs...>", "files, directories, or glob patterns")
   .requiredOption("-o, --output <path>", "output PDF file")
   .option("-f, --force", "replace an existing output file")
+  .addHelpText(
+    "after",
+    `
+Examples:
+  consultchimps pdf merge "inputs/*.pdf" -o combined.pdf
+  consultchimps pdf merge first.pdf second.pdf --output combined.pdf
+`,
+  )
   .action(async (inputs: string[], options: MergeOptions) => {
     const inputPaths = await discoverFiles(inputs, { extensions: [".pdf"] });
     const result = await mergePdfs(inputPaths, options.output, {
