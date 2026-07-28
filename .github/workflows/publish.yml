@@ -45,6 +45,11 @@ jobs:
       - name: Validate repository and package tarballs
         run: pnpm check
 
+      - name: Configure release Git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
       - name: Publish unpublished package versions
         run: pnpm release
 
