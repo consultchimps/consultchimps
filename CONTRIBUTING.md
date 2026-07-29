@@ -50,10 +50,19 @@ Before the first publish:
 3. Add a granular npm publishing token as the `NPM_TOKEN` environment secret.
 4. Run the **Publish packages** workflow from `main`.
 5. Configure npm Trusted Publishing for each package with GitHub owner
-   `rashoodz`, repository `consultchimps`, workflow `publish.yml`, and
+   `consultchimps`, repository `consultchimps`, workflow `publish.yml`, and
    environment `npm`.
 6. Delete `NPM_TOKEN`; subsequent publishes authenticate with short-lived OIDC
    credentials and generate provenance.
+
+npm matches the trusted publisher's owner and repository names literally. After
+a repository rename, transfer, or organization move, update every package's
+trusted publisher on npmjs.com to the new owner and repository, or every
+subsequent OIDC publish fails. A package that has never been published cannot
+have a trusted publisher yet; bootstrap its first version with the temporary
+`NPM_TOKEN` steps above (the token is used by temporarily restoring
+`NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}` on the publish step), then configure
+its trusted publisher and remove the token again.
 
 The publish workflow runs `pnpm check` before publishing. This includes creating
 all six tarballs in a temporary directory, installing them into a clean consumer
@@ -67,7 +76,9 @@ available only as a recovery mechanism.
 
 ## Documentation deployment
 
-The Vercel project must use `apps/docs` as its Root Directory. Leave **Include
-source files outside of the Root Directory** enabled so the deployment can read
-the root pnpm workspace and lockfile. The checked-in `vercel.ts` contains the
-remaining build configuration; the site does not need secrets.
+The documentation site deploys to GitHub Pages through the `Docs` workflow
+(`.github/workflows/docs.yml`), which builds `apps/docs` as a Next.js static
+export and publishes `apps/docs/out` on every push to `main`. The repository's
+**Settings → Pages** source must be set to **GitHub Actions**. The workflow
+derives the site URL and base path from the repository name; the site does not
+need secrets.
