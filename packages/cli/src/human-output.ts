@@ -74,9 +74,22 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
       "Keep the original PDFs until you have confirmed the merged file is complete.",
     ],
   },
+  "pptx.populate": {
+    title: "Your PowerPoint presentation is complete.",
+    summary: (result) => [
+      `ConsultChimps read ${quantity(metric(result, "inputRows"), "nonempty Excel record")} and created ${quantity(metric(result, "generatedSlides"), "populated slide")} in worksheet order.`,
+      `It replaced ${quantity(metric(result, "replacements"), "placeholder occurrence")} across the generated slides.`,
+      "Your source PowerPoint template and Excel workbook were not changed.",
+    ],
+    nextSteps: [
+      "Open the new PowerPoint presentation listed below and review every generated slide.",
+      "Check longer replacement values for fit because this version does not shrink or truncate text automatically.",
+    ],
+  },
 };
 
 const metricLabels: Readonly<Record<string, string>> = {
+  generatedSlides: "PowerPoint slides generated",
   groups: "Distinct groups found",
   inputFiles: "Input files read",
   inputRows: "Source data rows read",
@@ -85,7 +98,11 @@ const metricLabels: Readonly<Record<string, string>> = {
   outputFiles: "New files created",
   outputRows: "Data rows written",
   pages: "PDF pages processed",
+  placeholderFields: "Distinct placeholder fields",
+  placeholderOccurrences: "Placeholder occurrences per template slide",
+  replacements: "Placeholder replacements made",
   skippedRows: "Rows skipped",
+  warnings: "Warnings reported",
 };
 
 function artifactType(artifact: Artifact): string {
@@ -100,6 +117,12 @@ function artifactType(artifact: Artifact): string {
   }
   if (artifact.mediaType === "application/pdf") {
     return "PDF document";
+  }
+  if (
+    artifact.mediaType ===
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  ) {
+    return "PowerPoint presentation";
   }
   return "File";
 }
@@ -208,6 +231,13 @@ function recoverySteps(code: string | undefined): readonly string[] {
     return [
       "Confirm that every source file is a readable PDF and that the output location is available.",
       "Run the command with --help to review the available PDF options and examples.",
+    ];
+  }
+  if (code?.startsWith("PPTX_")) {
+    return [
+      "Check the PowerPoint template slide, placeholder spelling, Excel headers, and output path mentioned above.",
+      "Run consultchimps pptx inspect-template to review placeholders before populating the presentation.",
+      "Run consultchimps pptx populate --help for a complete example.",
     ];
   }
   return [

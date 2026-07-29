@@ -25,8 +25,26 @@ const temporaryRoot = mkdtempSync(
 );
 const tarballDirectory = path.join(temporaryRoot, "tarballs");
 const consumerDirectory = path.join(temporaryRoot, "consumer");
-const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const nodeDirectory = path.dirname(process.execPath);
+const pnpmCommand = process.platform === "win32" ? process.execPath : "pnpm";
+const pnpmArguments =
+  process.platform === "win32"
+    ? [
+        path.join(
+          nodeDirectory,
+          "node_modules",
+          "corepack",
+          "dist",
+          "corepack.js",
+        ),
+        "pnpm",
+      ]
+    : [];
+const npmCommand = process.platform === "win32" ? process.execPath : "npm";
+const npmArguments =
+  process.platform === "win32"
+    ? [path.join(nodeDirectory, "node_modules", "npm", "bin", "npm-cli.js")]
+    : [];
 
 const packageDirectories = [
   "core",
@@ -34,6 +52,7 @@ const packageDirectories = [
   "tabular",
   "pdf",
   "xlsx",
+  "pptx",
   "cli",
 ] as const;
 const libraryDirectories = packageDirectories.filter(
@@ -58,6 +77,7 @@ try {
   execFileSync(
     pnpmCommand,
     [
+      ...pnpmArguments,
       "--filter",
       "./packages/*",
       "-r",
@@ -97,7 +117,14 @@ try {
 
   execFileSync(
     npmCommand,
-    ["install", "--ignore-scripts", "--no-audit", "--no-fund", ...tarballs],
+    [
+      ...npmArguments,
+      "install",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      ...tarballs,
+    ],
     {
       cwd: consumerDirectory,
       stdio: "inherit",
@@ -108,13 +135,18 @@ try {
   const cliExecutable = path.join(
     consumerDirectory,
     "node_modules",
-    ".bin",
-    process.platform === "win32" ? "consultchimps.cmd" : "consultchimps",
+    ...(process.platform === "win32"
+      ? ["consultchimps", "dist", "index.js"]
+      : [".bin", "consultchimps"]),
   );
-  const installedVersion = execFileSync(cliExecutable, ["--version"], {
-    cwd: consumerDirectory,
-    encoding: "utf8",
-  }).trim();
+  const installedVersion = execFileSync(
+    process.platform === "win32" ? process.execPath : cliExecutable,
+    [...(process.platform === "win32" ? [cliExecutable] : []), "--version"],
+    {
+      cwd: consumerDirectory,
+      encoding: "utf8",
+    },
+  ).trim();
 
   if (installedVersion !== cliMetadata.version) {
     throw new Error(

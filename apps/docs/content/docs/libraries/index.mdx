@@ -5,8 +5,8 @@ icon: Blocks
 ---
 
 The CLI is intentionally thin. File discovery, table operations, workbook
-adapters, and PDF operations live in focused packages that can be reused in a
-server, desktop app, workflow runner, or another CLI.
+adapters, PowerPoint operations, and PDF operations live in focused packages
+that can be reused in a server, desktop app, workflow runner, or another CLI.
 
 ## Package map
 
@@ -16,6 +16,7 @@ server, desktop app, workflow runner, or another CLI.
 | `@consultchimps/files`   | File discovery and safe output handling              |
 | `@consultchimps/tabular` | Runtime-neutral table union and grouping operations  |
 | `@consultchimps/xlsx`    | Excel reading, writing, consolidation, and splitting |
+| `@consultchimps/pptx`    | PowerPoint template inspection and population        |
 | `@consultchimps/pdf`     | PDF splitting and merging                            |
 
 ## Discover inputs
@@ -81,3 +82,21 @@ async function run(): Promise<OperationResult | undefined> {
 
 Known errors carry a stable `code`, a human-readable message, optional
 structured details, and the original cause when available.
+
+## Populate a PowerPoint template
+
+```ts
+import { populatePowerPointTemplate } from "@consultchimps/pptx";
+
+const result = await populatePowerPointTemplate({
+  templatePath: "profile-template.pptx",
+  workbookPath: "companies.xlsx",
+  worksheet: "Companies",
+  headerRow: 1,
+  templateSlide: 1,
+  outputPath: "company-profiles.pptx",
+});
+```
+
+Set `overwrite: true` only when an existing output presentation should be
+replaced. The source template and workbook remain unchanged.

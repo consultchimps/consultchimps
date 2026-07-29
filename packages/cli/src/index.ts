@@ -10,6 +10,10 @@ import {
 import { discoverFiles } from "@consultchimps/files";
 import { mergePdfs, splitPdf } from "@consultchimps/pdf";
 import {
+  inspectPowerPointTemplate,
+  populatePowerPointTemplate,
+} from "@consultchimps/pptx";
+import {
   consolidateWorkbooks,
   splitWorkbookByColumn,
 } from "@consultchimps/xlsx";
@@ -59,6 +63,20 @@ interface MergeOptions {
   output: string;
 }
 
+interface PptxPopulateOptions {
+  data: string;
+  force?: boolean;
+  headerRow?: number;
+  output: string;
+  sheet: string;
+  template: string;
+  templateSlide: number;
+}
+
+interface PptxInspectOptions {
+  templateSlide: number;
+}
+
 function positiveInteger(value: string): number {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed < 1) {
@@ -84,7 +102,7 @@ const packageMetadata = JSON.parse(
 program
   .name("consultchimps")
   .description(
-    "Clear, local-first tools that explain how they process your spreadsheets and PDFs.",
+    "Clear, local-first tools that explain how they process your spreadsheets, presentations, and PDFs.",
   )
   .version(packageMetadata.version)
   .option(
@@ -97,6 +115,7 @@ program
 Quick start:
   consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
   consultchimps sheets split clients.xlsx -c Region -o by-region
+  consultchimps pptx populate --template profile.pptx --data clients.xlsx --sheet Clients --template-slide 1 -o profiles.pptx
   consultchimps pdf split report.pdf -o pages
   consultchimps pdf merge "inputs/*.pdf" -o combined.pdf
 
@@ -274,6 +293,132 @@ Your original workbook is never changed.
       preserveWorkbook: options.preserveWorkbook === true,
       sheet: options.sheet,
       table: options.table,
+    });
+    printResult(result, program.opts<GlobalOptions>().json === true);
+  });
+
+const pptx = program
+  .command("pptx")
+  .description(
+    "inspect or populate PowerPoint templates without changing the source files",
+  )
+  .addHelpText(
+    "after",
+    `
+Examples:
+  consultchimps pptx inspect-template profile.pptx --template-slide 1
+  consultchimps pptx populate --template profile.pptx --data clients.xlsx --sheet Clients --template-slide 1 -o profiles.pptx
+
+Safety:
+  Your source PowerPoint template and Excel workbook are not changed.
+  ConsultChimps creates one new presentation and refuses to replace an existing
+  output unless you use --force.
+`,
+  );
+
+pptx
+  .command("inspect-template")
+  .description(
+    "list text placeholders on one PowerPoint template slide without creating a file",
+  )
+  .argument("<template>", "the source .pptx template to inspect")
+  .requiredOption(
+    "--template-slide <number>",
+    "template slide number, counted from 1",
+    positiveInteger,
+  )
+  .addHelpText(
+    "after",
+    `
+Example:
+  consultchimps pptx inspect-template profile.pptx --template-slide 1
+
+The report identifies valid {{field_name}} placeholders, malformed placeholder
+braces, and placeholders split across PowerPoint text runs.
+`,
+  )
+  .action(async (template: string, options: PptxInspectOptions) => {
+    const inspection = await inspectPowerPointTemplate(template, {
+      templateSlide: options.templateSlide,
+    });
+    if (program.opts<GlobalOptions>().json === true) {
+      process.stdout.write(`${JSON.stringify(inspection, null, 2)}\n`);
+      return;
+    }
+
+    const lines = [
+      `PowerPoint template slide ${inspection.slideNumber}`,
+      `Placeholder occurrences: ${inspection.placeholderOccurrences}`,
+      "Placeholders:",
+      ...(inspection.placeholders.length > 0
+        ? inspection.placeholders.map(
+            (placeholder) =>
+              `  - ${placeholder.name}: ${placeholder.occurrences}`,
+          )
+        : ["  - None"]),
+      `Malformed placeholder locations: ${inspection.malformedPlaceholderCount}`,
+      `Unsupported split-run placeholders: ${
+        inspection.unsupportedSplitRunPlaceholders.join(", ") || "None"
+      }`,
+      `Unsupported placeholder placements: ${
+        inspection.unsupportedPlacementPlaceholders.join(", ") || "None"
+      }`,
+      "",
+    ];
+    process.stdout.write(lines.join("\n"));
+  });
+
+pptx
+  .command("populate")
+  .description(
+    "create one populated PowerPoint slide for every nonempty Excel data row",
+  )
+  .requiredOption(
+    "--template <path>",
+    "source .pptx file containing {{field_name}} placeholders",
+  )
+  .requiredOption("--data <path>", "source .xlsx workbook containing the data")
+  .requiredOption("--sheet <name>", "exact worksheet name containing the data")
+  .requiredOption(
+    "--template-slide <number>",
+    "template slide number, counted from 1",
+    positiveInteger,
+  )
+  .requiredOption(
+    "-o, --output <path>",
+    "where to save the new populated .pptx presentation",
+  )
+  .option(
+    "--header-row <number>",
+    "row containing field names, counted from 1",
+    positiveInteger,
+  )
+  .option(
+    "-f, --force",
+    "replace the output presentation if it already exists; use with care",
+  )
+  .addHelpText(
+    "after",
+    `
+Example:
+  consultchimps pptx populate --template profile.pptx --data clients.xlsx --sheet Clients --template-slide 1 --output profiles.pptx
+
+Put placeholders such as {{client_name}} or Revenue: {{revenue}} in ordinary
+text shapes on the template slide. Each nonempty row below the Excel header
+creates one slide, in worksheet order. Empty cells become empty text.
+
+The output contains only the generated slides. Source files are never changed.
+`,
+  )
+  .action(async (options: PptxPopulateOptions) => {
+    const result = await populatePowerPointTemplate({
+      headerRow: options.headerRow,
+      outputPath: options.output,
+      overwrite: options.force === true,
+      templatePath: options.template,
+      templateSlide: options.templateSlide,
+      workbookPath: options.data,
+      worksheet: options.sheet,
     });
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
