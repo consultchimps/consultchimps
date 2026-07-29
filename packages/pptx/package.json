@@ -1,0 +1,44 @@
+{
+  "name": "@consultchimps/pptx",
+  "version": "0.1.0",
+  "description": "PowerPoint template inspection and population for ConsultChimps.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rashoodz/consultchimps.git",
+    "directory": "packages/pptx"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "prepack": "pnpm build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@consultchimps/core": "workspace:*",
+    "@consultchimps/files": "workspace:*",
+    "@consultchimps/xlsx": "workspace:*",
+    "jszip": "3.10.1"
+  },
+  "devDependencies": {
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}
