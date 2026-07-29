@@ -6,7 +6,7 @@ import { gitConfig } from "./shared";
 export const homeLinks: NonNullable<BaseLayoutProps["links"]> = [
   {
     text: "Tools",
-    url: "/docs/tools/spreadsheets",
+    url: "/docs#start-with-a-tool",
   },
   {
     text: "Libraries",

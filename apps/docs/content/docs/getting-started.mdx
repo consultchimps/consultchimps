@@ -60,7 +60,17 @@ pnpm install
 pnpm build
 ```
 
-## Run your first operation
+## Choose your first operation
+
+Every shipped operation has a complete guide:
+
+- [Consolidate spreadsheets](./tools/spreadsheets)
+- [Split a spreadsheet](./tools/spreadsheet-split)
+- [Populate a PowerPoint template](./tools/powerpoint-populate)
+- [Split a PDF](./tools/pdf-split)
+- [Merge PDFs](./tools/pdf-merge)
+
+For example, split a PDF into individual pages:
 
 ```bash
 pnpm consultchimps pdf split report.pdf --output outputs/report-pages
@@ -68,6 +78,17 @@ pnpm consultchimps pdf split report.pdf --output outputs/report-pages
 
 The CLI refuses to replace existing output files unless you explicitly pass
 `--force`.
+
+To create a presentation from a designed slide and Excel records:
+
+```bash
+pnpm consultchimps pptx populate \
+  --template profile-template.pptx \
+  --data profiles.xlsx \
+  --sheet Profiles \
+  --template-slide 2 \
+  --output outputs/company-profiles.pptx
+```
 
 ## Open the documentation locally
 
