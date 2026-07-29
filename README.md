@@ -16,6 +16,7 @@ Documentation:
 | ---------------------- | ---------------------------------- | ------- |
 | Excel consolidation    | `consultchimps sheets consolidate` | Working |
 | Excel split by column  | `consultchimps sheets split`       | Working |
+| PowerPoint population  | `consultchimps pptx populate`      | Working |
 | PDF page splitting     | `consultchimps pdf split`          | Working |
 | PDF document merging   | `consultchimps pdf merge`          | Working |
 | Dataset inspection     | `consultchimps data inspect`       | Planned |
@@ -29,6 +30,7 @@ Documentation:
 | `@consultchimps/files`   | Input discovery and safe output-path handling    |
 | `@consultchimps/tabular` | Runtime-neutral table model and union operations |
 | `@consultchimps/xlsx`    | Excel workbook input and output                  |
+| `@consultchimps/pptx`    | PowerPoint template inspection and population    |
 | `@consultchimps/pdf`     | PDF split and merge operations                   |
 | `consultchimps`          | Command-line interface                           |
 
@@ -87,6 +89,13 @@ pnpm consultchimps sheets split clients.xlsx \
   --preserve-workbook \
   --output outputs/by-region
 
+pnpm consultchimps pptx populate \
+  --template profile-template.pptx \
+  --data companies.xlsx \
+  --sheet Companies \
+  --template-slide 1 \
+  --output outputs/company-profiles.pptx
+
 pnpm consultchimps pdf split report.pdf --output outputs/pages
 
 pnpm consultchimps pdf merge "inputs/**/*.pdf" \
@@ -103,6 +112,13 @@ destinations are checked before any output is written. A named Excel Table can
 be selected to ignore titles, notes, totals, and other cells outside its range.
 Add `--preserve-workbook` to retain the complete source workbook and change only
 the selected table's rows.
+
+PowerPoint population reads `{{field_name}}` placeholders from one selected
+template slide and creates one populated slide per nonempty Excel record. The
+output contains only generated slides, in worksheet order. Ordinary text-shape
+formatting is retained where the placeholder occupies one PowerPoint text run;
+split-run placeholders are rejected before writing. Source presentations and
+workbooks are never modified.
 
 ## Design principles
 
@@ -128,7 +144,8 @@ pnpm check
 ```
 
 The verification suite builds the distributable CLI and runs command-level tests
-against generated Excel and PDF fixtures in addition to package-level tests.
+against generated Excel, PowerPoint, and PDF fixtures in addition to
+package-level tests.
 
 The Fumadocs guide lives in `apps/docs`:
 

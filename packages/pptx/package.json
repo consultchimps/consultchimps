@@ -1,12 +1,12 @@
 {
-  "name": "@consultchimps/core",
+  "name": "@consultchimps/pptx",
   "version": "0.1.0",
-  "description": "Shared contracts and errors for ConsultChimps operations.",
+  "description": "PowerPoint template inspection and population for ConsultChimps.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/rashoodz/consultchimps.git",
-    "directory": "packages/core"
+    "directory": "packages/pptx"
   },
   "type": "module",
   "sideEffects": false,
@@ -17,12 +17,22 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean",
     "prepack": "pnpm build",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@consultchimps/core": "workspace:*",
+    "@consultchimps/files": "workspace:*",
+    "@consultchimps/xlsx": "workspace:*",
+    "jszip": "3.10.1"
+  },
+  "devDependencies": {
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "engines": {
     "node": "24.x"
