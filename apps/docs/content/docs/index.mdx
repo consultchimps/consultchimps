@@ -59,8 +59,11 @@ interface OperationResult {
 }
 ```
 
-That gives a person useful terminal feedback and gives an automation stable,
-machine-readable output.
+Normal terminal output turns that result into a detailed explanation for a
+non-technical reader. It explains what happened, translates counts into plain
+language, lists every created file, calls out warnings, confirms source-file
+safety, and suggests what to do next. Automations can use `--json` to receive
+the stable result shape directly.
 
 ## Design principles
 
@@ -68,4 +71,6 @@ machine-readable output.
 - **Immutable inputs:** the toolkit refuses to overwrite source files.
 - **Composable modules:** each capability is useful without the CLI.
 - **Explicit provenance:** consolidated rows can retain file, sheet, and row.
+- **Plain-language guidance:** every CLI tool explains its results and next
+  steps without assuming technical knowledge.
 - **Replaceable intelligence:** future OCR or AI providers remain optional.

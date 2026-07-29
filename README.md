@@ -110,9 +110,15 @@ the selected table's rows.
 - Immutable inputs by default
 - Small composable operations rather than one-off scripts
 - Explicit provenance and structured errors
+- Detailed, plain-language messages for non-technical users
 - Versioned public APIs and recipes
 - Optional, replaceable OCR or AI providers
 - Cross-platform behavior with no shell-specific assumptions
+
+Normal CLI output explains what the tool did, translates result counts into
+plain language, lists every created file, calls out warnings, confirms that
+source files were left unchanged, and suggests practical next steps. Use
+`--json` when an automation needs the compact structured result instead.
 
 ## Development
 

@@ -15,6 +15,8 @@ import {
 } from "@consultchimps/xlsx";
 import { Command } from "commander";
 
+import { formatHumanError, formatHumanResult } from "./human-output.js";
+
 interface GlobalOptions {
   json?: boolean;
 }
@@ -71,17 +73,7 @@ function printResult(result: OperationResult, json: boolean): void {
     return;
   }
 
-  process.stdout.write(
-    [
-      `${result.operation} completed.`,
-      ...Object.entries(result.metrics).map(
-        ([name, value]) => `  ${name}: ${value}`,
-      ),
-      ...result.artifacts.map((artifact) => `  output: ${artifact.path}`),
-      ...result.warnings.map((warning) => `  warning: ${warning}`),
-      "",
-    ].join("\n"),
-  );
+  process.stdout.write(formatHumanResult(result));
 }
 
 const program = new Command();
@@ -91,9 +83,14 @@ const packageMetadata = JSON.parse(
 
 program
   .name("consultchimps")
-  .description("Composable, local-first operations tools for consultants.")
+  .description(
+    "Clear, local-first tools that explain how they process your spreadsheets and PDFs.",
+  )
   .version(packageMetadata.version)
-  .option("--json", "print machine-readable JSON")
+  .option(
+    "--json",
+    "print structured JSON for automation instead of the detailed explanation",
+  )
   .addHelpText(
     "after",
     `
@@ -109,7 +106,9 @@ Run consultchimps help <command> or append --help to a command for all options.
 
 const sheets = program
   .command("sheets")
-  .description("work with spreadsheet files")
+  .description(
+    "combine or divide Excel workbooks without changing the original files",
+  )
   .addHelpText(
     "after",
     `
@@ -117,27 +116,64 @@ Examples:
   consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
   consultchimps sheets split clients.xlsx -c Region -o by-region
 
+Safety:
+  Your original Excel workbooks are not changed. ConsultChimps creates new
+  output files and refuses to replace existing outputs unless you use --force.
+
 Run consultchimps sheets help <command> for all command options.
 `,
   );
 
 sheets
   .command("consolidate")
-  .description("combine visible, non-empty worksheets into one Excel table")
-  .argument("<inputs...>", "files, directories, or glob patterns")
-  .requiredOption("-o, --output <path>", "output .xlsx file")
-  .option("--sheet <names...>", "include only these worksheet names")
-  .option("--header-row <number>", "one-based header row", positiveInteger)
-  .option("--hidden", "include hidden worksheets")
-  .option("--no-source", "omit source file, sheet, and row columns")
-  .option("--output-sheet <name>", "output worksheet name", "Consolidated")
-  .option("-f, --force", "replace an existing output file")
+  .description(
+    "combine visible, non-empty worksheets into one new Excel workbook",
+  )
+  .argument(
+    "<inputs...>",
+    'Excel files, folders, or quoted patterns such as "inputs/*.xlsx"',
+  )
+  .requiredOption(
+    "-o, --output <path>",
+    "where to save the new consolidated .xlsx workbook",
+  )
+  .option(
+    "--sheet <names...>",
+    "include only worksheets with these exact names",
+  )
+  .option(
+    "--header-row <number>",
+    "row containing column names, counted from 1",
+    positiveInteger,
+  )
+  .option("--hidden", "include hidden worksheets as well as visible ones")
+  .option(
+    "--no-source",
+    "leave out columns that identify each row's source file, worksheet, and row",
+  )
+  .option(
+    "--output-sheet <name>",
+    "name of the worksheet created in the new workbook",
+    "Consolidated",
+  )
+  .option(
+    "-f, --force",
+    "replace the output file if it already exists; use with care",
+  )
   .addHelpText(
     "after",
     `
 Examples:
   consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
   consultchimps sheets consolidate north.xlsx south.xlsx --output combined.xlsx
+
+What happens:
+  1. ConsultChimps finds the matching Excel files.
+  2. It reads every selected, non-empty worksheet.
+  3. It matches columns by header name and combines all data rows.
+  4. It writes one new workbook and explains exactly what was created.
+
+Your original workbooks are never changed.
 `,
   )
   .action(async (inputs: string[], options: ConsolidateOptions) => {
@@ -156,31 +192,58 @@ Examples:
 sheets
   .command("split")
   .description(
-    "write one Excel workbook per distinct value in a worksheet or Excel Table column",
+    "create one new Excel workbook for each distinct value in a selected column",
   )
-  .argument("<input>", "input .xlsx file")
-  .requiredOption("-c, --column <name>", "column header used to split rows")
-  .option("-o, --output <directory>", "output directory")
-  .option("--sheet <name>", "worksheet to split")
+  .argument("<input>", "the source .xlsx workbook to divide")
+  .requiredOption(
+    "-c, --column <name>",
+    "column whose values decide which rows go into each new workbook",
+  )
+  .option(
+    "-o, --output <directory>",
+    "folder where the new workbooks will be saved",
+  )
+  .option("--sheet <name>", "exact name of the worksheet to divide")
   .option(
     "--table <name>",
-    "named Excel Table to split instead of the worksheet used range",
+    "use this named Excel Table instead of the worksheet's full used range",
   )
-  .option("--header-row <number>", "one-based header row", positiveInteger)
-  .option("--hidden", "allow a selected hidden worksheet")
+  .option(
+    "--header-row <number>",
+    "row containing column names, counted from 1",
+    positiveInteger,
+  )
+  .option("--hidden", "allow the selected worksheet to be hidden")
   .option(
     "--preserve-workbook",
-    "copy the full workbook and replace only the selected Excel Table rows",
+    "keep the full workbook layout and replace only the selected Excel Table rows",
   )
-  .option("--skip-blank", "omit rows whose split-column value is blank")
-  .option("--prefix <name>", "output filename prefix")
-  .option("-f, --force", "replace existing output files")
+  .option(
+    "--skip-blank",
+    "do not create an output group for rows with a blank split-column value",
+  )
+  .option(
+    "--prefix <name>",
+    "text to place at the start of each output filename",
+  )
+  .option(
+    "-f, --force",
+    "replace matching output files that already exist; use with care",
+  )
   .addHelpText(
     "after",
     `
 Examples:
   consultchimps sheets split clients.xlsx -c Region -o by-region
   consultchimps sheets split clients.xlsx --table ClientData --column Region --preserve-workbook
+
+What happens:
+  1. ConsultChimps reads the selected worksheet or named Excel Table.
+  2. It groups rows using the values in --column.
+  3. It creates a clearly named workbook for every distinct group.
+  4. It reports every created file, skipped row, and warning.
+
+Your original workbook is never changed.
 `,
   )
   .action(async (input: string, options: SheetSplitOptions) => {
@@ -217,7 +280,7 @@ Examples:
 
 const pdf = program
   .command("pdf")
-  .description("work with PDF files")
+  .description("split or combine PDF documents without changing the originals")
   .addHelpText(
     "after",
     `
@@ -225,22 +288,39 @@ Examples:
   consultchimps pdf split report.pdf -o pages
   consultchimps pdf merge "inputs/*.pdf" -o combined.pdf
 
+Safety:
+  Your original PDF documents are not changed. ConsultChimps creates new output
+  files and refuses to replace existing outputs unless you use --force.
+
 Run consultchimps pdf help <command> for all command options.
 `,
   );
 
 pdf
   .command("split")
-  .description("write each PDF page to a separate file")
-  .argument("<input>", "input PDF file")
-  .option("-o, --output <directory>", "output directory")
-  .option("--prefix <name>", "output filename prefix")
-  .option("-f, --force", "replace existing output files")
+  .description("create one new PDF file for every page in a source PDF")
+  .argument("<input>", "the source PDF document to divide")
+  .option(
+    "-o, --output <directory>",
+    "folder where the separate page files will be saved",
+  )
+  .option(
+    "--prefix <name>",
+    "text to place at the start of each output filename",
+  )
+  .option(
+    "-f, --force",
+    "replace matching output files that already exist; use with care",
+  )
   .addHelpText(
     "after",
     `
 Example:
   consultchimps pdf split report.pdf -o pages
+
+What happens:
+  ConsultChimps creates one clearly numbered PDF for every page, lists every
+  new file, and leaves the source PDF unchanged.
 `,
   )
   .action(async (input: string, options: SplitOptions) => {
@@ -260,16 +340,30 @@ Example:
 
 pdf
   .command("merge")
-  .description("combine PDF files in resolved input order")
-  .argument("<inputs...>", "files, directories, or glob patterns")
-  .requiredOption("-o, --output <path>", "output PDF file")
-  .option("-f, --force", "replace an existing output file")
+  .description("combine several PDF documents into one new PDF")
+  .argument(
+    "<inputs...>",
+    'PDF files, folders, or quoted patterns such as "inputs/*.pdf"',
+  )
+  .requiredOption(
+    "-o, --output <path>",
+    "where to save the new combined PDF document",
+  )
+  .option(
+    "-f, --force",
+    "replace the output PDF if it already exists; use with care",
+  )
   .addHelpText(
     "after",
     `
 Examples:
   consultchimps pdf merge "inputs/*.pdf" -o combined.pdf
   consultchimps pdf merge first.pdf second.pdf --output combined.pdf
+
+What happens:
+  ConsultChimps reads the matching PDFs in their resolved order, copies every
+  page into one new document, reports the final page count, and leaves every
+  source PDF unchanged.
 `,
   )
   .action(async (inputs: string[], options: MergeOptions) => {
@@ -284,13 +378,22 @@ try {
   await program.parseAsync(process.argv);
 } catch (error) {
   if (isConsultChimpsError(error)) {
-    const details = program.opts<GlobalOptions>().json
+    const json = program.opts<GlobalOptions>().json === true;
+    const details = json
       ? `\n${JSON.stringify({ code: error.code, details: error.details }, null, 2)}`
       : "";
-    process.stderr.write(`consultchimps: ${error.message}${details}\n`);
+    process.stderr.write(
+      json
+        ? `consultchimps: ${error.message}${details}\n`
+        : formatHumanError(error.message, error.code),
+    );
   } else {
     const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`consultchimps: ${message}\n`);
+    process.stderr.write(
+      program.opts<GlobalOptions>().json
+        ? `consultchimps: ${message}\n`
+        : formatHumanError(message),
+    );
   }
   process.exitCode = 1;
 }
