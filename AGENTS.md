@@ -43,6 +43,8 @@ Every change must preserve these principles:
 - Complete destination validation before writing any output.
 - Portable behavior across Windows, macOS, and Linux.
 - Structured results and stable, actionable errors.
+- Detailed, plain-language messages that explain outcomes and next steps to
+  non-technical users.
 - Small composable operations instead of narrowly tailored one-off scripts.
 - No collection, transmission, or retention of client data.
 
@@ -239,6 +241,16 @@ exit status, stdout, and stderr are all part of that interface.
   inconsistently.
 - Send normal human-readable results to stdout.
 - Send errors to stderr and set a nonzero exit code.
+- Make normal output deliberately detailed and easy for a non-technical person
+  to understand. Explain what happened, translate metrics into plain language,
+  identify every created artifact, state whether warnings occurred, confirm
+  source-file safety where known, and provide practical next steps.
+- Do not expose raw internal metric names without a human-readable label.
+- For recoverable errors, explain both the problem and the safest likely
+  recovery action. Include a stable error reference for support.
+- Prefer clarity and reassurance over terseness in interactive output. Do not
+  assume the reader understands programming, shells, globs, file extensions, or
+  internal operation names.
 - Preserve `--json` as valid machine-readable JSON without surrounding prose.
 - Never mix diagnostics into JSON stdout.
 - Test the built CLI rather than importing its source entry point.
