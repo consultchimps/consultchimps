@@ -213,8 +213,6 @@ describe("consultchimps CLI", () => {
       "pptx",
       "inspect-template",
       template,
-      "--template-slide",
-      "1",
     ]);
     expect(JSON.parse(inspection.stdout)).toMatchObject({
       placeholderOccurrences: 2,
@@ -233,10 +231,6 @@ describe("consultchimps CLI", () => {
       template,
       "--data",
       data,
-      "--sheet",
-      "Companies",
-      "--template-slide",
-      "1",
       "--output",
       output,
     ]);
