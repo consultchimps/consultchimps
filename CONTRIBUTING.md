@@ -50,8 +50,8 @@ Before the first publish:
 3. Add a granular npm publishing token as the `NPM_TOKEN` environment secret.
 4. Run the **Publish packages** workflow from `main`.
 5. Configure npm Trusted Publishing for each package with GitHub owner
-   `rashoodz`, repository `chimpcons`, workflow `publish.yml`, and environment
-   `npm`.
+   `rashoodz`, repository `consultchimps`, workflow `publish.yml`, and
+   environment `npm`.
 6. Delete `NPM_TOKEN`; subsequent publishes authenticate with short-lived OIDC
    credentials and generate provenance.
 
