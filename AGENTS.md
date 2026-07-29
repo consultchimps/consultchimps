@@ -15,6 +15,9 @@ this file at the repository root gives the monorepo one shared baseline.
 -->
 
 - These instructions apply to the entire repository.
+- `CLAUDE.md` is a thin stub that imports this file with `@AGENTS.md` so Claude
+  Code and other coding agents read one shared instruction source; edit
+  `AGENTS.md`, never the stub.
 - A more deeply nested `AGENTS.md`, if one is added later, may refine these
   rules for its subtree but must not silently weaken repository-wide safety,
   privacy, testing, or release requirements.
@@ -69,6 +72,23 @@ Standard setup:
 pnpm install
 ```
 
+Common workspace commands:
+
+```bash
+pnpm build                                      # build all packages (tsup, ESM + d.ts)
+pnpm typecheck                                  # tsc --noEmit across packages
+pnpm --filter @consultchimps/xlsx typecheck     # one package
+pnpm lint                                       # ESLint (flat config, TS-native)
+pnpm format:check                               # Prettier check (pnpm format to write)
+pnpm test:run                                   # vitest run (packages/**/*.test.ts)
+pnpm test:run packages/xlsx/test/split.test.ts  # one test file
+pnpm test                                       # build, then vitest
+pnpm package:check                              # package metadata and publishability
+pnpm check                                      # full verification sequence
+pnpm consultchimps <args>                       # run the built CLI (packages/cli/dist)
+pnpm docs:dev                                   # Fumadocs site (apps/docs)
+```
+
 Do not regenerate the lockfile without a dependency or package metadata change.
 If the lockfile changes unexpectedly, investigate and revert only that
 agent-created change before continuing.
@@ -86,6 +106,7 @@ Put behavior at the lowest reusable layer and keep the CLI as an adapter.
 | `packages/files`   | Input discovery and safe output-path handling                  |
 | `packages/tabular` | Runtime-neutral table models and table operations              |
 | `packages/xlsx`    | Excel workbook reading, writing, consolidation, and splitting  |
+| `packages/pptx`    | PowerPoint template inspection and population                  |
 | `packages/pdf`     | PDF splitting and merging                                      |
 | `packages/cli`     | Command parsing, option mapping, and user-facing CLI output    |
 | `apps/docs`        | Next.js and Fumadocs documentation site                        |
@@ -254,6 +275,8 @@ exit status, stdout, and stderr are all part of that interface.
 - Preserve `--json` as valid machine-readable JSON without surrounding prose.
 - Never mix diagnostics into JSON stdout.
 - Test the built CLI rather than importing its source entry point.
+- CLI tests execute `packages/cli/dist/index.js`, so run `pnpm build` before
+  running them; without it they exercise a stale build.
 
 When changing a command, verify at least:
 
@@ -278,6 +301,7 @@ Test placement:
 - File discovery and collision tests belong with `packages/files`.
 - Runtime-neutral data tests belong with `packages/tabular`.
 - Excel behavior belongs with `packages/xlsx`.
+- PowerPoint behavior belongs with `packages/pptx`.
 - PDF behavior belongs with `packages/pdf`.
 - Argument parsing, help, exit status, stdout, stderr, and packaged command
   behavior belong with `packages/cli`.
