@@ -46,5 +46,14 @@ consultchimps pdf merge "inputs/**/*.pdf" \
 Inputs are never modified. Existing outputs require the explicit `--force`
 option.
 
+By default, every command gives a detailed, plain-language explanation of what
+happened. It translates result counts, lists every created file, reports
+warnings, confirms source-file safety, and suggests next steps. Add `--json`
+before the command when an automation needs the structured result instead:
+
+```bash
+consultchimps --json pdf split report.pdf --output outputs/pages
+```
+
 Reusable TypeScript APIs are published separately under the `@consultchimps/*`
 scope.

@@ -124,18 +124,66 @@ describe("consultchimps CLI", () => {
     );
 
     const consolidateHelp = await runCli(["sheets", "consolidate", "--help"]);
+    expect(consolidateHelp.stdout).toContain("-o, --output <path>");
     expect(consolidateHelp.stdout).toContain(
-      "-o, --output <path>    output .xlsx file",
+      "where to save the new consolidated .xlsx workbook",
     );
     expect(consolidateHelp.stdout).toContain("Examples:");
+    expect(consolidateHelp.stdout).toContain("What happens:");
+    expect(consolidateHelp.stdout).toContain(
+      "Your original workbooks are never changed.",
+    );
 
     const pdfSplitHelp = await runCli(["pdf", "split", "--help"]);
+    expect(pdfSplitHelp.stdout).toContain("-o, --output <directory>");
     expect(pdfSplitHelp.stdout).toContain(
-      "-o, --output <directory>  output directory",
+      "folder where the separate page files will be saved",
     );
     expect(pdfSplitHelp.stdout).toContain(
       "consultchimps pdf split report.pdf -o pages",
     );
+    expect(pdfSplitHelp.stdout).toContain("What happens:");
+  });
+
+  it("explains successful tasks and recoverable errors in plain language", async () => {
+    const directory = await createTemporaryDirectory();
+    const sourcePath = path.join(directory, "inputs", "source.pdf");
+    const pagesDirectory = path.join(directory, "outputs", "pages");
+    const source = await PDFDocument.create();
+    source.addPage([300, 400]);
+    source.addPage([400, 500]);
+    await writeFile(sourcePath, await source.save());
+
+    const success = await runCli([
+      "pdf",
+      "split",
+      sourcePath,
+      "--output",
+      pagesDirectory,
+    ]);
+    expect(success.stdout).toContain(
+      "SUCCESS: ConsultChimps finished your task.",
+    );
+    expect(success.stdout).toContain("Your PDF split is complete.");
+    expect(success.stdout).toContain(
+      "ConsultChimps read 2 pages from the source PDF.",
+    );
+    expect(success.stdout).toContain("Your original PDF was not changed.");
+    expect(success.stdout).toContain("Files created:");
+    expect(success.stdout).toContain("What you can do next:");
+
+    const error = await runCli(
+      ["pdf", "split", sourcePath, "--output", pagesDirectory],
+      1,
+    );
+    expect(error.stderr).toContain(
+      "ERROR: ConsultChimps could not finish your task.",
+    );
+    expect(error.stderr).toContain("Choose a different output filename");
+    expect(error.stderr).toContain(
+      "If you intentionally want to replace the existing output",
+    );
+    expect(error.stderr).toContain("FILES_OUTPUT_EXISTS");
   });
 
   it("consolidates workbook globs through the built command", async () => {

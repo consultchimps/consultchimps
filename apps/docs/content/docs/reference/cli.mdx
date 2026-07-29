@@ -11,7 +11,7 @@ consultchimps [options] [command]
 
 Options:
   -V, --version   output the version number
-  --json          print machine-readable JSON
+  --json          print structured JSON instead of the detailed explanation
   -h, --help      display help
 ```
 
@@ -20,6 +20,23 @@ Place `--json` before the subcommand:
 ```bash
 consultchimps --json pdf split report.pdf
 ```
+
+## Human-readable output
+
+Normal commands are intentionally detailed for non-technical users. A successful
+operation explains:
+
+1. What ConsultChimps did.
+2. What each result count means.
+3. Every file that was created.
+4. Whether any warnings occurred.
+5. Whether the source files were left unchanged.
+6. What the user can do next.
+
+Recoverable errors explain what went wrong, suggest safe recovery steps, and
+include a stable error reference that can be shared with support. Use `--json`
+to replace these explanations with the compact structured result needed by an
+automation.
 
 ## Spreadsheet consolidation
 
@@ -91,4 +108,4 @@ Options:
 
 Successful commands exit with status `0`. Invalid input, discovery failures,
 unreadable documents, and output-safety failures set exit status `1` and write a
-message to standard error.
+detailed explanation to standard error.
