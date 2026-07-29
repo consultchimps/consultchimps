@@ -116,6 +116,7 @@ async function writeWorkbook(
     currencyColumn?: number;
     dateColumn?: number;
     percentColumn?: number;
+    worksheetName?: string;
   } = {},
 ): Promise<void> {
   const worksheet = XLSX.utils.aoa_to_sheet(rows);
@@ -153,7 +154,11 @@ async function writeWorkbook(
     }
   }
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Companies");
+  XLSX.utils.book_append_sheet(
+    workbook,
+    worksheet,
+    options.worksheetName ?? "Companies",
+  );
   await writeFile(
     filePath,
     XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
@@ -377,12 +382,67 @@ describe("PowerPoint template population", () => {
       inspectPowerPointTemplate(templatePath, { templateSlide: 1 }),
     ).resolves.toEqual({
       malformedPlaceholderCount: 1,
-      placeholderOccurrences: 2,
-      placeholders: [{ name: "client_name", occurrences: 2 }],
+      placeholderOccurrences: 3,
+      placeholders: [
+        { name: "client_name", occurrences: 2 },
+        { name: "revenue", occurrences: 1 },
+      ],
       slideNumber: 1,
       unsupportedPlacementPlaceholders: ["table_value"],
-      unsupportedSplitRunPlaceholders: ["revenue"],
+      unsupportedSplitRunPlaceholders: [],
     });
+  });
+
+  it("populates split-run placeholders and defaults to the first worksheet and slide", async () => {
+    const directory = await createTemporaryDirectory();
+    const templatePath = path.join(directory, "template.pptx");
+    const workbookPath = path.join(directory, "data.xlsx");
+    const outputPath = path.join(directory, "output.pptx");
+    await writeTemplate(templatePath, [
+      slideXml([
+        {
+          id: 2,
+          name: "Favorite number",
+          runs: [
+            { color: "C00000", text: "Favorite: {{fav_" },
+            { color: "0000FF", text: "number}}" },
+          ],
+        },
+      ]),
+      slideXml([{ id: 3, name: "Unused", runs: [{ text: "Unused" }] }]),
+    ]);
+    await writeWorkbook(workbookPath, [["fav_number"], [42]], {
+      worksheetName: "Records",
+    });
+
+    await expect(
+      inspectPowerPointTemplate(templatePath, {}),
+    ).resolves.toMatchObject({
+      placeholderOccurrences: 1,
+      placeholders: [{ name: "fav_number", occurrences: 1 }],
+      slideNumber: 1,
+      unsupportedSplitRunPlaceholders: [],
+    });
+    const result = await populatePowerPointTemplate({
+      outputPath,
+      templatePath,
+      workbookPath,
+    });
+
+    expect(result).toMatchObject({
+      metrics: {
+        generatedSlides: 1,
+        placeholderOccurrences: 1,
+        replacements: 1,
+      },
+    });
+    const slides = await outputSlideXmls(outputPath);
+    expect(slides).toHaveLength(1);
+    expect(slides[0]).toContain("Favorite: 42");
+    expect(slides[0]).toContain('<a:srgbClr val="C00000"/>');
+    expect(slides[0]).toContain('<a:srgbClr val="0000FF"/>');
+    expect(slides[0]).not.toContain("{{fav_");
+    expect(slides[0]).not.toContain("number}}");
   });
 
   it.each([
@@ -396,16 +456,6 @@ describe("PowerPoint template population", () => {
       code: "PPTX_MALFORMED_PLACEHOLDER",
       slide: slideXml([
         { id: 2, name: "Malformed", runs: [{ text: "{{client_name}" }] },
-      ]),
-    },
-    {
-      code: "PPTX_UNSUPPORTED_SPLIT_RUN_PLACEHOLDER",
-      slide: slideXml([
-        {
-          id: 2,
-          name: "Split",
-          runs: [{ text: "{{client_" }, { text: "name}}" }],
-        },
       ]),
     },
     {

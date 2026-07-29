@@ -73,6 +73,10 @@ describe("readWorksheetRecords", () => {
         sourceRows: [2, 4],
         worksheet: "Companies",
       });
+
+      await expect(
+        readWorksheetRecords(workbookPath, { headerRow: 1 }),
+      ).resolves.toMatchObject({ worksheet: "Companies" });
     } finally {
       await rm(directory, { force: true, recursive: true });
     }

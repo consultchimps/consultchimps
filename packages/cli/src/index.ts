@@ -68,13 +68,13 @@ interface PptxPopulateOptions {
   force?: boolean;
   headerRow?: number;
   output: string;
-  sheet: string;
+  sheet?: string;
   template: string;
-  templateSlide: number;
+  templateSlide?: number;
 }
 
 interface PptxInspectOptions {
-  templateSlide: number;
+  templateSlide?: number;
 }
 
 function positiveInteger(value: string): number {
@@ -306,8 +306,8 @@ const pptx = program
     "after",
     `
 Examples:
-  consultchimps pptx inspect-template profile.pptx --template-slide 1
-  consultchimps pptx populate --template profile.pptx --data clients.xlsx --sheet Clients --template-slide 1 -o profiles.pptx
+  consultchimps pptx inspect-template profile.pptx
+  consultchimps pptx populate --template profile.pptx --data clients.xlsx -o profiles.pptx
 
 Safety:
   Your source PowerPoint template and Excel workbook are not changed.
@@ -322,19 +322,20 @@ pptx
     "list text placeholders on one PowerPoint template slide without creating a file",
   )
   .argument("<template>", "the source .pptx template to inspect")
-  .requiredOption(
+  .option(
     "--template-slide <number>",
-    "template slide number, counted from 1",
+    "template slide number, counted from 1 (default: 1)",
     positiveInteger,
   )
   .addHelpText(
     "after",
     `
 Example:
-  consultchimps pptx inspect-template profile.pptx --template-slide 1
+  consultchimps pptx inspect-template profile.pptx
 
 The report identifies valid {{field_name}} placeholders, malformed placeholder
-braces, and placeholders split across PowerPoint text runs.
+braces, and unsupported placeholder placements. Split-run placeholders are
+supported.
 `,
   )
   .action(async (template: string, options: PptxInspectOptions) => {
@@ -378,10 +379,13 @@ pptx
     "source .pptx file containing {{field_name}} placeholders",
   )
   .requiredOption("--data <path>", "source .xlsx workbook containing the data")
-  .requiredOption("--sheet <name>", "exact worksheet name containing the data")
-  .requiredOption(
+  .option(
+    "--sheet <name>",
+    "exact worksheet name containing the data (default: first worksheet)",
+  )
+  .option(
     "--template-slide <number>",
-    "template slide number, counted from 1",
+    "template slide number, counted from 1 (default: 1)",
     positiveInteger,
   )
   .requiredOption(
@@ -401,11 +405,12 @@ pptx
     "after",
     `
 Example:
-  consultchimps pptx populate --template profile.pptx --data clients.xlsx --sheet Clients --template-slide 1 --output profiles.pptx
+  consultchimps pptx populate --template profile.pptx --data clients.xlsx --output profiles.pptx
 
 Put placeholders such as {{client_name}} or Revenue: {{revenue}} in ordinary
 text shapes on the template slide. Each nonempty row below the Excel header
-creates one slide, in worksheet order. Empty cells become empty text.
+creates one slide, in worksheet order. The first worksheet and first slide are
+used unless you select them. Empty cells become empty text.
 
 The output contains only the generated slides. Source files are never changed.
 `,
