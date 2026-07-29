@@ -86,6 +86,7 @@ Put behavior at the lowest reusable layer and keep the CLI as an adapter.
 | `packages/files`   | Input discovery and safe output-path handling                  |
 | `packages/tabular` | Runtime-neutral table models and table operations              |
 | `packages/xlsx`    | Excel workbook reading, writing, consolidation, and splitting  |
+| `packages/pptx`    | PowerPoint template inspection and population                  |
 | `packages/pdf`     | PDF splitting and merging                                      |
 | `packages/cli`     | Command parsing, option mapping, and user-facing CLI output    |
 | `apps/docs`        | Next.js and Fumadocs documentation site                        |
@@ -278,6 +279,7 @@ Test placement:
 - File discovery and collision tests belong with `packages/files`.
 - Runtime-neutral data tests belong with `packages/tabular`.
 - Excel behavior belongs with `packages/xlsx`.
+- PowerPoint behavior belongs with `packages/pptx`.
 - PDF behavior belongs with `packages/pdf`.
 - Argument parsing, help, exit status, stdout, stderr, and packaged command
   behavior belong with `packages/cli`.
@@ -361,6 +363,14 @@ Documentation and CLI help must evolve with the public interface.
 - Update `apps/docs` for user-facing operations, options, recipes, and public
   library APIs.
 - Update CLI help whenever command usage or options change.
+- For every added, removed, or renamed user-facing operation, audit and update
+  the homepage tool catalog, field-manual index, sidebar navigation, getting
+  started guide, operation guide, CLI reference, library guide, package READMEs,
+  and site metadata wherever they describe the affected capability.
+- Search for stale tool counts and incomplete category descriptions after
+  changing the catalog; a standalone guide is not sufficient discoverability.
+- Render the documentation site, verify affected pages and navigation visually,
+  and confirm that the production deployment serves the new content.
 - Keep examples executable and consistent across README, docs, and CLI help.
 - Explain defaults, overwrite behavior, output locations, and destructive
   implications.

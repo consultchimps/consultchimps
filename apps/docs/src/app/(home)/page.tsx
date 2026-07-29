@@ -2,8 +2,10 @@ import {
   ArrowRight,
   FileStack,
   GitMerge,
+  Presentation,
   ScanLine,
   ShieldCheck,
+  SplitSquareVertical,
   TableProperties,
   TerminalSquare,
 } from "lucide-react";
@@ -20,6 +22,22 @@ const tools = [
   },
   {
     number: "Tool 02",
+    title: "Split spreadsheets",
+    description:
+      "Create one focused Excel workbook per distinct value while keeping source workbooks unchanged.",
+    href: "/docs/tools/spreadsheet-split",
+    icon: SplitSquareVertical,
+  },
+  {
+    number: "Tool 03",
+    title: "Populate PowerPoint templates",
+    description:
+      "Turn a designed template slide and Excel records into a review-ready presentation, entirely locally.",
+    href: "/docs/tools/powerpoint-populate",
+    icon: Presentation,
+  },
+  {
+    number: "Tool 04",
     title: "Split PDF pages",
     description:
       "Turn a long PDF into predictable, zero-padded page files without sending the document anywhere.",
@@ -27,7 +45,7 @@ const tools = [
     icon: ScanLine,
   },
   {
-    number: "Tool 03",
+    number: "Tool 05",
     title: "Merge PDF packs",
     description:
       "Assemble source PDFs in resolved order and preserve every page in one clean deliverable.",
@@ -58,7 +76,7 @@ export default function HomePage() {
   return (
     <main className="manual-home flex-1">
       <section className="mx-auto grid w-full max-w-[1320px] gap-14 px-6 pb-24 pt-24 lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.68fr)] lg:items-end lg:px-10 lg:pb-32 lg:pt-32">
-        <div>
+        <div className="min-w-0">
           <div className="manual-kicker">Operations field manual · v0.1</div>
           <h1 className="manual-title mt-8">
             Less busywork.
@@ -66,27 +84,27 @@ export default function HomePage() {
             More <em>useful</em> work.
           </h1>
           <p className="manual-intro mt-8 max-w-2xl text-lg leading-8 text-fd-muted-foreground md:text-xl">
-            Durable PDF and spreadsheet tools for consultants who need
-            repeatable results, visible provenance, and no mystery uploads.
+            Durable spreadsheet, PowerPoint, and PDF tools for consultants who
+            need repeatable results, visible provenance, and no mystery uploads.
           </p>
           <div className="manual-actions mt-9 flex flex-wrap gap-3">
             <Link
               href="/docs"
-              className="inline-flex items-center gap-2 rounded-lg bg-fd-primary px-5 py-3 text-sm font-semibold text-fd-primary-foreground shadow-[3px_3px_0_var(--color-fd-foreground)] transition-transform hover:-translate-y-0.5"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-fd-primary px-5 py-3 text-sm font-semibold text-fd-primary-foreground shadow-[3px_3px_0_var(--color-fd-foreground)] transition-transform hover:-translate-y-0.5 sm:w-auto"
             >
               Open the field manual
               <ArrowRight className="size-4" />
             </Link>
             <Link
               href="/docs/getting-started"
-              className="inline-flex items-center rounded-lg border bg-fd-card px-5 py-3 text-sm font-semibold transition-colors hover:bg-fd-accent"
+              className="inline-flex w-full items-center justify-center rounded-lg border bg-fd-card px-5 py-3 text-sm font-semibold transition-colors hover:bg-fd-accent sm:w-auto"
             >
               Install from source
             </Link>
           </div>
         </div>
 
-        <div className="manual-command">
+        <div className="manual-command min-w-0">
           <div className="manual-command__bar">
             <span>field-note.sh</span>
             <span>Node 24 · local</span>
@@ -127,12 +145,12 @@ export default function HomePage() {
 
       <section className="mx-auto w-full max-w-[1320px] px-6 py-24 lg:px-10 lg:py-32">
         <div className="mb-10 flex flex-col justify-between gap-5 md:flex-row md:items-end">
-          <div>
+          <div className="min-w-0">
             <div className="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-fd-primary">
               The first kit
             </div>
             <h2 className="mt-3 max-w-2xl text-4xl font-bold tracking-[-0.05em] md:text-5xl">
-              Three chores. One predictable interface.
+              Five chores. One predictable interface.
             </h2>
           </div>
           <p className="max-w-md text-sm leading-6 text-fd-muted-foreground">
@@ -141,7 +159,7 @@ export default function HomePage() {
           </p>
         </div>
 
-        <div className="grid gap-5 md:grid-cols-3">
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
           {tools.map(({ number, title, description, href, icon: Icon }) => (
             <Link className="tool-card" href={href} key={title}>
               <span className="tool-card__number">{number}</span>

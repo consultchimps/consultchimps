@@ -32,7 +32,7 @@ export const metadata: Metadata = {
     template: "%s · ConsultChimps",
   },
   description:
-    "Durable, local-first PDF and spreadsheet tools for consultants and operations teams.",
+    "Durable, local-first spreadsheet, PowerPoint, and PDF tools for consultants and operations teams.",
   icons: {
     icon: "/favicon.png",
   },
