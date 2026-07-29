@@ -1,5 +1,6 @@
 import "./global.css";
 
+import { basePath } from "@/lib/shared";
 import { RootProvider } from "fumadocs-ui/provider/next";
 import type { Metadata } from "next";
 import {
@@ -34,7 +35,7 @@ export const metadata: Metadata = {
   description:
     "Durable, local-first spreadsheet, PowerPoint, and PDF tools for consultants and operations teams.",
   icons: {
-    icon: "/favicon.png",
+    icon: `${basePath}/favicon.png`,
   },
 };
 
@@ -46,7 +47,16 @@ export default function Layout({ children }: LayoutProps<"/">) {
       suppressHydrationWarning
     >
       <body className="flex min-h-screen flex-col">
-        <RootProvider>{children}</RootProvider>
+        <RootProvider
+          search={{
+            options: {
+              type: "static",
+              api: `${basePath}/static.json`,
+            },
+          }}
+        >
+          {children}
+        </RootProvider>
       </body>
     </html>
   );

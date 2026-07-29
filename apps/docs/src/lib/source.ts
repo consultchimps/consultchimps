@@ -1,4 +1,9 @@
-import { docsContentRoute, docsImageRoute, docsRoute } from "@/lib/shared";
+import {
+  basePath,
+  docsContentRoute,
+  docsImageRoute,
+  docsRoute,
+} from "@/lib/shared";
 import { docs } from "collections/server";
 import { lucideIconsPlugin } from "fumadocs-core/source/lucide-icons";
 import { loader } from "fumadocs-core/source";
@@ -15,6 +20,7 @@ export function getPageImageUrl(page: (typeof source)["$inferPage"]) {
   return {
     segments,
     url:
+      basePath +
       "/" +
       [page.locale, ...docsImageRoute.split("/"), ...segments]
         .filter(Boolean)
@@ -28,6 +34,7 @@ export function getPageMarkdownUrl(page: (typeof source)["$inferPage"]) {
   return {
     segments,
     url:
+      basePath +
       "/" +
       [page.locale, ...docsContentRoute.split("/"), ...segments]
         .filter(Boolean)
