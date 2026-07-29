@@ -43,6 +43,19 @@ export interface ReadWorkbookExcelTablesOptions {
   tables?: string[] | undefined;
 }
 
+export interface ReadWorksheetRecordsOptions {
+  headerRow?: number | undefined;
+  worksheet: string;
+}
+
+export interface WorksheetRecords {
+  columns: string[];
+  rows: Array<Record<string, string>>;
+  skippedEmptyRows: number;
+  sourceRows: number[];
+  worksheet: string;
+}
+
 export interface ConsolidateWorkbooksOptions extends ReadWorkbookOptions {
   addSourceColumns?: boolean | undefined;
   outputSheetName?: string | undefined;
@@ -160,6 +173,26 @@ function cellToPrimitive(cell: XLSX.CellObject | undefined): CellValue {
   return String(cell.w ?? cell.v);
 }
 
+function cellToDisplayText(cell: XLSX.CellObject | undefined): string {
+  if (!cell || cell.v === null || cell.v === undefined) {
+    return "";
+  }
+
+  if (typeof cell.w === "string") {
+    return cell.w;
+  }
+
+  if (cell.v instanceof Date) {
+    return cell.v.toISOString();
+  }
+
+  if (typeof cell.v === "boolean") {
+    return cell.v ? "TRUE" : "FALSE";
+  }
+
+  return String(cell.v);
+}
+
 function getCell(
   worksheet: XLSX.WorkSheet,
   rowIndex: number,
@@ -213,7 +246,11 @@ function worksheetToTable(
 
   const range = XLSX.utils.decode_range(reference);
   const headerRowIndex = findHeaderRow(worksheet, range, configuredHeaderRow);
-  if (headerRowIndex === undefined || headerRowIndex > range.e.r) {
+  if (
+    headerRowIndex === undefined ||
+    headerRowIndex < range.s.r ||
+    headerRowIndex > range.e.r
+  ) {
     return undefined;
   }
 
@@ -417,6 +454,159 @@ export async function readWorkbookTables(
   }
 
   return tables;
+}
+
+export async function readWorksheetRecords(
+  filePath: string,
+  options: ReadWorksheetRecordsOptions,
+): Promise<WorksheetRecords> {
+  const absolutePath = path.resolve(filePath);
+  let workbook: XLSX.WorkBook;
+
+  try {
+    workbook = XLSX.read(await readFile(absolutePath), {
+      cellDates: true,
+      cellText: true,
+      dense: false,
+      type: "buffer",
+    });
+  } catch (error) {
+    throw new ConsultChimpsError(
+      "XLSX_READ_FAILED",
+      `Could not read workbook: ${absolutePath}`,
+      {
+        cause: error,
+        details: { filePath: absolutePath },
+      },
+    );
+  }
+
+  const requestedWorksheet = options.worksheet.trim();
+  const worksheetName = workbook.SheetNames.find(
+    (candidate) =>
+      candidate.toLocaleLowerCase() === requestedWorksheet.toLocaleLowerCase(),
+  );
+  if (!worksheetName) {
+    throw new ConsultChimpsError(
+      "XLSX_WORKSHEET_NOT_FOUND",
+      `Worksheet "${options.worksheet}" was not found in the workbook.`,
+      {
+        details: {
+          availableWorksheets: workbook.SheetNames,
+          worksheet: options.worksheet,
+        },
+      },
+    );
+  }
+
+  const worksheet = workbook.Sheets[worksheetName];
+  const reference = worksheet?.["!ref"];
+  if (!worksheet || !reference) {
+    throw new ConsultChimpsError(
+      "XLSX_INVALID_HEADER_ROW",
+      `Worksheet "${worksheetName}" does not contain a header row.`,
+      {
+        details: {
+          headerRow: options.headerRow,
+          worksheet: worksheetName,
+        },
+      },
+    );
+  }
+
+  const range = XLSX.utils.decode_range(reference);
+  const headerRowIndex = findHeaderRow(worksheet, range, options.headerRow);
+  if (headerRowIndex === undefined || headerRowIndex > range.e.r) {
+    throw new ConsultChimpsError(
+      "XLSX_INVALID_HEADER_ROW",
+      `Worksheet "${worksheetName}" does not contain the selected header row.`,
+      {
+        details: {
+          headerRow: options.headerRow,
+          worksheet: worksheetName,
+        },
+      },
+    );
+  }
+
+  const columns: string[] = [];
+  for (
+    let columnIndex = range.s.c;
+    columnIndex <= range.e.c;
+    columnIndex += 1
+  ) {
+    const header = cellToDisplayText(
+      getCell(worksheet, headerRowIndex, columnIndex),
+    ).trim();
+    if (!header) {
+      throw new ConsultChimpsError(
+        "XLSX_EMPTY_HEADER",
+        `Worksheet "${worksheetName}" contains an empty column header.`,
+        {
+          details: {
+            column: columnIndex + 1,
+            headerRow: headerRowIndex + 1,
+            worksheet: worksheetName,
+          },
+        },
+      );
+    }
+    columns.push(header);
+  }
+
+  const duplicateHeaders = columns.filter(
+    (column, index) => columns.indexOf(column) !== index,
+  );
+  if (duplicateHeaders.length > 0) {
+    throw new ConsultChimpsError(
+      "XLSX_DUPLICATE_HEADER",
+      `Worksheet "${worksheetName}" contains duplicate column headers.`,
+      {
+        details: {
+          duplicateHeaders: [...new Set(duplicateHeaders)],
+          headerRow: headerRowIndex + 1,
+          worksheet: worksheetName,
+        },
+      },
+    );
+  }
+
+  const rows: Array<Record<string, string>> = [];
+  const sourceRows: number[] = [];
+  let skippedEmptyRows = 0;
+
+  for (
+    let rowIndex = headerRowIndex + 1;
+    rowIndex <= range.e.r;
+    rowIndex += 1
+  ) {
+    const cells = columns.map((_, columnOffset) =>
+      getCell(worksheet, rowIndex, range.s.c + columnOffset),
+    );
+    const isEmpty = cells.every((cell) => {
+      const value = cellToPrimitive(cell);
+      return value === null || value === "";
+    });
+    if (isEmpty) {
+      skippedEmptyRows += 1;
+      continue;
+    }
+
+    const row: Record<string, string> = {};
+    columns.forEach((column, columnOffset) => {
+      row[column] = cellToDisplayText(cells[columnOffset]);
+    });
+    rows.push(row);
+    sourceRows.push(rowIndex + 1);
+  }
+
+  return {
+    columns,
+    rows,
+    skippedEmptyRows,
+    sourceRows,
+    worksheet: worksheetName,
+  };
 }
 
 export async function readWorkbookExcelTables(

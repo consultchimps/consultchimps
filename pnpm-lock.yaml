@@ -111,6 +111,9 @@ importers:
       '@consultchimps/pdf':
         specifier: workspace:*
         version: link:../pdf
+      '@consultchimps/pptx':
+        specifier: workspace:*
+        version: link:../pptx
       '@consultchimps/xlsx':
         specifier: workspace:*
         version: link:../xlsx
@@ -118,6 +121,9 @@ importers:
         specifier: 14.0.3
         version: 14.0.3
     devDependencies:
+      jszip:
+        specifier: 3.10.1
+        version: 3.10.1
       pdf-lib:
         specifier: 1.17.1
         version: 1.17.1
@@ -147,6 +153,25 @@ importers:
       pdf-lib:
         specifier: 1.17.1
         version: 1.17.1
+
+  packages/pptx:
+    dependencies:
+      '@consultchimps/core':
+        specifier: workspace:*
+        version: link:../core
+      '@consultchimps/files':
+        specifier: workspace:*
+        version: link:../files
+      '@consultchimps/xlsx':
+        specifier: workspace:*
+        version: link:../xlsx
+      jszip:
+        specifier: 3.10.1
+        version: 3.10.1
+    devDependencies:
+      xlsx:
+        specifier: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
+        version: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
 
   packages/tabular:
     dependencies:

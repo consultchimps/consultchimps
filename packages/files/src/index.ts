@@ -24,6 +24,17 @@ function normalizeExtensions(
   );
 }
 
+function normalizeGlobPattern(input: string): string {
+  return path.sep === "\\" ? input.replaceAll("\\", "/") : input;
+}
+
+function filesystemPathKey(filePath: string): string {
+  const resolved = path.resolve(filePath);
+  return process.platform === "win32" || process.platform === "darwin"
+    ? resolved.toLowerCase()
+    : resolved;
+}
+
 export async function discoverFiles(
   inputs: string[],
   options: DiscoverFilesOptions = {},
@@ -59,7 +70,7 @@ export async function discoverFiles(
         continue;
       }
     } catch {
-      const matches = await fg(input, {
+      const matches = await fg(normalizeGlobPattern(input), {
         absolute: true,
         cwd,
         onlyFiles: true,
@@ -129,11 +140,10 @@ export function refuseInputOverwrite(
   inputPaths: string[],
 ): void {
   const resolvedOutput = path.resolve(outputPath);
-  const resolvedInputs = new Set(
-    inputPaths.map((inputPath) => path.resolve(inputPath)),
-  );
+  const outputKey = filesystemPathKey(resolvedOutput);
+  const inputKeys = new Set(inputPaths.map(filesystemPathKey));
 
-  if (resolvedInputs.has(resolvedOutput)) {
+  if (inputKeys.has(outputKey)) {
     throw new ConsultChimpsError(
       "FILES_INPUT_OVERWRITE",
       `Refusing to overwrite an input file: ${resolvedOutput}`,

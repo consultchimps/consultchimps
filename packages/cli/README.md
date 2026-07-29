@@ -1,6 +1,6 @@
 # consultchimps
 
-Local-first spreadsheet and PDF operations for consultants.
+Local-first spreadsheet, PowerPoint, and PDF operations for consultants.
 
 Requires Node.js 24.
 
@@ -36,6 +36,13 @@ consultchimps sheets split clients.xlsx \
   --column Region \
   --preserve-workbook \
   --output outputs/by-region
+
+consultchimps pptx populate \
+  --template profile-template.pptx \
+  --data companies.xlsx \
+  --sheet Companies \
+  --template-slide 1 \
+  --output outputs/company-profiles.pptx
 
 consultchimps pdf split report.pdf --output outputs/pages
 

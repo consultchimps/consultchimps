@@ -13,6 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import JSZip from "jszip";
 import { PDFDocument } from "pdf-lib";
 import { afterEach, describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
@@ -100,6 +101,34 @@ async function writeWorkbook(
   );
 }
 
+async function writePowerPointTemplate(filePath: string): Promise<void> {
+  const zip = new JSZip();
+  zip.file(
+    "[Content_Types].xml",
+    '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/></Types>',
+  );
+  zip.file(
+    "_rels/.rels",
+    '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/></Relationships>',
+  );
+  zip.file(
+    "ppt/presentation.xml",
+    '<?xml version="1.0" encoding="UTF-8"?><p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst></p:presentation>',
+  );
+  zip.file(
+    "ppt/_rels/presentation.xml.rels",
+    '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/></Relationships>',
+  );
+  zip.file(
+    "ppt/slides/slide1.xml",
+    '<?xml version="1.0" encoding="UTF-8"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:sp><p:nvSpPr><p:cNvPr id="2" name="Profile"/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:p><a:r><a:rPr b="1"/><a:t>{{client_name}}: {{revenue}}</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>',
+  );
+  await writeFile(
+    filePath,
+    await zip.generateAsync({ compression: "DEFLATE", type: "nodebuffer" }),
+  );
+}
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories
@@ -109,40 +138,123 @@ afterEach(async () => {
 });
 
 describe("consultchimps CLI", () => {
-  it("shows output options in top-level and command help", async () => {
-    const topLevelHelp = await runCli(["--help"]);
-    expect(topLevelHelp.stdout).toContain(
-      'consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx',
-    );
-    expect(topLevelHelp.stdout).toContain(
-      "consultchimps pdf split report.pdf -o pages",
-    );
+  it(
+    "shows output options in top-level and command help",
+    { timeout: 30_000 },
+    async () => {
+      const topLevelHelp = await runCli(["--help"]);
+      expect(topLevelHelp.stdout).toContain(
+        'consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx',
+      );
+      expect(topLevelHelp.stdout).toContain(
+        "consultchimps pdf split report.pdf -o pages",
+      );
+      expect(topLevelHelp.stdout).toContain("consultchimps pptx populate");
 
-    const sheetsHelp = await runCli(["sheets", "--help"]);
-    expect(sheetsHelp.stdout).toContain(
-      "consultchimps sheets split clients.xlsx -c Region -o by-region",
-    );
+      const sheetsHelp = await runCli(["sheets", "--help"]);
+      expect(sheetsHelp.stdout).toContain(
+        "consultchimps sheets split clients.xlsx -c Region -o by-region",
+      );
 
-    const consolidateHelp = await runCli(["sheets", "consolidate", "--help"]);
-    expect(consolidateHelp.stdout).toContain("-o, --output <path>");
-    expect(consolidateHelp.stdout).toContain(
-      "where to save the new consolidated .xlsx workbook",
-    );
-    expect(consolidateHelp.stdout).toContain("Examples:");
-    expect(consolidateHelp.stdout).toContain("What happens:");
-    expect(consolidateHelp.stdout).toContain(
-      "Your original workbooks are never changed.",
-    );
+      const consolidateHelp = await runCli(["sheets", "consolidate", "--help"]);
+      expect(consolidateHelp.stdout).toContain("-o, --output <path>");
+      expect(consolidateHelp.stdout).toContain(
+        "where to save the new consolidated .xlsx workbook",
+      );
+      expect(consolidateHelp.stdout).toContain("Examples:");
+      expect(consolidateHelp.stdout).toContain("What happens:");
+      expect(consolidateHelp.stdout).toContain(
+        "Your original workbooks are never changed.",
+      );
 
-    const pdfSplitHelp = await runCli(["pdf", "split", "--help"]);
-    expect(pdfSplitHelp.stdout).toContain("-o, --output <directory>");
-    expect(pdfSplitHelp.stdout).toContain(
-      "folder where the separate page files will be saved",
+      const pdfSplitHelp = await runCli(["pdf", "split", "--help"]);
+      expect(pdfSplitHelp.stdout).toContain("-o, --output <directory>");
+      expect(pdfSplitHelp.stdout).toContain(
+        "folder where the separate page files will be saved",
+      );
+      expect(pdfSplitHelp.stdout).toContain(
+        "consultchimps pdf split report.pdf -o pages",
+      );
+      expect(pdfSplitHelp.stdout).toContain("What happens:");
+
+      const pptxHelp = await runCli(["pptx", "--help"]);
+      expect(pptxHelp.stdout).toContain("pptx inspect-template");
+      expect(pptxHelp.stdout).toContain("pptx populate");
+
+      const pptxPopulateHelp = await runCli(["pptx", "populate", "--help"]);
+      expect(pptxPopulateHelp.stdout).toContain("--template <path>");
+      expect(pptxPopulateHelp.stdout).toContain("--data <path>");
+      expect(pptxPopulateHelp.stdout).toContain("{{field_name}}");
+      expect(pptxPopulateHelp.stdout).toContain(
+        "Source files are never changed.",
+      );
+    },
+  );
+
+  it("inspects and populates a PowerPoint template through the built command", async () => {
+    const directory = await createTemporaryDirectory();
+    const template = path.join(directory, "inputs", "profile.pptx");
+    const data = path.join(directory, "inputs", "companies.xlsx");
+    const output = path.join(directory, "outputs", "profiles.pptx");
+    await writePowerPointTemplate(template);
+    await writeWorkbook(data, [
+      [
+        "Companies",
+        [
+          ["client_name", "revenue"],
+          ["Company A", "$12.4M"],
+          ["Company B", "$8.7M"],
+        ],
+      ],
+    ]);
+
+    const inspection = await runCli([
+      "--json",
+      "pptx",
+      "inspect-template",
+      template,
+      "--template-slide",
+      "1",
+    ]);
+    expect(JSON.parse(inspection.stdout)).toMatchObject({
+      placeholderOccurrences: 2,
+      placeholders: [
+        { name: "client_name", occurrences: 1 },
+        { name: "revenue", occurrences: 1 },
+      ],
+      slideNumber: 1,
+    });
+
+    const populated = await runCli([
+      "--json",
+      "pptx",
+      "populate",
+      "--template",
+      template,
+      "--data",
+      data,
+      "--sheet",
+      "Companies",
+      "--template-slide",
+      "1",
+      "--output",
+      output,
+    ]);
+    expect(JSON.parse(populated.stdout)).toMatchObject({
+      metrics: {
+        generatedSlides: 2,
+        replacements: 4,
+      },
+      operation: "pptx.populate",
+    });
+    const outputZip = await JSZip.loadAsync(await readFile(output));
+    const generatedText = await Promise.all(
+      ["ppt/slides/slide2.xml", "ppt/slides/slide3.xml"].map((entry) =>
+        outputZip.file(entry)!.async("string"),
+      ),
     );
-    expect(pdfSplitHelp.stdout).toContain(
-      "consultchimps pdf split report.pdf -o pages",
-    );
-    expect(pdfSplitHelp.stdout).toContain("What happens:");
+    expect(generatedText[0]).toContain("Company A: $12.4M");
+    expect(generatedText[1]).toContain("Company B: $8.7M");
   });
 
   it("explains successful tasks and recoverable errors in plain language", async () => {
