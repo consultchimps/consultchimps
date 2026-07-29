@@ -376,10 +376,17 @@ kbd {
 
 @media (max-width: 640px) {
   .manual-title {
-    font-size: clamp(3.25rem, 18vw, 5rem);
+    font-size: clamp(3rem, 16vw, 4.25rem);
+    line-height: 0.9;
+  }
+
+  .manual-title em {
+    display: block;
   }
 
   .manual-command {
+    width: 100%;
+    min-width: 0;
     box-shadow: 5px 5px 0 hsl(2 66% 40%);
   }
 }
