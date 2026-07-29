@@ -5,7 +5,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rashoodz/chimpcons.git",
+    "url": "git+https://github.com/rashoodz/consultchimps.git",
     "directory": "packages/files"
   },
   "type": "module",

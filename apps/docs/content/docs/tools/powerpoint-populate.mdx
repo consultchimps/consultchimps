@@ -1,0 +1,120 @@
+---
+title: Populate a PowerPoint template
+description:
+  Create one formatted PowerPoint slide for every nonempty Excel record.
+icon: Presentation
+---
+
+Use a designed `.pptx` slide as a repeatable template and populate its text from
+an `.xlsx` worksheet. Processing is deterministic and local: ConsultChimps does
+not upload, retain, or modify either source file.
+
+## Prepare the template slide
+
+Add placeholders to ordinary PowerPoint text shapes with double braces:
+
+```text
+{{client_name}}
+Client: {{client_name}}
+{{client_name}} generated {{revenue}} in {{year}}.
+```
+
+A shape may contain static text, multiple placeholders, or repeated
+placeholders. Spaces immediately inside the braces are trimmed, so
+`{{ revenue }}` matches the `revenue` header. Matching is otherwise exact and
+case-sensitive. PowerPoint object names do not matter.
+
+## Prepare the worksheet
+
+The selected header row defines the placeholder fields:
+
+| client_name | revenue | growth_rate |
+| ----------- | ------- | ----------- |
+| Company A   | $12.4M  | 8.2%        |
+| Company B   | $8.7M   | -2.1%       |
+
+Every subsequent row with at least one cell that is neither empty nor an empty
+string is an Excel record. Completely empty rows are skipped and reported. Each
+record creates one output slide in worksheet order.
+
+ConsultChimps uses Excel's stored display text when available. This preserves
+deterministic workbook formats such as percentages and dates without applying
+the computer's locale. Strings, numbers, dates, booleans, and formula cached
+values are supported when SheetJS can read them. An empty cell for a valid
+placeholder becomes empty text.
+
+Headers are trimmed. Empty and exactly duplicated headers are rejected. Extra
+worksheet columns are allowed, but every template placeholder must exactly match
+a header.
+
+## Inspect the template
+
+```bash
+consultchimps pptx inspect-template profile-template.pptx \
+  --template-slide 1
+```
+
+Inspection reports placeholder names, occurrence counts, malformed braces,
+unsupported placements, and placeholders split across text runs.
+
+## Generate the presentation
+
+```bash
+consultchimps pptx populate \
+  --template profile-template.pptx \
+  --data companies.xlsx \
+  --sheet Companies \
+  --template-slide 1 \
+  --header-row 1 \
+  --output company-profiles.pptx
+```
+
+Slide numbers and header rows are counted from 1. When `--header-row` is
+omitted, the first nonempty row in the worksheet is used.
+
+The output contains only populated copies of the selected template slide. The
+original template slide and unrelated template slides are not included in the
+visible slide list. Existing output files are protected; add `--force` only when
+replacing the named output is intentional.
+
+## Formatting behavior
+
+The selected slide's Open XML is cloned rather than recreated. For supported
+placeholders, ConsultChimps changes only the text node and retains the run's
+font properties, the paragraph properties, and the shape's geometry, rotation,
+fill, line, margins, and alignment. Static text around placeholders remains in
+the same run. Text is not automatically shrunk, truncated, or reformatted, so
+review long values after generation.
+
+PowerPoint can divide visually continuous text into several internal text runs,
+often after applying mixed formatting. This first version replaces a placeholder
+only when the complete `{{field_name}}` text is inside one run. A placeholder
+split across runs is rejected before output is written. Re-enter the complete
+placeholder with one consistent format in PowerPoint, then run the inspection
+command again.
+
+## Initial limitations
+
+This release does not populate images, charts, tables, SmartArt, or formulas. It
+does not evaluate expressions, apply conditional visibility, populate multiple
+template-slide groups, resize fonts, truncate text, or edit animations.
+Placeholders in tables, charts, SmartArt, and other non-shape text locations are
+rejected.
+
+The operation preserves ordinary slide content by cloning the selected slide and
+its relationships, but it does not claim compatibility with every PowerPoint
+extension or third-party object type. Review presentations that use specialized
+add-ins, media, comments, or advanced animation metadata.
+
+## Troubleshooting
+
+`PPTX_MISSING_EXCEL_COLUMN` means a placeholder has no exact worksheet header.
+For example, `{{growth_rate}}` does not match `growth`. Rename the header or
+placeholder, preserving case, and try again.
+
+`PPTX_UNSUPPORTED_SPLIT_RUN_PLACEHOLDER` means PowerPoint stored one placeholder
+across several formatted runs. Re-enter and consistently format the complete
+placeholder.
+
+`FILES_OUTPUT_EXISTS` protects an existing presentation. Choose a new output
+path, or use `--force` after confirming the existing file can be replaced.

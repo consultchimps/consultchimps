@@ -2,5 +2,11 @@
   "title": "Tools",
   "icon": "Wrench",
   "defaultOpen": true,
-  "pages": ["spreadsheets", "spreadsheet-split", "pdf-split", "pdf-merge"]
+  "pages": [
+    "spreadsheets",
+    "spreadsheet-split",
+    "powerpoint-populate",
+    "pdf-split",
+    "pdf-merge"
+  ]
 }
