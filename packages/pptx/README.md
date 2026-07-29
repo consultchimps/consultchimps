@@ -8,9 +8,7 @@ import { populatePowerPointTemplate } from "@consultchimps/pptx";
 const result = await populatePowerPointTemplate({
   templatePath: "profile-template.pptx",
   workbookPath: "companies.xlsx",
-  worksheet: "Companies",
   headerRow: 1,
-  templateSlide: 1,
   outputPath: "company-profiles.pptx",
 });
 ```
@@ -34,11 +32,11 @@ properties without coupling the public API to a presentation-generation library.
 
 ## Initial limitations
 
-- Only placeholders entirely inside one text run in an ordinary PowerPoint text
-  shape are replaced.
-- A placeholder split across runs is detected and rejected before output is
-  written. Re-entering the complete placeholder with consistent formatting in
-  PowerPoint usually places it in one run.
+- Placeholders in ordinary PowerPoint text shapes may span adjacent text runs;
+  the replacement is written into the first run and the remaining placeholder
+  fragments are cleared while preserving run formatting.
+- The first template slide and first worksheet are selected by default. Use
+  `templateSlide` or `worksheet` to select another one.
 - Placeholders in tables, charts, SmartArt, and other non-shape text locations
   are rejected.
 - The output contains only generated copies of the selected template slide.

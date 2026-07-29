@@ -22,7 +22,7 @@ import { readWorksheetRecords } from "@consultchimps/xlsx";
 import JSZip from "jszip";
 
 export interface InspectPowerPointTemplateOptions {
-  templateSlide: number;
+  templateSlide?: number | undefined;
 }
 
 export interface PowerPointPlaceholder {
@@ -44,9 +44,9 @@ export interface PopulatePowerPointTemplateOptions {
   outputPath: string;
   overwrite?: boolean | undefined;
   templatePath: string;
-  templateSlide: number;
+  templateSlide?: number | undefined;
   workbookPath: string;
-  worksheet: string;
+  worksheet?: string | undefined;
 }
 
 interface PresentationPackage {
@@ -84,6 +84,7 @@ const SLIDE_CONTENT_TYPE =
   "application/vnd.openxmlformats-officedocument.presentationml.slide+xml";
 const PRESENTATION_MEDIA_TYPE =
   "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+const DEFAULT_TEMPLATE_SLIDE = 1;
 const FIXED_ZIP_DATE = new Date("1980-01-01T00:00:00.000Z");
 const TEXT_RUN_PATTERN =
   /<a:t(?<attributes>\s[^>]*)?>(?<text>[\s\S]*?)<\/a:t>/gu;
@@ -182,32 +183,11 @@ function inspectShape(shapeXml: string): ShapeInspection {
     xmlDecode(match.groups?.text ?? ""),
   );
   const combinedText = runs.join("");
-  const matches = placeholderMatches(combinedText);
-  const runBoundaries: Array<{ end: number; start: number }> = [];
-  let offset = 0;
-
-  for (const run of runs) {
-    runBoundaries.push({ end: offset + run.length, start: offset });
-    offset += run.length;
-  }
-
-  const occurrences: string[] = [];
-  const splitRunPlaceholders: string[] = [];
-  for (const match of matches) {
-    const containingRun = runBoundaries.find(
-      (run) => match.start >= run.start && match.end <= run.end,
-    );
-    if (containingRun) {
-      occurrences.push(match.name);
-    } else {
-      splitRunPlaceholders.push(match.name);
-    }
-  }
 
   return {
     malformed: hasMalformedPlaceholder(combinedText),
-    occurrences,
-    splitRunPlaceholders,
+    occurrences: placeholderMatches(combinedText).map((match) => match.name),
+    splitRunPlaceholders: [],
   };
 }
 
@@ -401,6 +381,7 @@ export async function inspectPowerPointTemplate(
   templatePath: string,
   options: InspectPowerPointTemplateOptions,
 ): Promise<PowerPointTemplateInspection> {
+  const templateSlide = options.templateSlide ?? DEFAULT_TEMPLATE_SLIDE;
   const absoluteTemplate = path.resolve(templatePath);
   if (path.extname(absoluteTemplate).toLocaleLowerCase() !== ".pptx") {
     throw new ConsultChimpsError(
@@ -426,13 +407,13 @@ export async function inspectPowerPointTemplate(
 
   const presentation = await loadPresentationPackage(
     templateBytes,
-    options.templateSlide,
+    templateSlide,
   );
   const slideXml = await readRequiredZipText(
     presentation.zip,
     presentation.selectedSlidePath,
   );
-  return publicInspection(inspectSlideXml(slideXml), options.templateSlide);
+  return publicInspection(inspectSlideXml(slideXml), templateSlide);
 }
 
 function validateTemplateInspection(
@@ -488,34 +469,74 @@ function replaceSlideText(
   values: Readonly<Record<string, string>>,
 ): { replacements: number; xml: string } {
   let replacements = 0;
-  const xml = slideXml.replace(
-    TEXT_RUN_PATTERN,
-    (entireMatch: string, ...arguments_: unknown[]) => {
-      const groups = arguments_.at(-1) as
-        { attributes?: string; text?: string } | undefined;
-      const originalText = xmlDecode(groups?.text ?? "");
-      const replacedText = originalText.replace(
-        PLACEHOLDER_PATTERN,
-        (placeholder, field: string) => {
-          const name = field.trim();
-          if (!(name in values)) {
-            return placeholder;
-          }
+  const xml = slideXml.replace(SHAPE_PATTERN, (shapeXml) => {
+    const runs = [...shapeXml.matchAll(TEXT_RUN_PATTERN)].map((match) => ({
+      attributes: match.groups?.attributes ?? "",
+      entire: match[0],
+      text: xmlDecode(match.groups?.text ?? ""),
+    }));
+    if (runs.length === 0) {
+      return shapeXml;
+    }
+
+    const combinedText = runs.map((run) => run.text).join("");
+    let textOffset = 0;
+    const runBoundaries = runs.map((run) => {
+      const start = textOffset;
+      textOffset += run.text.length;
+      return { end: textOffset, start };
+    });
+    const replacementsForText = placeholderMatches(combinedText).filter(
+      (match) => match.name in values,
+    );
+    if (replacementsForText.length === 0) {
+      return shapeXml;
+    }
+
+    const replacementsByRun = runs.map((run, index) => {
+      const boundary = runBoundaries[index];
+      if (!boundary) {
+        return run.entire;
+      }
+      let cursor = boundary.start;
+      let text = "";
+      for (const match of replacementsForText) {
+        if (match.end <= boundary.start || match.start >= boundary.end) {
+          continue;
+        }
+        if (cursor < Math.min(match.start, boundary.end)) {
+          text += combinedText.slice(
+            cursor,
+            Math.min(match.start, boundary.end),
+          );
+        }
+        if (match.start >= boundary.start && match.start < boundary.end) {
+          text += values[match.name] ?? "";
           replacements += 1;
-          return values[name] ?? "";
-        },
-      );
-      if (replacedText === originalText) {
-        return entireMatch;
+        }
+        cursor = Math.max(cursor, match.end);
+        if (cursor >= boundary.end) {
+          break;
+        }
+      }
+      if (cursor < boundary.end) {
+        text += combinedText.slice(cursor, boundary.end);
       }
 
-      let attributes = groups?.attributes ?? "";
-      if (/^\s|\s$/u.test(replacedText) && !/\bxml:space=/u.test(attributes)) {
+      let attributes = run.attributes;
+      if (/^\s|\s$/u.test(text) && !/\bxml:space=/u.test(attributes)) {
         attributes += ' xml:space="preserve"';
       }
-      return `<a:t${attributes}>${xmlEncode(replacedText)}</a:t>`;
-    },
-  );
+      return `<a:t${attributes}>${xmlEncode(text)}</a:t>`;
+    });
+
+    let runIndex = 0;
+    return shapeXml.replace(TEXT_RUN_PATTERN, () => {
+      const replacement = replacementsByRun[runIndex];
+      runIndex += 1;
+      return replacement ?? "";
+    });
+  });
   return { replacements, xml };
 }
 
@@ -863,9 +884,10 @@ export async function populatePowerPointTemplate(
     );
 
     const templateBytes = await readFile(absoluteTemplate);
+    const templateSlide = options.templateSlide ?? DEFAULT_TEMPLATE_SLIDE;
     const presentation = await loadPresentationPackage(
       templateBytes,
-      options.templateSlide,
+      templateSlide,
     );
     const selectedSlideXml = await readRequiredZipText(
       presentation.zip,
@@ -873,7 +895,7 @@ export async function populatePowerPointTemplate(
     );
     const inspection = publicInspection(
       inspectSlideXml(selectedSlideXml),
-      options.templateSlide,
+      templateSlide,
     );
     validateTemplateInspection(inspection);
 

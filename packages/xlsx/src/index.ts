@@ -45,7 +45,7 @@ export interface ReadWorkbookExcelTablesOptions {
 
 export interface ReadWorksheetRecordsOptions {
   headerRow?: number | undefined;
-  worksheet: string;
+  worksheet?: string | undefined;
 }
 
 export interface WorksheetRecords {
@@ -481,15 +481,20 @@ export async function readWorksheetRecords(
     );
   }
 
-  const requestedWorksheet = options.worksheet.trim();
-  const worksheetName = workbook.SheetNames.find(
-    (candidate) =>
-      candidate.toLocaleLowerCase() === requestedWorksheet.toLocaleLowerCase(),
-  );
+  const requestedWorksheet = options.worksheet?.trim();
+  const worksheetName = requestedWorksheet
+    ? workbook.SheetNames.find(
+        (candidate) =>
+          candidate.toLocaleLowerCase() ===
+          requestedWorksheet.toLocaleLowerCase(),
+      )
+    : workbook.SheetNames[0];
   if (!worksheetName) {
     throw new ConsultChimpsError(
       "XLSX_WORKSHEET_NOT_FOUND",
-      `Worksheet "${options.worksheet}" was not found in the workbook.`,
+      requestedWorksheet
+        ? `Worksheet "${options.worksheet}" was not found in the workbook.`
+        : "The workbook does not contain a worksheet.",
       {
         details: {
           availableWorksheets: workbook.SheetNames,

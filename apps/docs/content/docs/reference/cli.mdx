@@ -97,13 +97,13 @@ Options:
 ```text
 consultchimps pptx inspect-template [options] <template>
 
-Required:
-  --template-slide <number>  one-based template slide number
+Options:
+  --template-slide <number>  one-based template slide (default: 1)
 ```
 
 The report lists valid placeholder names and occurrence counts, malformed
-placeholder locations, unsupported placements, and placeholders split across
-PowerPoint text runs.
+placeholder locations, and unsupported placements. Split-run placeholders are
+supported.
 
 ## PowerPoint template population
 
@@ -113,11 +113,11 @@ consultchimps pptx populate [options]
 Required:
   --template <path>          source .pptx template
   --data <path>              source .xlsx workbook
-  --sheet <name>             worksheet containing the records
-  --template-slide <number>  one-based template slide number
   -o, --output <path>        output .pptx presentation
 
 Options:
+  --sheet <name>             worksheet containing the records (default: first)
+  --template-slide <number>  one-based template slide (default: 1)
   --header-row <number>      one-based row containing field names
   -f, --force                replace an existing output presentation
 ```

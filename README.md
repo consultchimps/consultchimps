@@ -115,10 +115,10 @@ the selected table's rows.
 
 PowerPoint population reads `{{field_name}}` placeholders from one selected
 template slide and creates one populated slide per nonempty Excel record. The
-output contains only generated slides, in worksheet order. Ordinary text-shape
-formatting is retained where the placeholder occupies one PowerPoint text run;
-split-run placeholders are rejected before writing. Source presentations and
-workbooks are never modified.
+first slide and first worksheet are used by default, and both can be selected
+explicitly. Placeholders may span adjacent PowerPoint text runs, while ordinary
+text-shape formatting is retained. The output contains only generated slides, in
+worksheet order. Source presentations and workbooks are never modified.
 
 ## Design principles
 

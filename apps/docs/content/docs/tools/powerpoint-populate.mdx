@@ -47,15 +47,18 @@ Headers are trimmed. Empty and exactly duplicated headers are rejected. Extra
 worksheet columns are allowed, but every template placeholder must exactly match
 a header.
 
+The first worksheet is selected by default. Set `--sheet` when the records are
+on another worksheet.
+
 ## Inspect the template
 
 ```bash
-consultchimps pptx inspect-template profile-template.pptx \
-  --template-slide 1
+consultchimps pptx inspect-template profile-template.pptx
 ```
 
-Inspection reports placeholder names, occurrence counts, malformed braces,
-unsupported placements, and placeholders split across text runs.
+Inspection reports placeholder names, occurrence counts, malformed braces, and
+unsupported placements. Placeholders split across adjacent text runs are
+supported.
 
 ## Generate the presentation
 
@@ -63,14 +66,13 @@ unsupported placements, and placeholders split across text runs.
 consultchimps pptx populate \
   --template profile-template.pptx \
   --data companies.xlsx \
-  --sheet Companies \
-  --template-slide 1 \
   --header-row 1 \
   --output company-profiles.pptx
 ```
 
-Slide numbers and header rows are counted from 1. When `--header-row` is
-omitted, the first nonempty row in the worksheet is used.
+Slide numbers and header rows are counted from 1. The first slide and first
+worksheet are used unless `--template-slide` or `--sheet` is supplied. When
+`--header-row` is omitted, the first nonempty row in the worksheet is used.
 
 The output contains only populated copies of the selected template slide. The
 original template slide and unrelated template slides are not included in the
@@ -87,11 +89,10 @@ the same run. Text is not automatically shrunk, truncated, or reformatted, so
 review long values after generation.
 
 PowerPoint can divide visually continuous text into several internal text runs,
-often after applying mixed formatting. This first version replaces a placeholder
-only when the complete `{{field_name}}` text is inside one run. A placeholder
-split across runs is rejected before output is written. Re-enter the complete
-placeholder with one consistent format in PowerPoint, then run the inspection
-command again.
+often after applying mixed formatting. ConsultChimps joins adjacent text runs
+within a shape for placeholder matching, writes the replacement into the first
+run, and clears the remaining placeholder fragments while preserving each run's
+formatting.
 
 ## Initial limitations
 
@@ -111,10 +112,6 @@ add-ins, media, comments, or advanced animation metadata.
 `PPTX_MISSING_EXCEL_COLUMN` means a placeholder has no exact worksheet header.
 For example, `{{growth_rate}}` does not match `growth`. Rename the header or
 placeholder, preserving case, and try again.
-
-`PPTX_UNSUPPORTED_SPLIT_RUN_PLACEHOLDER` means PowerPoint stored one placeholder
-across several formatted runs. Re-enter and consistently format the complete
-placeholder.
 
 `FILES_OUTPUT_EXISTS` protects an existing presentation. Choose a new output
 path, or use `--force` after confirming the existing file can be replaced.
