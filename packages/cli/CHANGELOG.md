@@ -1,5 +1,27 @@
 # consultchimps
 
+## 0.4.0
+
+### Minor Changes
+
+- 6870be2: Add local PowerPoint template inspection and text population from
+  selected Excel worksheet records, with formatting-preserving slide cloning,
+  complete pre-write validation, safe overwrite handling, and detailed CLI
+  guidance. Also make absolute file-glob discovery portable on Windows.
+
+### Patch Changes
+
+- 6d9a7fb: Make every CLI tool explain successful results and recoverable errors
+  in detailed, non-technical language while preserving compact JSON output for
+  automation.
+- 31ff5a0: Make output options easier to discover by adding practical examples
+  to every CLI help level.
+- Updated dependencies [6870be2]
+  - @consultchimps/xlsx@0.4.0
+  - @consultchimps/pptx@0.2.0
+  - @consultchimps/files@0.1.1
+  - @consultchimps/pdf@0.1.1
+
 ## 0.3.0
 
 ### Minor Changes
