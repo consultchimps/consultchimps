@@ -8,7 +8,7 @@ server, or automation. AI may assist with ambiguous work later, but the core
 tools do not require Codex or any hosted service.
 
 Documentation:
-[consultchimps-docs.vercel.app](https://consultchimps-docs.vercel.app)
+[consultchimps.github.io/consultchimps](https://consultchimps.github.io/consultchimps/)
 
 ## Initial tools
 
@@ -155,13 +155,17 @@ pnpm docs:dev
 
 ## Deploy the guide
 
-Import this repository into Vercel and set the project Root Directory to
-`apps/docs`. Keep **Include source files outside of the Root Directory** enabled
-so Vercel can use the workspace lockfile. Vercel then reads
-`apps/docs/vercel.ts`, installs with pnpm, builds the Next.js application, and
-uses Node.js 24 from `apps/docs/package.json`.
+The documentation site deploys to GitHub Pages. The `Docs` workflow
+(`.github/workflows/docs.yml`) runs on every push to `main`: it builds the
+Next.js site as a static export and publishes `apps/docs/out` with the official
+Pages actions.
 
-No environment variables are required for the documentation site.
+One-time repository setup: under **Settings → Pages**, set **Source** to
+**GitHub Actions**.
+
+The workflow derives the public URL and base path from the repository name, so
+forks deploy without configuration. No secrets or environment variables are
+required.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow and
 [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
