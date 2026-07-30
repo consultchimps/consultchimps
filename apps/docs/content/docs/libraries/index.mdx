@@ -10,14 +10,15 @@ that can be reused in a server, desktop app, workflow runner, or another CLI.
 
 ## Package map
 
-| Package                  | Responsibility                                       |
-| ------------------------ | ---------------------------------------------------- |
-| `@consultchimps/core`    | Shared result contracts and structured errors        |
-| `@consultchimps/files`   | File discovery and safe output handling              |
-| `@consultchimps/tabular` | Runtime-neutral table union and grouping operations  |
-| `@consultchimps/xlsx`    | Excel reading, writing, consolidation, and splitting |
-| `@consultchimps/pptx`    | PowerPoint template inspection and population        |
-| `@consultchimps/pdf`     | PDF splitting and merging                            |
+| Package                   | Responsibility                                       |
+| ------------------------- | ---------------------------------------------------- |
+| `@consultchimps/core`     | Shared result contracts and structured errors        |
+| `@consultchimps/files`    | File discovery and safe output handling              |
+| `@consultchimps/tabular`  | Runtime-neutral table union and grouping operations  |
+| `@consultchimps/xlsx`     | Excel reading, writing, consolidation, and splitting |
+| `@consultchimps/pptx`     | PowerPoint template inspection and population        |
+| `@consultchimps/pdf`      | PDF splitting and merging                            |
+| `@consultchimps/messages` | Plain-language rendering of results and errors       |
 
 ## Discover inputs
 
@@ -68,7 +69,10 @@ import { splitPdf } from "@consultchimps/pdf";
 
 async function run(): Promise<OperationResult | undefined> {
   try {
-    return await splitPdf("report.pdf", "outputs/pages");
+    return await splitPdf({
+      input: "report.pdf",
+      outputDirectory: "outputs/pages",
+    });
   } catch (error) {
     if (isConsultChimpsError(error)) {
       console.error(error.code, error.details);
@@ -82,6 +86,70 @@ async function run(): Promise<OperationResult | undefined> {
 
 Known errors carry a stable `code`, a human-readable message, optional
 structured details, and the original cause when available.
+
+## Preview an operation before executing it
+
+Every file-producing operation has a `plan` variant that validates the inputs
+and computes every intended output without writing anything. Use it to show a
+confirmation screen before running the real operation.
+
+```ts
+import { planSplitPdf, splitPdf } from "@consultchimps/pdf";
+
+const plan = await planSplitPdf({
+  input: "report.pdf",
+  outputDirectory: "outputs/pages",
+});
+
+for (const output of plan.outputs) {
+  console.log(output.path, output.exists ? "(would need overwrite)" : "");
+}
+
+const result = await splitPdf({
+  input: "report.pdf",
+  outputDirectory: "outputs/pages",
+});
+```
+
+The plan lists absolute input paths, every planned output with an `exists` flag
+for collisions, deterministic metrics, and warnings such as skipped rows.
+`planConsolidateWorkbooks`, `planSplitWorkbookByColumn`, `planMergePdfs`, and
+`planPopulatePowerPointTemplate` follow the same shape.
+
+## Report progress and support cancellation
+
+Operations accept an optional `onProgress` reporter and an `AbortSignal`.
+Progress events are deterministic for identical inputs; aborting stops the
+operation before its next unit of work with a stable `OPERATION_ABORTED` error.
+Source files are never modified by a cancelled operation, although output files
+completed before the cancellation may remain.
+
+```ts
+import { mergePdfs } from "@consultchimps/pdf";
+
+const controller = new AbortController();
+
+const result = await mergePdfs({
+  inputs: ["first.pdf", "second.pdf"],
+  output: "outputs/combined.pdf",
+  signal: controller.signal,
+  onProgress: ({ stage, completed, total, detail }) => {
+    console.log(`${stage}: ${completed}/${total} ${detail ?? ""}`);
+  },
+});
+```
+
+## Explain results to people
+
+The `@consultchimps/messages` package renders any `OperationResult` or
+structured error as the same detailed, plain-language text the CLI prints, so a
+desktop or web interface can reuse one voice.
+
+```ts
+import { formatHumanError, formatHumanResult } from "@consultchimps/messages";
+
+console.log(formatHumanResult(result));
+```
 
 ## Populate a PowerPoint template
 

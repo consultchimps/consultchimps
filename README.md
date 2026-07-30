@@ -24,15 +24,16 @@ Documentation:
 
 ## Packages
 
-| Package                  | Responsibility                                   |
-| ------------------------ | ------------------------------------------------ |
-| `@consultchimps/core`    | Shared errors, artifacts, and operation results  |
-| `@consultchimps/files`   | Input discovery and safe output-path handling    |
-| `@consultchimps/tabular` | Runtime-neutral table model and union operations |
-| `@consultchimps/xlsx`    | Excel workbook input and output                  |
-| `@consultchimps/pptx`    | PowerPoint template inspection and population    |
-| `@consultchimps/pdf`     | PDF split and merge operations                   |
-| `consultchimps`          | Command-line interface                           |
+| Package                   | Responsibility                                   |
+| ------------------------- | ------------------------------------------------ |
+| `@consultchimps/core`     | Shared errors, artifacts, and operation results  |
+| `@consultchimps/files`    | Input discovery and safe output-path handling    |
+| `@consultchimps/tabular`  | Runtime-neutral table model and union operations |
+| `@consultchimps/xlsx`     | Excel workbook input and output                  |
+| `@consultchimps/pptx`     | PowerPoint template inspection and population    |
+| `@consultchimps/pdf`      | PDF split and merge operations                   |
+| `@consultchimps/messages` | Plain-language rendering of results and errors   |
+| `consultchimps`           | Command-line interface                           |
 
 ## Install
 

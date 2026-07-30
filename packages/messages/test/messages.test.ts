@@ -1,7 +1,7 @@
 import type { OperationResult } from "@consultchimps/core";
 import { describe, expect, it } from "vitest";
 
-import { formatHumanError, formatHumanResult } from "../src/human-output.js";
+import { formatHumanError, formatHumanResult } from "../src/index.js";
 
 function result(
   operation: string,

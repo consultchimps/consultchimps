@@ -100,19 +100,20 @@ Package boundaries are public architectural boundaries, not just folders.
 Put behavior at the lowest reusable layer and keep the CLI as an adapter.
 -->
 
-| Path               | Responsibility                                                 |
-| ------------------ | -------------------------------------------------------------- |
-| `packages/core`    | Shared errors, artifacts, operation results, and contracts     |
-| `packages/files`   | Input discovery and safe output-path handling                  |
-| `packages/tabular` | Runtime-neutral table models and table operations              |
-| `packages/xlsx`    | Excel workbook reading, writing, consolidation, and splitting  |
-| `packages/pptx`    | PowerPoint template inspection and population                  |
-| `packages/pdf`     | PDF splitting and merging                                      |
-| `packages/cli`     | Command parsing, option mapping, and user-facing CLI output    |
-| `apps/docs`        | Next.js and Fumadocs documentation site                        |
-| `scripts`          | Repository-wide verification and packaging utilities           |
-| `.github`          | CI, security analysis, issue templates, and release automation |
-| `.changeset`       | Pending public package release notes and version intent        |
+| Path                | Responsibility                                                 |
+| ------------------- | -------------------------------------------------------------- |
+| `packages/core`     | Shared errors, artifacts, operation results, and contracts     |
+| `packages/files`    | Input discovery and safe output-path handling                  |
+| `packages/tabular`  | Runtime-neutral table models and table operations              |
+| `packages/xlsx`     | Excel workbook reading, writing, consolidation, and splitting  |
+| `packages/pptx`     | PowerPoint template inspection and population                  |
+| `packages/pdf`      | PDF splitting and merging                                      |
+| `packages/messages` | Plain-language rendering of operation results and errors       |
+| `packages/cli`      | Command parsing, option mapping, and user-facing CLI output    |
+| `apps/docs`         | Next.js and Fumadocs documentation site                        |
+| `scripts`           | Repository-wide verification and packaging utilities           |
+| `.github`           | CI, security analysis, issue templates, and release automation |
+| `.changeset`        | Pending public package release notes and version intent        |
 
 When adding behavior:
 
@@ -303,6 +304,7 @@ Test placement:
 - Excel behavior belongs with `packages/xlsx`.
 - PowerPoint behavior belongs with `packages/pptx`.
 - PDF behavior belongs with `packages/pdf`.
+- Plain-language rendering belongs with `packages/messages`.
 - Argument parsing, help, exit status, stdout, stderr, and packaged command
   behavior belong with `packages/cli`.
 

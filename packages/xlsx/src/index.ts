@@ -8,11 +8,19 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 
-import { ConsultChimpsError, type OperationResult } from "@consultchimps/core";
+import {
+  ConsultChimpsError,
+  throwIfAborted,
+  type OperationControlOptions,
+  type OperationPlan,
+  type OperationResult,
+  type PlannedOutput,
+} from "@consultchimps/core";
 import {
   ensureDirectory,
   ensureOutputAvailable,
   ensureParentDirectory,
+  pathExists,
   refuseInputOverwrite,
 } from "@consultchimps/files";
 import {
@@ -56,13 +64,18 @@ export interface WorksheetRecords {
   worksheet: string;
 }
 
-export interface ConsolidateWorkbooksOptions extends ReadWorkbookOptions {
+export interface ConsolidateWorkbooksOptions
+  extends ReadWorkbookOptions, OperationControlOptions {
+  inputs: string[];
+  output: string;
   addSourceColumns?: boolean | undefined;
   outputSheetName?: string | undefined;
   overwrite?: boolean | undefined;
 }
 
-export interface SplitWorkbookByColumnOptions {
+export interface SplitWorkbookByColumnOptions extends OperationControlOptions {
+  input: string;
+  outputDirectory: string;
   column: string;
   filenamePrefix?: string | undefined;
   headerRow?: number | undefined;
@@ -746,24 +759,96 @@ export async function writeTable(
   return absoluteOutput;
 }
 
-export async function consolidateWorkbooks(
-  inputPaths: string[],
-  outputPath: string,
-  options: ConsolidateWorkbooksOptions = {},
-): Promise<OperationResult> {
-  if (inputPaths.length === 0) {
+const CONSOLIDATE_OPERATION = "sheets.consolidate";
+const SPLIT_OPERATION = "sheets.split-by-column";
+const WORKBOOK_MEDIA_TYPE =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+interface ResolvedConsolidate {
+  absoluteInputs: string[];
+  absoluteOutput: string;
+}
+
+function resolveConsolidateWorkbooks(
+  options: ConsolidateWorkbooksOptions,
+): ResolvedConsolidate {
+  if (options.inputs.length === 0) {
     throw new ConsultChimpsError(
       "XLSX_NO_INPUTS",
       "At least one workbook is required.",
     );
   }
 
-  refuseInputOverwrite(outputPath, inputPaths);
-  const tables = (
-    await Promise.all(
-      inputPaths.map((inputPath) => readWorkbookTables(inputPath, options)),
-    )
-  ).flat();
+  const absoluteInputs = options.inputs.map((inputPath) =>
+    path.resolve(inputPath),
+  );
+  const absoluteOutput = path.resolve(options.output);
+  refuseInputOverwrite(absoluteOutput, absoluteInputs);
+  return { absoluteInputs, absoluteOutput };
+}
+
+export async function planConsolidateWorkbooks(
+  options: ConsolidateWorkbooksOptions,
+): Promise<OperationPlan> {
+  const { absoluteInputs, absoluteOutput } =
+    resolveConsolidateWorkbooks(options);
+
+  for (const absoluteInput of absoluteInputs) {
+    if (!(await pathExists(absoluteInput))) {
+      throw new ConsultChimpsError(
+        "XLSX_INPUT_NOT_FOUND",
+        `Workbook not found: ${absoluteInput}`,
+        { details: { inputPath: absoluteInput } },
+      );
+    }
+  }
+
+  const exists = await pathExists(absoluteOutput);
+  const warnings =
+    exists && options.overwrite !== true
+      ? [
+          "The planned output workbook already exists; executing without overwrite will fail.",
+        ]
+      : [];
+
+  return {
+    operation: CONSOLIDATE_OPERATION,
+    inputs: absoluteInputs,
+    outputs: [
+      {
+        kind: "file",
+        mediaType: WORKBOOK_MEDIA_TYPE,
+        path: absoluteOutput,
+        exists,
+      },
+    ],
+    warnings,
+    metrics: {
+      inputFiles: absoluteInputs.length,
+      outputFiles: 1,
+    },
+  };
+}
+
+export async function consolidateWorkbooks(
+  options: ConsolidateWorkbooksOptions,
+): Promise<OperationResult> {
+  throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
+  const { absoluteInputs, absoluteOutput } =
+    resolveConsolidateWorkbooks(options);
+
+  const tables: Table[] = [];
+  for (const [index, absoluteInput] of absoluteInputs.entries()) {
+    throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
+    tables.push(...(await readWorkbookTables(absoluteInput, options)));
+    options.onProgress?.({
+      operation: CONSOLIDATE_OPERATION,
+      stage: "reading-workbooks",
+      completed: index + 1,
+      total: absoluteInputs.length,
+      detail: path.basename(absoluteInput),
+    });
+  }
 
   if (tables.length === 0) {
     throw new ConsultChimpsError(
@@ -775,24 +860,31 @@ export async function consolidateWorkbooks(
   const table = unionTables(tables, {
     addSourceColumns: options.addSourceColumns,
   });
-  const output = await writeTable(outputPath, table, {
+  throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
+  const output = await writeTable(absoluteOutput, table, {
     overwrite: options.overwrite,
     sheetName: options.outputSheetName,
   });
+  options.onProgress?.({
+    operation: CONSOLIDATE_OPERATION,
+    stage: "writing-output",
+    completed: 1,
+    total: 1,
+    detail: path.basename(output),
+  });
 
   return {
-    operation: "sheets.consolidate",
+    operation: CONSOLIDATE_OPERATION,
     artifacts: [
       {
         kind: "file",
-        mediaType:
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        mediaType: WORKBOOK_MEDIA_TYPE,
         path: output,
       },
     ],
     warnings: [],
     metrics: {
-      inputFiles: inputPaths.length,
+      inputFiles: absoluteInputs.length,
       inputTables: tables.length,
       outputColumns: table.columns.length,
       outputRows: table.rows.length,
@@ -800,12 +892,29 @@ export async function consolidateWorkbooks(
   };
 }
 
-export async function splitWorkbookByColumn(
-  inputPath: string,
-  outputDirectory: string,
+interface ResolvedSplit {
+  absoluteInput: string;
+  absoluteOutputDirectory: string;
+  existingOutputs: Set<string>;
+  grouped: ReturnType<typeof groupTableByColumn>;
+  outputPaths: string[];
+  preservedTableDefinition: ExcelTableDefinition | undefined;
+  preservedWorkbookBytes: Buffer | undefined;
+  table: Table;
+}
+
+function skippedRowsWarning(
+  grouped: ReturnType<typeof groupTableByColumn>,
+): string {
+  return `Skipped ${grouped.skippedRows} row${
+    grouped.skippedRows === 1 ? "" : "s"
+  } with blank values in "${grouped.column}".`;
+}
+
+async function resolveSplitWorkbookByColumn(
   options: SplitWorkbookByColumnOptions,
-): Promise<OperationResult> {
-  const absoluteInput = path.resolve(inputPath);
+): Promise<ResolvedSplit> {
+  const absoluteInput = path.resolve(options.input);
   if (options.table && options.headerRow !== undefined) {
     throw new ConsultChimpsError(
       "XLSX_SPLIT_TABLE_HEADER_ROW",
@@ -943,7 +1052,7 @@ export async function splitWorkbookByColumn(
     );
   }
 
-  const absoluteOutputDirectory = path.resolve(outputDirectory);
+  const absoluteOutputDirectory = path.resolve(options.outputDirectory);
   const inputBaseName = path.parse(absoluteInput).name;
   const filenamePrefix = safeFilenameSegment(
     options.filenamePrefix ?? inputBaseName,
@@ -976,11 +1085,78 @@ export async function splitWorkbookByColumn(
           throw error;
         }
       }
-
-      await ensureOutputAvailable(outputPath, {
-        overwrite: options.overwrite,
-      });
     }),
+  );
+
+  return {
+    absoluteInput,
+    absoluteOutputDirectory,
+    existingOutputs,
+    grouped,
+    outputPaths,
+    preservedTableDefinition,
+    preservedWorkbookBytes,
+    table,
+  };
+}
+
+export async function planSplitWorkbookByColumn(
+  options: SplitWorkbookByColumnOptions,
+): Promise<OperationPlan> {
+  const resolved = await resolveSplitWorkbookByColumn(options);
+  const outputs: PlannedOutput[] = resolved.outputPaths.map((outputPath) => ({
+    kind: "file",
+    mediaType: WORKBOOK_MEDIA_TYPE,
+    path: outputPath,
+    exists: resolved.existingOutputs.has(outputPath),
+  }));
+
+  const warnings: string[] = [];
+  if (resolved.grouped.skippedRows > 0) {
+    warnings.push(skippedRowsWarning(resolved.grouped));
+  }
+  const collisions = resolved.existingOutputs.size;
+  if (collisions > 0 && options.overwrite !== true) {
+    warnings.push(
+      `${collisions} planned output file${
+        collisions === 1 ? " already exists" : "s already exist"
+      }; executing without overwrite will fail.`,
+    );
+  }
+
+  return {
+    operation: SPLIT_OPERATION,
+    inputs: [resolved.absoluteInput],
+    outputs,
+    warnings,
+    metrics: {
+      groups: resolved.grouped.groups.length,
+      inputFiles: 1,
+      inputRows: resolved.table.rows.length,
+      outputFiles: resolved.outputPaths.length,
+      skippedRows: resolved.grouped.skippedRows,
+    },
+  };
+}
+
+export async function splitWorkbookByColumn(
+  options: SplitWorkbookByColumnOptions,
+): Promise<OperationResult> {
+  throwIfAborted(options.signal, SPLIT_OPERATION);
+  const {
+    absoluteOutputDirectory,
+    existingOutputs,
+    grouped,
+    outputPaths,
+    preservedTableDefinition,
+    preservedWorkbookBytes,
+    table,
+  } = await resolveSplitWorkbookByColumn(options);
+
+  await Promise.all(
+    outputPaths.map((outputPath) =>
+      ensureOutputAvailable(outputPath, { overwrite: options.overwrite }),
+    ),
   );
   await ensureDirectory(absoluteOutputDirectory);
 
@@ -993,6 +1169,7 @@ export async function splitWorkbookByColumn(
 
   try {
     for (const [index, group] of grouped.groups.entries()) {
+      throwIfAborted(options.signal, SPLIT_OPERATION);
       const stagedOutput = path.join(
         transactionDirectory,
         `output-${String(index + 1).padStart(6, "0")}.xlsx`,
@@ -1013,6 +1190,13 @@ export async function splitWorkbookByColumn(
           }),
         );
       }
+      options.onProgress?.({
+        operation: SPLIT_OPERATION,
+        stage: "staging-workbooks",
+        completed: index + 1,
+        total: grouped.groups.length,
+        detail: path.basename(outputPaths[index] ?? stagedOutput),
+      });
     }
 
     for (const [index, outputPath] of outputPaths.entries()) {
@@ -1032,6 +1216,13 @@ export async function splitWorkbookByColumn(
 
       await rename(stagedOutput, outputPath);
       committedOutputs.push(outputPath);
+      options.onProgress?.({
+        operation: SPLIT_OPERATION,
+        stage: "committing-outputs",
+        completed: index + 1,
+        total: outputPaths.length,
+        detail: path.basename(outputPath),
+      });
     }
   } catch (error) {
     const rollbackErrors: unknown[] = [];
@@ -1082,17 +1273,10 @@ export async function splitWorkbookByColumn(
     );
   }
 
-  const warnings =
-    grouped.skippedRows > 0
-      ? [
-          `Skipped ${grouped.skippedRows} row${
-            grouped.skippedRows === 1 ? "" : "s"
-          } with blank values in "${grouped.column}".`,
-        ]
-      : [];
+  const warnings = grouped.skippedRows > 0 ? [skippedRowsWarning(grouped)] : [];
 
   return {
-    operation: "sheets.split-by-column",
+    operation: SPLIT_OPERATION,
     artifacts: outputPaths.map((output) => ({
       kind: "file",
       mediaType:

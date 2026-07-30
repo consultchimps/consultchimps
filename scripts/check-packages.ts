@@ -50,6 +50,7 @@ const packageDirectories = [
   "core",
   "files",
   "tabular",
+  "messages",
   "pdf",
   "xlsx",
   "pptx",

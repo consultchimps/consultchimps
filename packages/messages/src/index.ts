@@ -195,6 +195,13 @@ export function formatHumanResult(result: OperationResult): string {
 }
 
 function recoverySteps(code: string | undefined): readonly string[] {
+  if (code === "OPERATION_ABORTED") {
+    return [
+      "The task was cancelled before it finished; no source file was changed.",
+      "Output files completed before the cancellation may remain. Review and remove them if they are not wanted.",
+      "Run the command again when you are ready to complete the task.",
+    ];
+  }
   if (code === "FILES_NOT_FOUND") {
     return [
       "Check that every file or folder path is spelled correctly and still exists.",

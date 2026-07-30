@@ -1,21 +1,41 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { ConsultChimpsError, type OperationResult } from "@consultchimps/core";
+import {
+  ConsultChimpsError,
+  throwIfAborted,
+  type OperationPlan,
+  type OperationControlOptions,
+  type OperationResult,
+} from "@consultchimps/core";
 import {
   ensureDirectory,
   ensureOutputAvailable,
   ensureParentDirectory,
+  pathExists,
   refuseInputOverwrite,
 } from "@consultchimps/files";
 import { PDFDocument } from "pdf-lib";
+
+const PDF_MEDIA_TYPE = "application/pdf";
+const SPLIT_OPERATION = "pdf.split";
+const MERGE_OPERATION = "pdf.merge";
 
 export interface PdfWriteOptions {
   overwrite?: boolean | undefined;
 }
 
-export interface SplitPdfOptions extends PdfWriteOptions {
+export interface SplitPdfOptions
+  extends PdfWriteOptions, OperationControlOptions {
+  input: string;
+  outputDirectory: string;
   filenamePrefix?: string | undefined;
+}
+
+export interface MergePdfsOptions
+  extends PdfWriteOptions, OperationControlOptions {
+  inputs: string[];
+  output: string;
 }
 
 async function loadPdf(filePath: string): Promise<PDFDocument> {
@@ -36,13 +56,19 @@ async function loadPdf(filePath: string): Promise<PDFDocument> {
   }
 }
 
-export async function splitPdf(
-  inputPath: string,
-  outputDirectory: string,
-  options: SplitPdfOptions = {},
-): Promise<OperationResult> {
-  const absoluteInput = path.resolve(inputPath);
-  const absoluteOutputDirectory = await ensureDirectory(outputDirectory);
+interface ResolvedSplit {
+  absoluteInput: string;
+  absoluteOutputDirectory: string;
+  outputPaths: string[];
+  pageCount: number;
+  sourceDocument: PDFDocument;
+}
+
+async function resolveSplitPdf(
+  options: SplitPdfOptions,
+): Promise<ResolvedSplit> {
+  const absoluteInput = path.resolve(options.input);
+  const absoluteOutputDirectory = path.resolve(options.outputDirectory);
   const sourceDocument = await loadPdf(absoluteInput);
   const pageCount = sourceDocument.getPageCount();
 
@@ -65,15 +91,71 @@ export async function splitPdf(
     ),
   );
 
+  outputPaths.forEach((outputPath) =>
+    refuseInputOverwrite(outputPath, [absoluteInput]),
+  );
+
+  return {
+    absoluteInput,
+    absoluteOutputDirectory,
+    outputPaths,
+    pageCount,
+    sourceDocument,
+  };
+}
+
+export async function planSplitPdf(
+  options: SplitPdfOptions,
+): Promise<OperationPlan> {
+  const resolved = await resolveSplitPdf(options);
+  const outputs = await Promise.all(
+    resolved.outputPaths.map(async (outputPath) => ({
+      kind: "file" as const,
+      mediaType: PDF_MEDIA_TYPE,
+      path: outputPath,
+      exists: await pathExists(outputPath),
+    })),
+  );
+
+  const collisions = outputs.filter((output) => output.exists).length;
+  const warnings =
+    collisions > 0 && options.overwrite !== true
+      ? [
+          `${collisions} planned output file${collisions === 1 ? " already exists" : "s already exist"}; executing without overwrite will fail.`,
+        ]
+      : [];
+
+  return {
+    operation: SPLIT_OPERATION,
+    inputs: [resolved.absoluteInput],
+    outputs,
+    warnings,
+    metrics: {
+      inputFiles: 1,
+      outputFiles: outputs.length,
+      pages: resolved.pageCount,
+    },
+  };
+}
+
+export async function splitPdf(
+  options: SplitPdfOptions,
+): Promise<OperationResult> {
+  throwIfAborted(options.signal, SPLIT_OPERATION);
+  const resolved = await resolveSplitPdf(options);
+  await ensureDirectory(resolved.absoluteOutputDirectory);
   await Promise.all(
-    outputPaths.map((outputPath) =>
+    resolved.outputPaths.map((outputPath) =>
       ensureOutputAvailable(outputPath, { overwrite: options.overwrite }),
     ),
   );
 
-  for (let index = 0; index < pageCount; index += 1) {
+  for (let index = 0; index < resolved.pageCount; index += 1) {
+    throwIfAborted(options.signal, SPLIT_OPERATION);
     const outputDocument = await PDFDocument.create();
-    const [page] = await outputDocument.copyPages(sourceDocument, [index]);
+    const [page] = await outputDocument.copyPages(resolved.sourceDocument, [
+      index,
+    ]);
     if (!page) {
       throw new ConsultChimpsError(
         "PDF_PAGE_COPY_FAILED",
@@ -81,47 +163,101 @@ export async function splitPdf(
       );
     }
     outputDocument.addPage(page);
-    await writeFile(outputPaths[index]!, await outputDocument.save());
+    const outputPath = resolved.outputPaths[index]!;
+    await writeFile(outputPath, await outputDocument.save());
+    options.onProgress?.({
+      operation: SPLIT_OPERATION,
+      stage: "writing-pages",
+      completed: index + 1,
+      total: resolved.pageCount,
+      detail: path.basename(outputPath),
+    });
   }
 
   return {
-    operation: "pdf.split",
-    artifacts: outputPaths.map((outputPath) => ({
+    operation: SPLIT_OPERATION,
+    artifacts: resolved.outputPaths.map((outputPath) => ({
       kind: "file",
-      mediaType: "application/pdf",
+      mediaType: PDF_MEDIA_TYPE,
       path: outputPath,
     })),
     warnings: [],
     metrics: {
       inputFiles: 1,
-      outputFiles: outputPaths.length,
-      pages: pageCount,
+      outputFiles: resolved.outputPaths.length,
+      pages: resolved.pageCount,
     },
   };
 }
 
-export async function mergePdfs(
-  inputPaths: string[],
-  outputPath: string,
-  options: PdfWriteOptions = {},
-): Promise<OperationResult> {
-  if (inputPaths.length === 0) {
+interface ResolvedMerge {
+  absoluteInputs: string[];
+  absoluteOutput: string;
+}
+
+function resolveMergePdfs(options: MergePdfsOptions): ResolvedMerge {
+  if (options.inputs.length === 0) {
     throw new ConsultChimpsError(
       "PDF_NO_INPUTS",
       "At least one input PDF is required.",
     );
   }
 
-  const absoluteInputs = inputPaths.map((inputPath) => path.resolve(inputPath));
-  const absoluteOutput = path.resolve(outputPath);
+  const absoluteInputs = options.inputs.map((inputPath) =>
+    path.resolve(inputPath),
+  );
+  const absoluteOutput = path.resolve(options.output);
   refuseInputOverwrite(absoluteOutput, absoluteInputs);
-  await ensureOutputAvailable(absoluteOutput, { overwrite: options.overwrite });
-  await ensureParentDirectory(absoluteOutput);
+
+  return { absoluteInputs, absoluteOutput };
+}
+
+export async function planMergePdfs(
+  options: MergePdfsOptions,
+): Promise<OperationPlan> {
+  const resolved = resolveMergePdfs(options);
+  const exists = await pathExists(resolved.absoluteOutput);
+  const warnings =
+    exists && options.overwrite !== true
+      ? [
+          "The planned output file already exists; executing without overwrite will fail.",
+        ]
+      : [];
+
+  return {
+    operation: MERGE_OPERATION,
+    inputs: resolved.absoluteInputs,
+    outputs: [
+      {
+        kind: "file",
+        mediaType: PDF_MEDIA_TYPE,
+        path: resolved.absoluteOutput,
+        exists,
+      },
+    ],
+    warnings,
+    metrics: {
+      inputFiles: resolved.absoluteInputs.length,
+      outputFiles: 1,
+    },
+  };
+}
+
+export async function mergePdfs(
+  options: MergePdfsOptions,
+): Promise<OperationResult> {
+  throwIfAborted(options.signal, MERGE_OPERATION);
+  const resolved = resolveMergePdfs(options);
+  await ensureOutputAvailable(resolved.absoluteOutput, {
+    overwrite: options.overwrite,
+  });
+  await ensureParentDirectory(resolved.absoluteOutput);
 
   const outputDocument = await PDFDocument.create();
   let pageCount = 0;
 
-  for (const inputPath of absoluteInputs) {
+  for (const [index, inputPath] of resolved.absoluteInputs.entries()) {
+    throwIfAborted(options.signal, MERGE_OPERATION);
     const inputDocument = await loadPdf(inputPath);
     const copiedPages = await outputDocument.copyPages(
       inputDocument,
@@ -129,22 +265,30 @@ export async function mergePdfs(
     );
     copiedPages.forEach((page) => outputDocument.addPage(page));
     pageCount += copiedPages.length;
+    options.onProgress?.({
+      operation: MERGE_OPERATION,
+      stage: "merging-inputs",
+      completed: index + 1,
+      total: resolved.absoluteInputs.length,
+      detail: path.basename(inputPath),
+    });
   }
 
-  await writeFile(absoluteOutput, await outputDocument.save());
+  throwIfAborted(options.signal, MERGE_OPERATION);
+  await writeFile(resolved.absoluteOutput, await outputDocument.save());
 
   return {
-    operation: "pdf.merge",
+    operation: MERGE_OPERATION,
     artifacts: [
       {
         kind: "file",
-        mediaType: "application/pdf",
-        path: absoluteOutput,
+        mediaType: PDF_MEDIA_TYPE,
+        path: resolved.absoluteOutput,
       },
     ],
     warnings: [],
     metrics: {
-      inputFiles: absoluteInputs.length,
+      inputFiles: resolved.absoluteInputs.length,
       outputFiles: 1,
       pages: pageCount,
     },

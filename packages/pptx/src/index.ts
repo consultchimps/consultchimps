@@ -11,6 +11,9 @@ import path from "node:path";
 import {
   ConsultChimpsError,
   isConsultChimpsError,
+  throwIfAborted,
+  type OperationControlOptions,
+  type OperationPlan,
   type OperationResult,
 } from "@consultchimps/core";
 import {
@@ -39,7 +42,7 @@ export interface PowerPointTemplateInspection {
   unsupportedSplitRunPlaceholders: string[];
 }
 
-export interface PopulatePowerPointTemplateOptions {
+export interface PopulatePowerPointTemplateOptions extends OperationControlOptions {
   headerRow?: number | undefined;
   outputPath: string;
   overwrite?: boolean | undefined;
@@ -593,6 +596,7 @@ function removeContentTypeOverrides(
 async function createOutputPresentation(
   presentation: PresentationPackage,
   rows: Array<Record<string, string>>,
+  control: OperationControlOptions = {},
 ): Promise<{ bytes: Buffer; replacements: number }> {
   const {
     contentTypesPath,
@@ -641,6 +645,7 @@ async function createOutputPresentation(
   let replacements = 0;
 
   for (const [index, row] of rows.entries()) {
+    throwIfAborted(control.signal, POPULATE_OPERATION);
     const slidePath = slideParts[index];
     if (!slidePath) {
       continue;
@@ -675,6 +680,13 @@ async function createOutputPresentation(
       `<Override PartName="/${slidePath}" ContentType="${SLIDE_CONTENT_TYPE}"/>`,
     );
     nextSlideId += 1;
+    control.onProgress?.({
+      operation: POPULATE_OPERATION,
+      stage: "generating-slides",
+      completed: index + 1,
+      total: rows.length,
+      detail: path.posix.basename(slidePath),
+    });
   }
 
   for (const originalSlidePath of originalSlidePaths) {
@@ -861,83 +873,165 @@ async function commitOutput(
   }
 }
 
+const POPULATE_OPERATION = "pptx.populate";
+
+interface ResolvedPopulate {
+  absoluteOutput: string;
+  absoluteTemplate: string;
+  absoluteWorkbook: string;
+  inspection: PowerPointTemplateInspection;
+  outputExists: boolean;
+  presentation: PresentationPackage;
+  records: Awaited<ReturnType<typeof readWorksheetRecords>>;
+}
+
+async function resolvePopulatePowerPointTemplate(
+  options: PopulatePowerPointTemplateOptions,
+  enforceOverwrite: boolean,
+): Promise<ResolvedPopulate> {
+  const absoluteTemplate = await validateInputFile(
+    options.templatePath,
+    ".pptx",
+    "PPTX_TEMPLATE_NOT_FOUND",
+    "PowerPoint template",
+  );
+  const absoluteWorkbook = await validateInputFile(
+    options.workbookPath,
+    ".xlsx",
+    "XLSX_WORKBOOK_NOT_FOUND",
+    "Excel workbook",
+  );
+  const { absoluteOutput, outputExists } = await validateOutputPath(
+    options.outputPath,
+    [absoluteTemplate, absoluteWorkbook],
+    enforceOverwrite ? options.overwrite === true : true,
+  );
+
+  const templateBytes = await readFile(absoluteTemplate);
+  const templateSlide = options.templateSlide ?? DEFAULT_TEMPLATE_SLIDE;
+  const presentation = await loadPresentationPackage(
+    templateBytes,
+    templateSlide,
+  );
+  const selectedSlideXml = await readRequiredZipText(
+    presentation.zip,
+    presentation.selectedSlidePath,
+  );
+  const inspection = publicInspection(
+    inspectSlideXml(selectedSlideXml),
+    templateSlide,
+  );
+  validateTemplateInspection(inspection);
+
+  const records = await readWorksheetRecords(absoluteWorkbook, {
+    headerRow: options.headerRow,
+    worksheet: options.worksheet,
+  });
+  if (records.rows.length === 0) {
+    throw new ConsultChimpsError(
+      "PPTX_NO_DATA_ROWS",
+      `Worksheet "${records.worksheet}" does not contain any nonempty data rows below the header.`,
+      {
+        details: {
+          headerRow: options.headerRow,
+          worksheet: records.worksheet,
+        },
+      },
+    );
+  }
+
+  const missingColumns = inspection.placeholders
+    .map((placeholder) => placeholder.name)
+    .filter((placeholder) => !records.columns.includes(placeholder));
+  if (missingColumns.length > 0) {
+    throw new ConsultChimpsError(
+      "PPTX_MISSING_EXCEL_COLUMN",
+      `Template placeholder "${missingColumns[0]}" does not match any Excel column.`,
+      {
+        details: {
+          availableColumns: records.columns,
+          missingColumns,
+          worksheet: records.worksheet,
+        },
+      },
+    );
+  }
+
+  return {
+    absoluteOutput,
+    absoluteTemplate,
+    absoluteWorkbook,
+    inspection,
+    outputExists,
+    presentation,
+    records,
+  };
+}
+
+export async function planPopulatePowerPointTemplate(
+  options: PopulatePowerPointTemplateOptions,
+): Promise<OperationPlan> {
+  const resolved = await resolvePopulatePowerPointTemplate(options, false);
+  const warnings: string[] = [];
+  if (resolved.records.skippedEmptyRows > 0) {
+    warnings.push(
+      `Skipped ${resolved.records.skippedEmptyRows} empty worksheet row${
+        resolved.records.skippedEmptyRows === 1 ? "" : "s"
+      }.`,
+    );
+  }
+  if (resolved.outputExists && options.overwrite !== true) {
+    warnings.push(
+      "The planned output presentation already exists; executing without overwrite will fail.",
+    );
+  }
+
+  return {
+    operation: POPULATE_OPERATION,
+    inputs: [resolved.absoluteTemplate, resolved.absoluteWorkbook],
+    outputs: [
+      {
+        kind: "file",
+        mediaType: PRESENTATION_MEDIA_TYPE,
+        path: resolved.absoluteOutput,
+        exists: resolved.outputExists,
+      },
+    ],
+    warnings,
+    metrics: {
+      generatedSlides: resolved.records.rows.length,
+      inputRows: resolved.records.rows.length,
+      outputFiles: 1,
+      placeholderFields: resolved.inspection.placeholders.length,
+      placeholderOccurrences: resolved.inspection.placeholderOccurrences,
+      skippedRows: resolved.records.skippedEmptyRows,
+    },
+  };
+}
+
 export async function populatePowerPointTemplate(
   options: PopulatePowerPointTemplateOptions,
 ): Promise<OperationResult> {
   try {
-    const absoluteTemplate = await validateInputFile(
-      options.templatePath,
-      ".pptx",
-      "PPTX_TEMPLATE_NOT_FOUND",
-      "PowerPoint template",
-    );
-    const absoluteWorkbook = await validateInputFile(
-      options.workbookPath,
-      ".xlsx",
-      "XLSX_WORKBOOK_NOT_FOUND",
-      "Excel workbook",
-    );
-    const { absoluteOutput, outputExists } = await validateOutputPath(
-      options.outputPath,
-      [absoluteTemplate, absoluteWorkbook],
-      options.overwrite === true,
-    );
+    throwIfAborted(options.signal, POPULATE_OPERATION);
+    const { absoluteOutput, inspection, outputExists, presentation, records } =
+      await resolvePopulatePowerPointTemplate(options, true);
 
-    const templateBytes = await readFile(absoluteTemplate);
-    const templateSlide = options.templateSlide ?? DEFAULT_TEMPLATE_SLIDE;
-    const presentation = await loadPresentationPackage(
-      templateBytes,
-      templateSlide,
-    );
-    const selectedSlideXml = await readRequiredZipText(
-      presentation.zip,
-      presentation.selectedSlidePath,
-    );
-    const inspection = publicInspection(
-      inspectSlideXml(selectedSlideXml),
-      templateSlide,
-    );
-    validateTemplateInspection(inspection);
-
-    const records = await readWorksheetRecords(absoluteWorkbook, {
-      headerRow: options.headerRow,
-      worksheet: options.worksheet,
-    });
-    if (records.rows.length === 0) {
-      throw new ConsultChimpsError(
-        "PPTX_NO_DATA_ROWS",
-        `Worksheet "${records.worksheet}" does not contain any nonempty data rows below the header.`,
-        {
-          details: {
-            headerRow: options.headerRow,
-            worksheet: records.worksheet,
-          },
-        },
-      );
-    }
-
-    const missingColumns = inspection.placeholders
-      .map((placeholder) => placeholder.name)
-      .filter((placeholder) => !records.columns.includes(placeholder));
-    if (missingColumns.length > 0) {
-      throw new ConsultChimpsError(
-        "PPTX_MISSING_EXCEL_COLUMN",
-        `Template placeholder "${missingColumns[0]}" does not match any Excel column.`,
-        {
-          details: {
-            availableColumns: records.columns,
-            missingColumns,
-            worksheet: records.worksheet,
-          },
-        },
-      );
-    }
-
+    throwIfAborted(options.signal, POPULATE_OPERATION);
     const generated = await createOutputPresentation(
       presentation,
       records.rows,
+      options,
     );
+    throwIfAborted(options.signal, POPULATE_OPERATION);
     await commitOutput(absoluteOutput, generated.bytes, outputExists);
+    options.onProgress?.({
+      operation: POPULATE_OPERATION,
+      stage: "writing-output",
+      completed: 1,
+      total: 1,
+      detail: path.basename(absoluteOutput),
+    });
 
     const warnings =
       records.skippedEmptyRows > 0
@@ -948,7 +1042,7 @@ export async function populatePowerPointTemplate(
           ]
         : [];
     return {
-      operation: "pptx.populate",
+      operation: POPULATE_OPERATION,
       artifacts: [
         {
           kind: "file",
