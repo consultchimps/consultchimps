@@ -1,4 +1,4 @@
-# @consultchimps/files
+# @consultchimps/core
 
 ## 0.2.0
 
@@ -15,17 +15,3 @@
   validates inputs and reports every intended output and collision without
   writing anything. Cancellation raises a stable `OPERATION_ABORTED` error and
   never modifies source files. CLI behavior is unchanged.
-
-### Patch Changes
-
-- Updated dependencies [c78b35e]
-  - @consultchimps/core@0.2.0
-
-## 0.1.1
-
-### Patch Changes
-
-- 6870be2: Add local PowerPoint template inspection and text population from
-  selected Excel worksheet records, with formatting-preserving slide cloning,
-  complete pre-write validation, safe overwrite handling, and detailed CLI
-  guidance. Also make absolute file-glob discovery portable on Windows.
