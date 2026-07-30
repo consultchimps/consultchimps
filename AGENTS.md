@@ -15,9 +15,9 @@ this file at the repository root gives the monorepo one shared baseline.
 -->
 
 - These instructions apply to the entire repository.
-- `CLAUDE.md` is a thin stub that imports this file with `@AGENTS.md` so Claude
-  Code and other coding agents read one shared instruction source; edit
-  `AGENTS.md`, never the stub.
+- `CLAUDE.md` is a symlink to this file so Claude Code and other coding agents
+  read one shared instruction source; edit `AGENTS.md`, never replace the
+  symlink with a separate copy.
 - A more deeply nested `AGENTS.md`, if one is added later, may refine these
   rules for its subtree but must not silently weaken repository-wide safety,
   privacy, testing, or release requirements.
@@ -469,6 +469,13 @@ automated releases safer.
 - Do not rewrite shared branch history unless explicitly authorized.
 - Never use destructive Git commands to discard work without explicit user
   authorization.
+- Never put personal email addresses or editors' legal/full names in Git author,
+  committer, or `Co-authored-by` identities. Prefer the GitHub username with
+  that account's private `users.noreply.github.com` address. Agent co-author
+  trailers and GitHub private noreply addresses are fine; see the rewritten
+  identity on
+  [commit 4477ecb](https://github.com/consultchimps/consultchimps/commit/4477ecb6b6f0267291484ce22cfd4993906dd87f)
+  (PR #34) as the expected pattern.
 - Review `git diff --check` and `git status --short --branch` before committing.
 - Stage only files belonging to the requested change.
 - In the pull request, summarize behavior, list verification performed, and
@@ -542,6 +549,9 @@ Never commit or expose:
 - Credentials, tokens, passwords, cookies, or private keys.
 - `.env` files or machine-specific authentication configuration.
 - Real personal data used as a convenient test fixture.
+- Personal email addresses or editors' legal/full names in commit metadata,
+  trailers, docs examples, or support text (use GitHub usernames and private
+  noreply addresses instead).
 - Browser profiles, session stores, or package-manager credentials.
 - `node_modules`, build caches, or local editor state.
 

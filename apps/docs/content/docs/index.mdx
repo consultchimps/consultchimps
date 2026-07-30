@@ -4,6 +4,15 @@ description: Durable, local-first operations tools for consultants.
 icon: BookOpen
 ---
 
+import {
+  Blocks,
+  Files,
+  Presentation,
+  Scissors,
+  SplitSquareVertical,
+  TableProperties,
+} from "lucide-react";
+
 ConsultChimps turns recurring document and data chores into deterministic tools.
 Use the command-line interface when you need an answer now, or import the
 focused TypeScript packages when you are building a repeatable workflow.
@@ -19,38 +28,38 @@ focused TypeScript packages when you are building a repeatable workflow.
   <Card
     title="Consolidate spreadsheets"
     description="Combine visible, non-empty worksheets into one auditable Excel table."
-    href="./tools/spreadsheets"
-    icon="TableProperties"
+    href="/docs/tools/spreadsheets"
+    icon={<TableProperties />}
   />
   <Card
     title="Split a spreadsheet"
     description="Create one Excel workbook for each distinct value in a selected column."
-    href="./tools/spreadsheet-split"
-    icon="SplitSquareVertical"
+    href="/docs/tools/spreadsheet-split"
+    icon={<SplitSquareVertical />}
   />
   <Card
     title="Populate a PowerPoint template"
     description="Create one formatted slide for every nonempty Excel record."
-    href="./tools/powerpoint-populate"
-    icon="Presentation"
+    href="/docs/tools/powerpoint-populate"
+    icon={<Presentation />}
   />
   <Card
     title="Split a PDF"
     description="Write every page to a predictably named PDF."
-    href="./tools/pdf-split"
-    icon="Scissors"
+    href="/docs/tools/pdf-split"
+    icon={<Scissors />}
   />
   <Card
     title="Merge PDFs"
     description="Assemble PDFs in resolved input order."
-    href="./tools/pdf-merge"
-    icon="Files"
+    href="/docs/tools/pdf-merge"
+    icon={<Files />}
   />
   <Card
     title="Compose with libraries"
     description="Import the file, table, workbook, PowerPoint, and PDF modules directly."
-    href="./libraries"
-    icon="Blocks"
+    href="/docs/libraries"
+    icon={<Blocks />}
   />
 </Cards>
 
