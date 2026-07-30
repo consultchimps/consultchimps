@@ -24,10 +24,14 @@ const mono = IBM_Plex_Mono({
   weight: ["400", "500", "600"],
 });
 
+const siteUrl = new URL(
+  process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000",
+);
+
 export const metadata: Metadata = {
-  metadataBase: new URL(
-    process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000",
-  ),
+  // Asset metadata already includes the GitHub Pages base path. Keeping the
+  // metadata base at the origin prevents Next.js from adding that path twice.
+  metadataBase: new URL(siteUrl.origin),
   title: {
     default: "ConsultChimps — Operations tools that keep their promises",
     template: "%s · ConsultChimps",
