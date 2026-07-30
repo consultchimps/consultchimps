@@ -1,0 +1,37 @@
+{
+  "name": "@consultchimps/messages",
+  "version": "0.0.0",
+  "description": "Plain-language explanations of ConsultChimps results and errors for CLIs and user interfaces.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/consultchimps/consultchimps.git",
+    "directory": "packages/messages"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "prepack": "pnpm build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@consultchimps/core": "workspace:*"
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

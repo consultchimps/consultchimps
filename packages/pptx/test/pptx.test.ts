@@ -6,8 +6,11 @@ import JSZip from "jszip";
 import { afterEach, describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 
+import { OPERATION_ABORTED, type OperationProgress } from "@consultchimps/core";
+
 import {
   inspectPowerPointTemplate,
+  planPopulatePowerPointTemplate,
   populatePowerPointTemplate,
 } from "../src/index.js";
 
@@ -687,5 +690,69 @@ describe("PowerPoint template population", () => {
         entry.startsWith(".consultchimps-pptx-"),
       ),
     ).toEqual([]);
+  });
+
+  it("plans population without writing, reports progress, and honours cancellation", async () => {
+    const directory = await createTemporaryDirectory();
+    const templatePath = path.join(directory, "template.pptx");
+    const workbookPath = path.join(directory, "data.xlsx");
+    const outputPath = path.join(directory, "output.pptx");
+    await writeTemplate(templatePath, [
+      slideXml([{ id: 2, name: "Title", runs: [{ text: "{{client}}" }] }]),
+    ]);
+    await writeWorkbook(workbookPath, [["client"], ["A"], ["B"]]);
+
+    const plan = await planPopulatePowerPointTemplate({
+      templatePath,
+      workbookPath,
+      outputPath,
+    });
+    expect(plan.operation).toBe("pptx.populate");
+    expect(plan.inputs).toEqual([
+      path.resolve(templatePath),
+      path.resolve(workbookPath),
+    ]);
+    expect(plan.outputs).toEqual([
+      {
+        kind: "file",
+        mediaType:
+          "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        path: path.resolve(outputPath),
+        exists: false,
+      },
+    ]);
+    expect(plan.metrics).toMatchObject({
+      generatedSlides: 2,
+      placeholderFields: 1,
+    });
+    await expect(readFile(outputPath)).rejects.toThrow();
+
+    const events: OperationProgress[] = [];
+    const result = await populatePowerPointTemplate({
+      templatePath,
+      workbookPath,
+      outputPath,
+      onProgress: (progress) => events.push(progress),
+    });
+    expect(result.metrics.generatedSlides).toBe(2);
+    expect(events.map((event) => [event.stage, event.completed])).toEqual([
+      ["generating-slides", 1],
+      ["generating-slides", 2],
+      ["writing-output", 1],
+    ]);
+
+    const controller = new AbortController();
+    controller.abort();
+    const cancelledPath = path.join(directory, "cancelled.pptx");
+    await expectErrorCode(
+      populatePowerPointTemplate({
+        templatePath,
+        workbookPath,
+        outputPath: cancelledPath,
+        signal: controller.signal,
+      }),
+      OPERATION_ABORTED,
+    );
+    await expect(readFile(cancelledPath)).rejects.toThrow();
   });
 });

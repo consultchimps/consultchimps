@@ -17,9 +17,8 @@ import {
   consolidateWorkbooks,
   splitWorkbookByColumn,
 } from "@consultchimps/xlsx";
+import { formatHumanError, formatHumanResult } from "@consultchimps/messages";
 import { Command } from "commander";
-
-import { formatHumanError, formatHumanResult } from "./human-output.js";
 
 interface GlobalOptions {
   json?: boolean;
@@ -197,7 +196,9 @@ Your original workbooks are never changed.
   )
   .action(async (inputs: string[], options: ConsolidateOptions) => {
     const inputPaths = await discoverFiles(inputs, { extensions: [".xlsx"] });
-    const result = await consolidateWorkbooks(inputPaths, options.output, {
+    const result = await consolidateWorkbooks({
+      inputs: inputPaths,
+      output: options.output,
       addSourceColumns: options.source !== false,
       headerRow: options.headerRow,
       includeHiddenSheets: options.hidden === true,
@@ -283,7 +284,9 @@ Your original workbook is never changed.
     const outputDirectory =
       options.output ??
       path.join(path.dirname(inputPath), `${path.parse(inputPath).name}-split`);
-    const result = await splitWorkbookByColumn(inputPath, outputDirectory, {
+    const result = await splitWorkbookByColumn({
+      input: inputPath,
+      outputDirectory,
       column: options.column,
       filenamePrefix: options.prefix,
       headerRow: options.headerRow,
@@ -481,7 +484,9 @@ What happens:
     const outputDirectory =
       options.output ??
       path.join(path.dirname(inputPath), `${path.parse(inputPath).name}-pages`);
-    const result = await splitPdf(inputPath, outputDirectory, {
+    const result = await splitPdf({
+      input: inputPath,
+      outputDirectory,
       filenamePrefix: options.prefix,
       overwrite: options.force === true,
     });
@@ -518,7 +523,9 @@ What happens:
   )
   .action(async (inputs: string[], options: MergeOptions) => {
     const inputPaths = await discoverFiles(inputs, { extensions: [".pdf"] });
-    const result = await mergePdfs(inputPaths, options.output, {
+    const result = await mergePdfs({
+      inputs: inputPaths,
+      output: options.output,
       overwrite: options.force === true,
     });
     printResult(result, program.opts<GlobalOptions>().json === true);

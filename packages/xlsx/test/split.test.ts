@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 
 import {
+  planSplitWorkbookByColumn,
   readWorkbookExcelTables,
   splitWorkbookByColumn,
 } from "../src/index.js";
@@ -120,7 +121,9 @@ describe("splitWorkbookByColumn", () => {
       sourceRows: [5, 6, 7],
     });
 
-    const result = await splitWorkbookByColumn(input, output, {
+    const result = await splitWorkbookByColumn({
+      input: input,
+      outputDirectory: output,
       column: "Region",
       table: "clientdata",
     });
@@ -151,7 +154,9 @@ describe("splitWorkbookByColumn", () => {
     await copyWorkbookWithExcelTable(input);
 
     const inputArchive = await JSZip.loadAsync(await readFile(input));
-    const result = await splitWorkbookByColumn(input, output, {
+    const result = await splitWorkbookByColumn({
+      input: input,
+      outputDirectory: output,
       column: "Region",
       preserveWorkbook: true,
       table: "ClientData",
@@ -227,7 +232,9 @@ describe("splitWorkbookByColumn", () => {
     await copyWorkbookWithExcelTable(input);
 
     await expect(
-      splitWorkbookByColumn(input, path.join(directory, "missing"), {
+      splitWorkbookByColumn({
+        input: input,
+        outputDirectory: path.join(directory, "missing"),
         column: "Region",
         table: "MissingTable",
       }),
@@ -236,7 +243,9 @@ describe("splitWorkbookByColumn", () => {
     );
 
     await expect(
-      splitWorkbookByColumn(input, path.join(directory, "invalid-header"), {
+      splitWorkbookByColumn({
+        input: input,
+        outputDirectory: path.join(directory, "invalid-header"),
         column: "Region",
         headerRow: 4,
         table: "ClientData",
@@ -246,7 +255,9 @@ describe("splitWorkbookByColumn", () => {
     );
 
     await expect(
-      splitWorkbookByColumn(input, path.join(directory, "preserve-sheet"), {
+      splitWorkbookByColumn({
+        input: input,
+        outputDirectory: path.join(directory, "preserve-sheet"),
         column: "Region",
         preserveWorkbook: true,
       }),
@@ -266,7 +277,9 @@ describe("splitWorkbookByColumn", () => {
     ).toHaveLength(1);
 
     await expect(
-      splitWorkbookByColumn(input, path.join(directory, "default"), {
+      splitWorkbookByColumn({
+        input: input,
+        outputDirectory: path.join(directory, "default"),
         column: "Region",
         table: "ClientData",
       }),
@@ -275,7 +288,9 @@ describe("splitWorkbookByColumn", () => {
     );
 
     await expect(
-      splitWorkbookByColumn(input, path.join(directory, "included"), {
+      splitWorkbookByColumn({
+        input: input,
+        outputDirectory: path.join(directory, "included"),
         column: "Region",
         includeHiddenSheets: true,
         table: "ClientData",
@@ -309,7 +324,9 @@ describe("splitWorkbookByColumn", () => {
       ],
     ]);
 
-    const result = await splitWorkbookByColumn(input, output, {
+    const result = await splitWorkbookByColumn({
+      input: input,
+      outputDirectory: output,
       column: " region ",
     });
 
@@ -370,19 +387,19 @@ describe("splitWorkbookByColumn", () => {
     ]);
 
     await expect(
-      splitWorkbookByColumn(input, path.join(directory, "ambiguous"), {
+      splitWorkbookByColumn({
+        input: input,
+        outputDirectory: path.join(directory, "ambiguous"),
         column: "Region",
       }),
     ).rejects.toThrowError(/multiple non-empty worksheets/);
 
-    const result = await splitWorkbookByColumn(
-      input,
-      path.join(directory, "selected"),
-      {
-        column: "Region",
-        sheet: "archive",
-      },
-    );
+    const result = await splitWorkbookByColumn({
+      input: input,
+      outputDirectory: path.join(directory, "selected"),
+      column: "Region",
+      sheet: "archive",
+    });
     expect(result.artifacts).toHaveLength(1);
     expect(await readRows(result.artifacts[0]!.path, "Archive")).toEqual([
       { Client: "B", Region: "South" },
@@ -417,7 +434,9 @@ describe("splitWorkbookByColumn", () => {
     ]);
 
     await expect(
-      splitWorkbookByColumn(input, output, {
+      splitWorkbookByColumn({
+        input: input,
+        outputDirectory: output,
         column: "Region",
         includeBlank: false,
       }),
@@ -426,7 +445,9 @@ describe("splitWorkbookByColumn", () => {
       readFile(path.join(output, "clients-North.xlsx")),
     ).rejects.toThrow();
 
-    const result = await splitWorkbookByColumn(input, output, {
+    const result = await splitWorkbookByColumn({
+      input: input,
+      outputDirectory: output,
       column: "Region",
       includeBlank: false,
       overwrite: true,
@@ -462,7 +483,9 @@ describe("splitWorkbookByColumn", () => {
     await mkdir(path.join(output, "clients-South.xlsx"), { recursive: true });
 
     await expect(
-      splitWorkbookByColumn(input, output, {
+      splitWorkbookByColumn({
+        input: input,
+        outputDirectory: output,
         column: "Region",
         overwrite: true,
       }),
@@ -470,5 +493,60 @@ describe("splitWorkbookByColumn", () => {
     await expect(
       readFile(path.join(output, "clients-North.xlsx")),
     ).rejects.toThrow();
+  });
+
+  it("plans the split without creating any file and flags collisions", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "clients.xlsx");
+    const output = path.join(directory, "split");
+    await createWorkbook(input, [
+      [
+        "Clients",
+        [
+          ["Client", "Region"],
+          ["A", "North"],
+          ["B", "South"],
+          ["C", null],
+        ],
+      ],
+    ]);
+
+    const plan = await planSplitWorkbookByColumn({
+      input,
+      outputDirectory: output,
+      column: "Region",
+    });
+    expect(plan.operation).toBe("sheets.split-by-column");
+    expect(plan.inputs).toEqual([path.resolve(input)]);
+    expect(plan.outputs.map((planned) => path.basename(planned.path))).toEqual([
+      "clients-North.xlsx",
+      "clients-South.xlsx",
+      "clients-blank.xlsx",
+    ]);
+    expect(plan.outputs.every((planned) => planned.exists === false)).toBe(
+      true,
+    );
+    expect(plan.metrics).toMatchObject({ groups: 3, inputRows: 3 });
+    await expect(readdir(output)).rejects.toThrow();
+
+    await mkdir(output, { recursive: true });
+    await createWorkbook(path.join(output, "clients-North.xlsx"), [
+      ["Existing", [["Header"]]],
+    ]);
+    const collidingPlan = await planSplitWorkbookByColumn({
+      input,
+      outputDirectory: output,
+      column: "Region",
+    });
+    expect(
+      collidingPlan.outputs.find(
+        (planned) => path.basename(planned.path) === "clients-North.xlsx",
+      )?.exists,
+    ).toBe(true);
+    expect(
+      collidingPlan.warnings.some((warning) =>
+        warning.includes("already exists"),
+      ),
+    ).toBe(true);
   });
 });

@@ -23,6 +23,7 @@
   "dependencies": {
     "@consultchimps/core": "workspace:*",
     "@consultchimps/files": "workspace:*",
+    "@consultchimps/messages": "workspace:*",
     "@consultchimps/pdf": "workspace:*",
     "@consultchimps/pptx": "workspace:*",
     "@consultchimps/xlsx": "workspace:*",
