@@ -99,6 +99,15 @@ export async function discoverFiles(
   return files;
 }
 
+export async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await stat(path.resolve(targetPath));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function ensureDirectory(directoryPath: string): Promise<string> {
   const absolutePath = path.resolve(directoryPath);
   await mkdir(absolutePath, { recursive: true });
