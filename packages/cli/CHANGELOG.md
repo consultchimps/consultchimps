@@ -1,5 +1,48 @@
 # consultchimps
 
+## 0.5.0
+
+### Minor Changes
+
+- 5c08c75: Excel Table splits now preserve the complete source workbook by
+  default, so every output opens exactly like the prepared original (zoom,
+  cursor position, cover sheets, styles, and content outside the table all carry
+  over). Pass `preserveWorkbook: false` or the new `--no-preserve-workbook` flag
+  for the previous compact data-only outputs. Behavior change for existing table
+  splits that relied on the compact default; plain worksheet splits are
+  unchanged.
+
+  Preserved splits now refuse to relocate cells whose formulas depend on their
+  position (A1-style references, shared, or array formulas) with a stable
+  `XLSX_SPLIT_PRESERVE_FORMULA` error instead of silently producing formulas
+  that point at the wrong rows; structured table references such as `[@Amount]`
+  remain fully supported.
+
+  Workbook named ranges are now supported as a data source: select one with the
+  new `range` option or `--range <name>` flag, inspect them with the new
+  `readWorkbookNamedRanges` export, and prefer sources in the order Excel Table,
+  named range, then full worksheet range. Named-range splits always produce
+  compact outputs and reject `headerRow` and `preserveWorkbook`.
+
+### Patch Changes
+
+- 5c08c75: Publish typed error-code registries (`FILES_ERRORS`, `PDF_ERRORS`,
+  `XLSX_ERRORS`, `PPTX_ERRORS`, with matching `*ErrorCode` unions) so consumers
+  can match expected failures without string literals, and make
+  `OperationResult` and `OperationPlan` generic over each operation's metric
+  names so metric renames become compile-time errors. All runtime values and
+  error codes are unchanged; the generics default to `string`, so existing
+  consumers keep compiling.
+- Updated dependencies [849bf37]
+- Updated dependencies [5c08c75]
+- Updated dependencies [5c08c75]
+  - @consultchimps/pdf@0.3.0
+  - @consultchimps/xlsx@0.6.0
+  - @consultchimps/core@0.3.0
+  - @consultchimps/files@0.3.0
+  - @consultchimps/pptx@0.4.0
+  - @consultchimps/messages@0.1.1
+
 ## 0.4.1
 
 ### Patch Changes

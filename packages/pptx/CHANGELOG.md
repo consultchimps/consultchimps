@@ -1,5 +1,25 @@
 # @consultchimps/pptx
 
+## 0.4.0
+
+### Minor Changes
+
+- 5c08c75: Publish typed error-code registries (`FILES_ERRORS`, `PDF_ERRORS`,
+  `XLSX_ERRORS`, `PPTX_ERRORS`, with matching `*ErrorCode` unions) so consumers
+  can match expected failures without string literals, and make
+  `OperationResult` and `OperationPlan` generic over each operation's metric
+  names so metric renames become compile-time errors. All runtime values and
+  error codes are unchanged; the generics default to `string`, so existing
+  consumers keep compiling.
+
+### Patch Changes
+
+- Updated dependencies [5c08c75]
+- Updated dependencies [5c08c75]
+  - @consultchimps/xlsx@0.6.0
+  - @consultchimps/core@0.3.0
+  - @consultchimps/files@0.3.0
+
 ## 0.3.0
 
 ### Minor Changes
