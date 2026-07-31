@@ -66,18 +66,33 @@ export function splitOutputNames(prefix: string, pageCount: number): string[] {
 
 const UNSAFE_NAME_CHARACTERS = /[<>:"/\\|?*]+/gu;
 
+// Linear-time replacement for a trailing [. ]+ regex, which CodeQL flags as
+// polynomial on adversarial inputs with long runs of spaces.
+function trimTrailingDotsAndSpaces(value: string): string {
+  let end = value.length;
+  while (end > 0) {
+    const character = value[end - 1];
+    if (character !== "." && character !== " ") {
+      break;
+    }
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 /**
  * Reduce a caller-supplied name to a portable filename fragment. Byte
  * operations never touch a filesystem, but their output names become
  * download and archive entries that must stay valid everywhere.
  */
 export function safeNameFragment(value: string, fallback: string): string {
-  const normalized = value
-    .replace(UNSAFE_NAME_CHARACTERS, "-")
-    .replace(/\s+/gu, " ")
-    .replace(/-+/gu, "-")
-    .trim()
-    .replace(/[. ]+$/gu, "");
+  const normalized = trimTrailingDotsAndSpaces(
+    value
+      .replace(UNSAFE_NAME_CHARACTERS, "-")
+      .replace(/\s+/gu, " ")
+      .replace(/-+/gu, "-")
+      .trim(),
+  );
   return normalized || fallback;
 }
 
