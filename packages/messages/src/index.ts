@@ -244,14 +244,17 @@ function artifactType(artifact: Artifact): string {
   return "File";
 }
 
-function genericExplanation(result: OperationResult): OperationExplanation {
+function genericExplanation(
+  result: OperationResult,
+  vocabulary: MessageVocabulary,
+): OperationExplanation {
   return {
     title: "Your task is complete.",
     summary: () => [
       `ConsultChimps completed the "${result.operation}" operation successfully.`,
-      "Review the detailed results and created files below.",
+      `Review the detailed results and the files ${vocabulary.artifactListReference}.`,
     ],
-    nextSteps: (vocabulary) => [
+    nextSteps: () => [
       `Open the files ${vocabulary.artifactListReference} and confirm that they contain the expected results.`,
     ],
   };
@@ -275,7 +278,8 @@ function renderResult(
   vocabulary: MessageVocabulary,
 ): string {
   const explanation =
-    operationExplanations[result.operation] ?? genericExplanation(result);
+    operationExplanations[result.operation] ??
+    genericExplanation(result, vocabulary);
   const lines = [
     "SUCCESS: ConsultChimps finished your task.",
     "",

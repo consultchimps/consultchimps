@@ -161,6 +161,7 @@ prints.
 import {
   CLI_VOCABULARY,
   formatHumanError,
+  GENERIC_VOCABULARY,
   type MessageVocabulary,
 } from "@consultchimps/messages";
 
@@ -170,9 +171,11 @@ console.error(
   }),
 );
 
+// Start a custom interface's vocabulary from the neutral defaults so no
+// command-line phrasing leaks through, then override what your interface
+// presents differently.
 const desktopVocabulary: MessageVocabulary = {
-  ...CLI_VOCABULARY,
-  actionNoun: "task",
+  ...GENERIC_VOCABULARY,
   artifactListReference: "in the results panel",
   retryWithOverwrite:
     "If you intentionally want to replace the existing output, switch on Replace existing files and try again.",
