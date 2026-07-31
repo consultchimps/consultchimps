@@ -87,15 +87,31 @@ function trimTrailingDotsAndSpaces(value: string): string {
  * operations never touch a filesystem, but their output names become
  * download and archive entries that must stay valid everywhere.
  */
+function withoutControlCharacters(value: string): string {
+  let result = "";
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint !== undefined && codePoint >= 32 && codePoint !== 127) {
+      result += character;
+    }
+  }
+  return result;
+}
+
 export function safeNameFragment(value: string, fallback: string): string {
   const normalized = trimTrailingDotsAndSpaces(
-    value
+    withoutControlCharacters(value.normalize("NFKC"))
       .replace(UNSAFE_NAME_CHARACTERS, "-")
       .replace(/\s+/gu, " ")
       .replace(/-+/gu, "-")
       .trim(),
   );
-  const safe = normalized || fallback;
+  // Cap the fragment like the Excel splitter does so generated names plus
+  // their page suffix stay well inside common 255-unit filename limits.
+  const limited = trimTrailingDotsAndSpaces(
+    [...normalized].slice(0, 80).join(""),
+  );
+  const safe = limited || fallback;
   return WINDOWS_RESERVED_FILENAME.test(safe) ? `_${safe}` : safe;
 }
 

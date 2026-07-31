@@ -69,6 +69,18 @@ describe("byte-level PDF operations", () => {
       outputName: "aux.pdf",
     });
     expect(reservedMerge.outputs[0]?.name).toBe("_aux.pdf");
+
+    const control = await splitPdfBytes({
+      input: { name: "client.pdf", bytes },
+    });
+    expect(control.outputs[0]?.name).toBe("client-page-001.pdf");
+
+    const longStem = `${"a".repeat(300)}.pdf`;
+    const bounded = await splitPdfBytes({
+      input: { name: longStem, bytes },
+    });
+    expect(bounded.outputs[0]?.name).toBe(`${"a".repeat(80)}-page-001.pdf`);
+    expect(bounded.outputs[0]!.name.length).toBeLessThanOrEqual(255);
   });
 
   it("plans a split without producing any bytes", async () => {
