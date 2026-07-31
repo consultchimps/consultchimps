@@ -21,6 +21,23 @@ const PDF_MEDIA_TYPE = "application/pdf";
 const SPLIT_OPERATION = "pdf.split";
 const MERGE_OPERATION = "pdf.merge";
 
+/**
+ * Stable, published error codes thrown by @consultchimps/pdf. Values are part
+ * of the versioned public API; never change an existing value.
+ */
+export const PDF_ERRORS = {
+  PDF_NO_INPUTS: "PDF_NO_INPUTS",
+  PDF_NO_PAGES: "PDF_NO_PAGES",
+  PDF_PAGE_COPY_FAILED: "PDF_PAGE_COPY_FAILED",
+  PDF_READ_FAILED: "PDF_READ_FAILED",
+} as const;
+
+export type PdfErrorCode = (typeof PDF_ERRORS)[keyof typeof PDF_ERRORS];
+
+export type SplitPdfMetric = "inputFiles" | "outputFiles" | "pages";
+export type MergePdfsMetric = "inputFiles" | "outputFiles" | "pages";
+export type MergePdfsPlanMetric = "inputFiles" | "outputFiles";
+
 export interface PdfWriteOptions {
   overwrite?: boolean | undefined;
 }
@@ -46,7 +63,7 @@ async function loadPdf(filePath: string): Promise<PDFDocument> {
     return await PDFDocument.load(bytes);
   } catch (error) {
     throw new ConsultChimpsError(
-      "PDF_READ_FAILED",
+      PDF_ERRORS.PDF_READ_FAILED,
       `Could not read PDF: ${absolutePath}`,
       {
         cause: error,
@@ -74,7 +91,7 @@ async function resolveSplitPdf(
 
   if (pageCount === 0) {
     throw new ConsultChimpsError(
-      "PDF_NO_PAGES",
+      PDF_ERRORS.PDF_NO_PAGES,
       "The input PDF contains no pages.",
       {
         details: { inputPath: absoluteInput },
@@ -106,7 +123,7 @@ async function resolveSplitPdf(
 
 export async function planSplitPdf(
   options: SplitPdfOptions,
-): Promise<OperationPlan> {
+): Promise<OperationPlan<SplitPdfMetric>> {
   const resolved = await resolveSplitPdf(options);
   const outputs = await Promise.all(
     resolved.outputPaths.map(async (outputPath) => ({
@@ -140,7 +157,7 @@ export async function planSplitPdf(
 
 export async function splitPdf(
   options: SplitPdfOptions,
-): Promise<OperationResult> {
+): Promise<OperationResult<SplitPdfMetric>> {
   throwIfAborted(options.signal, SPLIT_OPERATION);
   const resolved = await resolveSplitPdf(options);
   await ensureDirectory(resolved.absoluteOutputDirectory);
@@ -158,7 +175,7 @@ export async function splitPdf(
     ]);
     if (!page) {
       throw new ConsultChimpsError(
-        "PDF_PAGE_COPY_FAILED",
+        PDF_ERRORS.PDF_PAGE_COPY_FAILED,
         `Could not copy page ${index + 1}.`,
       );
     }
@@ -198,7 +215,7 @@ interface ResolvedMerge {
 function resolveMergePdfs(options: MergePdfsOptions): ResolvedMerge {
   if (options.inputs.length === 0) {
     throw new ConsultChimpsError(
-      "PDF_NO_INPUTS",
+      PDF_ERRORS.PDF_NO_INPUTS,
       "At least one input PDF is required.",
     );
   }
@@ -214,7 +231,7 @@ function resolveMergePdfs(options: MergePdfsOptions): ResolvedMerge {
 
 export async function planMergePdfs(
   options: MergePdfsOptions,
-): Promise<OperationPlan> {
+): Promise<OperationPlan<MergePdfsPlanMetric>> {
   const resolved = resolveMergePdfs(options);
   const exists = await pathExists(resolved.absoluteOutput);
   const warnings =
@@ -245,7 +262,7 @@ export async function planMergePdfs(
 
 export async function mergePdfs(
   options: MergePdfsOptions,
-): Promise<OperationResult> {
+): Promise<OperationResult<MergePdfsMetric>> {
   throwIfAborted(options.signal, MERGE_OPERATION);
   const resolved = resolveMergePdfs(options);
   await ensureOutputAvailable(resolved.absoluteOutput, {

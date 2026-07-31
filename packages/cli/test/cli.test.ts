@@ -494,6 +494,7 @@ describe("consultchimps CLI", () => {
       "ClientData",
       "--column",
       "Region",
+      "--no-preserve-workbook",
       "--output",
       output,
     ]);
@@ -526,7 +527,7 @@ describe("consultchimps CLI", () => {
     ]);
   });
 
-  it("preserves the complete workbook while splitting an Excel Table", async () => {
+  it("preserves the complete workbook by default while splitting an Excel Table", async () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "inputs", "clients.xlsx");
     const output = path.join(directory, "outputs", "preserved-regions");
@@ -541,7 +542,6 @@ describe("consultchimps CLI", () => {
       "ClientData",
       "--column",
       "Region",
-      "--preserve-workbook",
       "--output",
       output,
     ]);

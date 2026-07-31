@@ -140,7 +140,16 @@ function genericExplanation(result: OperationResult): OperationExplanation {
   };
 }
 
-export function formatHumanResult(result: OperationResult): string {
+export function formatHumanResult<TMetric extends string>(
+  result: OperationResult<TMetric>,
+): string {
+  return renderResult({
+    ...result,
+    metrics: result.metrics as Record<string, number>,
+  });
+}
+
+function renderResult(result: OperationResult): string {
   const explanation =
     operationExplanations[result.operation] ?? genericExplanation(result);
   const lines = [

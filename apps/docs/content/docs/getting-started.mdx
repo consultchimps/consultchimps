@@ -30,6 +30,27 @@ npm install --save-dev consultchimps
 npx consultchimps --help
 ```
 
+## Update an installed CLI
+
+`npx consultchimps@latest` always runs the newest published version, so it needs
+no updating. A global installation stays on the version you installed until you
+update it:
+
+```bash
+consultchimps --version
+npm install --global consultchimps@latest
+```
+
+For a repository-local installation, update the development dependency and
+commit the resulting lockfile change:
+
+```bash
+npm install --save-dev consultchimps@latest
+```
+
+Release notes for every version are published on the
+[GitHub releases page](https://github.com/consultchimps/consultchimps/releases).
+
 ## Install a library
 
 Install the narrowest package that owns the operation you need:
@@ -41,10 +62,10 @@ npm install @consultchimps/xlsx
 ```ts
 import { consolidateWorkbooks } from "@consultchimps/xlsx";
 
-const result = await consolidateWorkbooks(
-  ["inputs/january.xlsx", "inputs/february.xlsx"],
-  "outputs/consolidated.xlsx",
-);
+const result = await consolidateWorkbooks({
+  inputs: ["inputs/january.xlsx", "inputs/february.xlsx"],
+  output: "outputs/consolidated.xlsx",
+});
 ```
 
 The adapter package declares its required ConsultChimps packages, so npm

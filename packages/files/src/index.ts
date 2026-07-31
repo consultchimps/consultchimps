@@ -4,6 +4,19 @@ import path from "node:path";
 import { ConsultChimpsError } from "@consultchimps/core";
 import fg from "fast-glob";
 
+/**
+ * Stable, published error codes thrown by @consultchimps/files. Values are
+ * part of the versioned public API; never change an existing value.
+ */
+export const FILES_ERRORS = {
+  FILES_INPUT_OVERWRITE: "FILES_INPUT_OVERWRITE",
+  FILES_NO_INPUTS: "FILES_NO_INPUTS",
+  FILES_NOT_FOUND: "FILES_NOT_FOUND",
+  FILES_OUTPUT_EXISTS: "FILES_OUTPUT_EXISTS",
+} as const;
+
+export type FilesErrorCode = (typeof FILES_ERRORS)[keyof typeof FILES_ERRORS];
+
 export interface DiscoverFilesOptions {
   cwd?: string | undefined;
   extensions?: string[] | undefined;
@@ -41,7 +54,7 @@ export async function discoverFiles(
 ): Promise<string[]> {
   if (inputs.length === 0) {
     throw new ConsultChimpsError(
-      "FILES_NO_INPUTS",
+      FILES_ERRORS.FILES_NO_INPUTS,
       "At least one input path or pattern is required.",
     );
   }
@@ -88,7 +101,7 @@ export async function discoverFiles(
 
   if (files.length === 0) {
     throw new ConsultChimpsError(
-      "FILES_NOT_FOUND",
+      FILES_ERRORS.FILES_NOT_FOUND,
       "No files matched the supplied inputs.",
       {
         details: { inputs, cwd, extensions: options.extensions },
@@ -136,7 +149,7 @@ export async function ensureOutputAvailable(
   }
 
   throw new ConsultChimpsError(
-    "FILES_OUTPUT_EXISTS",
+    FILES_ERRORS.FILES_OUTPUT_EXISTS,
     `Output already exists: ${absolutePath}`,
     {
       details: { outputPath: absolutePath },
@@ -154,7 +167,7 @@ export function refuseInputOverwrite(
 
   if (inputKeys.has(outputKey)) {
     throw new ConsultChimpsError(
-      "FILES_INPUT_OVERWRITE",
+      FILES_ERRORS.FILES_INPUT_OVERWRITE,
       `Refusing to overwrite an input file: ${resolvedOutput}`,
       { details: { outputPath: resolvedOutput } },
     );

@@ -125,6 +125,7 @@ describe("splitWorkbookByColumn", () => {
       input: input,
       outputDirectory: output,
       column: "Region",
+      preserveWorkbook: false,
       table: "clientdata",
     });
 
@@ -147,7 +148,7 @@ describe("splitWorkbookByColumn", () => {
     ).toEqual([{ Amount: 20, Client: "B", Region: "South" }]);
   });
 
-  it("preserves the workbook and changes only the selected Excel Table rows", async () => {
+  it("preserves the workbook by default and changes only the selected Excel Table rows", async () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "clients.xlsx");
     const output = path.join(directory, "preserved");
@@ -158,7 +159,6 @@ describe("splitWorkbookByColumn", () => {
       input: input,
       outputDirectory: output,
       column: "Region",
-      preserveWorkbook: true,
       table: "ClientData",
     });
 
@@ -493,6 +493,95 @@ describe("splitWorkbookByColumn", () => {
     await expect(
       readFile(path.join(output, "clients-North.xlsx")),
     ).rejects.toThrow();
+  });
+
+  it("refuses to relocate position-dependent formulas during a preserved split", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "clients.xlsx");
+    const output = path.join(directory, "split");
+    await copyWorkbookWithExcelTable(input);
+
+    const archive = await JSZip.loadAsync(await readFile(input));
+    const sheetXml = await archive
+      .file("xl/worksheets/sheet2.xml")!
+      .async("text");
+    archive.file(
+      "xl/worksheets/sheet2.xml",
+      sheetXml.replace(
+        '<x:c r="D7" s="6" t="n"><x:v>30</x:v></x:c>',
+        '<x:c r="D7" s="6" t="n"><x:f>D5*3</x:f><x:v>30</x:v></x:c>',
+      ),
+    );
+    await writeFile(
+      input,
+      await archive.generateAsync({
+        compression: "DEFLATE",
+        type: "nodebuffer",
+      }),
+    );
+
+    await expect(
+      splitWorkbookByColumn({
+        input,
+        outputDirectory: output,
+        column: "Region",
+        table: "ClientData",
+      }),
+    ).rejects.toMatchObject({ code: "XLSX_SPLIT_PRESERVE_FORMULA" });
+    await expect(readdir(output)).resolves.toEqual([]);
+
+    const compact = await splitWorkbookByColumn({
+      input,
+      outputDirectory: output,
+      column: "Region",
+      preserveWorkbook: false,
+      table: "ClientData",
+    });
+    expect(compact.metrics.outputFiles).toBe(2);
+  });
+
+  it("relocates position-independent structured formulas during a preserved split", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "clients.xlsx");
+    const output = path.join(directory, "split");
+    await copyWorkbookWithExcelTable(input);
+
+    const archive = await JSZip.loadAsync(await readFile(input));
+    const sheetXml = await archive
+      .file("xl/worksheets/sheet2.xml")!
+      .async("text");
+    archive.file(
+      "xl/worksheets/sheet2.xml",
+      sheetXml.replace(
+        '<x:c r="D7" s="6" t="n"><x:v>30</x:v></x:c>',
+        '<x:c r="D7" s="6" t="n"><x:f>ClientData[[#This Row],[Amount]]</x:f><x:v>30</x:v></x:c>',
+      ),
+    );
+    await writeFile(
+      input,
+      await archive.generateAsync({
+        compression: "DEFLATE",
+        type: "nodebuffer",
+      }),
+    );
+
+    const result = await splitWorkbookByColumn({
+      input,
+      outputDirectory: output,
+      column: "Region",
+      table: "ClientData",
+    });
+    expect(result.metrics.outputFiles).toBe(2);
+
+    const northArchive = await JSZip.loadAsync(
+      await readFile(path.join(output, "clients-North.xlsx")),
+    );
+    const northSheetXml = await northArchive
+      .file("xl/worksheets/sheet2.xml")!
+      .async("text");
+    expect(northSheetXml).toContain(
+      '<x:c r="D6" s="6" t="n"><x:f>ClientData[[#This Row],[Amount]]</x:f><x:v>30</x:v></x:c>',
+    );
   });
 
   it("plans the split without creating any file and flags collisions", async () => {

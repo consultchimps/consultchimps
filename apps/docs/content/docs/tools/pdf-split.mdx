@@ -50,9 +50,10 @@ pnpm consultchimps pdf split report.pdf \
 ```ts
 import { splitPdf } from "@consultchimps/pdf";
 
-const result = await splitPdf("report.pdf", "outputs/pages", {
+const result = await splitPdf({
+  input: "report.pdf",
+  outputDirectory: "outputs/pages",
   filenamePrefix: "report",
-  overwrite: false,
 });
 
 for (const artifact of result.artifacts) {
