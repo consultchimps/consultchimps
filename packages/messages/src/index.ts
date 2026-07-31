@@ -1,7 +1,124 @@
 import type { Artifact, OperationResult } from "@consultchimps/core";
 
+/**
+ * Interface-specific wording used by the shared explanations.
+ *
+ * The guidance in this package is identical for every interface, but the way a
+ * recovery step is expressed is not: a terminal user reruns a command with
+ * `--force`, while a browser user turns on an overwrite control. Each entry is
+ * a complete, plain-language sentence (or, for `actionNoun` and
+ * `artifactListReference`, a fragment) so that an interface can supply wording
+ * that matches how its users actually work.
+ */
+export interface MessageVocabulary {
+  /**
+   * Word for a single unit of work the user asked for: "command" in a terminal,
+   * "task" in a graphical interface.
+   */
+  readonly actionNoun: string;
+  /**
+   * Fragment that points at the list of created files, such as "listed below"
+   * in a scrolling transcript or "shown in the list of created files" in an
+   * interface that renders the files somewhere else.
+   */
+  readonly artifactListReference: string;
+  /** Where to find worked examples for the attempted work. */
+  readonly examplesReference: string;
+  /** How to include hidden worksheets in a spreadsheet operation. */
+  readonly hiddenWorksheetOption: string;
+  /** Where to find the expected input format. */
+  readonly inputFormatReference: string;
+  /** How to review a PowerPoint template's placeholders before populating it. */
+  readonly inspectTemplateFirst: string;
+  /** Caution to confirm before replacing an existing output. */
+  readonly overwriteCaution: string;
+  /** How to make a file pattern such as `*.xlsx` be interpreted literally. */
+  readonly patternQuoting: string;
+  /** Where to find the available PDF options and examples. */
+  readonly pdfOptionsReference: string;
+  /** Where to find a complete PowerPoint population example. */
+  readonly powerPointExampleReference: string;
+  /** How to try again after choosing a different output location. */
+  readonly retryAfterChoosingDifferentOutput: string;
+  /** How to try the same work again once the user is ready. */
+  readonly retryWhenReady: string;
+  /** How to try again with overwriting deliberately enabled. */
+  readonly retryWithOverwrite: string;
+  /** Where to find the available spreadsheet options and examples. */
+  readonly spreadsheetOptionsReference: string;
+}
+
+/** Options shared by the human-readable formatters. */
+export interface MessageFormatOptions {
+  /** Interface wording to use. Defaults to {@link GENERIC_VOCABULARY}. */
+  readonly vocabulary?: MessageVocabulary;
+}
+
+/**
+ * Interface-neutral wording. It never names a flag, an executable, or a
+ * terminal, so any interface can render these explanations unchanged.
+ */
+export const GENERIC_VOCABULARY: MessageVocabulary = {
+  actionNoun: "task",
+  artifactListReference: "shown in the list of created files",
+  examplesReference: "Review the reference for this task if you need examples.",
+  hiddenWorksheetOption:
+    "If the data is on a hidden worksheet, turn on the option that includes hidden worksheets.",
+  inputFormatReference:
+    "Review the reference for this task if you want to check the expected input format.",
+  inspectTemplateFirst:
+    "Inspect the PowerPoint template to review its placeholders before populating the presentation.",
+  overwriteCaution:
+    "Allow the existing output to be replaced only after confirming that it is safe to replace.",
+  patternQuoting:
+    "If you used a pattern such as *.xlsx or *.pdf, check that it is written exactly as you intended and try again.",
+  pdfOptionsReference:
+    "Review the reference for this task to see the available PDF options and examples.",
+  powerPointExampleReference:
+    "Review the reference for populating a presentation to see a complete example.",
+  retryAfterChoosingDifferentOutput:
+    "Choose a different output filename or output folder and start the task again.",
+  retryWhenReady: "Start the task again when you are ready to complete it.",
+  retryWithOverwrite:
+    "If you intentionally want to replace the existing output, allow the existing output to be replaced and try again.",
+  spreadsheetOptionsReference:
+    "Review the reference for this task to see the available spreadsheet options and examples.",
+};
+
+/**
+ * Wording for the `consultchimps` command-line interface. These values are the
+ * exact sentences the CLI has always printed.
+ */
+export const CLI_VOCABULARY: MessageVocabulary = {
+  actionNoun: "command",
+  artifactListReference: "listed below",
+  examplesReference: "Run the command again with --help if you need examples.",
+  hiddenWorksheetOption:
+    "If the data is on a hidden worksheet, review the --hidden option in the command help.",
+  inputFormatReference:
+    "Run the command with --help if you want to review the expected input format.",
+  inspectTemplateFirst:
+    "Run consultchimps pptx inspect-template to review placeholders before populating the presentation.",
+  overwriteCaution:
+    "Use --force only after confirming that the existing output is safe to replace.",
+  patternQuoting:
+    "If you used a pattern such as *.xlsx or *.pdf, place it in quotation marks and try again.",
+  pdfOptionsReference:
+    "Run the command with --help to review the available PDF options and examples.",
+  powerPointExampleReference:
+    "Run consultchimps pptx populate --help for a complete example.",
+  retryAfterChoosingDifferentOutput:
+    "Choose a different output filename or output folder and run the command again.",
+  retryWhenReady:
+    "Run the command again when you are ready to complete the task.",
+  retryWithOverwrite:
+    "If you intentionally want to replace the existing output, rerun the command with --force.",
+  spreadsheetOptionsReference:
+    "Run the command with --help to review the available spreadsheet options and examples.",
+};
+
 interface OperationExplanation {
-  readonly nextSteps: readonly string[];
+  readonly nextSteps: (vocabulary: MessageVocabulary) => readonly string[];
   readonly summary: (result: OperationResult) => readonly string[];
   readonly title: string;
 }
@@ -32,8 +149,8 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
       `The finished workbook contains ${quantity(metric(result, "outputRows"), "data row")} arranged across ${quantity(metric(result, "outputColumns"), "column")}.`,
       "Your original Excel files were not changed.",
     ],
-    nextSteps: [
-      "Open the new Excel workbook listed below and review the consolidated worksheet.",
+    nextSteps: (vocabulary) => [
+      `Open the new Excel workbook ${vocabulary.artifactListReference} and review the consolidated worksheet.`,
       "Keep the source columns in the workbook if you need to trace a row back to its original file and worksheet.",
     ],
   },
@@ -45,8 +162,8 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
       `${quantity(metric(result, "outputRows"), "data row")} ${metric(result, "outputRows") === 1 ? "was" : "were"} written to the new workbooks, and ${quantity(metric(result, "skippedRows"), "row")} ${metric(result, "skippedRows") === 1 ? "was" : "were"} skipped.`,
       "Your original Excel workbook was not changed.",
     ],
-    nextSteps: [
-      "Open the new workbooks listed below and confirm that each file contains the expected group.",
+    nextSteps: (vocabulary) => [
+      `Open the new workbooks ${vocabulary.artifactListReference} and confirm that each file contains the expected group.`,
       "If rows were skipped, review the warning section to understand why.",
     ],
   },
@@ -57,8 +174,8 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
       `It created ${quantity(metric(result, "outputFiles"), "separate PDF file")}, with one source page in each new file.`,
       "Your original PDF was not changed.",
     ],
-    nextSteps: [
-      "Open the new PDF files listed below and confirm that the pages are in the expected order.",
+    nextSteps: (vocabulary) => [
+      `Open the new PDF files ${vocabulary.artifactListReference} and confirm that the pages are in the expected order.`,
       "The page number in each filename identifies its position in the original PDF.",
     ],
   },
@@ -69,8 +186,8 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
       `The new PDF contains ${quantity(metric(result, "pages"), "page")}.`,
       "Your original PDF files were not changed.",
     ],
-    nextSteps: [
-      "Open the new PDF listed below and check that the documents appear in the intended order.",
+    nextSteps: (vocabulary) => [
+      `Open the new PDF ${vocabulary.artifactListReference} and check that the documents appear in the intended order.`,
       "Keep the original PDFs until you have confirmed the merged file is complete.",
     ],
   },
@@ -81,8 +198,8 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
       `It replaced ${quantity(metric(result, "replacements"), "placeholder occurrence")} across the generated slides.`,
       "Your source PowerPoint template and Excel workbook were not changed.",
     ],
-    nextSteps: [
-      "Open the new PowerPoint presentation listed below and review every generated slide.",
+    nextSteps: (vocabulary) => [
+      `Open the new PowerPoint presentation ${vocabulary.artifactListReference} and review every generated slide.`,
       "Check longer replacement values for fit because this version does not shrink or truncate text automatically.",
     ],
   },
@@ -134,22 +251,29 @@ function genericExplanation(result: OperationResult): OperationExplanation {
       `ConsultChimps completed the "${result.operation}" operation successfully.`,
       "Review the detailed results and created files below.",
     ],
-    nextSteps: [
-      "Open the files listed below and confirm that they contain the expected results.",
+    nextSteps: (vocabulary) => [
+      `Open the files ${vocabulary.artifactListReference} and confirm that they contain the expected results.`,
     ],
   };
 }
 
 export function formatHumanResult<TMetric extends string>(
   result: OperationResult<TMetric>,
+  options?: MessageFormatOptions,
 ): string {
-  return renderResult({
-    ...result,
-    metrics: result.metrics as Record<string, number>,
-  });
+  return renderResult(
+    {
+      ...result,
+      metrics: result.metrics as Record<string, number>,
+    },
+    options?.vocabulary ?? GENERIC_VOCABULARY,
+  );
 }
 
-function renderResult(result: OperationResult): string {
+function renderResult(
+  result: OperationResult,
+  vocabulary: MessageVocabulary,
+): string {
   const explanation =
     operationExplanations[result.operation] ?? genericExplanation(result);
   const lines = [
@@ -196,33 +320,36 @@ function renderResult(result: OperationResult): string {
   lines.push(
     "",
     "What you can do next:",
-    ...explanation.nextSteps.map((step) => `  - ${step}`),
+    ...explanation.nextSteps(vocabulary).map((step) => `  - ${step}`),
     "",
   );
 
   return lines.join("\n");
 }
 
-function recoverySteps(code: string | undefined): readonly string[] {
+function recoverySteps(
+  code: string | undefined,
+  vocabulary: MessageVocabulary,
+): readonly string[] {
   if (code === "OPERATION_ABORTED") {
     return [
       "The task was cancelled before it finished; no source file was changed.",
       "Output files completed before the cancellation may remain. Review and remove them if they are not wanted.",
-      "Run the command again when you are ready to complete the task.",
+      vocabulary.retryWhenReady,
     ];
   }
   if (code === "FILES_NOT_FOUND") {
     return [
       "Check that every file or folder path is spelled correctly and still exists.",
-      "If you used a pattern such as *.xlsx or *.pdf, place it in quotation marks and try again.",
-      "Run the command with --help if you want to review the expected input format.",
+      vocabulary.patternQuoting,
+      vocabulary.inputFormatReference,
     ];
   }
   if (code === "FILES_OUTPUT_EXISTS") {
     return [
-      "Choose a different output filename or output folder and run the command again.",
-      "If you intentionally want to replace the existing output, rerun the command with --force.",
-      "Use --force only after confirming that the existing output is safe to replace.",
+      vocabulary.retryAfterChoosingDifferentOutput,
+      vocabulary.retryWithOverwrite,
+      vocabulary.overwriteCaution,
     ];
   }
   if (code === "FILES_INPUT_OVERWRITE") {
@@ -234,36 +361,41 @@ function recoverySteps(code: string | undefined): readonly string[] {
   if (code === "XLSX_NO_TABLES") {
     return [
       "Open the source workbooks and confirm that they contain at least one visible worksheet with data.",
-      "If the data is on a hidden worksheet, review the --hidden option in the command help.",
+      vocabulary.hiddenWorksheetOption,
     ];
   }
   if (code?.startsWith("XLSX_")) {
     return [
-      "Check the workbook, worksheet, table, column name, and command options mentioned in the message above.",
-      "Run the command with --help to review the available spreadsheet options and examples.",
+      `Check the workbook, worksheet, table, column name, and ${vocabulary.actionNoun} options mentioned in the message above.`,
+      vocabulary.spreadsheetOptionsReference,
     ];
   }
   if (code?.startsWith("PDF_")) {
     return [
       "Confirm that every source file is a readable PDF and that the output location is available.",
-      "Run the command with --help to review the available PDF options and examples.",
+      vocabulary.pdfOptionsReference,
     ];
   }
   if (code?.startsWith("PPTX_")) {
     return [
       "Check the PowerPoint template slide, placeholder spelling, Excel headers, and output path mentioned above.",
-      "Run consultchimps pptx inspect-template to review placeholders before populating the presentation.",
-      "Run consultchimps pptx populate --help for a complete example.",
+      vocabulary.inspectTemplateFirst,
+      vocabulary.powerPointExampleReference,
     ];
   }
   return [
-    "Read the message above and check the supplied files, folders, and command options.",
-    "Run the command again with --help if you need examples.",
+    `Read the message above and check the supplied files, folders, and ${vocabulary.actionNoun} options.`,
+    vocabulary.examplesReference,
     "If the problem continues, keep the error reference below when asking for support.",
   ];
 }
 
-export function formatHumanError(message: string, code?: string): string {
+export function formatHumanError(
+  message: string,
+  code?: string,
+  options?: MessageFormatOptions,
+): string {
+  const vocabulary = options?.vocabulary ?? GENERIC_VOCABULARY;
   return [
     "ERROR: ConsultChimps could not finish your task.",
     "",
@@ -271,7 +403,7 @@ export function formatHumanError(message: string, code?: string): string {
     `  ${message}`,
     "",
     "What you can do:",
-    ...recoverySteps(code).map((step) => `  - ${step}`),
+    ...recoverySteps(code, vocabulary).map((step) => `  - ${step}`),
     ...(code
       ? [
           "",
