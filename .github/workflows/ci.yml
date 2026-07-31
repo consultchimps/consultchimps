@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  check:
-    name: Check
+  verify:
+    name: Check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
 
@@ -38,3 +38,16 @@ jobs:
 
       - name: Check formatting, lint, build, types, and tests
         run: pnpm check
+
+  # Aggregates the matrix into the single "Check" status that branch
+  # protection requires; it fails unless every operating system passed.
+  check:
+    name: Check
+    needs: verify
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Confirm every operating system passed
+        run: test "${{ needs.verify.result }}" = "success"
