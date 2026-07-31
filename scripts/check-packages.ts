@@ -103,6 +103,29 @@ try {
     );
   }
 
+  for (const directory of packageDirectories) {
+    execFileSync(pnpmCommand, [...pnpmArguments, "exec", "publint"], {
+      cwd: path.join(workspaceRoot, "packages", directory),
+      stdio: "inherit",
+    });
+  }
+
+  for (const tarball of tarballs) {
+    // The CLI package publishes only a bin entry point, so it has no type
+    // resolution surface for arethetypeswrong to analyze.
+    if (/^consultchimps-\d/.test(path.basename(tarball))) {
+      continue;
+    }
+    execFileSync(
+      pnpmCommand,
+      [...pnpmArguments, "exec", "attw", tarball, "--profile", "esm-only"],
+      {
+        cwd: workspaceRoot,
+        stdio: "inherit",
+      },
+    );
+  }
+
   writeFileSync(
     path.join(consumerDirectory, "package.json"),
     `${JSON.stringify(

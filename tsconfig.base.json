@@ -1,11 +1,14 @@
 {
   "compilerOptions": {
-    "allowSyntheticDefaultImports": true,
     "declaration": true,
     "esModuleInterop": true,
     "exactOptionalPropertyTypes": true,
     "forceConsistentCasingInFileNames": true,
+    // Solely for tsup's declaration build, which injects the deprecated
+    // baseUrl option into its TypeScript 6 worker. Our own options are
+    // deprecation-free; TypeScript 7 accepts and ignores this flag.
     "ignoreDeprecations": "6.0",
+    "isolatedDeclarations": true,
     "isolatedModules": true,
     "lib": ["ES2024"],
     "module": "NodeNext",
@@ -17,6 +20,7 @@
     "skipLibCheck": true,
     "strict": true,
     "target": "ES2024",
-    "types": ["node"]
+    "types": ["node"],
+    "verbatimModuleSyntax": true
   }
 }
