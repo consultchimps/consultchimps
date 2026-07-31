@@ -20,6 +20,16 @@ import { PDFDocument } from "pdf-lib";
 const PDF_MEDIA_TYPE = "application/pdf";
 const SPLIT_OPERATION = "pdf.split";
 const MERGE_OPERATION = "pdf.merge";
+// Identical inputs must produce byte-identical outputs, so generated
+// documents carry a fixed timestamp instead of the current time.
+const FIXED_PDF_DATE = new Date("1980-01-01T00:00:00.000Z");
+
+async function createOutputDocument(): Promise<PDFDocument> {
+  const document = await PDFDocument.create();
+  document.setCreationDate(FIXED_PDF_DATE);
+  document.setModificationDate(FIXED_PDF_DATE);
+  return document;
+}
 
 /**
  * Stable, published error codes thrown by @consultchimps/pdf. Values are part
@@ -169,7 +179,7 @@ export async function splitPdf(
 
   for (let index = 0; index < resolved.pageCount; index += 1) {
     throwIfAborted(options.signal, SPLIT_OPERATION);
-    const outputDocument = await PDFDocument.create();
+    const outputDocument = await createOutputDocument();
     const [page] = await outputDocument.copyPages(resolved.sourceDocument, [
       index,
     ]);
@@ -270,7 +280,7 @@ export async function mergePdfs(
   });
   await ensureParentDirectory(resolved.absoluteOutput);
 
-  const outputDocument = await PDFDocument.create();
+  const outputDocument = await createOutputDocument();
   let pageCount = 0;
 
   for (const [index, inputPath] of resolved.absoluteInputs.entries()) {

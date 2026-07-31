@@ -16,7 +16,7 @@
   "scripts": {
     "build": "pnpm -r --if-present build",
     "changeset": "changeset",
-    "check": "pnpm format:check && pnpm lint && pnpm build && pnpm typecheck && pnpm test:run && pnpm package:check",
+    "check": "pnpm format:check && pnpm lint && pnpm build && pnpm typecheck && pnpm test:coverage && pnpm package:check",
     "consultchimps": "node packages/cli/dist/index.js",
     "docs:dev": "pnpm --filter @consultchimps/docs dev",
     "format": "prettier --write .",
@@ -25,6 +25,7 @@
     "package:check": "node scripts/check-packages.ts",
     "release": "changeset publish",
     "test": "pnpm build && vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:run": "vitest run",
     "typecheck": "pnpm -r --if-present typecheck",
     "version-packages": "changeset version && pnpm install --lockfile-only"
@@ -33,6 +34,7 @@
     "@changesets/cli": "2.31.1",
     "@eslint/js": "10.0.1",
     "@types/node": "26.1.1",
+    "@vitest/coverage-v8": "4.1.10",
     "eslint": "10.8.0",
     "prettier": "3.9.6",
     "tsup": "8.5.1",

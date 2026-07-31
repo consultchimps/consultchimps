@@ -181,4 +181,28 @@ describe("consolidateWorkbooks", () => {
       await rm(directory, { force: true, recursive: true });
     }
   });
+
+  it("produces byte-identical output for identical inputs", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
+
+    try {
+      const input = path.join(directory, "north.xlsx");
+      await createWorkbook(input, "North", [
+        ["Client", "Amount"],
+        ["A", 10],
+      ]);
+
+      const first = path.join(directory, "first.xlsx");
+      const second = path.join(directory, "second.xlsx");
+      await consolidateWorkbooks({ inputs: [input], output: first });
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      await consolidateWorkbooks({ inputs: [input], output: second });
+
+      expect(
+        Buffer.compare(await readFile(first), await readFile(second)),
+      ).toBe(0);
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
 });

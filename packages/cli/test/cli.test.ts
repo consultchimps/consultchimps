@@ -570,6 +570,53 @@ describe("consultchimps CLI", () => {
     );
   });
 
+  it("splits a named range through the built command", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "inputs", "clients.xlsx");
+    const output = path.join(directory, "outputs", "range-regions");
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.aoa_to_sheet([
+        ["Quarterly report", null],
+        ["Client", "Region"],
+        ["A", "North"],
+        ["B", "South"],
+      ]),
+      "Clients",
+    );
+    workbook.Workbook = {
+      Names: [{ Name: "ClientRange", Ref: "Clients!$A$2:$B$4" }],
+    };
+    await writeFile(
+      input,
+      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+    );
+
+    const command = await runCli([
+      "--json",
+      "sheets",
+      "split",
+      input,
+      "--range",
+      "ClientRange",
+      "--column",
+      "Region",
+      "--output",
+      output,
+    ]);
+
+    expect(JSON.parse(command.stdout).metrics).toMatchObject({
+      groups: 2,
+      inputRows: 2,
+      outputFiles: 2,
+    });
+    expect((await readdir(output)).sort()).toEqual([
+      "clients-North.xlsx",
+      "clients-South.xlsx",
+    ]);
+  });
+
   it("splits and merges PDFs through the built command", async () => {
     const directory = await createTemporaryDirectory();
     const inputs = path.join(directory, "inputs");

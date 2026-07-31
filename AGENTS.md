@@ -82,6 +82,7 @@ pnpm lint                                       # ESLint (flat config, TS-native
 pnpm format:check                               # Prettier check (pnpm format to write)
 pnpm test:run                                   # vitest run (packages/**/*.test.ts)
 pnpm test:run packages/xlsx/test/split.test.ts  # one test file
+pnpm test:coverage                              # tests + coverage thresholds (used by check)
 pnpm test                                       # build, then vitest
 pnpm package:check                              # package metadata and publishability
 pnpm check                                      # full verification sequence
