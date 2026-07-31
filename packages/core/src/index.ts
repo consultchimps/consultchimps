@@ -6,11 +6,16 @@ export interface Artifact {
   mediaType?: string;
 }
 
-export interface OperationResult {
+/**
+ * The structured outcome of a completed operation. TMetric narrows the metric
+ * names an operation reports, making metric renames a compile-time error; the
+ * default keeps consumers that handle arbitrary operations working.
+ */
+export interface OperationResult<TMetric extends string = string> {
   operation: string;
   artifacts: Artifact[];
   warnings: string[];
-  metrics: Record<string, number>;
+  metrics: Record<TMetric, number>;
 }
 
 export interface OperationProgress {
@@ -48,12 +53,12 @@ export interface PlannedOutput {
  * The validated write plan for an operation: every input it will read and
  * every output it intends to create, computed without writing anything.
  */
-export interface OperationPlan {
+export interface OperationPlan<TMetric extends string = string> {
   operation: string;
   inputs: string[];
   outputs: PlannedOutput[];
   warnings: string[];
-  metrics: Record<string, number>;
+  metrics: Record<TMetric, number>;
 }
 
 export const OPERATION_ABORTED = "OPERATION_ABORTED";

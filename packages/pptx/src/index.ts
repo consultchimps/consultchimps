@@ -79,6 +79,49 @@ interface XmlRelationship {
   type: string;
 }
 
+/**
+ * Stable, published error codes thrown by @consultchimps/pptx. Values are
+ * part of the versioned public API; never change an existing value.
+ * XLSX_WORKBOOK_NOT_FOUND is intentionally XLSX-prefixed: it reports the
+ * missing Excel data source of a PowerPoint operation.
+ */
+export const PPTX_ERRORS = {
+  PPTX_GENERATION_FAILED: "PPTX_GENERATION_FAILED",
+  PPTX_INVALID_TEMPLATE: "PPTX_INVALID_TEMPLATE",
+  PPTX_INVALID_TEMPLATE_SLIDE: "PPTX_INVALID_TEMPLATE_SLIDE",
+  PPTX_MALFORMED_PLACEHOLDER: "PPTX_MALFORMED_PLACEHOLDER",
+  PPTX_MISSING_EXCEL_COLUMN: "PPTX_MISSING_EXCEL_COLUMN",
+  PPTX_NO_DATA_ROWS: "PPTX_NO_DATA_ROWS",
+  PPTX_NO_PLACEHOLDERS: "PPTX_NO_PLACEHOLDERS",
+  PPTX_OUTPUT_NOT_FILE: "PPTX_OUTPUT_NOT_FILE",
+  PPTX_OUTPUT_ROLLBACK_FAILED: "PPTX_OUTPUT_ROLLBACK_FAILED",
+  PPTX_TEMPLATE_NOT_FOUND: "PPTX_TEMPLATE_NOT_FOUND",
+  PPTX_TEMPLATE_SLIDE_NOT_FOUND: "PPTX_TEMPLATE_SLIDE_NOT_FOUND",
+  PPTX_UNSUPPORTED_OUTPUT_TYPE: "PPTX_UNSUPPORTED_OUTPUT_TYPE",
+  PPTX_UNSUPPORTED_PLACEHOLDER_PLACEMENT:
+    "PPTX_UNSUPPORTED_PLACEHOLDER_PLACEMENT",
+  PPTX_UNSUPPORTED_SPLIT_RUN_PLACEHOLDER:
+    "PPTX_UNSUPPORTED_SPLIT_RUN_PLACEHOLDER",
+  PPTX_UNSUPPORTED_TEMPLATE_TYPE: "PPTX_UNSUPPORTED_TEMPLATE_TYPE",
+  XLSX_WORKBOOK_NOT_FOUND: "XLSX_WORKBOOK_NOT_FOUND",
+} as const;
+
+export type PptxErrorCode = (typeof PPTX_ERRORS)[keyof typeof PPTX_ERRORS];
+
+export type PopulatePowerPointTemplateMetric =
+  | "generatedSlides"
+  | "inputRows"
+  | "outputFiles"
+  | "placeholderFields"
+  | "placeholderOccurrences"
+  | "replacements"
+  | "skippedRows"
+  | "warnings";
+export type PopulatePowerPointTemplatePlanMetric = Exclude<
+  PopulatePowerPointTemplateMetric,
+  "replacements" | "warnings"
+>;
+
 const OFFICE_DOCUMENT_RELATIONSHIP =
   "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
 const SLIDE_RELATIONSHIP =
@@ -245,7 +288,7 @@ function inspectSlideXml(slideXml: string): SlideInspection {
 function validatePositiveSlideNumber(templateSlide: number): void {
   if (!Number.isInteger(templateSlide) || templateSlide < 1) {
     throw new ConsultChimpsError(
-      "PPTX_INVALID_TEMPLATE_SLIDE",
+      PPTX_ERRORS.PPTX_INVALID_TEMPLATE_SLIDE,
       "The template slide number must be a positive integer counted from 1.",
       { details: { templateSlide } },
     );
@@ -259,7 +302,7 @@ async function readRequiredZipText(
   const entry = zip.file(entryPath);
   if (!entry) {
     throw new ConsultChimpsError(
-      "PPTX_INVALID_TEMPLATE",
+      PPTX_ERRORS.PPTX_INVALID_TEMPLATE,
       "The PowerPoint template is missing a required presentation part.",
       { details: { part: entryPath } },
     );
@@ -278,7 +321,7 @@ async function loadPresentationPackage(
     zip = await JSZip.loadAsync(templateBytes);
   } catch (error) {
     throw new ConsultChimpsError(
-      "PPTX_INVALID_TEMPLATE",
+      PPTX_ERRORS.PPTX_INVALID_TEMPLATE,
       "The template is not a readable PowerPoint .pptx presentation.",
       { cause: error },
     );
@@ -292,7 +335,7 @@ async function loadPresentationPackage(
   );
   if (!officeDocument) {
     throw new ConsultChimpsError(
-      "PPTX_INVALID_TEMPLATE",
+      PPTX_ERRORS.PPTX_INVALID_TEMPLATE,
       "The template does not contain a PowerPoint presentation document.",
     );
   }
@@ -314,7 +357,7 @@ async function loadPresentationPackage(
 
   if (templateSlide > slideRelationshipIds.length) {
     throw new ConsultChimpsError(
-      "PPTX_TEMPLATE_SLIDE_NOT_FOUND",
+      PPTX_ERRORS.PPTX_TEMPLATE_SLIDE_NOT_FOUND,
       `Template slide ${templateSlide} does not exist.`,
       {
         details: {
@@ -335,7 +378,7 @@ async function loadPresentationPackage(
   );
   if (!selectedRelationship) {
     throw new ConsultChimpsError(
-      "PPTX_INVALID_TEMPLATE",
+      PPTX_ERRORS.PPTX_INVALID_TEMPLATE,
       "The selected template slide has an invalid package relationship.",
       { details: { templateSlide } },
     );
@@ -388,7 +431,7 @@ export async function inspectPowerPointTemplate(
   const absoluteTemplate = path.resolve(templatePath);
   if (path.extname(absoluteTemplate).toLocaleLowerCase() !== ".pptx") {
     throw new ConsultChimpsError(
-      "PPTX_UNSUPPORTED_TEMPLATE_TYPE",
+      PPTX_ERRORS.PPTX_UNSUPPORTED_TEMPLATE_TYPE,
       "The PowerPoint template must be a .pptx file.",
       { details: { extension: path.extname(absoluteTemplate) } },
     );
@@ -399,7 +442,7 @@ export async function inspectPowerPointTemplate(
     templateBytes = await readFile(absoluteTemplate);
   } catch (error) {
     throw new ConsultChimpsError(
-      "PPTX_TEMPLATE_NOT_FOUND",
+      PPTX_ERRORS.PPTX_TEMPLATE_NOT_FOUND,
       "The PowerPoint template could not be read. Check that the file exists and is accessible.",
       {
         cause: error,
@@ -424,7 +467,7 @@ function validateTemplateInspection(
 ): void {
   if (inspection.malformedPlaceholderCount > 0) {
     throw new ConsultChimpsError(
-      "PPTX_MALFORMED_PLACEHOLDER",
+      PPTX_ERRORS.PPTX_MALFORMED_PLACEHOLDER,
       "The template slide contains malformed placeholder braces. Use the exact {{field_name}} syntax.",
       {
         details: {
@@ -436,7 +479,7 @@ function validateTemplateInspection(
   }
   if (inspection.unsupportedSplitRunPlaceholders.length > 0) {
     throw new ConsultChimpsError(
-      "PPTX_UNSUPPORTED_SPLIT_RUN_PLACEHOLDER",
+      PPTX_ERRORS.PPTX_UNSUPPORTED_SPLIT_RUN_PLACEHOLDER,
       `Template placeholder "${inspection.unsupportedSplitRunPlaceholders[0]}" is split across multiple PowerPoint text runs.`,
       {
         details: {
@@ -448,7 +491,7 @@ function validateTemplateInspection(
   }
   if (inspection.unsupportedPlacementPlaceholders.length > 0) {
     throw new ConsultChimpsError(
-      "PPTX_UNSUPPORTED_PLACEHOLDER_PLACEMENT",
+      PPTX_ERRORS.PPTX_UNSUPPORTED_PLACEHOLDER_PLACEMENT,
       `Template placeholder "${inspection.unsupportedPlacementPlaceholders[0]}" is not in a supported text shape.`,
       {
         details: {
@@ -460,7 +503,7 @@ function validateTemplateInspection(
   }
   if (inspection.placeholderOccurrences === 0) {
     throw new ConsultChimpsError(
-      "PPTX_NO_PLACEHOLDERS",
+      PPTX_ERRORS.PPTX_NO_PLACEHOLDERS,
       "The selected template slide does not contain any valid {{field_name}} placeholders.",
       { details: { templateSlide: inspection.slideNumber } },
     );
@@ -566,7 +609,7 @@ function appendBeforeClosingTag(
   const index = xml.lastIndexOf(closingTag);
   if (index < 0) {
     throw new ConsultChimpsError(
-      "PPTX_INVALID_TEMPLATE",
+      PPTX_ERRORS.PPTX_INVALID_TEMPLATE,
       "The PowerPoint template contains invalid package XML.",
       { details: { closingTag } },
     );
@@ -706,7 +749,7 @@ async function createOutputPresentation(
     /<p:sldIdLst(?<attributes>\s[^>]*)?>[\s\S]*?<\/p:sldIdLst>/u;
   if (!slideListPattern.test(presentationXml)) {
     throw new ConsultChimpsError(
-      "PPTX_INVALID_TEMPLATE",
+      PPTX_ERRORS.PPTX_INVALID_TEMPLATE,
       "The PowerPoint template does not contain a valid slide list.",
     );
   }
@@ -753,7 +796,7 @@ function isMissingPathError(error: unknown): boolean {
 async function validateInputFile(
   filePath: string,
   extension: ".pptx" | ".xlsx",
-  errorCode: string,
+  errorCode: PptxErrorCode,
   label: string,
 ): Promise<string> {
   const absolutePath = path.resolve(filePath);
@@ -794,7 +837,7 @@ async function validateOutputPath(
   const absoluteOutput = path.resolve(outputPath);
   if (path.extname(absoluteOutput).toLocaleLowerCase() !== ".pptx") {
     throw new ConsultChimpsError(
-      "PPTX_UNSUPPORTED_OUTPUT_TYPE",
+      PPTX_ERRORS.PPTX_UNSUPPORTED_OUTPUT_TYPE,
       "The output presentation must use the .pptx file extension.",
       { details: { extension: path.extname(absoluteOutput) } },
     );
@@ -806,7 +849,7 @@ async function validateOutputPath(
     const outputStat = await stat(absoluteOutput);
     if (!outputStat.isFile()) {
       throw new ConsultChimpsError(
-        "PPTX_OUTPUT_NOT_FILE",
+        PPTX_ERRORS.PPTX_OUTPUT_NOT_FILE,
         "The output path exists but is not a file.",
         { details: { outputPath: absoluteOutput } },
       );
@@ -849,7 +892,7 @@ async function commitOutput(
           backupCreated = false;
         } catch (rollbackError) {
           throw new ConsultChimpsError(
-            "PPTX_OUTPUT_ROLLBACK_FAILED",
+            PPTX_ERRORS.PPTX_OUTPUT_ROLLBACK_FAILED,
             "PowerPoint generation failed and the previous output could not be restored automatically.",
             {
               cause: error,
@@ -892,13 +935,13 @@ async function resolvePopulatePowerPointTemplate(
   const absoluteTemplate = await validateInputFile(
     options.templatePath,
     ".pptx",
-    "PPTX_TEMPLATE_NOT_FOUND",
+    PPTX_ERRORS.PPTX_TEMPLATE_NOT_FOUND,
     "PowerPoint template",
   );
   const absoluteWorkbook = await validateInputFile(
     options.workbookPath,
     ".xlsx",
-    "XLSX_WORKBOOK_NOT_FOUND",
+    PPTX_ERRORS.XLSX_WORKBOOK_NOT_FOUND,
     "Excel workbook",
   );
   const { absoluteOutput, outputExists } = await validateOutputPath(
@@ -929,7 +972,7 @@ async function resolvePopulatePowerPointTemplate(
   });
   if (records.rows.length === 0) {
     throw new ConsultChimpsError(
-      "PPTX_NO_DATA_ROWS",
+      PPTX_ERRORS.PPTX_NO_DATA_ROWS,
       `Worksheet "${records.worksheet}" does not contain any nonempty data rows below the header.`,
       {
         details: {
@@ -945,7 +988,7 @@ async function resolvePopulatePowerPointTemplate(
     .filter((placeholder) => !records.columns.includes(placeholder));
   if (missingColumns.length > 0) {
     throw new ConsultChimpsError(
-      "PPTX_MISSING_EXCEL_COLUMN",
+      PPTX_ERRORS.PPTX_MISSING_EXCEL_COLUMN,
       `Template placeholder "${missingColumns[0]}" does not match any Excel column.`,
       {
         details: {
@@ -970,7 +1013,7 @@ async function resolvePopulatePowerPointTemplate(
 
 export async function planPopulatePowerPointTemplate(
   options: PopulatePowerPointTemplateOptions,
-): Promise<OperationPlan> {
+): Promise<OperationPlan<PopulatePowerPointTemplatePlanMetric>> {
   const resolved = await resolvePopulatePowerPointTemplate(options, false);
   const warnings: string[] = [];
   if (resolved.records.skippedEmptyRows > 0) {
@@ -1011,7 +1054,7 @@ export async function planPopulatePowerPointTemplate(
 
 export async function populatePowerPointTemplate(
   options: PopulatePowerPointTemplateOptions,
-): Promise<OperationResult> {
+): Promise<OperationResult<PopulatePowerPointTemplateMetric>> {
   try {
     throwIfAborted(options.signal, POPULATE_OPERATION);
     const { absoluteOutput, inspection, outputExists, presentation, records } =
@@ -1067,7 +1110,7 @@ export async function populatePowerPointTemplate(
       throw error;
     }
     throw new ConsultChimpsError(
-      "PPTX_GENERATION_FAILED",
+      PPTX_ERRORS.PPTX_GENERATION_FAILED,
       "The PowerPoint presentation could not be generated. The source files and existing output were left unchanged.",
       { cause: error },
     );

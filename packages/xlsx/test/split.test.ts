@@ -125,6 +125,7 @@ describe("splitWorkbookByColumn", () => {
       input: input,
       outputDirectory: output,
       column: "Region",
+      preserveWorkbook: false,
       table: "clientdata",
     });
 
@@ -147,7 +148,7 @@ describe("splitWorkbookByColumn", () => {
     ).toEqual([{ Amount: 20, Client: "B", Region: "South" }]);
   });
 
-  it("preserves the workbook and changes only the selected Excel Table rows", async () => {
+  it("preserves the workbook by default and changes only the selected Excel Table rows", async () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "clients.xlsx");
     const output = path.join(directory, "preserved");
@@ -158,7 +159,6 @@ describe("splitWorkbookByColumn", () => {
       input: input,
       outputDirectory: output,
       column: "Region",
-      preserveWorkbook: true,
       table: "ClientData",
     });
 

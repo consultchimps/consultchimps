@@ -46,6 +46,7 @@ interface SheetSplitOptions {
   output?: string;
   prefix?: string;
   preserveWorkbook?: boolean;
+  range?: string;
   sheet?: string;
   skipBlank?: boolean;
   table?: string;
@@ -84,7 +85,10 @@ function positiveInteger(value: string): number {
   return parsed;
 }
 
-function printResult(result: OperationResult, json: boolean): void {
+function printResult<TMetric extends string>(
+  result: OperationResult<TMetric>,
+  json: boolean,
+): void {
   if (json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return;
@@ -226,7 +230,11 @@ sheets
   .option("--sheet <name>", "exact name of the worksheet to divide")
   .option(
     "--table <name>",
-    "use this named Excel Table instead of the worksheet's full used range",
+    "use this named Excel Table instead of the worksheet's full used range (preferred)",
+  )
+  .option(
+    "--range <name>",
+    "use this named range instead of the worksheet's full used range",
   )
   .option(
     "--header-row <number>",
@@ -236,7 +244,11 @@ sheets
   .option("--hidden", "allow the selected worksheet to be hidden")
   .option(
     "--preserve-workbook",
-    "keep the full workbook layout and replace only the selected Excel Table rows",
+    "keep the full workbook layout and replace only the selected Excel Table rows (default when --table is used)",
+  )
+  .option(
+    "--no-preserve-workbook",
+    "write plain data-only workbooks even when a table is selected",
   )
   .option(
     "--skip-blank",
@@ -255,13 +267,24 @@ sheets
     `
 Examples:
   consultchimps sheets split clients.xlsx -c Region -o by-region
-  consultchimps sheets split clients.xlsx --table ClientData --column Region --preserve-workbook
+  consultchimps sheets split clients.xlsx --table ClientData --column Region
+  consultchimps sheets split clients.xlsx --range ClientRange --column Region
 
 What happens:
-  1. ConsultChimps reads the selected worksheet or named Excel Table.
+  1. ConsultChimps reads the selected Excel Table, named range, or worksheet.
   2. It groups rows using the values in --column.
   3. It creates a clearly named workbook for every distinct group.
   4. It reports every created file, skipped row, and warning.
+
+Splitting an Excel Table keeps the complete workbook layout by default, so
+every output looks like the file you prepared: zoom, saved cursor position,
+cover sheets, and formatting all carry over. Use --no-preserve-workbook for
+plain data-only outputs. Prefer an Excel Table, then a named range, over
+splitting a worksheet's full used range.
+
+Pro tip: before a table split, prepare the workbook exactly as you want to
+deliver it - set each sheet's zoom, place the cursor on cell A1 so every
+file opens consistently, add any cover sheet, and save.
 
 Your original workbook is never changed.
 `,
@@ -293,7 +316,8 @@ Your original workbook is never changed.
       includeBlank: options.skipBlank !== true,
       includeHiddenSheets: options.hidden === true,
       overwrite: options.force === true,
-      preserveWorkbook: options.preserveWorkbook === true,
+      preserveWorkbook: options.preserveWorkbook,
+      range: options.range,
       sheet: options.sheet,
       table: options.table,
     });

@@ -107,17 +107,14 @@ pnpm consultchimps sheets consolidate inputs/ \
 ```ts
 import { consolidateWorkbooks } from "@consultchimps/xlsx";
 
-const result = await consolidateWorkbooks(
-  ["north.xlsx", "south.xlsx"],
-  "outputs/master.xlsx",
-  {
-    addSourceColumns: true,
-    headerRow: 2,
-    outputSheetName: "Master",
-    overwrite: false,
-    sheets: ["Revenue"],
-  },
-);
+const result = await consolidateWorkbooks({
+  inputs: ["north.xlsx", "south.xlsx"],
+  output: "outputs/master.xlsx",
+  addSourceColumns: true,
+  headerRow: 2,
+  outputSheetName: "Master",
+  sheets: ["Revenue"],
+});
 
 console.log(result.metrics.outputRows);
 ```

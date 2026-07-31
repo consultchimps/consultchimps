@@ -37,7 +37,25 @@ import {
   type ExcelTableDefinition,
   readExcelTableDefinitions,
 } from "./excel-tables.js";
+import { XLSX_ERRORS } from "./errors.js";
 import { preserveWorkbookWithFilteredExcelTable } from "./preserve-table-split.js";
+
+export { XLSX_ERRORS, type XlsxErrorCode } from "./errors.js";
+
+export type ConsolidateWorkbooksMetric =
+  "inputFiles" | "inputTables" | "outputColumns" | "outputRows";
+export type ConsolidateWorkbooksPlanMetric = "inputFiles" | "outputFiles";
+export type SplitWorkbookByColumnMetric =
+  | "groups"
+  | "inputFiles"
+  | "inputRows"
+  | "outputFiles"
+  | "outputRows"
+  | "skippedRows";
+export type SplitWorkbookByColumnPlanMetric = Exclude<
+  SplitWorkbookByColumnMetric,
+  "outputRows"
+>;
 
 export interface ReadWorkbookOptions {
   headerRow?: number | undefined;
@@ -82,7 +100,13 @@ export interface SplitWorkbookByColumnOptions extends OperationControlOptions {
   includeBlank?: boolean | undefined;
   includeHiddenSheets?: boolean | undefined;
   overwrite?: boolean | undefined;
+  /**
+   * Keep the complete source workbook and replace only the selected Excel
+   * Table's rows. Defaults to true when a table is selected; not available
+   * for named ranges or plain worksheet splits.
+   */
   preserveWorkbook?: boolean | undefined;
+  range?: string | undefined;
   sheet?: string | undefined;
   table?: string | undefined;
 }
@@ -90,6 +114,17 @@ export interface SplitWorkbookByColumnOptions extends OperationControlOptions {
 export interface WorkbookExcelTable extends Table {
   excelTableName: string;
   excelTableRange: string;
+}
+
+export interface WorkbookNamedRange extends Table {
+  rangeName: string;
+  rangeRef: string;
+}
+
+export interface ReadWorkbookNamedRangesOptions {
+  includeHiddenSheets?: boolean | undefined;
+  names?: string[] | undefined;
+  sheets?: string[] | undefined;
 }
 
 export interface WriteTableOptions {
@@ -223,7 +258,7 @@ function findHeaderRow(
   if (configuredRow !== undefined) {
     if (!Number.isInteger(configuredRow) || configuredRow < 1) {
       throw new ConsultChimpsError(
-        "XLSX_INVALID_HEADER_ROW",
+        XLSX_ERRORS.XLSX_INVALID_HEADER_ROW,
         "The header row must be a positive integer.",
         { details: { configuredRow } },
       );
@@ -330,7 +365,7 @@ function excelTableToTable(
     range = XLSX.utils.decode_range(definition.range);
   } catch (error) {
     throw new ConsultChimpsError(
-      "XLSX_INVALID_EXCEL_TABLE",
+      XLSX_ERRORS.XLSX_INVALID_EXCEL_TABLE,
       `Excel Table "${definition.name}" has an invalid range.`,
       {
         cause: error,
@@ -346,7 +381,7 @@ function excelTableToTable(
   const rangeColumnCount = range.e.c - range.s.c + 1;
   if (rangeColumnCount !== definition.columns.length) {
     throw new ConsultChimpsError(
-      "XLSX_INVALID_EXCEL_TABLE",
+      XLSX_ERRORS.XLSX_INVALID_EXCEL_TABLE,
       `Excel Table "${definition.name}" has inconsistent column metadata.`,
       {
         details: {
@@ -429,7 +464,7 @@ export async function readWorkbookTables(
     });
   } catch (error) {
     throw new ConsultChimpsError(
-      "XLSX_READ_FAILED",
+      XLSX_ERRORS.XLSX_READ_FAILED,
       `Could not read workbook: ${absolutePath}`,
       {
         cause: error,
@@ -485,7 +520,7 @@ export async function readWorksheetRecords(
     });
   } catch (error) {
     throw new ConsultChimpsError(
-      "XLSX_READ_FAILED",
+      XLSX_ERRORS.XLSX_READ_FAILED,
       `Could not read workbook: ${absolutePath}`,
       {
         cause: error,
@@ -504,7 +539,7 @@ export async function readWorksheetRecords(
     : workbook.SheetNames[0];
   if (!worksheetName) {
     throw new ConsultChimpsError(
-      "XLSX_WORKSHEET_NOT_FOUND",
+      XLSX_ERRORS.XLSX_WORKSHEET_NOT_FOUND,
       requestedWorksheet
         ? `Worksheet "${options.worksheet}" was not found in the workbook.`
         : "The workbook does not contain a worksheet.",
@@ -521,7 +556,7 @@ export async function readWorksheetRecords(
   const reference = worksheet?.["!ref"];
   if (!worksheet || !reference) {
     throw new ConsultChimpsError(
-      "XLSX_INVALID_HEADER_ROW",
+      XLSX_ERRORS.XLSX_INVALID_HEADER_ROW,
       `Worksheet "${worksheetName}" does not contain a header row.`,
       {
         details: {
@@ -536,7 +571,7 @@ export async function readWorksheetRecords(
   const headerRowIndex = findHeaderRow(worksheet, range, options.headerRow);
   if (headerRowIndex === undefined || headerRowIndex > range.e.r) {
     throw new ConsultChimpsError(
-      "XLSX_INVALID_HEADER_ROW",
+      XLSX_ERRORS.XLSX_INVALID_HEADER_ROW,
       `Worksheet "${worksheetName}" does not contain the selected header row.`,
       {
         details: {
@@ -558,7 +593,7 @@ export async function readWorksheetRecords(
     ).trim();
     if (!header) {
       throw new ConsultChimpsError(
-        "XLSX_EMPTY_HEADER",
+        XLSX_ERRORS.XLSX_EMPTY_HEADER,
         `Worksheet "${worksheetName}" contains an empty column header.`,
         {
           details: {
@@ -577,7 +612,7 @@ export async function readWorksheetRecords(
   );
   if (duplicateHeaders.length > 0) {
     throw new ConsultChimpsError(
-      "XLSX_DUPLICATE_HEADER",
+      XLSX_ERRORS.XLSX_DUPLICATE_HEADER,
       `Worksheet "${worksheetName}" contains duplicate column headers.`,
       {
         details: {
@@ -645,7 +680,7 @@ export async function readWorkbookExcelTables(
     definitions = await readExcelTableDefinitions(workbookBytes);
   } catch (error) {
     throw new ConsultChimpsError(
-      "XLSX_READ_FAILED",
+      XLSX_ERRORS.XLSX_READ_FAILED,
       `Could not read workbook: ${absolutePath}`,
       {
         cause: error,
@@ -695,6 +730,173 @@ export async function readWorkbookExcelTables(
   return tables;
 }
 
+const BUILTIN_DEFINED_NAME_PREFIX = "_xlnm.";
+const NAMED_RANGE_REF_PATTERN =
+  /^(?:'(?<quotedSheet>(?:[^']|'')+)'|(?<sheet>[^'!,:]+))!(?<range>\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?)$/u;
+
+function parseNamedRangeRef(
+  ref: string,
+): { range: string; sheet: string } | undefined {
+  const match = NAMED_RANGE_REF_PATTERN.exec(ref.trim());
+  const sheet =
+    match?.groups?.quotedSheet?.replaceAll("''", "'") ?? match?.groups?.sheet;
+  const range = match?.groups?.range;
+  if (!sheet || !range) {
+    return undefined;
+  }
+  return { range: range.replaceAll("$", ""), sheet };
+}
+
+function namedRangeToTable(
+  filePath: string,
+  name: string,
+  sheetName: string,
+  rangeRef: string,
+  worksheet: XLSX.WorkSheet,
+): WorkbookNamedRange | undefined {
+  let range: XLSX.Range;
+  try {
+    range = XLSX.utils.decode_range(rangeRef);
+  } catch (error) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_INVALID_NAMED_RANGE,
+      `Named range "${name}" has an invalid cell reference.`,
+      {
+        cause: error,
+        details: { name, range: rangeRef, sheet: sheetName },
+      },
+    );
+  }
+
+  const rawHeaders: Array<string | null> = [];
+  for (
+    let columnIndex = range.s.c;
+    columnIndex <= range.e.c;
+    columnIndex += 1
+  ) {
+    const value = cellToPrimitive(getCell(worksheet, range.s.r, columnIndex));
+    rawHeaders.push(value === null ? null : String(value));
+  }
+  const columns = uniqueHeaders(rawHeaders);
+
+  const rows: TableRow[] = [];
+  const sourceRows: number[] = [];
+  for (let rowIndex = range.s.r + 1; rowIndex <= range.e.r; rowIndex += 1) {
+    const values = columns.map((_, index) =>
+      cellToPrimitive(getCell(worksheet, rowIndex, range.s.c + index)),
+    );
+    if (values.every((value) => value === null || value === "")) {
+      continue;
+    }
+
+    const row: TableRow = {};
+    columns.forEach((column, index) => {
+      row[column] = values[index] ?? null;
+    });
+    rows.push(row);
+    sourceRows.push(rowIndex + 1);
+  }
+
+  if (rows.length === 0) {
+    return undefined;
+  }
+
+  return {
+    columns,
+    rows,
+    sourceRows,
+    rangeName: name,
+    rangeRef,
+    source: {
+      file: path.basename(filePath),
+      firstDataRow: range.s.r + 2,
+      sheet: sheetName,
+    },
+  };
+}
+
+export async function readWorkbookNamedRanges(
+  filePath: string,
+  options: ReadWorkbookNamedRangesOptions = {},
+): Promise<WorkbookNamedRange[]> {
+  const absolutePath = path.resolve(filePath);
+  let workbook: XLSX.WorkBook;
+
+  try {
+    workbook = XLSX.read(await readFile(absolutePath), {
+      cellDates: true,
+      cellText: true,
+      dense: false,
+      type: "buffer",
+    });
+  } catch (error) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_READ_FAILED,
+      `Could not read workbook: ${absolutePath}`,
+      {
+        cause: error,
+        details: { filePath: absolutePath },
+      },
+    );
+  }
+
+  const selectedSheets = options.sheets
+    ? new Set(options.sheets.map((sheet) => sheet.toLocaleLowerCase()))
+    : undefined;
+  const selectedNames = options.names
+    ? new Set(options.names.map((name) => name.toLocaleLowerCase()))
+    : undefined;
+  const ranges: WorkbookNamedRange[] = [];
+
+  for (const definedName of workbook.Workbook?.Names ?? []) {
+    if (
+      !definedName.Name ||
+      definedName.Name.startsWith(BUILTIN_DEFINED_NAME_PREFIX)
+    ) {
+      continue;
+    }
+    const parsed = parseNamedRangeRef(definedName.Ref ?? "");
+    if (!parsed) {
+      continue;
+    }
+    if (
+      !options.includeHiddenSheets &&
+      !isVisibleSheet(workbook, parsed.sheet)
+    ) {
+      continue;
+    }
+    if (
+      selectedSheets &&
+      !selectedSheets.has(parsed.sheet.toLocaleLowerCase())
+    ) {
+      continue;
+    }
+    if (
+      selectedNames &&
+      !selectedNames.has(definedName.Name.toLocaleLowerCase())
+    ) {
+      continue;
+    }
+
+    const worksheet = workbook.Sheets[parsed.sheet];
+    if (!worksheet) {
+      continue;
+    }
+    const table = namedRangeToTable(
+      absolutePath,
+      definedName.Name,
+      parsed.sheet,
+      parsed.range,
+      worksheet,
+    );
+    if (table) {
+      ranges.push(table);
+    }
+  }
+
+  return ranges;
+}
+
 export async function writeTable(
   outputPath: string,
   table: Table,
@@ -702,7 +904,7 @@ export async function writeTable(
 ): Promise<string> {
   if (table.columns.length === 0) {
     throw new ConsultChimpsError(
-      "XLSX_NO_COLUMNS",
+      XLSX_ERRORS.XLSX_NO_COLUMNS,
       "Cannot write a table with no columns.",
     );
   }
@@ -774,7 +976,7 @@ function resolveConsolidateWorkbooks(
 ): ResolvedConsolidate {
   if (options.inputs.length === 0) {
     throw new ConsultChimpsError(
-      "XLSX_NO_INPUTS",
+      XLSX_ERRORS.XLSX_NO_INPUTS,
       "At least one workbook is required.",
     );
   }
@@ -789,14 +991,14 @@ function resolveConsolidateWorkbooks(
 
 export async function planConsolidateWorkbooks(
   options: ConsolidateWorkbooksOptions,
-): Promise<OperationPlan> {
+): Promise<OperationPlan<ConsolidateWorkbooksPlanMetric>> {
   const { absoluteInputs, absoluteOutput } =
     resolveConsolidateWorkbooks(options);
 
   for (const absoluteInput of absoluteInputs) {
     if (!(await pathExists(absoluteInput))) {
       throw new ConsultChimpsError(
-        "XLSX_INPUT_NOT_FOUND",
+        XLSX_ERRORS.XLSX_INPUT_NOT_FOUND,
         `Workbook not found: ${absoluteInput}`,
         { details: { inputPath: absoluteInput } },
       );
@@ -832,7 +1034,7 @@ export async function planConsolidateWorkbooks(
 
 export async function consolidateWorkbooks(
   options: ConsolidateWorkbooksOptions,
-): Promise<OperationResult> {
+): Promise<OperationResult<ConsolidateWorkbooksMetric>> {
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
   const { absoluteInputs, absoluteOutput } =
     resolveConsolidateWorkbooks(options);
@@ -852,7 +1054,7 @@ export async function consolidateWorkbooks(
 
   if (tables.length === 0) {
     throw new ConsultChimpsError(
-      "XLSX_NO_TABLES",
+      XLSX_ERRORS.XLSX_NO_TABLES,
       "No visible, non-empty worksheets were found in the input workbooks.",
     );
   }
@@ -915,9 +1117,21 @@ async function resolveSplitWorkbookByColumn(
   options: SplitWorkbookByColumnOptions,
 ): Promise<ResolvedSplit> {
   const absoluteInput = path.resolve(options.input);
+  if (options.table && options.range) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_SPLIT_TABLE_RANGE_CONFLICT,
+      "Choose either an Excel Table or a named range as the data source, not both.",
+      {
+        details: {
+          range: options.range,
+          table: options.table,
+        },
+      },
+    );
+  }
   if (options.table && options.headerRow !== undefined) {
     throw new ConsultChimpsError(
-      "XLSX_SPLIT_TABLE_HEADER_ROW",
+      XLSX_ERRORS.XLSX_SPLIT_TABLE_HEADER_ROW,
       "The headerRow option cannot be used with an Excel Table; the table defines its own headers.",
       {
         details: {
@@ -927,13 +1141,29 @@ async function resolveSplitWorkbookByColumn(
       },
     );
   }
-  if (options.preserveWorkbook && !options.table) {
+  if (options.range && options.headerRow !== undefined) {
     throw new ConsultChimpsError(
-      "XLSX_SPLIT_PRESERVE_REQUIRES_TABLE",
-      "The preserveWorkbook option requires a named Excel Table.",
+      XLSX_ERRORS.XLSX_SPLIT_RANGE_HEADER_ROW,
+      "The headerRow option cannot be used with a named range; the range's first row provides the headers.",
+      {
+        details: {
+          headerRow: options.headerRow,
+          range: options.range,
+        },
+      },
+    );
+  }
+  // Table splits preserve the complete workbook unless explicitly disabled.
+  const preserveWorkbook =
+    options.preserveWorkbook ?? options.table !== undefined;
+  if (options.preserveWorkbook === true && !options.table) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_SPLIT_PRESERVE_REQUIRES_TABLE,
+      "The preserveWorkbook option requires a named Excel Table; it is not available for named ranges or plain worksheet splits.",
       {
         details: {
           preserveWorkbook: options.preserveWorkbook,
+          range: options.range,
           table: options.table,
         },
       },
@@ -946,36 +1176,55 @@ async function resolveSplitWorkbookByColumn(
         sheets: options.sheet ? [options.sheet] : undefined,
       })
     : [];
-  const tables = options.table
+  const availableNamedRanges = options.range
+    ? await readWorkbookNamedRanges(absoluteInput, {
+        includeHiddenSheets: options.includeHiddenSheets,
+        sheets: options.sheet ? [options.sheet] : undefined,
+      })
+    : [];
+  const tables: Table[] = options.table
     ? availableExcelTables.filter(
         (table) =>
           table.excelTableName.toLocaleLowerCase() ===
           options.table?.toLocaleLowerCase(),
       )
-    : await readWorkbookTables(absoluteInput, {
-        headerRow: options.headerRow,
-        includeHiddenSheets: options.includeHiddenSheets,
-        sheets: options.sheet ? [options.sheet] : undefined,
-      });
+    : options.range
+      ? availableNamedRanges.filter(
+          (namedRange) =>
+            namedRange.rangeName.toLocaleLowerCase() ===
+            options.range?.toLocaleLowerCase(),
+        )
+      : await readWorkbookTables(absoluteInput, {
+          headerRow: options.headerRow,
+          includeHiddenSheets: options.includeHiddenSheets,
+          sheets: options.sheet ? [options.sheet] : undefined,
+        });
 
   if (tables.length === 0) {
     const selectedSource = options.table
       ? `Excel Table "${options.table}"`
-      : options.sheet
-        ? `Worksheet "${options.sheet}"`
-        : undefined;
+      : options.range
+        ? `Named range "${options.range}"`
+        : options.sheet
+          ? `Worksheet "${options.sheet}"`
+          : undefined;
     throw new ConsultChimpsError(
-      "XLSX_SPLIT_NO_TABLE",
+      XLSX_ERRORS.XLSX_SPLIT_NO_TABLE,
       selectedSource
         ? `${selectedSource} was not found or has no data rows.`
         : "No visible, non-empty worksheet was found in the input workbook.",
       {
         details: {
+          availableRanges: availableNamedRanges.map((namedRange) => ({
+            name: namedRange.rangeName,
+            sheet: namedRange.source?.sheet,
+          })),
           availableTables: availableExcelTables.map((table) => ({
             name: table.excelTableName,
             sheet: table.source?.sheet,
           })),
           inputPath: absoluteInput,
+          range: options.range,
           sheet: options.sheet,
           table: options.table,
         },
@@ -985,10 +1234,12 @@ async function resolveSplitWorkbookByColumn(
 
   if (tables.length > 1) {
     throw new ConsultChimpsError(
-      "XLSX_SPLIT_MULTIPLE_TABLES",
+      XLSX_ERRORS.XLSX_SPLIT_MULTIPLE_TABLES,
       options.table
         ? `Excel Table "${options.table}" was found on multiple worksheets; choose one with the sheet option.`
-        : "The workbook contains multiple non-empty worksheets; choose one with the sheet option.",
+        : options.range
+          ? `Named range "${options.range}" is defined more than once; choose a worksheet with the sheet option.`
+          : "The workbook contains multiple non-empty worksheets; choose one with the sheet option.",
       {
         details: {
           availableSheets: tables
@@ -1003,7 +1254,7 @@ async function resolveSplitWorkbookByColumn(
   const table = tables[0];
   if (!table) {
     throw new ConsultChimpsError(
-      "XLSX_SPLIT_NO_TABLE",
+      XLSX_ERRORS.XLSX_SPLIT_NO_TABLE,
       "No worksheet table was available to split.",
       { details: { inputPath: absoluteInput } },
     );
@@ -1014,7 +1265,7 @@ async function resolveSplitWorkbookByColumn(
   });
   if (grouped.groups.length === 0) {
     throw new ConsultChimpsError(
-      "XLSX_SPLIT_NO_GROUPS",
+      XLSX_ERRORS.XLSX_SPLIT_NO_GROUPS,
       `No output groups remain for column "${grouped.column}".`,
       {
         details: {
@@ -1026,7 +1277,7 @@ async function resolveSplitWorkbookByColumn(
     );
   }
 
-  const preservedWorkbookBytes = options.preserveWorkbook
+  const preservedWorkbookBytes = preserveWorkbook
     ? await readFile(absoluteInput)
     : undefined;
   const preservedTableDefinition = preservedWorkbookBytes
@@ -1038,9 +1289,9 @@ async function resolveSplitWorkbookByColumn(
             table.source?.sheet?.toLocaleLowerCase(),
       )
     : undefined;
-  if (options.preserveWorkbook && !preservedTableDefinition) {
+  if (preserveWorkbook && !preservedTableDefinition) {
     throw new ConsultChimpsError(
-      "XLSX_SPLIT_PRESERVE_TABLE_NOT_FOUND",
+      XLSX_ERRORS.XLSX_SPLIT_PRESERVE_TABLE_NOT_FOUND,
       `Excel Table "${options.table}" could not be located in the workbook package.`,
       {
         details: {
@@ -1074,7 +1325,7 @@ async function resolveSplitWorkbookByColumn(
         const outputStat = await stat(outputPath);
         if (!outputStat.isFile()) {
           throw new ConsultChimpsError(
-            "XLSX_SPLIT_OUTPUT_NOT_FILE",
+            XLSX_ERRORS.XLSX_SPLIT_OUTPUT_NOT_FILE,
             `Output path exists but is not a file: ${outputPath}`,
             { details: { outputPath } },
           );
@@ -1102,7 +1353,7 @@ async function resolveSplitWorkbookByColumn(
 
 export async function planSplitWorkbookByColumn(
   options: SplitWorkbookByColumnOptions,
-): Promise<OperationPlan> {
+): Promise<OperationPlan<SplitWorkbookByColumnPlanMetric>> {
   const resolved = await resolveSplitWorkbookByColumn(options);
   const outputs: PlannedOutput[] = resolved.outputPaths.map((outputPath) => ({
     kind: "file",
@@ -1141,7 +1392,7 @@ export async function planSplitWorkbookByColumn(
 
 export async function splitWorkbookByColumn(
   options: SplitWorkbookByColumnOptions,
-): Promise<OperationResult> {
+): Promise<OperationResult<SplitWorkbookByColumnMetric>> {
   throwIfAborted(options.signal, SPLIT_OPERATION);
   const {
     absoluteOutputDirectory,
@@ -1250,7 +1501,7 @@ export async function splitWorkbookByColumn(
 
     if (rollbackErrors.length > 0) {
       throw new ConsultChimpsError(
-        "XLSX_SPLIT_ROLLBACK_FAILED",
+        XLSX_ERRORS.XLSX_SPLIT_ROLLBACK_FAILED,
         "The split failed and one or more output files could not be restored.",
         {
           cause: error,

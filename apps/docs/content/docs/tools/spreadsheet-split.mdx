@@ -46,11 +46,13 @@ Worksheet and column matching ignore letter case. `--header-row` is one-based,
 matching the row number displayed by Excel. Add `--hidden` when intentionally
 selecting a hidden worksheet.
 
-## Use a named Excel Table
+## Use a named Excel Table (preferred)
 
 If the worksheet contains titles, notes, formulas, or multiple data blocks,
 split a named Excel Table instead of treating the worksheet's complete used
-range as one table:
+range as one table. A structured table is the most reliable data source: it
+defines its own headers and boundaries, so nothing outside it can leak into the
+outputs.
 
 ```bash
 pnpm consultchimps sheets split clients.xlsx \
@@ -69,24 +71,53 @@ Excel Tables define their own headers, so `--header-row` cannot be combined with
 
 ### Preserve the complete workbook
 
-By default, the table splitter creates a compact workbook containing only the
-selected headers and matching rows. Add `--preserve-workbook` when each output
-should remain a full copy of the source workbook:
+Splitting an Excel Table keeps the complete workbook by default: each output is
+a full copy of the source file in which only the selected table changed.
+Original worksheets, styles, merged cells, column widths, notes, cover sheets,
+and content outside the table all carry over. Matching rows are compacted at the
+top of the table's data area, its totals row is moved when present, and its
+structured range is resized to the matching rows.
+
+<Callout title="Pro tip: prepare the workbook before splitting">
+  Because every output is a copy of the file you saved, prepare the workbook
+  exactly as you want to deliver it before running the split: set the zoom you
+  want on each sheet, place the selector on cell **A1** so every file opens
+  consistently, add the cover sheet where needed, and save the document. Every
+  generated workbook will open just like your prepared original.
+</Callout>
+
+Add `--no-preserve-workbook` when you want compact, data-only outputs containing
+just the selected headers and matching rows:
 
 ```bash
 pnpm consultchimps sheets split clients.xlsx \
   --table ClientData \
   --column Region \
-  --preserve-workbook \
+  --no-preserve-workbook \
   --output outputs/by-region
 ```
 
-Each output keeps the original worksheets, styles, merged cells, column widths,
-notes, and content outside `ClientData`. Only the selected table is changed:
-matching rows are compacted at the top of its data area, its totals row is moved
-when present, and its structured range is resized to the matching rows.
+Preserving the workbook requires `--table`; it is not available for named ranges
+or for splitting a worksheet's complete used range.
 
-`--preserve-workbook` requires `--table`; it cannot be used when splitting a
+## Use a named range
+
+When the data is not formatted as an Excel Table but a workbook-level named
+range covers it, select the range by name. The range's first row provides the
+headers, and cells outside the range are ignored:
+
+```bash
+pnpm consultchimps sheets split clients.xlsx \
+  --range ClientRange \
+  --column Region \
+  --output outputs/by-region
+```
+
+Range-name matching ignores letter case, and Excel's built-in names such as
+print areas are never considered. `--range` cannot be combined with `--table` or
+`--header-row`, and named-range splits always produce compact data-only outputs.
+
+Prefer sources in this order: a named Excel Table, then a named range, then the
 worksheet's complete used range.
 
 ## Blank values
@@ -139,26 +170,34 @@ Use `--force` only when replacing the complete output set is intentional.
 ## TypeScript API
 
 ```ts
-import { splitWorkbookByColumn } from "@consultchimps/xlsx";
+import {
+  planSplitWorkbookByColumn,
+  splitWorkbookByColumn,
+} from "@consultchimps/xlsx";
 
-const result = await splitWorkbookByColumn(
-  "clients.xlsx",
-  "outputs/by-region",
-  {
-    column: "Region",
-    filenamePrefix: "client-region",
-    includeBlank: true,
-    overwrite: false,
-    preserveWorkbook: true,
-    sheet: "Active clients",
-    table: "ClientData",
-  },
-);
+const plan = await planSplitWorkbookByColumn({
+  input: "clients.xlsx",
+  outputDirectory: "outputs/by-region",
+  column: "Region",
+  table: "ClientData",
+});
+console.log(plan.outputs.map((output) => output.path));
+
+const result = await splitWorkbookByColumn({
+  input: "clients.xlsx",
+  outputDirectory: "outputs/by-region",
+  column: "Region",
+  filenamePrefix: "client-region",
+  includeBlank: true,
+  table: "ClientData",
+});
 
 console.log(result.metrics.outputFiles);
 ```
 
-The format-neutral grouping primitive is also available from
-`@consultchimps/tabular` as `groupTableByColumn`. Use `readWorkbookExcelTables`
-from `@consultchimps/xlsx` when an application needs to inspect all visible,
-non-empty structured tables before choosing one.
+Table splits preserve the workbook unless `preserveWorkbook: false` is passed;
+use `range` instead of `table` to select a named range. The format-neutral
+grouping primitive is also available from `@consultchimps/tabular` as
+`groupTableByColumn`. Use `readWorkbookExcelTables` or `readWorkbookNamedRanges`
+from `@consultchimps/xlsx` when an application needs to inspect the available
+data sources before choosing one.

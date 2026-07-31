@@ -85,9 +85,8 @@ pnpm consultchimps sheets split clients.xlsx \
   --output outputs/by-region
 
 pnpm consultchimps sheets split clients.xlsx \
-  --table ClientData \
+  --range ClientRange \
   --column Region \
-  --preserve-workbook \
   --output outputs/by-region
 
 pnpm consultchimps pptx populate \
@@ -109,10 +108,12 @@ case-insensitive header name, and adds `_source_file`, `_source_sheet`, and
 
 Excel splitting creates one workbook per distinct value in a selected column.
 Blank values are retained by default, filenames are portable, and all
-destinations are checked before any output is written. A named Excel Table can
-be selected to ignore titles, notes, totals, and other cells outside its range.
-Add `--preserve-workbook` to retain the complete source workbook and change only
-the selected table's rows.
+destinations are checked before any output is written. A named Excel Table
+(preferred) or a workbook named range can be selected to ignore titles, notes,
+totals, and other cells outside its bounds. Table splits keep the complete
+source workbook by default and change only the selected table's rows — prepare
+the file exactly as you want to deliver it before splitting; use
+`--no-preserve-workbook` for compact data-only outputs.
 
 PowerPoint population reads `{{field_name}}` placeholders from one selected
 template slide and creates one populated slide per nonempty Excel record. The

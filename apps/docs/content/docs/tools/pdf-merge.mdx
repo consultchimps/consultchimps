@@ -49,11 +49,10 @@ pnpm consultchimps pdf merge pack/ \
 ```ts
 import { mergePdfs } from "@consultchimps/pdf";
 
-const result = await mergePdfs(
-  ["01-cover.pdf", "02-summary.pdf", "03-appendix.pdf"],
-  "outputs/client-pack.pdf",
-  { overwrite: false },
-);
+const result = await mergePdfs({
+  inputs: ["01-cover.pdf", "02-summary.pdf", "03-appendix.pdf"],
+  output: "outputs/client-pack.pdf",
+});
 
 console.log(result.metrics.pages);
 ```
