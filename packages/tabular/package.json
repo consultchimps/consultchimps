@@ -1,6 +1,6 @@
 {
   "name": "@consultchimps/tabular",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Runtime-neutral table operations for ConsultChimps.",
   "license": "Apache-2.0",
   "repository": {

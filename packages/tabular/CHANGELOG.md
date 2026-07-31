@@ -1,5 +1,12 @@
 # @consultchimps/tabular
 
+## 0.2.2
+
+### Patch Changes
+
+- Updated dependencies [5c08c75]
+  - @consultchimps/core@0.3.0
+
 ## 0.2.1
 
 ### Patch Changes

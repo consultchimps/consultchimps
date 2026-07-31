@@ -1,6 +1,6 @@
 {
   "name": "@consultchimps/pptx",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "PowerPoint template inspection and population for ConsultChimps.",
   "license": "Apache-2.0",
   "repository": {
