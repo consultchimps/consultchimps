@@ -103,12 +103,12 @@ export async function planSplitPdfBytes(
 export async function splitPdfBytes(
   options: SplitPdfBytesOptions,
 ): Promise<ByteOperationOutcome<SplitPdfMetric>> {
-  throwIfAborted(options.signal, SPLIT_OPERATION);
+  throwIfAborted(options.signal, SPLIT_OPERATION, "memory");
   const resolved = await resolveSplitPdfBytes(options);
   const outputs: ByteArtifact[] = [];
 
   for (let index = 0; index < resolved.pageCount; index += 1) {
-    throwIfAborted(options.signal, SPLIT_OPERATION);
+    throwIfAborted(options.signal, SPLIT_OPERATION, "memory");
     const outputDocument = await createOutputDocument();
     const [page] = await outputDocument.copyPages(resolved.sourceDocument, [
       index,
@@ -157,7 +157,7 @@ export async function splitPdfBytes(
 export async function mergePdfsBytes(
   options: MergePdfsBytesOptions,
 ): Promise<ByteOperationOutcome<MergePdfsMetric>> {
-  throwIfAborted(options.signal, MERGE_OPERATION);
+  throwIfAborted(options.signal, MERGE_OPERATION, "memory");
   if (options.inputs.length === 0) {
     throw new ConsultChimpsError(
       PDF_ERRORS.PDF_NO_INPUTS,
@@ -173,7 +173,7 @@ export async function mergePdfsBytes(
   let pageCount = 0;
 
   for (const [index, input] of options.inputs.entries()) {
-    throwIfAborted(options.signal, MERGE_OPERATION);
+    throwIfAborted(options.signal, MERGE_OPERATION, "memory");
     const inputDocument = await parsePdf(input.bytes, input.name);
     const copiedPages = await outputDocument.copyPages(
       inputDocument,
@@ -190,7 +190,7 @@ export async function mergePdfsBytes(
     });
   }
 
-  throwIfAborted(options.signal, MERGE_OPERATION);
+  throwIfAborted(options.signal, MERGE_OPERATION, "memory");
   const output: ByteArtifact = {
     name: outputName,
     bytes: await outputDocument.save(),

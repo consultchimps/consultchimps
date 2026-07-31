@@ -139,6 +139,43 @@ const result = await mergePdfs({
 });
 ```
 
+## Run PDF operations without a filesystem
+
+Browsers and other filesystem-free environments use the byte-level entry point.
+Named in-memory bytes go in; the produced bytes come out alongside the same
+structured result the path-based operations report, and the import graph
+contains no Node built-ins:
+
+```ts
+import {
+  mergePdfsBytes,
+  planSplitPdfBytes,
+  splitPdfBytes,
+} from "@consultchimps/pdf/bytes";
+
+const plan = await planSplitPdfBytes({
+  input: { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) },
+});
+console.log(plan.outputs.map((output) => output.path));
+
+const { result, outputs } = await splitPdfBytes({
+  input: { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) },
+  signal: controller.signal,
+  onProgress: ({ completed, total }) => updateProgress(completed / total),
+});
+
+for (const output of outputs) {
+  download(output.name, output.bytes, output.mediaType);
+}
+```
+
+Output names default to the input name (`report.pdf` becomes
+`report-page-001.pdf`; merges default to `combined.pdf`) and are sanitized to
+stay portable, including on Windows. Outputs are byte-deterministic, and a
+cancelled byte operation returns nothing and leaves nothing behind. Artifact
+paths in the structured result carry these output names rather than filesystem
+paths.
+
 ## Explain results to people
 
 The `@consultchimps/messages` package renders any `OperationResult` or

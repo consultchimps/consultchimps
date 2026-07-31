@@ -65,6 +65,8 @@ export function splitOutputNames(prefix: string, pageCount: number): string[] {
 }
 
 const UNSAFE_NAME_CHARACTERS = /[<>:"/\\|?*]+/gu;
+const WINDOWS_RESERVED_FILENAME =
+  /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu;
 
 // Linear-time replacement for a trailing [. ]+ regex, which CodeQL flags as
 // polynomial on adversarial inputs with long runs of spaces.
@@ -93,7 +95,8 @@ export function safeNameFragment(value: string, fallback: string): string {
       .replace(/-+/gu, "-")
       .trim(),
   );
-  return normalized || fallback;
+  const safe = normalized || fallback;
+  return WINDOWS_RESERVED_FILENAME.test(safe) ? `_${safe}` : safe;
 }
 
 export function withoutPdfExtension(name: string): string {

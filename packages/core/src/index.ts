@@ -83,14 +83,26 @@ export interface ByteOperationOutcome<TMetric extends string = string> {
 
 export const OPERATION_ABORTED = "OPERATION_ABORTED";
 
+/**
+ * Where a cancelled operation's already-produced outputs live: "files" for
+ * path-based operations, whose completed output files remain on disk, or
+ * "memory" for byte-based operations, which return nothing when cancelled.
+ */
+export type AbortOutputContext = "files" | "memory";
+
 export function throwIfAborted(
   signal: AbortSignal | undefined,
   operation: string,
+  outputContext: AbortOutputContext = "files",
 ): void {
   if (signal?.aborted) {
+    const consequence =
+      outputContext === "memory"
+        ? "No source data was changed and no partial output was produced."
+        : "No source file was changed; output files completed before the cancellation may remain.";
     throw new ConsultChimpsError(
       OPERATION_ABORTED,
-      `The "${operation}" operation was cancelled before it finished. No source file was changed; output files completed before the cancellation may remain.`,
+      `The "${operation}" operation was cancelled before it finished. ${consequence}`,
       {
         cause: signal.reason,
         details: { operation },

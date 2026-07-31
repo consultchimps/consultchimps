@@ -58,6 +58,17 @@ describe("byte-level PDF operations", () => {
       input: { name: "cli*ent<>secret.pdf", bytes },
     });
     expect(outputs[0]?.name).toBe("cli-ent-secret-page-001.pdf");
+
+    const reserved = await splitPdfBytes({
+      input: { name: "CON.pdf", bytes },
+    });
+    expect(reserved.outputs[0]?.name).toBe("_CON-page-001.pdf");
+
+    const reservedMerge = await mergePdfsBytes({
+      inputs: [{ name: "a.pdf", bytes }],
+      outputName: "aux.pdf",
+    });
+    expect(reservedMerge.outputs[0]?.name).toBe("_aux.pdf");
   });
 
   it("plans a split without producing any bytes", async () => {
@@ -143,6 +154,10 @@ describe("byte-level PDF operations", () => {
     }
     expect(isConsultChimpsError(thrown)).toBe(true);
     expect((thrown as { code: string }).code).toBe(OPERATION_ABORTED);
+    expect((thrown as Error).message).toContain(
+      "no partial output was produced",
+    );
+    expect((thrown as Error).message).not.toContain("output files");
 
     await expect(mergePdfsBytes({ inputs: [] })).rejects.toMatchObject({
       code: "PDF_NO_INPUTS",
