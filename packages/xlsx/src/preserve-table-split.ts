@@ -1,7 +1,9 @@
+import { ConsultChimpsError } from "@consultchimps/core";
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
 
 import type { ExcelTableDefinition } from "./excel-tables.js";
+import { XLSX_ERRORS } from "./errors.js";
 
 interface CellFragment {
   columnIndex: number;
@@ -79,9 +81,52 @@ function cellReference(xml: string): string {
   return reference;
 }
 
+const FORMULA_PATTERN =
+  /<(?:[A-Za-z_][\w.-]*:)?f\b[^>]*(?:\/\s*>|>(?<expression>[\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?f\s*>)/u;
+// An A1-style cell reference outside a quoted string. The negative lookahead
+// keeps function names such as LOG10( from matching.
+const A1_REFERENCE_PATTERN =
+  /(?<![A-Za-z0-9_.$])\$?[A-Za-z]{1,3}\$?\d+(?![\dA-Za-z_(])/u;
+
+function assertRelocatableFormula(xml: string, destinationRow: number): void {
+  const match = FORMULA_PATTERN.exec(xml);
+  if (!match) {
+    return;
+  }
+
+  const formulaOpeningTag = elementOpeningTag(match[0]);
+  const formulaType = xmlAttribute(formulaOpeningTag, "t");
+  const expression = (match.groups?.expression ?? "").replace(
+    /"[^"]*"/gu,
+    '""',
+  );
+  const positionDependent =
+    formulaType === "shared" ||
+    formulaType === "array" ||
+    A1_REFERENCE_PATTERN.test(expression);
+  if (!positionDependent) {
+    return;
+  }
+
+  const reference = cellReference(xml);
+  throw new ConsultChimpsError(
+    XLSX_ERRORS.XLSX_SPLIT_PRESERVE_FORMULA,
+    `Cell ${reference} contains a formula with cell references, and its row would move during a preserved split, which would leave the formula pointing at the wrong rows. Convert the formula to structured table references, or run the split again without preserving the workbook.`,
+    {
+      details: { cell: reference, destinationRow },
+    },
+  );
+}
+
 function relocateCell(xml: string, destinationRow: number): string {
   const openingTag = elementOpeningTag(xml);
   const reference = cellReference(xml);
+  const sourceRow = Number(/\d+$/u.exec(reference)?.[0]);
+  if (sourceRow === destinationRow) {
+    return xml;
+  }
+
+  assertRelocatableFormula(xml, destinationRow);
   const destinationReference = reference.replace(
     /\d+$/u,
     String(destinationRow),
