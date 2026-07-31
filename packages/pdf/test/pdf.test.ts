@@ -8,7 +8,7 @@ import {
   type OperationProgress,
 } from "@consultchimps/core";
 import { PDFDocument } from "pdf-lib";
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   mergePdfs,
@@ -182,5 +182,46 @@ describe("PDF operations", () => {
     } finally {
       await rm(directory, { force: true, recursive: true });
     }
+  });
+
+  it("produces byte-identical outputs for identical inputs", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-pdf-"));
+
+    try {
+      const input = path.join(directory, "source.pdf");
+      await createSamplePdf(input, 2);
+
+      await splitPdf({ input, outputDirectory: path.join(directory, "a") });
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      await splitPdf({ input, outputDirectory: path.join(directory, "b") });
+
+      for (const page of ["source-page-001.pdf", "source-page-002.pdf"]) {
+        expect(
+          Buffer.compare(
+            await readFile(path.join(directory, "a", page)),
+            await readFile(path.join(directory, "b", page)),
+          ),
+        ).toBe(0);
+      }
+
+      const merged1 = path.join(directory, "merged-1.pdf");
+      const merged2 = path.join(directory, "merged-2.pdf");
+      await mergePdfs({ inputs: [input, input], output: merged1 });
+      await mergePdfs({ inputs: [input, input], output: merged2 });
+      expect(
+        Buffer.compare(await readFile(merged1), await readFile(merged2)),
+      ).toBe(0);
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("types metric names for results and plans", () => {
+    expectTypeOf<
+      Awaited<ReturnType<typeof splitPdf>>["metrics"]
+    >().toEqualTypeOf<Record<"inputFiles" | "outputFiles" | "pages", number>>();
+    expectTypeOf<
+      Awaited<ReturnType<typeof planMergePdfs>>["metrics"]
+    >().toEqualTypeOf<Record<"inputFiles" | "outputFiles", number>>();
   });
 });
