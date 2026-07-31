@@ -17,7 +17,11 @@ import {
   consolidateWorkbooks,
   splitWorkbookByColumn,
 } from "@consultchimps/xlsx";
-import { formatHumanError, formatHumanResult } from "@consultchimps/messages";
+import {
+  CLI_VOCABULARY,
+  formatHumanError,
+  formatHumanResult,
+} from "@consultchimps/messages";
 import { Command } from "commander";
 
 interface GlobalOptions {
@@ -94,7 +98,9 @@ function printResult<TMetric extends string>(
     return;
   }
 
-  process.stdout.write(formatHumanResult(result));
+  process.stdout.write(
+    formatHumanResult(result, { vocabulary: CLI_VOCABULARY }),
+  );
 }
 
 const program = new Command();
@@ -566,14 +572,18 @@ try {
     process.stderr.write(
       json
         ? `consultchimps: ${error.message}${details}\n`
-        : formatHumanError(error.message, error.code),
+        : formatHumanError(error.message, error.code, {
+            vocabulary: CLI_VOCABULARY,
+          }),
     );
   } else {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(
       program.opts<GlobalOptions>().json
         ? `consultchimps: ${message}\n`
-        : formatHumanError(message),
+        : formatHumanError(message, undefined, {
+            vocabulary: CLI_VOCABULARY,
+          }),
     );
   }
   process.exitCode = 1;

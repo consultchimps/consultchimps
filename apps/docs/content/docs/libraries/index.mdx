@@ -142,13 +142,44 @@ const result = await mergePdfs({
 ## Explain results to people
 
 The `@consultchimps/messages` package renders any `OperationResult` or
-structured error as the same detailed, plain-language text the CLI prints, so a
-desktop or web interface can reuse one voice.
+structured error as detailed, plain-language text, so a desktop or web interface
+can reuse one voice.
 
 ```ts
 import { formatHumanError, formatHumanResult } from "@consultchimps/messages";
 
 console.log(formatHumanResult(result));
+```
+
+Recovery guidance is worded for the interface that shows it. By default the
+explanations use interface-neutral wording that never names a flag or an
+executable. Pass a `MessageVocabulary` to match your own interface, or pass the
+exported `CLI_VOCABULARY` to reproduce the wording the `consultchimps` command
+prints.
+
+```ts
+import {
+  CLI_VOCABULARY,
+  formatHumanError,
+  GENERIC_VOCABULARY,
+  type MessageVocabulary,
+} from "@consultchimps/messages";
+
+console.error(
+  formatHumanError("The output file already exists.", "FILES_OUTPUT_EXISTS", {
+    vocabulary: CLI_VOCABULARY,
+  }),
+);
+
+// Start a custom interface's vocabulary from the neutral defaults so no
+// command-line phrasing leaks through, then override what your interface
+// presents differently.
+const desktopVocabulary: MessageVocabulary = {
+  ...GENERIC_VOCABULARY,
+  artifactListReference: "in the results panel",
+  retryWithOverwrite:
+    "If you intentionally want to replace the existing output, switch on Replace existing files and try again.",
+};
 ```
 
 ## Populate a PowerPoint template
