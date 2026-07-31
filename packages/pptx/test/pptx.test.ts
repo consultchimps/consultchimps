@@ -755,4 +755,32 @@ describe("PowerPoint template population", () => {
     );
     await expect(readFile(cancelledPath)).rejects.toThrow();
   });
+
+  it("produces byte-identical presentations for identical inputs", async () => {
+    const directory = await createTemporaryDirectory();
+    const templatePath = path.join(directory, "template.pptx");
+    const workbookPath = path.join(directory, "data.xlsx");
+    await writeTemplate(templatePath, [
+      slideXml([{ id: 2, name: "Title", runs: [{ text: "{{client}}" }] }]),
+    ]);
+    await writeWorkbook(workbookPath, [["client"], ["A"], ["B"]]);
+
+    const first = path.join(directory, "first.pptx");
+    const second = path.join(directory, "second.pptx");
+    await populatePowerPointTemplate({
+      templatePath,
+      workbookPath,
+      outputPath: first,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await populatePowerPointTemplate({
+      templatePath,
+      workbookPath,
+      outputPath: second,
+    });
+
+    expect(Buffer.compare(await readFile(first), await readFile(second))).toBe(
+      0,
+    );
+  });
 });
