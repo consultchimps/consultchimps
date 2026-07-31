@@ -61,6 +61,26 @@ export interface OperationPlan<TMetric extends string = string> {
   metrics: Record<TMetric, number>;
 }
 
+/**
+ * An output produced entirely in memory by a byte-level operation variant.
+ * The name is a plain portable filename, never a filesystem path.
+ */
+export interface ByteArtifact {
+  name: string;
+  bytes: Uint8Array;
+  mediaType?: string;
+}
+
+/**
+ * The outcome of a byte-level operation variant: the same structured result
+ * the path-based operation reports (artifact paths carry output names), plus
+ * the produced bytes themselves.
+ */
+export interface ByteOperationOutcome<TMetric extends string = string> {
+  result: OperationResult<TMetric>;
+  outputs: ByteArtifact[];
+}
+
 export const OPERATION_ABORTED = "OPERATION_ABORTED";
 
 export function throwIfAborted(

@@ -17,36 +17,25 @@ import {
 } from "@consultchimps/files";
 import { PDFDocument } from "pdf-lib";
 
-const PDF_MEDIA_TYPE = "application/pdf";
-const SPLIT_OPERATION = "pdf.split";
-const MERGE_OPERATION = "pdf.merge";
-// Identical inputs must produce byte-identical outputs, so generated
-// documents carry a fixed timestamp instead of the current time.
-const FIXED_PDF_DATE = new Date("1980-01-01T00:00:00.000Z");
+import {
+  createOutputDocument,
+  MERGE_OPERATION,
+  PDF_ERRORS,
+  PDF_MEDIA_TYPE,
+  SPLIT_OPERATION,
+  splitOutputNames,
+  type MergePdfsMetric,
+  type MergePdfsPlanMetric,
+  type SplitPdfMetric,
+} from "./shared.js";
 
-async function createOutputDocument(): Promise<PDFDocument> {
-  const document = await PDFDocument.create();
-  document.setCreationDate(FIXED_PDF_DATE);
-  document.setModificationDate(FIXED_PDF_DATE);
-  return document;
-}
-
-/**
- * Stable, published error codes thrown by @consultchimps/pdf. Values are part
- * of the versioned public API; never change an existing value.
- */
-export const PDF_ERRORS = {
-  PDF_NO_INPUTS: "PDF_NO_INPUTS",
-  PDF_NO_PAGES: "PDF_NO_PAGES",
-  PDF_PAGE_COPY_FAILED: "PDF_PAGE_COPY_FAILED",
-  PDF_READ_FAILED: "PDF_READ_FAILED",
-} as const;
-
-export type PdfErrorCode = (typeof PDF_ERRORS)[keyof typeof PDF_ERRORS];
-
-export type SplitPdfMetric = "inputFiles" | "outputFiles" | "pages";
-export type MergePdfsMetric = "inputFiles" | "outputFiles" | "pages";
-export type MergePdfsPlanMetric = "inputFiles" | "outputFiles";
+export {
+  PDF_ERRORS,
+  type MergePdfsMetric,
+  type MergePdfsPlanMetric,
+  type PdfErrorCode,
+  type SplitPdfMetric,
+} from "./shared.js";
 
 export interface PdfWriteOptions {
   overwrite?: boolean | undefined;
@@ -109,13 +98,9 @@ async function resolveSplitPdf(
     );
   }
 
-  const width = Math.max(3, String(pageCount).length);
   const prefix = options.filenamePrefix ?? path.parse(absoluteInput).name;
-  const outputPaths = Array.from({ length: pageCount }, (_, index) =>
-    path.join(
-      absoluteOutputDirectory,
-      `${prefix}-page-${String(index + 1).padStart(width, "0")}.pdf`,
-    ),
+  const outputPaths = splitOutputNames(prefix, pageCount).map((name) =>
+    path.join(absoluteOutputDirectory, name),
   );
 
   outputPaths.forEach((outputPath) =>
