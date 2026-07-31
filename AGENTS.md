@@ -60,6 +60,11 @@ published packages. Read package.json and the lockfile before changing them.
 
 - Use Node.js 24.x.
 - Use pnpm 11.x through the repository's pinned `packageManager` declaration.
+- TypeScript runs split-toolchain: each package's own `typescript` 7
+  devDependency powers `tsc --noEmit` typechecks (native compiler), while the
+  workspace root keeps TypeScript 6 for tools that need the JavaScript compiler
+  API (tsup's declaration build, typescript-eslint, Next.js). Do not collapse
+  the two until those tools support TypeScript 7.
 - Run workspace commands from the repository root unless a command explicitly
   requires a package directory.
 - Use the committed `pnpm-lock.yaml`; do not replace pnpm with npm or Yarn.
