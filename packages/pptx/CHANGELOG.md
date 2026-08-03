@@ -1,5 +1,14 @@
 # @consultchimps/pptx
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies [6564e24]
+  - @consultchimps/core@0.4.0
+  - @consultchimps/files@0.3.1
+  - @consultchimps/xlsx@0.6.1
+
 ## 0.4.0
 
 ### Minor Changes
