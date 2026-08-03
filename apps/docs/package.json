@@ -11,10 +11,14 @@
     "typecheck": "next typegen && fumadocs-mdx && tsc --noEmit"
   },
   "dependencies": {
+    "@consultchimps/core": "workspace:*",
+    "@consultchimps/messages": "workspace:*",
+    "@consultchimps/pdf": "workspace:*",
     "cnfast": "^0.0.8",
     "fumadocs-core": "16.12.1",
     "fumadocs-mdx": "15.2.0",
     "fumadocs-ui": "npm:@fumadocs/base-ui@16.12.1",
+    "jszip": "3.10.1",
     "lucide-react": "^1.25.0",
     "next": "16.2.11",
     "react": "^19.2.8",
