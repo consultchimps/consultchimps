@@ -81,6 +81,15 @@ describe("byte-level PDF operations", () => {
     });
     expect(bounded.outputs[0]?.name).toBe(`${"a".repeat(80)}-page-001.pdf`);
     expect(bounded.outputs[0]!.name.length).toBeLessThanOrEqual(255);
+
+    const emojiStem = `${"🙂".repeat(100)}.pdf`;
+    const boundedBytes = await splitPdfBytes({
+      input: { name: emojiStem, bytes },
+    });
+    expect(
+      Buffer.byteLength(boundedBytes.outputs[0]!.name, "utf8"),
+    ).toBeLessThanOrEqual(255);
+    expect(boundedBytes.outputs[0]?.name.endsWith("-page-001.pdf")).toBe(true);
   });
 
   it("plans a split without producing any bytes", async () => {

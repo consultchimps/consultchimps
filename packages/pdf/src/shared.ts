@@ -87,6 +87,21 @@ function trimTrailingDotsAndSpaces(value: string): string {
  * operations never touch a filesystem, but their output names become
  * download and archive entries that must stay valid everywhere.
  */
+function truncateToUtf8Bytes(value: string, maxBytes: number): string {
+  const encoder = new TextEncoder();
+  let result = "";
+  let total = 0;
+  for (const character of value) {
+    const size = encoder.encode(character).length;
+    if (total + size > maxBytes) {
+      break;
+    }
+    result += character;
+    total += size;
+  }
+  return result;
+}
+
 function withoutControlCharacters(value: string): string {
   let result = "";
   for (const character of value) {
@@ -106,10 +121,11 @@ export function safeNameFragment(value: string, fallback: string): string {
       .replace(/-+/gu, "-")
       .trim(),
   );
-  // Cap the fragment like the Excel splitter does so generated names plus
-  // their page suffix stay well inside common 255-unit filename limits.
+  // Cap the fragment by encoded size, truncating at code-point boundaries,
+  // so generated names plus their page suffix stay well inside common
+  // 255-byte filename limits even for multi-byte scripts and emoji.
   const limited = trimTrailingDotsAndSpaces(
-    [...normalized].slice(0, 80).join(""),
+    truncateToUtf8Bytes(normalized, 80),
   );
   const safe = limited || fallback;
   return WINDOWS_RESERVED_FILENAME.test(safe) ? `_${safe}` : safe;
