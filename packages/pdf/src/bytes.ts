@@ -135,6 +135,7 @@ export async function splitPdfBytes(
     });
   }
 
+  throwIfAborted(options.signal, SPLIT_OPERATION, "memory");
   return {
     result: {
       operation: SPLIT_OPERATION,
@@ -196,6 +197,9 @@ export async function mergePdfsBytes(
     bytes: await outputDocument.save(),
     mediaType: PDF_MEDIA_TYPE,
   };
+  // The save above is asynchronous; honour a cancellation that arrived
+  // while the merged document was being serialized.
+  throwIfAborted(options.signal, MERGE_OPERATION, "memory");
 
   return {
     result: {
