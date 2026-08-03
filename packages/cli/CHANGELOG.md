@@ -1,5 +1,17 @@
 # consultchimps
 
+## 0.5.2
+
+### Patch Changes
+
+- Updated dependencies [6564e24]
+  - @consultchimps/core@0.4.0
+  - @consultchimps/pdf@0.4.0
+  - @consultchimps/files@0.3.1
+  - @consultchimps/messages@0.2.1
+  - @consultchimps/pptx@0.4.1
+  - @consultchimps/xlsx@0.6.1
+
 ## 0.5.1
 
 ### Patch Changes
