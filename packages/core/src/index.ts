@@ -61,16 +61,48 @@ export interface OperationPlan<TMetric extends string = string> {
   metrics: Record<TMetric, number>;
 }
 
+/**
+ * An output produced entirely in memory by a byte-level operation variant.
+ * The name is a plain portable filename, never a filesystem path.
+ */
+export interface ByteArtifact {
+  name: string;
+  bytes: Uint8Array;
+  mediaType?: string;
+}
+
+/**
+ * The outcome of a byte-level operation variant: the same structured result
+ * the path-based operation reports (artifact paths carry output names), plus
+ * the produced bytes themselves.
+ */
+export interface ByteOperationOutcome<TMetric extends string = string> {
+  result: OperationResult<TMetric>;
+  outputs: ByteArtifact[];
+}
+
 export const OPERATION_ABORTED = "OPERATION_ABORTED";
+
+/**
+ * Where a cancelled operation's already-produced outputs live: "files" for
+ * path-based operations, whose completed output files remain on disk, or
+ * "memory" for byte-based operations, which return nothing when cancelled.
+ */
+export type AbortOutputContext = "files" | "memory";
 
 export function throwIfAborted(
   signal: AbortSignal | undefined,
   operation: string,
+  outputContext: AbortOutputContext = "files",
 ): void {
   if (signal?.aborted) {
+    const consequence =
+      outputContext === "memory"
+        ? "No source data was changed and no partial output was produced."
+        : "No source file was changed; output files completed before the cancellation may remain.";
     throw new ConsultChimpsError(
       OPERATION_ABORTED,
-      `The "${operation}" operation was cancelled before it finished. No source file was changed; output files completed before the cancellation may remain.`,
+      `The "${operation}" operation was cancelled before it finished. ${consequence}`,
       {
         cause: signal.reason,
         details: { operation },
