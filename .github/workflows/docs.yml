@@ -38,7 +38,7 @@ jobs:
       - name: Build static documentation site
         run: |
           export NEXT_PUBLIC_SITE_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io${NEXT_PUBLIC_BASE_PATH}"
-          pnpm --filter @consultchimps/docs build
+          pnpm --filter @consultchimps/docs... build
         env:
           NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
 
