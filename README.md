@@ -15,6 +15,7 @@ Documentation:
 | Tool                   | Command                            | Status  |
 | ---------------------- | ---------------------------------- | ------- |
 | Excel consolidation    | `consultchimps sheets consolidate` | Working |
+| Excel worksheet merge  | `consultchimps sheets merge`       | Working |
 | Excel split by column  | `consultchimps sheets split`       | Working |
 | PowerPoint population  | `consultchimps pptx populate`      | Working |
 | PDF page splitting     | `consultchimps pdf split`          | Working |
@@ -75,6 +76,9 @@ pnpm build
 pnpm consultchimps sheets consolidate "inputs/**/*.xlsx" \
   --output outputs/consolidated.xlsx
 
+pnpm consultchimps sheets merge "inputs/**/*.xlsx" \
+  --output outputs/all-sheets.xlsx
+
 pnpm consultchimps sheets split clients.xlsx \
   --column Region \
   --output outputs/by-region
@@ -122,9 +126,13 @@ explicitly. Placeholders may span adjacent PowerPoint text runs, while ordinary
 text-shape formatting is retained. The output contains only generated slides, in
 worksheet order. Source presentations and workbooks are never modified.
 
-## Design principles
+To preserve every source worksheet as a separate tab, use
+`consultchimps sheets merge "inputs/**/*.xlsx" --output outputs/all-sheets.xlsx`.
+It copies worksheet formatting/layout supported by Excel and adds a visible
+`Sheet Index` tab recording source names and hidden/visible status. Use
+`--no-index` to omit the index.
 
-To preserve every source worksheet as a separate tab, use `consultchimps sheets merge "inputs/**/*.xlsx" --output outputs/all-sheets.xlsx`. It copies worksheet formatting/layout supported by Excel and adds a visible `Sheet Index` tab recording source names and hidden/visible status. Use `--no-index` to omit the index.
+## Design principles
 
 - Deterministic and local-first
 - Immutable inputs by default

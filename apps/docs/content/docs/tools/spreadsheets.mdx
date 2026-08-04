@@ -1,7 +1,6 @@
 ---
-title: Consolidate spreadsheets
-description:
-  Combine one or many Excel workbooks and worksheets into a single table.
+title: Work with spreadsheets
+description: Consolidate tabular data or merge complete Excel workbook tabs.
 icon: TableProperties
 ---
 
@@ -62,7 +61,7 @@ pnpm consultchimps sheets consolidate inputs/ \
   --no-source
 ```
 
-## Copy every worksheet into one workbook
+## Merge complete workbooks
 
 To preserve each source worksheet as its own tab, use:
 
@@ -74,6 +73,21 @@ This copies all worksheets with their separate tabs and formatting/layout
 supported by Excel. A visible `Sheet Index` tab records the source file,
 original and final tab names, and hidden/visible status. Duplicate worksheet
 names receive a suffix; use `--no-index` to omit the index.
+
+The library operation accepts resolved input paths in the order they should
+appear:
+
+```ts
+import { mergeWorkbooks } from "@consultchimps/xlsx";
+
+const result = await mergeWorkbooks(
+  ["north.xlsx", "south.xlsx"],
+  "outputs/all-sheets.xlsx",
+  { includeSheetIndex: true, overwrite: false },
+);
+
+console.log(result.metrics.outputSheets);
+```
 
 ## Select worksheets
 
