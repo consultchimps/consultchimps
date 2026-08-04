@@ -22,6 +22,9 @@ npm install --global consultchimps
 consultchimps sheets consolidate "inputs/**/*.xlsx" \
   --output outputs/consolidated.xlsx
 
+consultchimps sheets merge "inputs/**/*.xlsx" \
+  --output outputs/all-sheets.xlsx
+
 consultchimps sheets split clients.xlsx \
   --column Region \
   --output outputs/by-region

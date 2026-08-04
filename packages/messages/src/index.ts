@@ -142,6 +142,18 @@ function quantity(
 }
 
 const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
+  "sheets.merge": {
+    title: "Your Excel workbook merge is complete.",
+    summary: (result) => [
+      `ConsultChimps copied ${quantity(metric(result, "outputSheets"), "worksheet")} from ${quantity(metric(result, "inputFiles"), "Excel file")} into one workbook.`,
+      `${quantity(metric(result, "hiddenSheets"), "source worksheet")} ${metric(result, "hiddenSheets") === 1 ? "was" : "were"} hidden.`,
+      "Your original Excel files were not changed.",
+    ],
+    nextSteps: (vocabulary) => [
+      `Open the new Excel workbook ${vocabulary.artifactListReference} and review the copied worksheets.`,
+      "Keep the original workbooks until you have confirmed the merged workbook is complete.",
+    ],
+  },
   "sheets.consolidate": {
     title: "Your Excel consolidation is complete.",
     summary: (result) => [
@@ -208,12 +220,14 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
 const metricLabels: Readonly<Record<string, string>> = {
   generatedSlides: "PowerPoint slides generated",
   groups: "Distinct groups found",
+  hiddenSheets: "Hidden source worksheets copied",
   inputFiles: "Input files read",
   inputRows: "Source data rows read",
   inputTables: "Visible worksheets combined",
   outputColumns: "Columns in the finished spreadsheet",
   outputFiles: "New files created",
   outputRows: "Data rows written",
+  outputSheets: "Source worksheets copied",
   pages: "PDF pages processed",
   placeholderFields: "Distinct placeholder fields",
   placeholderOccurrences: "Placeholder occurrences per template slide",

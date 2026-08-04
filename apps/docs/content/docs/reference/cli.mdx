@@ -55,6 +55,24 @@ Options:
   -f, --force               replace an existing output file
 ```
 
+## Spreadsheet worksheet merging
+
+```text
+consultchimps sheets merge [options] <inputs...>
+
+Required:
+  -o, --output <path>       output .xlsx file
+
+Options:
+  --no-index                omit the visible Sheet Index worksheet
+  -f, --force               replace an existing output file
+```
+
+The command copies every source worksheet into a separate tab in resolved input
+order. Duplicate worksheet names receive a numeric suffix. Source visibility is
+retained, and the default `Sheet Index` records each source file, original tab
+name, final tab name, and visibility.
+
 ## Spreadsheet splitting
 
 ```text

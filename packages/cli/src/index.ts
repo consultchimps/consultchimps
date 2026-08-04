@@ -45,7 +45,7 @@ interface ConsolidateOptions {
 
 interface SheetMergeOptions {
   force?: boolean;
-  noIndex?: boolean;
+  index: boolean;
   output: string;
 }
 
@@ -165,25 +165,31 @@ sheets
   .description(
     "copy every worksheet from multiple Excel workbooks into one workbook",
   )
-  .argument("<inputs...>", 'Excel files, folders, or quoted patterns such as "inputs/*.xlsx"')
+  .argument(
+    "<inputs...>",
+    'Excel files, folders, or quoted patterns such as "inputs/*.xlsx"',
+  )
   .requiredOption("-o, --output <path>", "where to save the new workbook")
   .option("--no-index", "do not add the visible Sheet Index worksheet")
   .option(
     "-f, --force",
     "replace the output file if it already exists; use with care",
   )
-  .addHelpText("after", `
+  .addHelpText(
+    "after",
+    `
 Examples:
   consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx
   consultchimps sheets merge north.xlsx south.xlsx --output all-sheets.xlsx
 
 Every source worksheet remains a separate tab. Sheet Index records source names
 and hidden/visible status. Duplicate tab names receive a suffix.
-`)
+`,
+  )
   .action(async (inputs: string[], options: SheetMergeOptions) => {
     const inputPaths = await discoverFiles(inputs, { extensions: [".xlsx"] });
     const result = await mergeWorkbooks(inputPaths, options.output, {
-      includeSheetIndex: options.noIndex !== false,
+      includeSheetIndex: options.index,
       overwrite: options.force === true,
     });
     printResult(result, program.opts<GlobalOptions>().json === true);

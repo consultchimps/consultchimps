@@ -156,6 +156,13 @@ describe("consultchimps CLI", () => {
         "consultchimps sheets split clients.xlsx -c Region -o by-region",
       );
 
+      const mergeHelp = await runCli(["sheets", "merge", "--help"]);
+      expect(mergeHelp.stdout).toContain("-o, --output <path>");
+      expect(mergeHelp.stdout).toContain("--no-index");
+      expect(mergeHelp.stdout).toContain(
+        'consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx',
+      );
+
       const consolidateHelp = await runCli(["sheets", "consolidate", "--help"]);
       expect(consolidateHelp.stdout).toContain("-o, --output <path>");
       expect(consolidateHelp.stdout).toContain(
@@ -387,6 +394,61 @@ describe("consultchimps CLI", () => {
         "--force",
       ]),
     ).resolves.toMatchObject({ exitCode: 0 });
+  });
+
+  it("merges worksheets through the built command", async () => {
+    const directory = await createTemporaryDirectory();
+    const inputs = path.join(directory, "inputs");
+    const output = path.join(directory, "outputs", "merged.xlsx");
+    await writeWorkbook(
+      path.join(inputs, "north.xlsx"),
+      [
+        ["Summary", [["Region"], ["North"]]],
+        ["Private", [["Amount"], [100]]],
+      ],
+      ["Private"],
+    );
+    await writeWorkbook(path.join(inputs, "south.xlsx"), [
+      ["Summary", [["Region"], ["South"]]],
+    ]);
+
+    const command = await runCli([
+      "--json",
+      "sheets",
+      "merge",
+      path.join(inputs, "*.xlsx"),
+      "--output",
+      output,
+    ]);
+
+    expect(JSON.parse(command.stdout).metrics).toEqual({
+      hiddenSheets: 1,
+      inputFiles: 2,
+      outputSheets: 3,
+    });
+    const workbook = XLSX.read(await readFile(output), { type: "buffer" });
+    expect(workbook.SheetNames).toEqual([
+      "Summary",
+      "Private",
+      "Summary (2)",
+      "Sheet Index",
+    ]);
+
+    const humanOutput = path.join(directory, "outputs", "human.xlsx");
+    const human = await runCli([
+      "sheets",
+      "merge",
+      path.join(inputs, "*.xlsx"),
+      "--output",
+      humanOutput,
+      "--no-index",
+    ]);
+    expect(human.stdout).toContain("Your Excel workbook merge is complete.");
+    expect(human.stdout).toContain("3 worksheets");
+    expect(human.stdout).toContain(
+      "1 source worksheet was hidden in the merged workbook.",
+    );
+    expect(human.stdout).not.toContain('see the visible "Sheet Index"');
   });
 
   it("splits one workbook into files grouped by a column", async () => {

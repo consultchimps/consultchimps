@@ -22,6 +22,14 @@ const tools = [
   },
   {
     number: "Tool 02",
+    title: "Merge workbook tabs",
+    description:
+      "Copy every source worksheet into one workbook while retaining separate tabs and source visibility.",
+    href: "/docs/tools/spreadsheets#merge-complete-workbooks",
+    icon: FileStack,
+  },
+  {
+    number: "Tool 03",
     title: "Split spreadsheets",
     description:
       "Create one focused Excel workbook per distinct value while keeping source workbooks unchanged.",
@@ -29,7 +37,7 @@ const tools = [
     icon: SplitSquareVertical,
   },
   {
-    number: "Tool 03",
+    number: "Tool 04",
     title: "Populate PowerPoint templates",
     description:
       "Turn a designed template slide and Excel records into a review-ready presentation, entirely locally.",
@@ -37,7 +45,7 @@ const tools = [
     icon: Presentation,
   },
   {
-    number: "Tool 04",
+    number: "Tool 05",
     title: "Split PDF pages",
     description:
       "Turn a long PDF into predictable, zero-padded page files without sending the document anywhere.",
@@ -45,7 +53,7 @@ const tools = [
     icon: ScanLine,
   },
   {
-    number: "Tool 05",
+    number: "Tool 06",
     title: "Merge PDF packs",
     description:
       "Assemble source PDFs in resolved order and preserve every page in one clean deliverable.",

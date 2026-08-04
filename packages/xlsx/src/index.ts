@@ -45,6 +45,8 @@ export { XLSX_ERRORS, type XlsxErrorCode } from "./errors.js";
 export type ConsolidateWorkbooksMetric =
   "inputFiles" | "inputTables" | "outputColumns" | "outputRows";
 export type ConsolidateWorkbooksPlanMetric = "inputFiles" | "outputFiles";
+export type MergeWorkbooksMetric =
+  "hiddenSheets" | "inputFiles" | "outputSheets";
 export type SplitWorkbookByColumnMetric =
   | "groups"
   | "inputFiles"
@@ -88,6 +90,11 @@ export interface ConsolidateWorkbooksOptions
   output: string;
   addSourceColumns?: boolean | undefined;
   outputSheetName?: string | undefined;
+  overwrite?: boolean | undefined;
+}
+
+export interface MergeWorkbooksOptions {
+  includeSheetIndex?: boolean | undefined;
   overwrite?: boolean | undefined;
 }
 
@@ -1097,29 +1104,54 @@ export async function consolidateWorkbooks(
 export async function mergeWorkbooks(
   inputPaths: string[],
   outputPath: string,
-  options: { includeSheetIndex?: boolean; overwrite?: boolean } = {},
-): Promise<OperationResult> {
+  options: MergeWorkbooksOptions = {},
+): Promise<OperationResult<MergeWorkbooksMetric>> {
   if (inputPaths.length === 0) {
-    throw new ConsultChimpsError("XLSX_NO_INPUTS", "At least one workbook is required.");
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_NO_INPUTS,
+      "At least one workbook is required.",
+    );
   }
   const absoluteInputs = inputPaths.map((inputPath) => path.resolve(inputPath));
   const absoluteOutput = path.resolve(outputPath);
   refuseInputOverwrite(absoluteOutput, absoluteInputs);
-  await ensureParentDirectory(absoluteOutput);
   await ensureOutputAvailable(absoluteOutput, { overwrite: options.overwrite });
   const outputWorkbook = XLSX.utils.book_new();
-  const usedNames = new Set<string>();
-  const indexRows: string[][] = [["Source file", "Original worksheet", "Final worksheet", "Source visibility"]];
+  const usedNames = new Set<string>(
+    options.includeSheetIndex === false ? [] : ["sheet index"],
+  );
+  const indexRows: string[][] = [
+    [
+      "Source file",
+      "Original worksheet",
+      "Final worksheet",
+      "Source visibility",
+    ],
+  ];
   let sheetCount = 0;
   let hiddenCount = 0;
 
   for (const inputPath of absoluteInputs) {
-    const inputWorkbook = XLSX.read(await readFile(inputPath), {
-      cellDates: true, cellStyles: true, dense: false, type: "buffer",
-    });
+    let inputWorkbook: XLSX.WorkBook;
+    try {
+      inputWorkbook = XLSX.read(await readFile(inputPath), {
+        cellDates: true,
+        cellStyles: true,
+        dense: false,
+        type: "buffer",
+      });
+    } catch (error) {
+      throw new ConsultChimpsError(
+        XLSX_ERRORS.XLSX_READ_FAILED,
+        `Could not read workbook: ${inputPath}`,
+        { cause: error, details: { filePath: inputPath } },
+      );
+    }
     for (const originalName of inputWorkbook.SheetNames) {
       const worksheet = inputWorkbook.Sheets[originalName];
-      if (!worksheet) continue;
+      if (!worksheet) {
+        continue;
+      }
       const baseName = originalName.slice(0, 31) || "Sheet";
       let finalName = baseName;
       let suffix = 2;
@@ -1129,28 +1161,77 @@ export async function mergeWorkbooks(
         suffix += 1;
       }
       usedNames.add(finalName.toLocaleLowerCase());
-      const hidden = !isVisibleSheet(inputWorkbook, originalName);
-      if (hidden) hiddenCount += 1;
+      const visibility =
+        inputWorkbook.Workbook?.Sheets?.find(
+          (sheet) => sheet.name === originalName,
+        )?.Hidden ?? 0;
+      if (visibility !== 0) {
+        hiddenCount += 1;
+      }
       sheetCount += 1;
-      indexRows.push([path.basename(inputPath), originalName, finalName, hidden ? "Hidden" : "Visible"]);
+      indexRows.push([
+        path.basename(inputPath),
+        originalName,
+        finalName,
+        visibility === 2
+          ? "Very hidden"
+          : visibility === 1
+            ? "Hidden"
+            : "Visible",
+      ]);
       XLSX.utils.book_append_sheet(outputWorkbook, worksheet, finalName);
       outputWorkbook.Workbook ??= {};
       outputWorkbook.Workbook.Sheets ??= [];
-      outputWorkbook.Workbook.Sheets.push({ name: finalName, Hidden: hidden ? 1 : 0 });
+      outputWorkbook.Workbook.Sheets.push({
+        name: finalName,
+        Hidden: visibility,
+      });
     }
   }
-  if (sheetCount === 0) throw new ConsultChimpsError("XLSX_NO_SHEETS", "No worksheets were found in the input workbooks.");
-  if (options.includeSheetIndex !== false) {
-    XLSX.utils.book_append_sheet(outputWorkbook, XLSX.utils.aoa_to_sheet(indexRows), "Sheet Index");
+  if (sheetCount === 0) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_NO_SHEETS,
+      "No worksheets were found in the input workbooks.",
+    );
   }
-  await writeFile(absoluteOutput, XLSX.write(outputWorkbook, {
-    bookType: "xlsx", cellStyles: true, compression: true, type: "buffer",
-  }));
+  if (options.includeSheetIndex !== false) {
+    XLSX.utils.book_append_sheet(
+      outputWorkbook,
+      XLSX.utils.aoa_to_sheet(indexRows),
+      "Sheet Index",
+    );
+  }
+  const outputBytes = XLSX.write(outputWorkbook, {
+    bookType: "xlsx",
+    cellStyles: true,
+    compression: true,
+    type: "buffer",
+  });
+  await ensureParentDirectory(absoluteOutput);
+  await writeFile(absoluteOutput, outputBytes);
+  const warnings = [];
+  if (hiddenCount > 0) {
+    warnings.push(
+      options.includeSheetIndex === false
+        ? `${hiddenCount} source worksheet${hiddenCount === 1 ? " was" : "s were"} hidden in the merged workbook.`
+        : `${hiddenCount} source worksheet${hiddenCount === 1 ? " was" : "s were"} hidden; see the visible "Sheet Index" worksheet.`,
+    );
+  }
   return {
     operation: "sheets.merge",
-    artifacts: [{ kind: "file", mediaType: WORKBOOK_MEDIA_TYPE, path: absoluteOutput }],
-    warnings: hiddenCount > 0 ? [`${hiddenCount} source worksheet${hiddenCount === 1 ? " was" : "s were"} hidden; see the visible "Sheet Index" worksheet.`] : [],
-    metrics: { inputFiles: inputPaths.length, outputSheets: sheetCount, hiddenSheets: hiddenCount },
+    artifacts: [
+      {
+        kind: "file",
+        mediaType: WORKBOOK_MEDIA_TYPE,
+        path: absoluteOutput,
+      },
+    ],
+    warnings,
+    metrics: {
+      inputFiles: inputPaths.length,
+      outputSheets: sheetCount,
+      hiddenSheets: hiddenCount,
+    },
   };
 }
 

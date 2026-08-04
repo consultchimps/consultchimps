@@ -107,6 +107,25 @@ describe("human-readable CLI output", () => {
     expected.forEach((text) => expect(output).toContain(text));
   });
 
+  it("explains worksheet merges without exposing raw metric names", () => {
+    const output = formatHumanResult(
+      result(
+        "sheets.merge",
+        { hiddenSheets: 1, inputFiles: 2, outputSheets: 4 },
+        ["merged.xlsx"],
+        ["1 source worksheet was hidden."],
+      ),
+      cli,
+    );
+
+    expect(output).toContain("Your Excel workbook merge is complete.");
+    expect(output).toContain("4 worksheets");
+    expect(output).toContain("2 Excel files");
+    expect(output).toContain("1 source worksheet was hidden");
+    expect(output).toContain("Your original Excel files were not changed.");
+    expect(output).not.toContain("outputSheets:");
+  });
+
   it("states clearly when a successful operation has no warnings", () => {
     const output = formatHumanResult(
       result("pdf.merge", { inputFiles: 2, outputFiles: 1, pages: 6 }, [
