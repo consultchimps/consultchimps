@@ -1094,6 +1094,66 @@ export async function consolidateWorkbooks(
   };
 }
 
+export async function mergeWorkbooks(
+  inputPaths: string[],
+  outputPath: string,
+  options: { includeSheetIndex?: boolean; overwrite?: boolean } = {},
+): Promise<OperationResult> {
+  if (inputPaths.length === 0) {
+    throw new ConsultChimpsError("XLSX_NO_INPUTS", "At least one workbook is required.");
+  }
+  const absoluteInputs = inputPaths.map((inputPath) => path.resolve(inputPath));
+  const absoluteOutput = path.resolve(outputPath);
+  refuseInputOverwrite(absoluteOutput, absoluteInputs);
+  await ensureParentDirectory(absoluteOutput);
+  await ensureOutputAvailable(absoluteOutput, { overwrite: options.overwrite });
+  const outputWorkbook = XLSX.utils.book_new();
+  const usedNames = new Set<string>();
+  const indexRows: string[][] = [["Source file", "Original worksheet", "Final worksheet", "Source visibility"]];
+  let sheetCount = 0;
+  let hiddenCount = 0;
+
+  for (const inputPath of absoluteInputs) {
+    const inputWorkbook = XLSX.read(await readFile(inputPath), {
+      cellDates: true, cellStyles: true, dense: false, type: "buffer",
+    });
+    for (const originalName of inputWorkbook.SheetNames) {
+      const worksheet = inputWorkbook.Sheets[originalName];
+      if (!worksheet) continue;
+      const baseName = originalName.slice(0, 31) || "Sheet";
+      let finalName = baseName;
+      let suffix = 2;
+      while (usedNames.has(finalName.toLocaleLowerCase())) {
+        const suffixText = ` (${suffix})`;
+        finalName = `${baseName.slice(0, 31 - suffixText.length)}${suffixText}`;
+        suffix += 1;
+      }
+      usedNames.add(finalName.toLocaleLowerCase());
+      const hidden = !isVisibleSheet(inputWorkbook, originalName);
+      if (hidden) hiddenCount += 1;
+      sheetCount += 1;
+      indexRows.push([path.basename(inputPath), originalName, finalName, hidden ? "Hidden" : "Visible"]);
+      XLSX.utils.book_append_sheet(outputWorkbook, worksheet, finalName);
+      outputWorkbook.Workbook ??= {};
+      outputWorkbook.Workbook.Sheets ??= [];
+      outputWorkbook.Workbook.Sheets.push({ name: finalName, Hidden: hidden ? 1 : 0 });
+    }
+  }
+  if (sheetCount === 0) throw new ConsultChimpsError("XLSX_NO_SHEETS", "No worksheets were found in the input workbooks.");
+  if (options.includeSheetIndex !== false) {
+    XLSX.utils.book_append_sheet(outputWorkbook, XLSX.utils.aoa_to_sheet(indexRows), "Sheet Index");
+  }
+  await writeFile(absoluteOutput, XLSX.write(outputWorkbook, {
+    bookType: "xlsx", cellStyles: true, compression: true, type: "buffer",
+  }));
+  return {
+    operation: "sheets.merge",
+    artifacts: [{ kind: "file", mediaType: WORKBOOK_MEDIA_TYPE, path: absoluteOutput }],
+    warnings: hiddenCount > 0 ? [`${hiddenCount} source worksheet${hiddenCount === 1 ? " was" : "s were"} hidden; see the visible "Sheet Index" worksheet.`] : [],
+    metrics: { inputFiles: inputPaths.length, outputSheets: sheetCount, hiddenSheets: hiddenCount },
+  };
+}
+
 interface ResolvedSplit {
   absoluteInput: string;
   absoluteOutputDirectory: string;

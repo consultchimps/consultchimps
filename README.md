@@ -124,6 +124,8 @@ worksheet order. Source presentations and workbooks are never modified.
 
 ## Design principles
 
+To preserve every source worksheet as a separate tab, use `consultchimps sheets merge "inputs/**/*.xlsx" --output outputs/all-sheets.xlsx`. It copies worksheet formatting/layout supported by Excel and adds a visible `Sheet Index` tab recording source names and hidden/visible status. Use `--no-index` to omit the index.
+
 - Deterministic and local-first
 - Immutable inputs by default
 - Small composable operations rather than one-off scripts

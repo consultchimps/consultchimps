@@ -15,6 +15,7 @@ import {
 } from "@consultchimps/pptx";
 import {
   consolidateWorkbooks,
+  mergeWorkbooks,
   splitWorkbookByColumn,
 } from "@consultchimps/xlsx";
 import {
@@ -40,6 +41,12 @@ interface ConsolidateOptions {
   outputSheet?: string;
   sheet?: string[];
   source?: boolean;
+}
+
+interface SheetMergeOptions {
+  force?: boolean;
+  noIndex?: boolean;
+  output: string;
 }
 
 interface SheetSplitOptions {
@@ -123,6 +130,7 @@ program
     `
 Quick start:
   consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
+  consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx
   consultchimps sheets split clients.xlsx -c Region -o by-region
   consultchimps pptx populate --template profile.pptx --data clients.xlsx --sheet Clients --template-slide 1 -o profiles.pptx
   consultchimps pdf split report.pdf -o pages
@@ -151,6 +159,35 @@ Safety:
 Run consultchimps sheets help <command> for all command options.
 `,
   );
+
+sheets
+  .command("merge")
+  .description(
+    "copy every worksheet from multiple Excel workbooks into one workbook",
+  )
+  .argument("<inputs...>", 'Excel files, folders, or quoted patterns such as "inputs/*.xlsx"')
+  .requiredOption("-o, --output <path>", "where to save the new workbook")
+  .option("--no-index", "do not add the visible Sheet Index worksheet")
+  .option(
+    "-f, --force",
+    "replace the output file if it already exists; use with care",
+  )
+  .addHelpText("after", `
+Examples:
+  consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx
+  consultchimps sheets merge north.xlsx south.xlsx --output all-sheets.xlsx
+
+Every source worksheet remains a separate tab. Sheet Index records source names
+and hidden/visible status. Duplicate tab names receive a suffix.
+`)
+  .action(async (inputs: string[], options: SheetMergeOptions) => {
+    const inputPaths = await discoverFiles(inputs, { extensions: [".xlsx"] });
+    const result = await mergeWorkbooks(inputPaths, options.output, {
+      includeSheetIndex: options.noIndex !== false,
+      overwrite: options.force === true,
+    });
+    printResult(result, program.opts<GlobalOptions>().json === true);
+  });
 
 sheets
   .command("consolidate")

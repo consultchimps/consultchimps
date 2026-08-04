@@ -62,6 +62,19 @@ pnpm consultchimps sheets consolidate inputs/ \
   --no-source
 ```
 
+## Copy every worksheet into one workbook
+
+To preserve each source worksheet as its own tab, use:
+
+```bash
+pnpm consultchimps sheets merge "inputs/**/*.xlsx" --output outputs/all-sheets.xlsx
+```
+
+This copies all worksheets with their separate tabs and formatting/layout
+supported by Excel. A visible `Sheet Index` tab records the source file,
+original and final tab names, and hidden/visible status. Duplicate worksheet
+names receive a suffix; use `--no-index` to omit the index.
+
 ## Select worksheets
 
 Visible, non-empty worksheets are included by default.
