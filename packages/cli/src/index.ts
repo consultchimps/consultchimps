@@ -57,11 +57,13 @@ interface SheetSplitOptions {
   headerRow?: number;
   hidden?: boolean;
   output?: string;
+  outputDir?: string;
   prefix?: string;
   preserveWorkbook?: boolean;
   range?: string;
   sheet?: string;
   skipBlank?: boolean;
+  strict?: boolean;
   table?: string;
   values?: boolean;
 }
@@ -339,7 +341,7 @@ sheets
   .description(
     "create one new Excel workbook for each distinct value in a selected column",
   )
-  .argument("<input>", "the source .xlsx workbook to divide")
+  .argument("<input>", "the source .xlsx or .xlsm workbook to divide")
   .requiredOption(
     "-c, --column <name>",
     "column whose values decide which rows go into each new workbook",
@@ -347,6 +349,10 @@ sheets
   .option(
     "-o, --output <directory>",
     "folder where the new workbooks will be saved",
+  )
+  .option(
+    "--output-dir <directory>",
+    "folder where the new workbooks will be saved (alias for --output)",
   )
   .option("--sheet <name>", "exact name of the worksheet to divide")
   .option(
@@ -365,15 +371,19 @@ sheets
   .option("--hidden", "allow the selected worksheet to be hidden")
   .option(
     "--preserve-workbook",
-    "keep the full workbook layout and replace only the selected Excel Table rows (default when --table is used)",
+    "keep the full workbook layout (default without a selector and for --table)",
   )
   .option(
     "--no-preserve-workbook",
-    "write plain data-only workbooks even when a table is selected",
+    "write plain data-only workbooks using the single-source split mode",
   )
   .option(
     "--values",
     "replace formulas with their stored values while preserving formatting",
+  )
+  .option(
+    "--strict",
+    "match split values exactly, including case, whitespace, and value type",
   )
   .option(
     "--skip-blank",
@@ -391,25 +401,24 @@ sheets
     "after",
     `
 Examples:
-  consultchimps sheets split clients.xlsx -c Region -o by-region
+  consultchimps sheets split clients.xlsx -c Region --output-dir by-region
   consultchimps sheets split clients.xlsx --table ClientData --column Region --values
   consultchimps sheets split clients.xlsx --range ClientRange --column Region
 
 What happens:
-  1. ConsultChimps reads the selected Excel Table, named range, or worksheet.
-  2. It groups rows using the values in --column.
-  3. It creates a clearly named workbook for every distinct group.
-  4. It reports every created file, skipped row, and warning.
+  1. By default, ConsultChimps finds --column in every worksheet.
+  2. It collects distinct non-blank values across all matching worksheets.
+  3. It copies the complete workbook once per value and removes other rows.
+  4. Worksheets without --column are copied unchanged.
 
-Splitting an Excel Table keeps the complete workbook layout by default, so
-every output looks like the file you prepared: zoom, saved cursor position,
-cover sheets, and formatting all carry over. Use --no-preserve-workbook for
-plain data-only outputs. Prefer an Excel Table, then a named range, over
-splitting a worksheet's full used range.
+Matching trims surrounding whitespace, ignores case, and treats ordinary
+numeric text like the equivalent number. Use --strict for exact matching.
+Use --sheet, --table, or --range for the legacy single-source split mode.
+Use --no-preserve-workbook only when a compact, data-only result is wanted.
 
 --values removes formulas while retaining their stored results and all
 formatting in a preserved workbook. A formula without a stored result becomes
-a formatted blank cell.
+a formatted blank cell and is reported as a warning.
 
 Pro tip: before a table split, prepare the workbook exactly as you want to
 deliver it - set each sheet's zoom, place the cursor on cell A1 so every
@@ -419,8 +428,13 @@ Your original workbook is never changed.
 `,
   )
   .action(async (input: string, options: SheetSplitOptions) => {
+    if (options.output && options.outputDir) {
+      throw new Error(
+        "Choose either --output or --output-dir; they name the same destination option.",
+      );
+    }
     const inputPaths = await discoverFiles([input], {
-      extensions: [".xlsx"],
+      extensions: [".xlsx", ".xlsm"],
     });
     if (inputPaths.length !== 1) {
       throw new Error(
@@ -434,6 +448,7 @@ Your original workbook is never changed.
     }
 
     const outputDirectory =
+      options.outputDir ??
       options.output ??
       path.join(path.dirname(inputPath), `${path.parse(inputPath).name}-split`);
     const result = await splitWorkbookByColumn({
@@ -449,6 +464,7 @@ Your original workbook is never changed.
       range: options.range,
       sheet: options.sheet,
       table: options.table,
+      strict: options.strict === true,
       values: options.values === true,
     });
     printResult(result, program.opts<GlobalOptions>().json === true);

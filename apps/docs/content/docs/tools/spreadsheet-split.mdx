@@ -1,223 +1,167 @@
 ---
-title: Split a workbook by column
+title: Split an Excel workbook by column value
 description:
-  Create one Excel workbook for every distinct value in a selected column.
+  Copy a complete workbook for every distinct value found across its worksheets.
 icon: Rows3
 ---
 
-The spreadsheet splitter reads one worksheet as a table, groups its rows by a
-column, and writes each group to a separate `.xlsx` file. The source workbook is
-never modified.
+The Excel splitter creates one complete workbook for every distinct, non-blank
+value in a selected column. It edits copies of the original OOXML workbook
+instead of rebuilding worksheets, so the source file remains unchanged and the
+workbook's formatting and embedded objects remain in place.
 
 ## Basic usage
 
 ```bash
-pnpm consultchimps sheets split clients.xlsx \
-  --column Region \
-  --output outputs/by-region
+consultchimps sheets split "Sprint 2 Datasets.xlsx" \
+  --column "Entity Name" \
+  --output-dir "./entities"
 ```
 
-For a workbook containing `North`, `South`, and blank values in `Region`, the
-default output names are:
+ConsultChimps searches every worksheet for `Entity Name`, even when the column
+is in a different position. It collects the union of values across those
+worksheets. Every output contains all original worksheets in their original
+order:
 
-```text
-clients-North.xlsx
-clients-South.xlsx
-clients-blank.xlsx
-```
+- A worksheet containing `Entity Name` retains its header and only rows for the
+  output entity.
+- A worksheet without `Entity Name` is copied unchanged.
+- Hidden and very hidden worksheets are retained with the same visibility.
+- Content above an automatically found header is retained.
 
-Each output contains the original headers, only the matching rows, an
-autofilter, and practical column widths.
+The automatic header search selects the first cell whose trimmed,
+case-insensitive text equals the requested column name. Use `--header-row 3` to
+restrict matching to a known one-based row when a workbook is ambiguous.
 
-## Choose the worksheet and header
+## Matching and blank values
 
-When a workbook has more than one visible, non-empty worksheet, select the
-source explicitly:
+Default matching is designed for business exports:
+
+- surrounding whitespace is removed;
+- letter case is ignored;
+- Unicode text is normalized;
+- ordinary numeric text, such as `"100"`, matches the number `100`;
+- the original cell content is left unchanged in the output; and
+- blank and null values never create an output workbook.
+
+Consequently, `DGE`, `dge`, `DGE `, and ` DGE` create one workbook. Use
+`--strict` when case, surrounding whitespace, and value type must remain
+distinct.
+
+For plain worksheet ranges, every used row below the header is treated as a data
+candidate. A row with a blank split value is removed. A named Excel Table
+provides safer data boundaries when a sheet contains a footer or a second data
+block.
+
+## Formulas and values-only output
+
+Formulas remain formulas by default, and existing workbook calculation settings
+are retained. Use `--values` to remove formulas across every worksheet while
+keeping their most recently saved cached results:
 
 ```bash
-pnpm consultchimps sheets split clients.xlsx \
-  --sheet "Active clients" \
-  --column Region \
-  --header-row 3 \
-  --output outputs/by-region
+consultchimps sheets split "Sprint 2 Datasets.xlsx" \
+  --column "Entity Name" \
+  --output-dir "./entities" \
+  --values
 ```
 
-Worksheet and column matching ignore letter case. `--header-row` is one-based,
-matching the row number displayed by Excel. Add `--hidden` when intentionally
-selecting a hidden worksheet.
+ConsultChimps does not calculate formulas. If Excel did not save a cached
+result, the values-only cell becomes a formatted blank and the completion result
+warns with the affected worksheet and cell. Open and recalculate the source in
+Excel, save it, and run the split again when that value is required.
 
-## Use a named Excel Table (preferred)
+## Filenames and overwrite safety
 
-If the worksheet contains titles, notes, formulas, or multiple data blocks,
-split a named Excel Table instead of treating the worksheet's complete used
-range as one table. A structured table is the most reliable data source: it
-defines its own headers and boundaries, so nothing outside it can leak into the
-outputs.
+The normalized entity display value becomes the filename. Unicode and Arabic
+text are retained. Windows-invalid characters (`< > : " / \\ | ? *`), control
+characters, trailing spaces or periods, and reserved device names are handled
+safely. If two values sanitize to the same name, a stable `-2`, `-3`, and so on
+suffix is added.
 
-```bash
-pnpm consultchimps sheets split clients.xlsx \
-  --table ClientData \
-  --column Region \
-  --output outputs/by-region
-```
-
-Table-name matching ignores letter case. The splitter reads only the structured
-table's columns and data rows, excludes its totals row, and ignores every cell
-outside the table range.
-
-Excel Tables define their own headers, so `--header-row` cannot be combined with
-`--table`. You may add `--sheet` as an extra worksheet constraint, and
-`--hidden` is still required when the selected table is on a hidden worksheet.
-
-### Preserve the complete workbook
-
-Splitting an Excel Table keeps the complete workbook by default: each output is
-a full copy of the source file in which only the selected table changed.
-Original worksheets, styles, merged cells, column widths, notes, cover sheets,
-and content outside the table all carry over. Matching rows are compacted at the
-top of the table's data area, its totals row is moved when present, and its
-structured range is resized to the matching rows.
-
-<Callout title="Pro tip: prepare the workbook before splitting">
-  Because every output is a copy of the file you saved, prepare the workbook
-  exactly as you want to deliver it before running the split: set the zoom you
-  want on each sheet, place the selector on cell **A1** so every file opens
-  consistently, add the cover sheet where needed, and save the document. Every
-  generated workbook will open just like your prepared original.
-</Callout>
-
-### Replace formulas with values and keep formatting
-
-Use `--values` to deliver the preserved workbook without formulas:
+All destinations are validated before any output is written. Existing files stop
+the operation unless `--force` is present:
 
 ```bash
-pnpm consultchimps sheets split clients.xlsx \
-  --table ClientData \
-  --column Region \
+consultchimps sheets split "Sprint 2 Datasets.xlsx" \
+  --column "Entity Name" \
+  --output-dir "./entities" \
   --values \
-  --output outputs/by-region
-```
-
-Formula cells become their stored results across every worksheet in each output
-workbook. Styles, number formats, merged cells, dimensions, cover sheets, and
-the rest of the preserved workbook remain unchanged. A formula without a stored
-result becomes a formatted blank cell. This mode also removes calculated-column
-and totals-row formulas from Excel Table definitions so the formulas do not
-return when the file opens.
-
-Add `--no-preserve-workbook` when you want compact, data-only outputs containing
-just the selected headers and matching rows:
-
-```bash
-pnpm consultchimps sheets split clients.xlsx \
-  --table ClientData \
-  --column Region \
-  --no-preserve-workbook \
-  --output outputs/by-region
-```
-
-Preserving the workbook requires `--table`; it is not available for named ranges
-or for splitting a worksheet's complete used range.
-
-## Use a named range
-
-When the data is not formatted as an Excel Table but a workbook-level named
-range covers it, select the range by name. The range's first row provides the
-headers, and cells outside the range are ignored:
-
-```bash
-pnpm consultchimps sheets split clients.xlsx \
-  --range ClientRange \
-  --column Region \
-  --output outputs/by-region
-```
-
-Range-name matching ignores letter case, and Excel's built-in names such as
-print areas are never considered. `--range` cannot be combined with `--table` or
-`--header-row`, and named-range splits always produce compact data-only outputs.
-
-Prefer sources in this order: a named Excel Table, then a named range, then the
-worksheet's complete used range.
-
-## Blank values
-
-Blank cells are included by default in a `blank` workbook so rows are not
-silently discarded. Omit them explicitly when needed:
-
-```bash
-pnpm consultchimps sheets split clients.xlsx \
-  --column Region \
-  --skip-blank
-```
-
-The structured result reports the number of skipped rows, and the human-readable
-output prints a warning.
-
-## Safe filenames
-
-Output files use the source workbook name as their prefix. Override it with
-`--prefix`:
-
-```bash
-pnpm consultchimps sheets split clients.xlsx \
-  --column Region \
-  --prefix "client-region"
-```
-
-Characters that are unsafe on common filesystems are replaced with hyphens. When
-two distinct values produce the same safe filename, the later file gains a
-numeric suffix such as `client-region-North-West-2.xlsx`.
-
-Numbers, text, and booleans remain distinct groups even when their displayed
-text is the same. Group order follows the first appearance of each value in the
-worksheet.
-
-## Output safety
-
-The operation checks every destination before writing any workbook. It stops if
-an output already exists:
-
-```bash
-pnpm consultchimps sheets split clients.xlsx \
-  --column Region \
-  --output outputs/by-region \
   --force
 ```
 
-Use `--force` only when replacing the complete output set is intentional.
+Outputs are staged in the destination directory and committed only after every
+workbook is created successfully. The source workbook is never overwritten.
+
+## Windows, macOS, and Linux examples
+
+PowerShell on Windows:
+
+```powershell
+consultchimps sheets split "C:\Work\Sprint 2 Datasets.xlsx" `
+  --column "Entity Name" `
+  --output-dir "C:\Work\entities"
+```
+
+macOS or Linux:
+
+```bash
+consultchimps sheets split "$HOME/work/Sprint 2 Datasets.xlsx" \
+  --column "Entity Name" \
+  --output-dir "$HOME/work/entities"
+```
+
+## Target one table, range, or worksheet
+
+The established single-source modes remain available for narrower jobs:
+
+```bash
+consultchimps sheets split clients.xlsx \
+  --table ClientData \
+  --column Region \
+  --output-dir outputs/by-region
+```
+
+`--table`, `--range`, or `--sheet` selects the legacy one-source grouping path.
+A table split preserves the complete workbook by default and compacts matching
+rows while resizing its table and AutoFilter range. `--no-preserve-workbook`
+creates compact data-only outputs. Named-range and selected-worksheet modes are
+data-only.
+
+## Preservation and known limitations
+
+The all-worksheet mode retains the OOXML package and changes only affected
+worksheet row XML, table ranges, formula metadata in values-only mode, and
+calculation-chain references. This preserves sheet order and visibility, cell
+styles, number formats, row heights, column widths, merged cells, freeze panes,
+filters, conditional formatting, data validation, print settings, hyperlinks,
+comments, images, charts, names, workbook properties, and VBA project parts in
+`.xlsm` files.
+
+Plain worksheet rows retain their original Excel row numbers instead of being
+compacted. This deliberately keeps formulas, drawings, validations, conditional
+formatting, and named-range coordinates stable; deleted rows may therefore
+appear as blank visual gaps. Excel Tables are compacted and resized. External
+links, ActiveX controls, unsupported extension parts, chart source ranges, and
+formulas that depend on removed rows are preserved but are not semantically
+rewritten or recalculated. Review complex workbooks in Excel before delivery.
 
 ## TypeScript API
 
 ```ts
-import {
-  planSplitWorkbookByColumn,
-  splitWorkbookByColumn,
-} from "@consultchimps/xlsx";
-
-const plan = await planSplitWorkbookByColumn({
-  input: "clients.xlsx",
-  outputDirectory: "outputs/by-region",
-  column: "Region",
-  table: "ClientData",
-});
-console.log(plan.outputs.map((output) => output.path));
+import { splitWorkbookByColumn } from "@consultchimps/xlsx";
 
 const result = await splitWorkbookByColumn({
-  input: "clients.xlsx",
-  outputDirectory: "outputs/by-region",
-  column: "Region",
-  filenamePrefix: "client-region",
-  includeBlank: true,
-  table: "ClientData",
+  input: "Sprint 2 Datasets.xlsx",
+  outputDirectory: "entities",
+  column: "Entity Name",
   values: true,
 });
 
 console.log(result.metrics.outputFiles);
+console.log(result.outputs);
 ```
 
-Table splits preserve the workbook unless `preserveWorkbook: false` is passed;
-use `range` instead of `table` to select a named range. The format-neutral
-grouping primitive is also available from `@consultchimps/tabular` as
-`groupTableByColumn`. Use `readWorkbookExcelTables` or `readWorkbookNamedRanges`
-from `@consultchimps/xlsx` when an application needs to inspect the available
-data sources before choosing one.
+`result.outputs` contains the retained and deleted row counts for each filtered
+worksheet in each output workbook. Progress callbacks receive the same counts
+while large jobs are staged.

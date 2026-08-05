@@ -41,6 +41,13 @@ import {
 import { XLSX_ERRORS } from "./errors.js";
 import { preserveWorkbookWithFilteredExcelTable } from "./preserve-table-split.js";
 import { convertWorkbookToValues } from "./values-only.js";
+import {
+  type FullWorkbookSplitMetric,
+  type FullWorkbookSplitSummary,
+  type SplitOutputDetail,
+  planFullWorkbookSplit,
+  splitFullWorkbookByColumn,
+} from "./workbook-column-split.js";
 
 export { XLSX_ERRORS, type XlsxErrorCode } from "./errors.js";
 
@@ -49,13 +56,7 @@ export type ConsolidateWorkbooksMetric =
 export type ConsolidateWorkbooksPlanMetric = "inputFiles" | "outputFiles";
 export type MergeWorkbooksMetric =
   "hiddenSheets" | "inputFiles" | "outputSheets";
-export type SplitWorkbookByColumnMetric =
-  | "groups"
-  | "inputFiles"
-  | "inputRows"
-  | "outputFiles"
-  | "outputRows"
-  | "skippedRows";
+export type SplitWorkbookByColumnMetric = FullWorkbookSplitMetric;
 export type SplitWorkbookByColumnPlanMetric = Exclude<
   SplitWorkbookByColumnMetric,
   "outputRows"
@@ -112,15 +113,25 @@ export interface SplitWorkbookByColumnOptions extends OperationControlOptions {
   includeHiddenSheets?: boolean | undefined;
   overwrite?: boolean | undefined;
   /**
-   * Keep the complete source workbook and replace only the selected Excel
-   * Table's rows. Defaults to true when a table is selected; not available
-   * for named ranges or plain worksheet splits.
+   * Keep the complete source workbook. In the default all-worksheet mode this
+   * is enabled unless explicitly set to false; table splits also default to
+   * true. Named-range and selected-worksheet splits remain compact when this
+   * option is false.
    */
   preserveWorkbook?: boolean | undefined;
   range?: string | undefined;
   sheet?: string | undefined;
   table?: string | undefined;
+  /** Compare split values without trimming, case folding, or numeric coercion. */
+  strict?: boolean | undefined;
   values?: boolean | undefined;
+}
+
+export interface SplitWorkbookByColumnResult extends OperationResult<SplitWorkbookByColumnMetric> {
+  /** Per-output, per-worksheet filtering details for all-worksheet splits. */
+  outputs?: SplitOutputDetail[] | undefined;
+  /** Input, output, option, and worksheet summary for all-worksheet splits. */
+  summary?: FullWorkbookSplitSummary | undefined;
 }
 
 export interface WorkbookExcelTable extends Table {
@@ -1478,6 +1489,14 @@ async function resolveSplitWorkbookByColumn(
 export async function planSplitWorkbookByColumn(
   options: SplitWorkbookByColumnOptions,
 ): Promise<OperationPlan<SplitWorkbookByColumnPlanMetric>> {
+  if (
+    !options.table &&
+    !options.range &&
+    !options.sheet &&
+    options.preserveWorkbook !== false
+  ) {
+    return planFullWorkbookSplit(options);
+  }
   const resolved = await resolveSplitWorkbookByColumn(options);
   const outputs: PlannedOutput[] = resolved.outputPaths.map((outputPath) => ({
     kind: "file",
@@ -1505,18 +1524,32 @@ export async function planSplitWorkbookByColumn(
     outputs,
     warnings,
     metrics: {
+      formulaCellsConverted: 0,
+      formulaCellsWithoutCachedValues: 0,
       groups: resolved.grouped.groups.length,
       inputFiles: 1,
       inputRows: resolved.table.rows.length,
       outputFiles: resolved.outputPaths.length,
+      rowsDeleted: 0,
+      sheetsCopiedUnchanged: 0,
+      sheetsFiltered: 1,
       skippedRows: resolved.grouped.skippedRows,
+      valuesOnly: options.values === true ? 1 : 0,
     },
   };
 }
 
 export async function splitWorkbookByColumn(
   options: SplitWorkbookByColumnOptions,
-): Promise<OperationResult<SplitWorkbookByColumnMetric>> {
+): Promise<SplitWorkbookByColumnResult> {
+  if (
+    !options.table &&
+    !options.range &&
+    !options.sheet &&
+    options.preserveWorkbook !== false
+  ) {
+    return splitFullWorkbookByColumn(options);
+  }
   throwIfAborted(options.signal, SPLIT_OPERATION);
   const {
     absoluteOutputDirectory,
@@ -1664,6 +1697,8 @@ export async function splitWorkbookByColumn(
     })),
     warnings,
     metrics: {
+      formulaCellsConverted: 0,
+      formulaCellsWithoutCachedValues: 0,
       groups: grouped.groups.length,
       inputFiles: 1,
       inputRows: table.rows.length,
@@ -1672,7 +1707,11 @@ export async function splitWorkbookByColumn(
         (total, group) => total + group.table.rows.length,
         0,
       ),
+      rowsDeleted: 0,
+      sheetsCopiedUnchanged: 0,
+      sheetsFiltered: 1,
       skippedRows: grouped.skippedRows,
+      valuesOnly: options.values === true ? 1 : 0,
     },
   };
 }

@@ -15,6 +15,13 @@ interface PackageRelationship {
 interface WorkbookSheet {
   name: string;
   relationshipId: string;
+  state: string | undefined;
+}
+
+export interface WorkbookWorksheetPart {
+  name: string;
+  state: string | undefined;
+  worksheetPart: string;
 }
 
 export interface ExcelTableDefinition {
@@ -88,11 +95,46 @@ function parseWorkbookSheets(xml: string, fileName: string): WorkbookSheet[] {
     const name = attribute(tag, "name");
     const relationshipId = attribute(tag, "id");
     if (name && relationshipId) {
-      sheets.push({ name, relationshipId });
+      sheets.push({
+        name,
+        relationshipId,
+        state: attribute(tag, "state"),
+      });
     }
   });
 
   return sheets;
+}
+
+export async function readWorkbookWorksheetParts(
+  workbookBytes: Buffer,
+): Promise<WorkbookWorksheetPart[]> {
+  const archive = await JSZip.loadAsync(workbookBytes);
+  const workbookPart = "xl/workbook.xml";
+  const sheets = parseWorkbookSheets(
+    await requiredText(archive, workbookPart),
+    workbookPart,
+  );
+  const workbookRelationships = new Map(
+    (await optionalRelationships(archive, workbookPart)).map(
+      (relationship) => [relationship.id, relationship] as const,
+    ),
+  );
+
+  return sheets.flatMap((sheet) => {
+    const relationship = workbookRelationships.get(sheet.relationshipId);
+    if (!relationship?.type.endsWith(WORKSHEET_RELATIONSHIP_SUFFIX)) {
+      return [];
+    }
+
+    return [
+      {
+        name: sheet.name,
+        state: sheet.state,
+        worksheetPart: resolvePartPath(workbookPart, relationship.target),
+      },
+    ];
+  });
 }
 
 function parseTableDefinition(

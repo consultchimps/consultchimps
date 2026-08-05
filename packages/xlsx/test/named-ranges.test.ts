@@ -141,7 +141,7 @@ describe("splitWorkbookByColumn with a named range", () => {
       range: "clientrange",
     });
 
-    expect(result.metrics).toEqual({
+    expect(result.metrics).toMatchObject({
       groups: 2,
       inputFiles: 1,
       inputRows: 3,

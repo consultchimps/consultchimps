@@ -78,9 +78,10 @@ pnpm consultchimps sheets merge "inputs/**/*.xlsx" \
   --values \
   --output outputs/all-sheets.xlsx
 
-pnpm consultchimps sheets split clients.xlsx \
-  --column Region \
-  --output outputs/by-region
+pnpm consultchimps sheets split "Sprint 2 Datasets.xlsx" \
+  --column "Entity Name" \
+  --output-dir outputs/by-entity \
+  --values
 
 pnpm consultchimps sheets split clients.xlsx \
   --table ClientData \
@@ -110,14 +111,16 @@ case-insensitive header name, and adds `_source_file`, `_source_sheet`, and
 `_source_row` columns. Consolidated cells are values rather than formulas.
 Original files are never modified.
 
-Excel splitting creates one workbook per distinct value in a selected column.
-Blank values are retained by default, filenames are portable, and all
-destinations are checked before any output is written. A named Excel Table
-(preferred) or a workbook named range can be selected to ignore titles, notes,
-totals, and other cells outside its bounds. Table splits keep the complete
-source workbook by default and change only the selected table's rows — prepare
-the file exactly as you want to deliver it before splitting; use
-`--no-preserve-workbook` for compact data-only outputs.
+Excel splitting creates one complete workbook per normalized, non-blank value
+found in the selected column across all worksheets. Each output retains every
+worksheet in its original order; sheets containing the column are filtered and
+sheets without it are copied unchanged. Matching trims whitespace, ignores case,
+and treats ordinary numeric text like the equivalent number. Filenames are
+portable, all destinations are checked before writing, and `.xlsx` and `.xlsm`
+sources are supported. Add `--values` to replace formulas across the outputs
+with their saved cached results while preserving formatting. A named Excel
+Table, named range, or worksheet can still be selected for the established
+single-source modes.
 
 PowerPoint population reads `{{field_name}}` placeholders from one selected
 template slide and creates one populated slide per nonempty Excel record. The

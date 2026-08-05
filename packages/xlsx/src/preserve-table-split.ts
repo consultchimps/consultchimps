@@ -18,6 +18,8 @@ interface RowFragment {
 export interface PreserveExcelTableOptions {
   definition: ExcelTableDefinition;
   sourceRows: number[];
+  values?: boolean | undefined;
+  wholeRows?: boolean | undefined;
 }
 
 const CELL_PATTERN =
@@ -118,15 +120,20 @@ function assertRelocatableFormula(xml: string, destinationRow: number): void {
   );
 }
 
-function relocateCell(xml: string, destinationRow: number): string {
-  const openingTag = elementOpeningTag(xml);
-  const reference = cellReference(xml);
+function relocateCell(
+  xml: string,
+  destinationRow: number,
+  values: boolean,
+): string {
+  const preparedXml = values ? xml.replace(FORMULA_PATTERN, "") : xml;
+  const openingTag = elementOpeningTag(preparedXml);
+  const reference = cellReference(preparedXml);
   const sourceRow = Number(/\d+$/u.exec(reference)?.[0]);
   if (sourceRow === destinationRow) {
-    return xml;
+    return preparedXml;
   }
 
-  assertRelocatableFormula(xml, destinationRow);
+  assertRelocatableFormula(preparedXml, destinationRow);
   const destinationReference = reference.replace(
     /\d+$/u,
     String(destinationRow),
@@ -135,7 +142,7 @@ function relocateCell(xml: string, destinationRow: number): string {
     /(\br=)(?:"[^"]*"|'[^']*')/u,
     `$1"${destinationReference}"`,
   );
-  return `${relocatedOpeningTag}${xml.slice(openingTag.length)}`;
+  return `${relocatedOpeningTag}${preparedXml.slice(openingTag.length)}`;
 }
 
 function clearCell(xml: string): string {
@@ -245,15 +252,149 @@ function replaceElementReference(
   )}${xml.slice(match.index + openingTag.length)}`;
 }
 
-function filterWorksheetXml(
+function filterWholeWorksheetRows(
   worksheetXml: string,
   definition: ExcelTableDefinition,
   sourceRows: number[],
+  values: boolean,
 ): {
   tableDataReference: string;
   tableReference: string;
   worksheetXml: string;
 } {
+  const tableRange = XLSX.utils.decode_range(definition.range);
+  const firstDataRow = tableRange.s.r + 2;
+  const originalLastDataRow =
+    tableRange.e.r + 1 - (definition.totalsRow ? 1 : 0);
+  const originalTableEndRow = tableRange.e.r + 1;
+  if (
+    sourceRows.some((row) => row < firstDataRow || row > originalLastDataRow)
+  ) {
+    throw new Error(
+      `Excel Table "${definition.name}" received invalid source rows.`,
+    );
+  }
+
+  const openingMatch = SHEET_DATA_OPEN_PATTERN.exec(worksheetXml);
+  if (!openingMatch) {
+    throw new Error(
+      `Worksheet "${definition.sheet}" has no sheetData element.`,
+    );
+  }
+  const sheetDataOpeningTag = openingMatch[0];
+  const sheetDataElementName = qualifiedElementName(sheetDataOpeningTag);
+  const sheetDataClosingTag = `</${sheetDataElementName}>`;
+  const sheetDataStart = openingMatch.index + sheetDataOpeningTag.length;
+  const sheetDataEnd = worksheetXml.indexOf(
+    sheetDataClosingTag,
+    sheetDataStart,
+  );
+  if (sheetDataEnd < 0) {
+    throw new Error(
+      `Worksheet "${definition.sheet}" has invalid sheetData XML.`,
+    );
+  }
+
+  const rowFragments = parseRowFragments(
+    worksheetXml.slice(sheetDataStart, sheetDataEnd),
+  );
+  const rowByNumber = new Map(
+    rowFragments.map((row) => [row.rowNumber, row.xml] as const),
+  );
+  const rowElementName = rowFragments[0]
+    ? qualifiedElementName(rowFragments[0].xml)
+    : sheetDataElementName.replace(/sheetData$/u, "row");
+  const sourceXmlByRow = new Map(
+    sourceRows.map((row) => [row, rowByNumber.get(row)] as const),
+  );
+  const newLastDataRow = sourceRows.length
+    ? firstDataRow + sourceRows.length - 1
+    : firstDataRow - 1;
+  const newTableEndRow = definition.totalsRow
+    ? firstDataRow + sourceRows.length
+    : Math.max(newLastDataRow, tableRange.s.r + 1);
+
+  for (let row = firstDataRow; row <= originalTableEndRow; row += 1) {
+    rowByNumber.delete(row);
+  }
+  sourceRows.forEach((sourceRow, index) => {
+    const destinationRow = firstDataRow + index;
+    const sourceXml = sourceXmlByRow.get(sourceRow);
+    if (!sourceXml) {
+      return;
+    }
+    const relocated = sourceXml
+      .replace(
+        /^(<[^\s/>]*row\b[^>]*\br=)(?:"[^"]*"|'[^']*')/u,
+        `$1"${destinationRow}"`,
+      )
+      .replace(CELL_PATTERN, (cellXml) =>
+        relocateCell(cellXml, destinationRow, values),
+      );
+    rowByNumber.set(
+      destinationRow,
+      relocated.replace(/<row\b/u, `<${rowElementName}`),
+    );
+  });
+
+  if (definition.totalsRow) {
+    const totalsRow = rowFragments.find(
+      (row) => row.rowNumber === originalTableEndRow,
+    )?.xml;
+    if (totalsRow) {
+      const relocatedTotals = totalsRow
+        .replace(
+          /^(<[^\s/>]*row\b[^>]*\br=)(?:"[^"]*"|'[^']*')/u,
+          `$1"${newTableEndRow}"`,
+        )
+        .replace(CELL_PATTERN, (cellXml) =>
+          relocateCell(cellXml, newTableEndRow, values),
+        );
+      rowByNumber.set(
+        newTableEndRow,
+        relocatedTotals.replace(/<row\b/u, `<${rowElementName}`),
+      );
+    }
+  }
+
+  const rewrittenSheetData = [...rowByNumber]
+    .sort(([left], [right]) => left - right)
+    .map(([, rowXml]) => rowXml)
+    .join("");
+  const tableReference = XLSX.utils.encode_range({
+    e: { c: tableRange.e.c, r: newTableEndRow - 1 },
+    s: tableRange.s,
+  });
+  const tableDataReference = XLSX.utils.encode_range({
+    e: { c: tableRange.e.c, r: Math.max(newLastDataRow - 1, tableRange.s.r) },
+    s: tableRange.s,
+  });
+  return {
+    tableDataReference,
+    tableReference,
+    worksheetXml: `${worksheetXml.slice(0, sheetDataStart)}${rewrittenSheetData}${worksheetXml.slice(sheetDataEnd)}`,
+  };
+}
+
+function filterWorksheetXml(
+  worksheetXml: string,
+  definition: ExcelTableDefinition,
+  sourceRows: number[],
+  values: boolean,
+  wholeRows: boolean,
+): {
+  tableDataReference: string;
+  tableReference: string;
+  worksheetXml: string;
+} {
+  if (wholeRows) {
+    return filterWholeWorksheetRows(
+      worksheetXml,
+      definition,
+      sourceRows,
+      values,
+    );
+  }
   const tableRange = XLSX.utils.decode_range(definition.range);
   const firstDataRow = tableRange.s.r + 1 + (definition.headerRow ? 1 : 0);
   const lastDataRow = tableRange.e.r + 1 - (definition.totalsRow ? 1 : 0);
@@ -322,7 +463,7 @@ function filterWorksheetXml(
         tableRange.e.c,
       ).map((cell) => ({
         ...cell,
-        xml: relocateCell(cell.xml, destinationRow),
+        xml: relocateCell(cell.xml, destinationRow, values),
       })),
     );
   });
@@ -337,7 +478,7 @@ function filterWorksheetXml(
         tableRange.e.c,
       ).map((cell) => ({
         ...cell,
-        xml: relocateCell(cell.xml, newTableEndRow),
+        xml: relocateCell(cell.xml, newTableEndRow, values),
       })),
     );
   }
@@ -399,6 +540,8 @@ export async function preserveWorkbookWithFilteredExcelTable(
     await worksheetEntry.async("text"),
     options.definition,
     options.sourceRows,
+    options.values === true,
+    options.wholeRows === true,
   );
   let tableXml = replaceElementReference(
     await tableEntry.async("text"),

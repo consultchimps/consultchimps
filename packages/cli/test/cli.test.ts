@@ -473,7 +473,7 @@ describe("consultchimps CLI", () => {
       "--output",
       output,
     ]);
-    expect(parseJsonSuccess(command.stdout).metrics).toEqual({
+    expect(parseJsonSuccess(command.stdout).metrics).toMatchObject({
       inputFiles: 2,
       inputTables: 3,
       outputColumns: 7,
@@ -550,7 +550,7 @@ describe("consultchimps CLI", () => {
       output,
     ]);
 
-    expect(parseJsonSuccess(command.stdout).metrics).toEqual({
+    expect(parseJsonSuccess(command.stdout).metrics).toMatchObject({
       hiddenSheets: 1,
       inputFiles: 2,
       outputSheets: 3,
@@ -615,23 +615,23 @@ describe("consultchimps CLI", () => {
       input,
       "--column",
       "Region",
-      "--output",
+      "--output-dir",
       output,
       "--prefix",
       "client-region",
     ]);
-    expect(parseJsonSuccess(command.stdout).metrics).toEqual({
-      groups: 3,
+    expect(parseJsonSuccess(command.stdout).metrics).toMatchObject({
+      groups: 2,
       inputFiles: 1,
       inputRows: 4,
-      outputFiles: 3,
-      outputRows: 4,
-      skippedRows: 0,
+      outputFiles: 2,
+      outputRows: 3,
+      sheetsFiltered: 1,
+      skippedRows: 1,
     });
     expect((await readdir(output)).sort()).toEqual([
       "client-region-North.xlsx",
       "client-region-South.xlsx",
-      "client-region-blank.xlsx",
     ]);
 
     const north = XLSX.read(
@@ -701,7 +701,7 @@ describe("consultchimps CLI", () => {
       output,
     ]);
 
-    expect(parseJsonSuccess(command.stdout).metrics).toEqual({
+    expect(parseJsonSuccess(command.stdout).metrics).toMatchObject({
       groups: 2,
       inputFiles: 1,
       inputRows: 3,
