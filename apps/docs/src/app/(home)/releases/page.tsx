@@ -37,7 +37,7 @@ export default function ReleasesPage() {
                 </span>
                 <a
                   className="ml-auto inline-flex items-center gap-1 text-sm text-fd-muted-foreground hover:text-fd-foreground"
-                  href={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/packages/${folder}/CHANGELOG.md`}
+                  href={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/packages/${encodeURIComponent(folder)}/CHANGELOG.md`}
                   rel="noreferrer"
                   target="_blank"
                 >

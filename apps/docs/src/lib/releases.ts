@@ -100,6 +100,9 @@ export function packageReleases(entryLimit = 3): PackageReleases[] {
   const releases: PackageReleases[] = [];
 
   for (const folder of readdirSync(packagesDir).sort()) {
+    // Folder names become URL path segments on /releases; accept only the
+    // plain lowercase names our packages actually use.
+    if (!/^[a-z0-9-]+$/.test(folder)) continue;
     const manifestPath = path.join(packagesDir, folder, "package.json");
     if (!existsSync(manifestPath)) continue;
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
