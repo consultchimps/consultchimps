@@ -78,7 +78,9 @@ async function runCli(
 
 async function writeWorkbook(
   filePath: string,
-  sheets: Array<[string, Array<Array<boolean | null | number | string>>]>,
+  sheets: Array<
+    [string, Array<Array<XLSX.CellObject | boolean | null | number | string>>]
+  >,
   hiddenSheets: string[] = [],
 ): Promise<void> {
   const workbook = XLSX.utils.book_new();
@@ -97,7 +99,11 @@ async function writeWorkbook(
   };
   await writeFile(
     filePath,
-    XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+    XLSX.write(workbook, {
+      bookType: "xlsx",
+      cellStyles: true,
+      type: "buffer",
+    }),
   );
 }
 
@@ -159,12 +165,14 @@ describe("consultchimps CLI", () => {
       const mergeHelp = await runCli(["sheets", "merge", "--help"]);
       expect(mergeHelp.stdout).toContain("-o, --output <path>");
       expect(mergeHelp.stdout).toContain("--no-index");
+      expect(mergeHelp.stdout).toContain("--values");
       expect(mergeHelp.stdout).toContain(
-        'consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx',
+        'consultchimps sheets merge "inputs/*.xlsx" --values -o all-sheets.xlsx',
       );
 
       const consolidateHelp = await runCli(["sheets", "consolidate", "--help"]);
       expect(consolidateHelp.stdout).toContain("-o, --output <path>");
+      expect(consolidateHelp.stdout).toContain("--values");
       expect(consolidateHelp.stdout).toContain(
         "where to save the new consolidated .xlsx workbook",
       );
@@ -173,6 +181,10 @@ describe("consultchimps CLI", () => {
       expect(consolidateHelp.stdout).toContain(
         "Your original workbooks are never changed.",
       );
+
+      const splitHelp = await runCli(["sheets", "split", "--help"]);
+      expect(splitHelp.stdout).toContain("--values");
+      expect(splitHelp.stdout).toContain("preserving formatting");
 
       const pdfSplitHelp = await runCli(["pdf", "split", "--help"]);
       expect(pdfSplitHelp.stdout).toContain("-o, --output <directory>");
@@ -403,7 +415,13 @@ describe("consultchimps CLI", () => {
     await writeWorkbook(
       path.join(inputs, "north.xlsx"),
       [
-        ["Summary", [["Region"], ["North"]]],
+        [
+          "Summary",
+          [
+            ["Amount", "Tax", "Total"],
+            [100, 5, { f: "A2+B2", t: "n", v: 105, z: "$#,##0.00" }],
+          ],
+        ],
         ["Private", [["Amount"], [100]]],
       ],
       ["Private"],
@@ -433,6 +451,7 @@ describe("consultchimps CLI", () => {
       "Summary (2)",
       "Sheet Index",
     ]);
+    expect(workbook.Sheets.Summary?.C2?.f).toBe("A2+B2");
 
     const humanOutput = path.join(directory, "outputs", "human.xlsx");
     const human = await runCli([
@@ -442,6 +461,7 @@ describe("consultchimps CLI", () => {
       "--output",
       humanOutput,
       "--no-index",
+      "--values",
     ]);
     expect(human.stdout).toContain("Your Excel workbook merge is complete.");
     expect(human.stdout).toContain("3 worksheets");
@@ -449,6 +469,15 @@ describe("consultchimps CLI", () => {
       "1 source worksheet was hidden in the merged workbook.",
     );
     expect(human.stdout).not.toContain('see the visible "Sheet Index"');
+    const valuesWorkbook = XLSX.read(await readFile(humanOutput), {
+      cellStyles: true,
+      type: "buffer",
+    });
+    expect(valuesWorkbook.Sheets.Summary?.C2).toMatchObject({
+      v: 105,
+      z: "$#,##0.00",
+    });
+    expect(valuesWorkbook.Sheets.Summary?.C2?.f).toBeUndefined();
   });
 
   it("splits one workbook into files grouped by a column", async () => {

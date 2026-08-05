@@ -18,7 +18,7 @@ import {
 async function createWorkbook(
   filePath: string,
   sheetName: string,
-  rows: Array<Array<string | number>>,
+  rows: Array<Array<XLSX.CellObject | string | number>>,
 ): Promise<void> {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(
@@ -42,7 +42,7 @@ describe("consolidateWorkbooks", () => {
       const output = path.join(directory, "consolidated.xlsx");
       await createWorkbook(first, "North", [
         ["Client", "Amount"],
-        ["A", 10],
+        ["A", { f: "5+5", t: "n", v: 10 }],
       ]);
       await createWorkbook(second, "South", [
         ["Amount", "Status", "client"],
@@ -52,6 +52,7 @@ describe("consolidateWorkbooks", () => {
       const result = await consolidateWorkbooks({
         inputs: [first, second],
         output: output,
+        values: true,
       });
       expect(result.metrics).toMatchObject({
         inputFiles: 2,

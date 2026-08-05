@@ -23,6 +23,7 @@ consultchimps sheets consolidate "inputs/**/*.xlsx" \
   --output outputs/consolidated.xlsx
 
 consultchimps sheets merge "inputs/**/*.xlsx" \
+  --values \
   --output outputs/all-sheets.xlsx
 
 consultchimps sheets split clients.xlsx \
@@ -54,7 +55,9 @@ consultchimps pdf merge "inputs/**/*.pdf" \
 ```
 
 Inputs are never modified. Existing outputs require the explicit `--force`
-option.
+option. Every spreadsheet command accepts `--values`; formulas are replaced by
+their stored results without removing cell formatting. Consolidation and compact
+data-only splits already write values, so the flag makes that intent explicit.
 
 By default, every command gives a detailed, plain-language explanation of what
 happened. It translates result counts, lists every created file, reports

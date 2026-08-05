@@ -39,6 +39,7 @@ import {
 } from "./excel-tables.js";
 import { XLSX_ERRORS } from "./errors.js";
 import { preserveWorkbookWithFilteredExcelTable } from "./preserve-table-split.js";
+import { convertWorkbookToValues } from "./values-only.js";
 
 export { XLSX_ERRORS, type XlsxErrorCode } from "./errors.js";
 
@@ -91,11 +92,13 @@ export interface ConsolidateWorkbooksOptions
   addSourceColumns?: boolean | undefined;
   outputSheetName?: string | undefined;
   overwrite?: boolean | undefined;
+  values?: boolean | undefined;
 }
 
 export interface MergeWorkbooksOptions {
   includeSheetIndex?: boolean | undefined;
   overwrite?: boolean | undefined;
+  values?: boolean | undefined;
 }
 
 export interface SplitWorkbookByColumnOptions extends OperationControlOptions {
@@ -116,6 +119,7 @@ export interface SplitWorkbookByColumnOptions extends OperationControlOptions {
   range?: string | undefined;
   sheet?: string | undefined;
   table?: string | undefined;
+  values?: boolean | undefined;
 }
 
 export interface WorkbookExcelTable extends Table {
@@ -1201,12 +1205,15 @@ export async function mergeWorkbooks(
       "Sheet Index",
     );
   }
-  const outputBytes = XLSX.write(outputWorkbook, {
+  let outputBytes = XLSX.write(outputWorkbook, {
     bookType: "xlsx",
     cellStyles: true,
     compression: true,
     type: "buffer",
   });
+  if (options.values) {
+    outputBytes = await convertWorkbookToValues(outputBytes);
+  }
   await ensureParentDirectory(absoluteOutput);
   await writeFile(absoluteOutput, outputBytes);
   const warnings = [];
@@ -1558,6 +1565,10 @@ export async function splitWorkbookByColumn(
   const stagedOutputs: string[] = [];
   const committedOutputs: string[] = [];
   const backups = new Map<string, string>();
+  const workbookTemplateBytes =
+    preservedWorkbookBytes && options.values
+      ? await convertWorkbookToValues(preservedWorkbookBytes)
+      : preservedWorkbookBytes;
 
   try {
     for (const [index, group] of grouped.groups.entries()) {
@@ -1566,10 +1577,10 @@ export async function splitWorkbookByColumn(
         transactionDirectory,
         `output-${String(index + 1).padStart(6, "0")}.xlsx`,
       );
-      if (preservedWorkbookBytes && preservedTableDefinition) {
+      if (workbookTemplateBytes && preservedTableDefinition) {
         await writeFile(
           stagedOutput,
-          await preserveWorkbookWithFilteredExcelTable(preservedWorkbookBytes, {
+          await preserveWorkbookWithFilteredExcelTable(workbookTemplateBytes, {
             definition: preservedTableDefinition,
             sourceRows: group.table.sourceRows ?? [],
           }),

@@ -86,6 +86,25 @@ structured range is resized to the matching rows.
   generated workbook will open just like your prepared original.
 </Callout>
 
+### Replace formulas with values and keep formatting
+
+Use `--values` to deliver the preserved workbook without formulas:
+
+```bash
+pnpm consultchimps sheets split clients.xlsx \
+  --table ClientData \
+  --column Region \
+  --values \
+  --output outputs/by-region
+```
+
+Formula cells become their stored results across every worksheet in each output
+workbook. Styles, number formats, merged cells, dimensions, cover sheets, and
+the rest of the preserved workbook remain unchanged. A formula without a stored
+result becomes a formatted blank cell. This mode also removes calculated-column
+and totals-row formulas from Excel Table definitions so the formulas do not
+return when the file opens.
+
 Add `--no-preserve-workbook` when you want compact, data-only outputs containing
 just the selected headers and matching rows:
 
@@ -190,6 +209,7 @@ const result = await splitWorkbookByColumn({
   filenamePrefix: "client-region",
   includeBlank: true,
   table: "ClientData",
+  values: true,
 });
 
 console.log(result.metrics.outputFiles);

@@ -77,6 +77,7 @@ pnpm consultchimps sheets consolidate "inputs/**/*.xlsx" \
   --output outputs/consolidated.xlsx
 
 pnpm consultchimps sheets merge "inputs/**/*.xlsx" \
+  --values \
   --output outputs/all-sheets.xlsx
 
 pnpm consultchimps sheets split clients.xlsx \
@@ -108,7 +109,8 @@ pnpm consultchimps pdf merge "inputs/**/*.pdf" \
 
 Excel consolidation reads every visible, non-empty worksheet, unions columns by
 case-insensitive header name, and adds `_source_file`, `_source_sheet`, and
-`_source_row` columns. Original files are never modified.
+`_source_row` columns. Consolidated cells are values rather than formulas.
+Original files are never modified.
 
 Excel splitting creates one workbook per distinct value in a selected column.
 Blank values are retained by default, filenames are portable, and all
@@ -130,7 +132,10 @@ To preserve every source worksheet as a separate tab, use
 `consultchimps sheets merge "inputs/**/*.xlsx" --output outputs/all-sheets.xlsx`.
 It copies worksheet formatting/layout supported by Excel and adds a visible
 `Sheet Index` tab recording source names and hidden/visible status. Use
-`--no-index` to omit the index.
+`--no-index` to omit the index. Add `--values` to replace formulas with their
+stored results. Formula removal edits the workbook cells directly, so formatting
+is always preserved; a formula without a stored result becomes a formatted blank
+cell.
 
 ## Design principles
 

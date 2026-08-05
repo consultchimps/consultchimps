@@ -58,6 +58,25 @@ The output columns are `Client`, `Amount`, `Status`, and the three provenance
 columns. Case-insensitive headers are aligned without changing the original
 spelling of the first header encountered.
 
+## Write values without losing Excel formatting
+
+The Excel consolidation, merge, and split operations accept `values: true`. For
+operations that preserve a source workbook, formula elements are removed
+directly from the XLSX package while cached results and formatting remain in
+place:
+
+```ts
+import { mergeWorkbooks } from "@consultchimps/xlsx";
+
+await mergeWorkbooks(["north.xlsx", "south.xlsx"], "outputs/all-sheets.xlsx", {
+  values: true,
+});
+```
+
+Consolidation and compact data-only splits already create value cells, so the
+same option is accepted there to make the caller's intent consistent across all
+Excel operations.
+
 ## Handle structured failures
 
 ```ts

@@ -540,6 +540,52 @@ describe("splitWorkbookByColumn", () => {
     expect(compact.metrics.outputFiles).toBe(2);
   });
 
+  it("writes cached formula values while preserving styles in a table split", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "clients.xlsx");
+    const output = path.join(directory, "split");
+    await copyWorkbookWithExcelTable(input);
+
+    const archive = await JSZip.loadAsync(await readFile(input));
+    const sheetXml = await archive
+      .file("xl/worksheets/sheet2.xml")!
+      .async("text");
+    archive.file(
+      "xl/worksheets/sheet2.xml",
+      sheetXml.replace(
+        '<x:c r="D7" s="6" t="n"><x:v>30</x:v></x:c>',
+        '<x:c r="D7" s="6" t="n"><x:f>D5*3</x:f><x:v>30</x:v></x:c>',
+      ),
+    );
+    await writeFile(
+      input,
+      await archive.generateAsync({
+        compression: "DEFLATE",
+        type: "nodebuffer",
+      }),
+    );
+
+    const result = await splitWorkbookByColumn({
+      input,
+      outputDirectory: output,
+      column: "Region",
+      table: "ClientData",
+      values: true,
+    });
+    expect(result.metrics.outputFiles).toBe(2);
+
+    const northArchive = await JSZip.loadAsync(
+      await readFile(path.join(output, "clients-North.xlsx")),
+    );
+    const northSheetXml = await northArchive
+      .file("xl/worksheets/sheet2.xml")!
+      .async("text");
+    expect(northSheetXml).not.toContain("<x:f>");
+    expect(northSheetXml).toContain(
+      '<x:c r="D6" s="6" t="n"><x:v>30</x:v></x:c>',
+    );
+  });
+
   it("relocates position-independent structured formulas during a preserved split", async () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "clients.xlsx");

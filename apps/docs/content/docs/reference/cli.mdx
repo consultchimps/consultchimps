@@ -52,6 +52,7 @@ Options:
   --hidden                  include hidden worksheets
   --no-source               omit file, sheet, and row provenance
   --output-sheet <name>     output worksheet name (default: Consolidated)
+  --values                  write values instead of formulas, preserving formatting
   -f, --force               replace an existing output file
 ```
 
@@ -65,6 +66,7 @@ Required:
 
 Options:
   --no-index                omit the visible Sheet Index worksheet
+  --values                  replace formulas with stored values, preserving formatting
   -f, --force               replace an existing output file
 ```
 
@@ -88,6 +90,8 @@ Options:
   --header-row <number>     one-based header row
   --hidden                  allow a selected hidden worksheet
   --preserve-workbook       retain the complete workbook and filter only the table
+  --no-preserve-workbook    create a compact data-only workbook for a table split
+  --values                  replace formulas with stored values, preserving formatting
   --skip-blank              omit rows whose split-column value is blank
   --prefix <name>           output filename prefix
   -f, --force               replace existing output files
@@ -98,6 +102,14 @@ its range. Because the table defines its own headers, it cannot be combined with
 `--header-row`. Add `--preserve-workbook` to keep every worksheet and the source
 formatting while replacing only the selected table's data rows. The preservation
 option requires `--table`.
+
+Every spreadsheet command accepts `--values`. It removes worksheet and Excel
+Table formulas while retaining their stored results. The conversion edits the
+underlying workbook cells rather than reconstructing them, so styles, number
+formats, dimensions, and workbook layout are preserved. A formula with no stored
+result becomes a formatted blank cell. Consolidation and compact data-only split
+outputs already contain values, so the option is explicit but does not otherwise
+change those files.
 
 ## PDF splitting
 
