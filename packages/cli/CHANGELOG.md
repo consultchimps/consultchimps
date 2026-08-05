@@ -1,5 +1,33 @@
 # consultchimps
 
+## 0.7.0
+
+### Minor Changes
+
+- 7199fb8: Give `--json` a single-line result envelope on stdout. A successful
+  command now prints `{"ok":true,"result":...}` and a failing command prints
+  `{"ok":false,"error":{"message":...,"code":...}}` while keeping its nonzero
+  exit code, so an automation can branch on `ok` and read the stable error code
+  without parsing human text. Usage errors such as an unknown option or a
+  missing required option are reported through the same envelope with the code
+  `CLI_USAGE`, instead of leaving stdout empty. `--help` and `--version` are
+  unchanged.
+
+  This changes the shape of `--json` output. Commands previously printed the
+  operation result pretty-printed and unwrapped, and a failure wrote a prose
+  line to stderr with nothing machine-readable on stdout. Consumers that read
+  `--json` should now read the value under `result`.
+
+### Patch Changes
+
+- Updated dependencies [1f759eb]
+  - @consultchimps/core@0.5.0
+  - @consultchimps/pdf@0.4.1
+  - @consultchimps/xlsx@0.7.1
+  - @consultchimps/files@0.3.2
+  - @consultchimps/messages@0.2.3
+  - @consultchimps/pptx@0.4.3
+
 ## 0.6.0
 
 ### Minor Changes

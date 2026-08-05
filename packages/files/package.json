@@ -1,6 +1,6 @@
 {
   "name": "@consultchimps/files",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "File discovery and safe output handling for ConsultChimps.",
   "license": "Apache-2.0",
   "repository": {
