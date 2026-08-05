@@ -1,5 +1,22 @@
 # consultchimps
 
+## 0.6.0
+
+### Minor Changes
+
+- fa3b316: Add a values-only option to every Excel operation so formulas can be
+  replaced with their stored results without removing workbook formatting.
+- 8b49943: Add `sheets merge` to copy formatted worksheets from multiple Excel
+  workbooks into one workbook while recording hidden-sheet status.
+
+### Patch Changes
+
+- Updated dependencies [fa3b316]
+- Updated dependencies [8b49943]
+  - @consultchimps/xlsx@0.7.0
+  - @consultchimps/messages@0.2.2
+  - @consultchimps/pptx@0.4.2
+
 ## 0.5.2
 
 ### Patch Changes
