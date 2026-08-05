@@ -1,5 +1,12 @@
 # @consultchimps/messages
 
+## 0.2.2
+
+### Patch Changes
+
+- 8b49943: Add `sheets merge` to copy formatted worksheets from multiple Excel
+  workbooks into one workbook while recording hidden-sheet status.
+
 ## 0.2.1
 
 ### Patch Changes
