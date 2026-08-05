@@ -1,5 +1,15 @@
 # consultchimps
 
+## 0.8.2
+
+### Patch Changes
+
+- 727239a: Physically remove unmatched worksheet rows during preserved Excel
+  splits instead of leaving empty row shells behind.
+- Updated dependencies [727239a]
+  - @consultchimps/xlsx@0.9.1
+  - @consultchimps/pptx@0.5.1
+
 ## 0.8.1
 
 ### Patch Changes
