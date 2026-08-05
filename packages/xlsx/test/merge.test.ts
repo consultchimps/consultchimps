@@ -41,6 +41,60 @@ async function createWorkbook(
 }
 
 describe("mergeWorkbooks", () => {
+  it("replaces formulas with cached values without changing their number formats", async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "consultchimps-merge-"),
+    );
+
+    try {
+      const input = path.join(directory, "source.xlsx");
+      const formulaOutput = path.join(directory, "formulas.xlsx");
+      const valuesOutput = path.join(directory, "values.xlsx");
+      const workbook = XLSX.utils.book_new();
+      const worksheet = XLSX.utils.aoa_to_sheet([
+        ["Amount", "Tax", "Total"],
+        [100, 5, { f: "A2+B2", t: "n", v: 105, z: "$#,##0.00" }],
+      ]);
+      worksheet["!cols"] = [{ wch: 16 }, { wch: 12 }, { wch: 22 }];
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Summary");
+      await writeFile(
+        input,
+        XLSX.write(workbook, {
+          bookType: "xlsx",
+          cellStyles: true,
+          type: "buffer",
+        }),
+      );
+
+      await mergeWorkbooks([input], formulaOutput);
+      await mergeWorkbooks([input], valuesOutput, { values: true });
+
+      const formulaWorkbook = XLSX.read(await readFile(formulaOutput), {
+        cellStyles: true,
+        type: "buffer",
+      });
+      const valuesWorkbook = XLSX.read(await readFile(valuesOutput), {
+        cellStyles: true,
+        type: "buffer",
+      });
+      expect(formulaWorkbook.Sheets.Summary?.C2).toMatchObject({
+        f: "A2+B2",
+        v: 105,
+        z: "$#,##0.00",
+      });
+      expect(valuesWorkbook.Sheets.Summary?.C2).toMatchObject({
+        v: 105,
+        z: "$#,##0.00",
+      });
+      expect(valuesWorkbook.Sheets.Summary?.C2?.f).toBeUndefined();
+      expect(valuesWorkbook.Sheets.Summary?.["!cols"]).toEqual(
+        formulaWorkbook.Sheets.Summary?.["!cols"],
+      );
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
   it("copies worksheets in input order, resolves names, and records provenance", async () => {
     const directory = await mkdtemp(
       path.join(tmpdir(), "consultchimps-merge-"),

@@ -74,6 +74,23 @@ supported by Excel. A visible `Sheet Index` tab records the source file,
 original and final tab names, and hidden/visible status. Duplicate worksheet
 names receive a suffix; use `--no-index` to omit the index.
 
+### Replace formulas with values
+
+Add `--values` when the merged workbook must contain no formulas:
+
+```bash
+pnpm consultchimps sheets merge "inputs/**/*.xlsx" \
+  --values \
+  --output outputs/all-sheets-values.xlsx
+```
+
+ConsultChimps replaces each formula with the result stored in the source file.
+It edits the workbook cell in place, so number formats, fonts, fills, borders,
+alignment, row heights, column widths, hidden state, and workbook layout are
+preserved. A formula that has never been calculated and therefore has no stored
+result becomes a blank cell with its formatting intact. Excel Table calculated
+column and totals formulas are also removed so Excel does not recreate them.
+
 The library operation accepts resolved input paths in the order they should
 appear:
 
@@ -83,7 +100,7 @@ import { mergeWorkbooks } from "@consultchimps/xlsx";
 const result = await mergeWorkbooks(
   ["north.xlsx", "south.xlsx"],
   "outputs/all-sheets.xlsx",
-  { includeSheetIndex: true, overwrite: false },
+  { includeSheetIndex: true, overwrite: false, values: true },
 );
 
 console.log(result.metrics.outputSheets);
@@ -126,6 +143,8 @@ pnpm consultchimps sheets consolidate inputs/ \
 
 - `--output-sheet` changes the destination worksheet name.
 - `--force` replaces an existing output file.
+- `--values` explicitly requests values-only output. Consolidation already reads
+  stored cell results and never copies formulas.
 - The output table receives an autofilter and practical column widths.
 - The command refuses to use any input workbook as its output.
 
@@ -141,6 +160,7 @@ const result = await consolidateWorkbooks({
   headerRow: 2,
   outputSheetName: "Master",
   sheets: ["Revenue"],
+  values: true,
 });
 
 console.log(result.metrics.outputRows);

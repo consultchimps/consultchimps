@@ -41,12 +41,14 @@ interface ConsolidateOptions {
   outputSheet?: string;
   sheet?: string[];
   source?: boolean;
+  values?: boolean;
 }
 
 interface SheetMergeOptions {
   force?: boolean;
   index: boolean;
   output: string;
+  values?: boolean;
 }
 
 interface SheetSplitOptions {
@@ -61,6 +63,7 @@ interface SheetSplitOptions {
   sheet?: string;
   skipBlank?: boolean;
   table?: string;
+  values?: boolean;
 }
 
 interface SplitOptions {
@@ -172,6 +175,10 @@ sheets
   .requiredOption("-o, --output <path>", "where to save the new workbook")
   .option("--no-index", "do not add the visible Sheet Index worksheet")
   .option(
+    "--values",
+    "replace formulas with their stored values while preserving formatting",
+  )
+  .option(
     "-f, --force",
     "replace the output file if it already exists; use with care",
   )
@@ -179,11 +186,12 @@ sheets
     "after",
     `
 Examples:
-  consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx
+  consultchimps sheets merge "inputs/*.xlsx" --values -o all-sheets.xlsx
   consultchimps sheets merge north.xlsx south.xlsx --output all-sheets.xlsx
 
 Every source worksheet remains a separate tab. Sheet Index records source names
-and hidden/visible status. Duplicate tab names receive a suffix.
+and hidden/visible status. Duplicate tab names receive a suffix. --values
+removes formulas but always retains cell and workbook formatting.
 `,
   )
   .action(async (inputs: string[], options: SheetMergeOptions) => {
@@ -191,6 +199,7 @@ and hidden/visible status. Duplicate tab names receive a suffix.
     const result = await mergeWorkbooks(inputPaths, options.output, {
       includeSheetIndex: options.index,
       overwrite: options.force === true,
+      values: options.values === true,
     });
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
@@ -228,6 +237,10 @@ sheets
     "Consolidated",
   )
   .option(
+    "--values",
+    "write stored values instead of formulas while preserving output formatting",
+  )
+  .option(
     "-f, --force",
     "replace the output file if it already exists; use with care",
   )
@@ -245,6 +258,8 @@ What happens:
   4. It writes one new workbook and explains exactly what was created.
 
 Your original workbooks are never changed.
+Consolidation already writes stored values rather than copying formulas;
+--values makes that requirement explicit.
 `,
   )
   .action(async (inputs: string[], options: ConsolidateOptions) => {
@@ -258,6 +273,7 @@ Your original workbooks are never changed.
       outputSheetName: options.outputSheet,
       overwrite: options.force === true,
       sheets: options.sheet,
+      values: options.values === true,
     });
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
@@ -300,6 +316,10 @@ sheets
     "write plain data-only workbooks even when a table is selected",
   )
   .option(
+    "--values",
+    "replace formulas with their stored values while preserving formatting",
+  )
+  .option(
     "--skip-blank",
     "do not create an output group for rows with a blank split-column value",
   )
@@ -316,7 +336,7 @@ sheets
     `
 Examples:
   consultchimps sheets split clients.xlsx -c Region -o by-region
-  consultchimps sheets split clients.xlsx --table ClientData --column Region
+  consultchimps sheets split clients.xlsx --table ClientData --column Region --values
   consultchimps sheets split clients.xlsx --range ClientRange --column Region
 
 What happens:
@@ -330,6 +350,10 @@ every output looks like the file you prepared: zoom, saved cursor position,
 cover sheets, and formatting all carry over. Use --no-preserve-workbook for
 plain data-only outputs. Prefer an Excel Table, then a named range, over
 splitting a worksheet's full used range.
+
+--values removes formulas while retaining their stored results and all
+formatting in a preserved workbook. A formula without a stored result becomes
+a formatted blank cell.
 
 Pro tip: before a table split, prepare the workbook exactly as you want to
 deliver it - set each sheet's zoom, place the cursor on cell A1 so every
@@ -369,6 +393,7 @@ Your original workbook is never changed.
       range: options.range,
       sheet: options.sheet,
       table: options.table,
+      values: options.values === true,
     });
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
