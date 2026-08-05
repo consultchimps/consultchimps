@@ -32,6 +32,7 @@
     "provenance": true
   },
   "devDependencies": {
+    "fast-check": "4.9.0",
     "typescript": "7.0.2"
   }
 }

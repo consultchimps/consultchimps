@@ -10,6 +10,7 @@ import path from "node:path";
 
 import {
   ConsultChimpsError,
+  safeNameFragment,
   throwIfAborted,
   type OperationControlOptions,
   type OperationPlan,
@@ -143,41 +144,16 @@ export interface WriteTableOptions {
   sheetName?: string | undefined;
 }
 
-const UNSAFE_FILENAME_CHARACTERS = /[<>:"/\\|?*]+/gu;
-const WINDOWS_RESERVED_FILENAME =
-  /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu;
-
-function withoutControlCharacters(value: string): string {
-  return [...value]
-    .filter((character) => {
-      const codePoint = character.codePointAt(0);
-      return codePoint !== undefined && codePoint >= 32 && codePoint !== 127;
-    })
-    .join("");
-}
-
-function safeFilenameSegment(value: string, fallback: string): string {
-  const normalized = withoutControlCharacters(value.normalize("NFKC"))
-    .replace(UNSAFE_FILENAME_CHARACTERS, "-")
-    .replace(/\s+/gu, " ")
-    .replace(/-+/gu, "-")
-    .trim()
-    .replace(/[. ]+$/gu, "");
-  const limited = [...normalized]
-    .slice(0, 80)
-    .join("")
-    .replace(/[. ]+$/gu, "");
-  const safe = limited || fallback;
-
-  return WINDOWS_RESERVED_FILENAME.test(safe) ? `_${safe}` : safe;
-}
-
+// Filename sanitization lives in @consultchimps/core. The rules match the
+// former local copy character for character; core additionally caps the
+// fragment by UTF-8 byte length instead of code-point count, so long
+// non-ASCII group values can no longer produce over-long filenames.
 function groupValueFilenameSegment(value: CellValue): string {
   if (value === null) {
     return "blank";
   }
 
-  return safeFilenameSegment(String(value), "value");
+  return safeNameFragment(String(value), "value");
 }
 
 function splitOutputPaths(
@@ -1453,7 +1429,7 @@ async function resolveSplitWorkbookByColumn(
 
   const absoluteOutputDirectory = path.resolve(options.outputDirectory);
   const inputBaseName = path.parse(absoluteInput).name;
-  const filenamePrefix = safeFilenameSegment(
+  const filenamePrefix = safeNameFragment(
     options.filenamePrefix ?? inputBaseName,
     "split",
   );

@@ -1,3 +1,5 @@
+export { safeNameFragment, truncateToUtf8Bytes } from "./names.js";
+
 export type ArtifactKind = "file" | "directory";
 
 export interface Artifact {
