@@ -1,0 +1,29 @@
+version: 2
+
+updates:
+  # The pnpm workspace is resolved from the root manifest and lockfile, so a
+  # single "/" entry covers every package under apps/* and packages/*.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Minor and patch updates travel together; majors stay individual so each
+      # breaking upgrade can be reviewed on its own.
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
