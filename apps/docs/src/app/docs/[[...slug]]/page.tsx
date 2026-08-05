@@ -1,7 +1,10 @@
 import { getMDXComponents } from "@/components/mdx";
 import { gitConfig } from "@/lib/shared";
 import { getPageImageUrl, getPageMarkdownUrl, source } from "@/lib/source";
+import { findToolByDocUrl } from "@/lib/tools";
 import { createRelativeLink } from "fumadocs-ui/mdx";
+import { ArrowRight } from "lucide-react";
+import Link from "next/link";
 import {
   DocsBody,
   DocsDescription,
@@ -20,6 +23,7 @@ export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
 
   const MDX = page.data.body;
   const markdownUrl = getPageMarkdownUrl(page).url;
+  const browserTool = findToolByDocUrl(page.url);
 
   return (
     <DocsPage
@@ -32,6 +36,15 @@ export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
         {page.data.description}
       </DocsDescription>
       <div className="flex flex-row items-center gap-2 border-b pb-6">
+        {browserTool?.browserHref ? (
+          <Link
+            className="inline-flex items-center gap-1.5 rounded-lg bg-fd-primary px-3 py-1.5 text-sm font-semibold text-fd-primary-foreground no-underline transition-opacity hover:opacity-90"
+            href={browserTool.browserHref}
+          >
+            Try it online
+            <ArrowRight className="size-3.5" aria-hidden="true" />
+          </Link>
+        ) : null}
         <MarkdownCopyButton markdownUrl={markdownUrl} />
         <ViewOptionsPopover
           markdownUrl={markdownUrl}

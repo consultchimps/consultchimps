@@ -14,7 +14,11 @@ export const homeLinks: NonNullable<BaseLayoutProps["links"]> = [
   },
   {
     text: "Online tools",
-    url: "/tools/pdf-split",
+    url: "/tools",
+  },
+  {
+    text: "Releases",
+    url: "/releases",
   },
 ];
 
