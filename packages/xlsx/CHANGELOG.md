@@ -1,5 +1,12 @@
 # @consultchimps/xlsx
 
+## 0.9.2
+
+### Patch Changes
+
+- 128a310: Compact retained plain worksheet rows after splitting so deleted rows
+  do not remain as visible gaps in generated workbooks.
+
 ## 0.9.1
 
 ### Patch Changes
