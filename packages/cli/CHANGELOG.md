@@ -1,5 +1,21 @@
 # consultchimps
 
+## 0.8.0
+
+### Minor Changes
+
+- 6c62d2e: Split complete Excel workbooks by normalized column values collected
+  across all worksheets, preserving workbook formatting, formulas or cached
+  values, tables, VBA content, and sheets that do not contain the selected
+  column.
+
+### Patch Changes
+
+- Updated dependencies [6c62d2e]
+  - @consultchimps/xlsx@0.8.0
+  - @consultchimps/messages@0.2.4
+  - @consultchimps/pptx@0.4.4
+
 ## 0.7.0
 
 ### Minor Changes
