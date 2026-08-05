@@ -158,12 +158,13 @@ const result = await mergePdfs({
 });
 ```
 
-## Run PDF operations without a filesystem
+## Run operations without a filesystem
 
-Browsers and other filesystem-free environments use the byte-level entry point.
-Named in-memory bytes go in; the produced bytes come out alongside the same
-structured result the path-based operations report, and the import graph
-contains no Node built-ins:
+Browsers and other filesystem-free environments use the byte-level entry points
+`@consultchimps/pdf/bytes`, `@consultchimps/xlsx/bytes`, and
+`@consultchimps/pptx/bytes`. Named in-memory bytes go in; the produced bytes
+come out alongside the same structured result the path-based operations report,
+and the import graph contains no Node built-ins:
 
 ```ts
 import {
@@ -188,12 +189,41 @@ for (const output of outputs) {
 }
 ```
 
+The workbook and presentation operations follow the same shape.
+`splitWorkbookBytes` accepts the worksheet, Excel Table, named range, header
+row, blank-value, and workbook-preserving options of the path-based split;
+`mergeWorkbooksBytes` combines every worksheet of every input, keeping tabs and
+formatting and adding the same `Sheet Index`; and `populatePresentationBytes`
+fills a template presentation from either records you already hold or the bytes
+of a workbook.
+
+```ts
+import {
+  mergeWorkbooksBytes,
+  planSplitWorkbookBytes,
+  splitWorkbookBytes,
+} from "@consultchimps/xlsx/bytes";
+import { populatePresentationBytes } from "@consultchimps/pptx/bytes";
+
+const { outputs } = await splitWorkbookBytes({
+  input: { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) },
+  column: "Region",
+  table: "ClientData",
+});
+
+const populated = await populatePresentationBytes({
+  template: { name: "template.pptx", bytes: templateBytes },
+  records: [{ client: "North", amount: "10" }],
+});
+```
+
 Output names default to the input name (`report.pdf` becomes
-`report-page-001.pdf`; merges default to `combined.pdf`) and are sanitized to
-stay portable, including on Windows. Outputs are byte-deterministic, and a
-cancelled byte operation returns nothing and leaves nothing behind. Artifact
-paths in the structured result carry these output names rather than filesystem
-paths.
+`report-page-001.pdf`, `clients.xlsx` becomes `clients-North.xlsx`, and
+`template.pptx` becomes `template-populated.pptx`; workbook merges default to
+`merged.xlsx` and PDF merges to `combined.pdf`) and are sanitized to stay
+portable, including on Windows. Outputs are byte-deterministic, and a cancelled
+byte operation returns nothing and leaves nothing behind. Artifact paths in the
+structured result carry these output names rather than filesystem paths.
 
 ## Explain results to people
 

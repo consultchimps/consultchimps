@@ -22,6 +22,25 @@ is changed.
 Use `inspectPowerPointTemplate()` to discover valid placeholders and diagnose
 malformed, split-run, or unsupported placements before population.
 
+## Populate without a filesystem
+
+`@consultchimps/pptx/bytes` runs the same population entirely in memory, which
+suits browsers and other environments without a filesystem. The records come
+either from an array you already hold or from workbook bytes:
+
+```ts
+import { populatePresentationBytes } from "@consultchimps/pptx/bytes";
+
+const { result, outputs } = await populatePresentationBytes({
+  template: { name: "profile-template.pptx", bytes: templateBytes },
+  records: [{ client_name: "North", revenue: "10" }],
+});
+```
+
+`inspectPresentationBytes()` and `planPopulatePresentationBytes()` mirror the
+path-based inspection and plan. Output names are sanitized portable filenames,
+never paths, and identical inputs produce byte-identical presentations.
+
 ## Implementation boundary
 
 The package edits the Open XML parts inside a `.pptx` archive with the
