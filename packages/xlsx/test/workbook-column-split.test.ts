@@ -179,6 +179,15 @@ describe("all-worksheet workbook splitting", () => {
     expect(dge.Sheets.Operations?.["!cols"]?.[1]?.wch).toBeCloseTo(28, 0);
     expect(dge.Sheets.Operations?.["!rows"]?.[0]?.hpt).toBe(30);
 
+    const otherArchive = await JSZip.loadAsync(
+      await readFile(path.join(output, "Other.xlsx")),
+    );
+    const otherXml = await otherArchive
+      .file("xl/worksheets/sheet1.xml")!
+      .async("text");
+    expect(otherXml).toMatch(/<row\b[^>]*\br="4"/u);
+    expect(otherXml).not.toMatch(/<row\b[^>]*\br="6"/u);
+
     const dgeArchive = await JSZip.loadAsync(
       await readFile(path.join(output, "DGE.xlsx")),
     );

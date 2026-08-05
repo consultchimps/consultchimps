@@ -39,6 +39,7 @@ const XLSX_MEDIA_TYPE =
 const XLSM_MEDIA_TYPE = "application/vnd.ms-excel.sheet.macroEnabled.12";
 const ROW_PATTERN =
   /<(?:[A-Za-z_][\w.-]*:)?row\b[^>]*?(?:\/\s*>|>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?row\s*>)/gu;
+const CELL_REFERENCE_ATTRIBUTE_PATTERN = /(\br=)(["'])([A-Z]{1,3})\d+\2/gu;
 const SHEET_DATA_OPEN_PATTERN = /<(?:[A-Za-z_][\w.-]*:)?sheetData\b[^>]*>/u;
 const FORMULA_XML_PATTERN =
   /<(?:[A-Za-z_][\w.-]*:)?f\b([^>]*?)(?:\/\s*>|>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?f\s*>)/gu;
@@ -265,11 +266,25 @@ function removeWorksheetRows(
     throw new Error("Worksheet package part has unclosed sheetData markup.");
   }
   const sheetData = worksheetXml.slice(openEnd, closeStart);
+  let deletedBefore = 0;
   const filtered = sheetData.replace(ROW_PATTERN, (rowXml) => {
     const rowNumber = Number(
       xmlAttribute(rowXml.slice(0, rowXml.indexOf(">") + 1), "r"),
     );
-    return rowsToDelete.has(rowNumber) ? "" : rowXml;
+    if (rowsToDelete.has(rowNumber)) {
+      deletedBefore += 1;
+      return "";
+    }
+    const destinationRow = rowNumber - deletedBefore;
+    if (destinationRow === rowNumber) {
+      return rowXml;
+    }
+    return rowXml
+      .replace(
+        /^(<[\s\S]*?\brow\b[^>]*\br=)(["'])\d+\2/u,
+        `$1"${destinationRow}"`,
+      )
+      .replace(CELL_REFERENCE_ATTRIBUTE_PATTERN, `$1$2$3${destinationRow}$2`);
   });
   return `${worksheetXml.slice(0, openEnd)}${filtered}${worksheetXml.slice(closeStart)}`;
 }
