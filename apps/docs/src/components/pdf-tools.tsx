@@ -278,8 +278,6 @@ interface ToolShellProps {
   readonly guideHref: string;
   readonly guideLabel: string;
   readonly kicker: string;
-  readonly siblingHref: string;
-  readonly siblingLabel: string;
   readonly title: string;
 }
 
@@ -289,8 +287,6 @@ function ToolShell({
   guideHref,
   guideLabel,
   kicker,
-  siblingHref,
-  siblingLabel,
   title,
 }: ToolShellProps) {
   return (
@@ -309,13 +305,6 @@ function ToolShell({
             href={guideHref}
           >
             {guideLabel}
-            <ArrowRight className="size-3.5" aria-hidden="true" />
-          </Link>
-          <Link
-            className="inline-flex items-center gap-1.5 text-fd-primary hover:underline"
-            href={siblingHref}
-          >
-            {siblingLabel}
             <ArrowRight className="size-3.5" aria-hidden="true" />
           </Link>
         </div>
@@ -595,8 +584,6 @@ export function PdfSplitTool() {
       guideHref="/docs/tools/pdf-split"
       guideLabel="Read the split guide"
       kicker="Online tool · PDF split"
-      siblingHref="/tools/pdf-merge"
-      siblingLabel="Merge PDFs instead"
       title="Split a PDF"
     >
       <section className={sectionClass}>
@@ -791,8 +778,6 @@ export function PdfMergeTool() {
       guideHref="/docs/tools/pdf-merge"
       guideLabel="Read the merge guide"
       kicker="Online tool · PDF merge"
-      siblingHref="/tools/pdf-split"
-      siblingLabel="Split a PDF instead"
       title="Merge PDFs"
     >
       <section className={sectionClass}>
