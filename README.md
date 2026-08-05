@@ -38,7 +38,7 @@ Documentation:
 
 Requirements:
 
-- Node.js 24
+- Node.js 22 or newer (24 recommended)
 
 Run the CLI without keeping a global installation:
 
