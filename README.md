@@ -12,16 +12,14 @@ Documentation:
 
 ## Initial tools
 
-| Tool                   | Command                            | Status  |
-| ---------------------- | ---------------------------------- | ------- |
-| Excel consolidation    | `consultchimps sheets consolidate` | Working |
-| Excel worksheet merge  | `consultchimps sheets merge`       | Working |
-| Excel split by column  | `consultchimps sheets split`       | Working |
-| PowerPoint population  | `consultchimps pptx populate`      | Working |
-| PDF page splitting     | `consultchimps pdf split`          | Working |
-| PDF document merging   | `consultchimps pdf merge`          | Working |
-| Dataset inspection     | `consultchimps data inspect`       | Planned |
-| Dataset reconciliation | `consultchimps data reconcile`     | Planned |
+| Tool                  | Command                            | Status  |
+| --------------------- | ---------------------------------- | ------- |
+| Excel consolidation   | `consultchimps sheets consolidate` | Working |
+| Excel worksheet merge | `consultchimps sheets merge`       | Working |
+| Excel split by column | `consultchimps sheets split`       | Working |
+| PowerPoint population | `consultchimps pptx populate`      | Working |
+| PDF page splitting    | `consultchimps pdf split`          | Working |
+| PDF document merging  | `consultchimps pdf merge`          | Working |
 
 ## Packages
 
