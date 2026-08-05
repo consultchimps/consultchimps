@@ -3,6 +3,9 @@ coverage
 .next
 .source
 .playwright-cli
+blob-report
+playwright-report
+test-results
 out
 node_modules
 pnpm-lock.yaml

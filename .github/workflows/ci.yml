@@ -39,11 +39,71 @@ jobs:
       - name: Check formatting, lint, build, types, and tests
         run: pnpm check
 
-  # Aggregates the matrix into the single "Check" status that branch
-  # protection requires; it fails unless every operating system passed.
+  # Browser smoke tests for the in-browser tool pages. They run against the
+  # static export exactly as GitHub Pages serves it, so they need a real
+  # browser and only run on Linux; the operations underneath are covered
+  # cross-platform by the unit suites in `verify`.
+  e2e:
+    name: Browser tools
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve the Playwright version
+        id: playwright
+        run: |
+          manifest="apps/docs/node_modules/@playwright/test/package.json"
+          version="$(node -p "JSON.parse(require('node:fs').readFileSync('${manifest}', 'utf8')).version")"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Playwright browser cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key:
+            playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      - name: Install Chromium
+        run:
+          pnpm --filter @consultchimps/docs exec playwright install chromium
+          --with-deps
+
+      # Built without NEXT_PUBLIC_BASE_PATH so the export serves from "/",
+      # which is what the suite's static server and the tests assume.
+      - name: Build the documentation site
+        run: pnpm --filter @consultchimps/docs... build
+
+      - name: Run the browser smoke tests
+        run: pnpm --filter @consultchimps/docs e2e
+
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-report
+          path: apps/docs/playwright-report
+          retention-days: 7
+
+  # Aggregates the matrix and the browser suite into the single "Check" status
+  # that branch protection requires; it fails unless every job passed.
   check:
     name: Check
-    needs: verify
+    needs: [verify, e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -51,3 +111,6 @@ jobs:
     steps:
       - name: Confirm every operating system passed
         run: test "${{ needs.verify.result }}" = "success"
+
+      - name: Confirm the browser smoke tests passed
+        run: test "${{ needs.e2e.result }}" = "success"

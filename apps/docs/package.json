@@ -6,6 +6,7 @@
   "scripts": {
     "build": "next build",
     "dev": "next dev",
+    "e2e": "playwright test",
     "lint": "eslint --flag unstable_native_nodejs_ts_config",
     "postinstall": "fumadocs-mdx",
     "typecheck": "next typegen && fumadocs-mdx && tsc --noEmit"
@@ -25,6 +26,7 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/mdx": "^2.0.14",
     "@types/node": "^26.1.2",
@@ -32,7 +34,9 @@
     "@types/react-dom": "^19.2.4",
     "eslint": "^9.39.4",
     "eslint-config-next": "16.2.12",
+    "pdf-lib": "1.17.1",
     "postcss": "^8.5.21",
+    "serve": "14.2.6",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3"
   },

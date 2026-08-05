@@ -168,6 +168,18 @@ The Fumadocs guide lives in `apps/docs`:
 pnpm docs:dev
 ```
 
+The in-browser tool pages have a Playwright smoke suite that drives the static
+export in a real browser. It serves `apps/docs/out`, so build the site first
+(without `NEXT_PUBLIC_BASE_PATH`, so the routes are served from `/`):
+
+```bash
+pnpm --filter @consultchimps/docs... build
+pnpm --filter @consultchimps/docs exec playwright install chromium
+pnpm --filter @consultchimps/docs e2e
+```
+
+CI runs the same suite on Linux; see [apps/docs/e2e](apps/docs/e2e/README.md).
+
 ## Deploy the guide
 
 The documentation site deploys to GitHub Pages. The `Docs` workflow
