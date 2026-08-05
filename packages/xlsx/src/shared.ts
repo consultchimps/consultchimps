@@ -1242,6 +1242,9 @@ export async function buildSplitGroupBytes(
     return preserveWorkbookWithFilteredExcelTable(context.templateBytes, {
       definition: context.preservedTableDefinition,
       sourceRows: group.table.sourceRows ?? [],
+      // Remove complete worksheet rows, including cells outside the table,
+      // rather than leaving styled/empty row shells behind.
+      wholeRows: true,
     });
   }
   return buildTableWorkbookBytes(group.table, context.sheetName);

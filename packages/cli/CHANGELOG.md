@@ -1,5 +1,33 @@
 # consultchimps
 
+## 0.8.3
+
+### Patch Changes
+
+- 128a310: Compact retained plain worksheet rows after splitting so deleted rows
+  do not remain as visible gaps in generated workbooks.
+- Updated dependencies [128a310]
+  - @consultchimps/xlsx@0.9.2
+  - @consultchimps/pptx@0.5.2
+
+## 0.8.2
+
+### Patch Changes
+
+- 727239a: Physically remove unmatched worksheet rows during preserved Excel
+  splits instead of leaving empty row shells behind.
+- Updated dependencies [727239a]
+  - @consultchimps/xlsx@0.9.1
+  - @consultchimps/pptx@0.5.1
+
+## 0.8.1
+
+### Patch Changes
+
+- Updated dependencies [ea3d302]
+  - @consultchimps/pptx@0.5.0
+  - @consultchimps/xlsx@0.9.0
+
 ## 0.8.0
 
 ### Minor Changes

@@ -179,6 +179,15 @@ describe("all-worksheet workbook splitting", () => {
     expect(dge.Sheets.Operations?.["!cols"]?.[1]?.wch).toBeCloseTo(28, 0);
     expect(dge.Sheets.Operations?.["!rows"]?.[0]?.hpt).toBe(30);
 
+    const otherArchive = await JSZip.loadAsync(
+      await readFile(path.join(output, "Other.xlsx")),
+    );
+    const otherXml = await otherArchive
+      .file("xl/worksheets/sheet1.xml")!
+      .async("text");
+    expect(otherXml).toMatch(/<row\b[^>]*\br="4"/u);
+    expect(otherXml).not.toMatch(/<row\b[^>]*\br="6"/u);
+
     const dgeArchive = await JSZip.loadAsync(
       await readFile(path.join(output, "DGE.xlsx")),
     );
@@ -378,6 +387,43 @@ describe("all-worksheet workbook splitting", () => {
       .file(definition!.tablePart)!
       .async("text");
     expect(tableXml).toContain('ref="B4:D5"');
+  });
+
+  it("deletes complete table rows when preserving a selected group", async () => {
+    const definitions = await readExcelTableDefinitions(
+      await readFile(structuredTableFixture),
+    );
+    const definition = definitions[0];
+    expect(definition).toBeDefined();
+    const output = await preserveWorkbookWithFilteredExcelTable(
+      await readFile(structuredTableFixture),
+      {
+        definition: definition!,
+        sourceRows: [5],
+        wholeRows: true,
+        values: true,
+      },
+    );
+    const outputArchive = await JSZip.loadAsync(output);
+    const worksheetXml = await outputArchive
+      .file(definition!.worksheetPart)!
+      .async("text");
+    expect(worksheetXml).toContain('<x:row r="5">');
+    // The totals row is retained and compacted directly after the selected data.
+    expect(worksheetXml).toContain('<x:row r="6">');
+    expect(worksheetXml).not.toContain('<x:row r="7">');
+    expect(worksheetXml).not.toContain('<x:row r="8">');
+
+    // Exercise the legacy cell-only mode as a compatibility guard.
+    const cellOnlyOutput = await preserveWorkbookWithFilteredExcelTable(
+      await readFile(structuredTableFixture),
+      { definition: definition!, sourceRows: [5], wholeRows: false },
+    );
+    const cellOnlyArchive = await JSZip.loadAsync(cellOnlyOutput);
+    const cellOnlyXml = await cellOnlyArchive
+      .file(definition!.worksheetPart)!
+      .async("text");
+    expect(cellOnlyXml).toContain('<x:row r="6">');
   });
 
   it("retains macro package content and the .xlsm extension", async () => {
