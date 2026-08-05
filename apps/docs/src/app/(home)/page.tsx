@@ -1,66 +1,13 @@
+import { cliVersion } from "@/lib/releases";
+import { TOOLS } from "@/lib/tools";
 import {
   ArrowRight,
   FileStack,
-  GitMerge,
-  Presentation,
-  ScanLine,
+  Globe,
   ShieldCheck,
-  SplitSquareVertical,
-  TableProperties,
   TerminalSquare,
 } from "lucide-react";
 import Link from "next/link";
-
-const tools = [
-  {
-    number: "Tool 01",
-    title: "Consolidate spreadsheets",
-    description:
-      "Union every useful worksheet into one auditable table, even when columns arrive in different orders.",
-    href: "/docs/tools/spreadsheets",
-    icon: TableProperties,
-  },
-  {
-    number: "Tool 02",
-    title: "Merge workbook tabs",
-    description:
-      "Copy every source worksheet into one workbook while retaining separate tabs and source visibility.",
-    href: "/docs/tools/spreadsheets#merge-complete-workbooks",
-    icon: FileStack,
-  },
-  {
-    number: "Tool 03",
-    title: "Split spreadsheets",
-    description:
-      "Create one focused Excel workbook per distinct value while keeping source workbooks unchanged.",
-    href: "/docs/tools/spreadsheet-split",
-    icon: SplitSquareVertical,
-  },
-  {
-    number: "Tool 04",
-    title: "Populate PowerPoint templates",
-    description:
-      "Turn a designed template slide and Excel records into a review-ready presentation, entirely locally.",
-    href: "/docs/tools/powerpoint-populate",
-    icon: Presentation,
-  },
-  {
-    number: "Tool 05",
-    title: "Split PDF pages",
-    description:
-      "Turn a long PDF into predictable, zero-padded page files without sending the document anywhere.",
-    href: "/docs/tools/pdf-split",
-    icon: ScanLine,
-  },
-  {
-    number: "Tool 06",
-    title: "Merge PDF packs",
-    description:
-      "Assemble source PDFs in resolved order and preserve every page in one clean deliverable.",
-    href: "/docs/tools/pdf-merge",
-    icon: GitMerge,
-  },
-] as const;
 
 const principles = [
   {
@@ -76,7 +23,7 @@ const principles = [
   {
     icon: TerminalSquare,
     title: "Built to compose",
-    detail: "Use the CLI or import focused TypeScript modules.",
+    detail: "Use the browser tools, the CLI, or focused TypeScript modules.",
   },
 ] as const;
 
@@ -85,7 +32,9 @@ export default function HomePage() {
     <main className="manual-home flex-1">
       <section className="mx-auto grid w-full max-w-[1320px] gap-14 px-6 pb-24 pt-24 lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.68fr)] lg:items-end lg:px-10 lg:pb-32 lg:pt-32">
         <div className="min-w-0">
-          <div className="manual-kicker">Operations field manual · v0.1</div>
+          <div className="manual-kicker">
+            Operations field manual · v{cliVersion()}
+          </div>
           <h1 className="manual-title mt-8">
             Less busywork.
             <br />
@@ -97,17 +46,17 @@ export default function HomePage() {
           </p>
           <div className="manual-actions mt-9 flex flex-wrap gap-3">
             <Link
-              href="/docs"
+              href="/tools"
               className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-fd-primary px-5 py-3 text-sm font-semibold text-fd-primary-foreground shadow-[3px_3px_0_var(--color-fd-foreground)] transition-transform hover:-translate-y-0.5 sm:w-auto"
             >
-              Open the field manual
+              Use the tools online
               <ArrowRight className="size-4" />
             </Link>
             <Link
-              href="/docs/getting-started"
+              href="/docs"
               className="inline-flex w-full items-center justify-center rounded-lg border bg-fd-card px-5 py-3 text-sm font-semibold transition-colors hover:bg-fd-accent sm:w-auto"
             >
-              Install from source
+              Open the field manual
             </Link>
           </div>
         </div>
@@ -155,35 +104,62 @@ export default function HomePage() {
         <div className="mb-10 flex flex-col justify-between gap-5 md:flex-row md:items-end">
           <div className="min-w-0">
             <div className="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-fd-primary">
-              The first kit
+              The toolkit
             </div>
             <h2 className="mt-3 max-w-2xl text-4xl font-bold tracking-[-0.05em] md:text-5xl">
-              Five chores. One predictable interface.
+              Recurring chores. One predictable interface.
             </h2>
           </div>
           <p className="max-w-md text-sm leading-6 text-fd-muted-foreground">
             Every operation returns artifacts, warnings, and metrics—useful for
             humans at a terminal and automations that need structured output.
+            See what shipped recently in the{" "}
+            <Link className="text-fd-primary hover:underline" href="/releases">
+              release history
+            </Link>
+            .
           </p>
         </div>
 
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
-          {tools.map(({ number, title, description, href, icon: Icon }) => (
-            <Link className="tool-card" href={href} key={title}>
-              <span className="tool-card__number">{number}</span>
-              <div>
-                <span className="tool-card__icon">
-                  <Icon className="size-5" />
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+          {TOOLS.map((tool, index) => {
+            const {
+              title,
+              description,
+              docHref,
+              browserHref,
+              icon: Icon,
+            } = tool;
+            return (
+              <Link
+                className="tool-card"
+                href={browserHref ?? docHref}
+                key={tool.slug}
+              >
+                <span className="tool-card__number">
+                  Tool {String(index + 1).padStart(2, "0")}
                 </span>
-                <h2>{title}</h2>
-                <p>{description}</p>
-                <span className="tool-card__link">
-                  Read the guide
-                  <ArrowRight className="size-3.5" />
-                </span>
-              </div>
-            </Link>
-          ))}
+                <div>
+                  <span className="tool-card__icon">
+                    <Icon className="size-5" />
+                  </span>
+                  <h2>{title}</h2>
+                  <p>{description}</p>
+                  <span className="tool-card__link">
+                    {browserHref ? (
+                      <>
+                        <Globe className="size-3.5" aria-hidden="true" />
+                        Use it online
+                      </>
+                    ) : (
+                      "Read the guide"
+                    )}
+                    <ArrowRight className="size-3.5" />
+                  </span>
+                </div>
+              </Link>
+            );
+          })}
         </div>
       </section>
     </main>

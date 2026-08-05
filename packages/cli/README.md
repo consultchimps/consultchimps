@@ -68,5 +68,10 @@ before the command when an automation needs the structured result instead:
 consultchimps --json pdf split report.pdf --output outputs/pages
 ```
 
+`--json` prints exactly one JSON object on a single line of stdout. Success
+prints `{"ok":true,"result":...}` and failure prints
+`{"ok":false,"error":{"message":...,"code":...}}` while keeping the nonzero exit
+code, so an automation can branch on `ok` instead of parsing message text.
+
 Reusable TypeScript APIs are published separately under the `@consultchimps/*`
 scope.
