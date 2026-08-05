@@ -1,5 +1,7 @@
 import JSZip from "jszip";
 
+import { generatePackageBytes, replacePackagePart } from "./package-zip.js";
+
 const CELL_PATTERN =
   /<(?:[A-Za-z_][\w.-]*:)?c\b[^>]*?(?:\/\s*>|>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?c\s*>)/gu;
 const CELL_FORMULA_PATTERN =
@@ -68,13 +70,13 @@ function removeCalculationChainReferences(xml: string): string {
  * package byte-for-byte apart from formula and calculation-chain metadata.
  */
 export async function convertWorkbookToValues(
-  workbookBytes: Buffer,
+  workbookBytes: Uint8Array,
 ): Promise<Buffer> {
   return (await convertWorkbookToValuesWithReport(workbookBytes)).bytes;
 }
 
 export async function convertWorkbookToValuesWithReport(
-  workbookBytes: Buffer,
+  workbookBytes: Uint8Array,
 ): Promise<ValuesOnlyConversion> {
   const archive = await JSZip.loadAsync(workbookBytes);
   const worksheetParts = Object.keys(archive.files).filter((partName) =>
@@ -92,7 +94,7 @@ export async function convertWorkbookToValuesWithReport(
           await entry.async("text"),
           partName,
         );
-        archive.file(partName, conversion.xml);
+        replacePackagePart(archive, partName, conversion.xml);
         return conversion;
       }
       return undefined;
@@ -102,7 +104,8 @@ export async function convertWorkbookToValuesWithReport(
     tableParts.map(async (partName) => {
       const entry = archive.file(partName);
       if (entry) {
-        archive.file(
+        replacePackagePart(
+          archive,
           partName,
           (await entry.async("text")).replace(TABLE_FORMULA_PATTERN, ""),
         );
@@ -117,7 +120,8 @@ export async function convertWorkbookToValuesWithReport(
   ]) {
     const entry = archive.file(partName);
     if (entry) {
-      archive.file(
+      replacePackagePart(
+        archive,
         partName,
         removeCalculationChainReferences(await entry.async("text")),
       );
@@ -125,10 +129,7 @@ export async function convertWorkbookToValuesWithReport(
   }
 
   return {
-    bytes: await archive.generateAsync({
-      compression: "DEFLATE",
-      type: "nodebuffer",
-    }),
+    bytes: Buffer.from(await generatePackageBytes(archive)),
     formulasConverted: worksheetConversions.reduce(
       (total, conversion) => total + (conversion?.formulasConverted ?? 0),
       0,

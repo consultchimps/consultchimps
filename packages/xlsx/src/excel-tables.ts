@@ -1,7 +1,12 @@
-import path from "node:path";
-
 import JSZip from "jszip";
 import { SaxesParser, type SaxesTagNS } from "saxes";
+
+import {
+  joinPackagePath,
+  packagePartDirectory,
+  packagePartName,
+  normalizePackagePath,
+} from "./package-paths.js";
 
 const TABLE_RELATIONSHIP_SUFFIX = "/table";
 const WORKSHEET_RELATIONSHIP_SUFFIX = "/worksheet";
@@ -194,23 +199,23 @@ function parseTableDefinition(
 }
 
 function relationshipsPath(partPath: string): string {
-  return path.posix.join(
-    path.posix.dirname(partPath),
+  return joinPackagePath(
+    packagePartDirectory(partPath),
     "_rels",
-    `${path.posix.basename(partPath)}.rels`,
+    `${packagePartName(partPath)}.rels`,
   );
 }
 
 function resolvePartPath(sourcePart: string, target: string): string {
   const candidate = target.startsWith("/")
     ? target.slice(1)
-    : path.posix.join(path.posix.dirname(sourcePart), target);
-  const normalized = path.posix.normalize(candidate);
+    : joinPackagePath(packagePartDirectory(sourcePart), target);
+  const normalized = normalizePackagePath(candidate);
 
   if (
     normalized === ".." ||
     normalized.startsWith("../") ||
-    path.posix.isAbsolute(normalized)
+    normalized.startsWith("/")
   ) {
     throw new Error(
       `Relationship target escapes the workbook package: ${target}`,
@@ -241,7 +246,7 @@ async function optionalRelationships(
 }
 
 export async function readExcelTableDefinitions(
-  workbookBytes: Buffer,
+  workbookBytes: Uint8Array,
 ): Promise<ExcelTableDefinition[]> {
   const archive = await JSZip.loadAsync(workbookBytes);
   const workbookPart = "xl/workbook.xml";

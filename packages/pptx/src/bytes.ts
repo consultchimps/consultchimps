@@ -1,0 +1,272 @@
+/**
+ * Byte-level PowerPoint operations for environments without a filesystem,
+ * such as browsers. Inputs and outputs are in-memory bytes; artifact paths in
+ * the structured results carry portable output names. This module must stay
+ * free of node:fs and node:path imports.
+ */
+import {
+  ConsultChimpsError,
+  throwIfAborted,
+  type ByteArtifact,
+  type ByteOperationOutcome,
+  type OperationControlOptions,
+  type OperationPlan,
+} from "@consultchimps/core";
+import {
+  readWorksheetRecordsBytes,
+  type WorkbookInputBytes,
+} from "@consultchimps/xlsx/bytes";
+
+import {
+  createOutputPresentation,
+  DEFAULT_TEMPLATE_SLIDE,
+  inspectPresentationSlide,
+  loadPresentationPackage,
+  POPULATE_OPERATION,
+  PPTX_ERRORS,
+  PRESENTATION_EXTENSION,
+  PRESENTATION_MEDIA_TYPE,
+  safeNameFragment,
+  skippedRowsWarnings,
+  validateRecordsForTemplate,
+  validateTemplateInspection,
+  withoutPresentationExtension,
+  type PopulatePowerPointTemplateMetric,
+  type PopulatePowerPointTemplatePlanMetric,
+  type PopulationRecords,
+  type PowerPointTemplateInspection,
+  type PresentationPackage,
+} from "./shared.js";
+
+export interface PresentationInputBytes {
+  name: string;
+  bytes: Uint8Array;
+}
+
+/** One record per generated slide, keyed by placeholder name. */
+export type PresentationRecord = Readonly<Record<string, string>>;
+
+export interface InspectPresentationBytesOptions {
+  templateSlide?: number | undefined;
+}
+
+export interface PopulatePresentationBytesOptions extends OperationControlOptions {
+  template: PresentationInputBytes;
+  /**
+   * The records to populate from, supplied directly. Provide either records
+   * or a workbook, never both.
+   */
+  records?: readonly PresentationRecord[] | undefined;
+  /** The workbook whose worksheet rows become the records. */
+  workbook?: WorkbookInputBytes | undefined;
+  headerRow?: number | undefined;
+  outputName?: string | undefined;
+  templateSlide?: number | undefined;
+  worksheet?: string | undefined;
+}
+
+interface ResolvedPopulateBytes {
+  inspection: PowerPointTemplateInspection;
+  outputName: string;
+  presentation: PresentationPackage;
+  records: PopulationRecords;
+}
+
+/** Column order is the order the fields first appear across the records. */
+function recordColumns(records: readonly PresentationRecord[]): string[] {
+  const columns: string[] = [];
+  const seen = new Set<string>();
+
+  for (const record of records) {
+    for (const column of Object.keys(record)) {
+      if (!seen.has(column)) {
+        seen.add(column);
+        columns.push(column);
+      }
+    }
+  }
+
+  return columns;
+}
+
+async function resolveRecords(
+  options: PopulatePresentationBytesOptions,
+): Promise<PopulationRecords> {
+  const suppliedRecords = options.records !== undefined;
+  const suppliedWorkbook = options.workbook !== undefined;
+  if (suppliedRecords === suppliedWorkbook) {
+    throw new ConsultChimpsError(
+      PPTX_ERRORS.PPTX_INVALID_DATA_SOURCE,
+      "Provide exactly one data source: either the records to populate from or the workbook bytes to read them from.",
+      {
+        details: {
+          records: suppliedRecords,
+          workbook: suppliedWorkbook,
+        },
+      },
+    );
+  }
+
+  if (options.records) {
+    return {
+      columns: recordColumns(options.records),
+      noDataMessage:
+        "The supplied records contain no rows, so there is nothing to populate.",
+      rows: options.records.map((record) => ({ ...record })),
+      skippedEmptyRows: 0,
+    };
+  }
+
+  const workbook = options.workbook!;
+  const worksheetRecords = await readWorksheetRecordsBytes(workbook, {
+    headerRow: options.headerRow,
+    worksheet: options.worksheet,
+  });
+  return {
+    columns: worksheetRecords.columns,
+    noDataMessage: `Worksheet "${worksheetRecords.worksheet}" does not contain any nonempty data rows below the header.`,
+    rows: worksheetRecords.rows,
+    skippedEmptyRows: worksheetRecords.skippedEmptyRows,
+  };
+}
+
+/** Report the placeholders a template slide uses, without populating it. */
+export async function inspectPresentationBytes(
+  template: PresentationInputBytes,
+  options: InspectPresentationBytesOptions = {},
+): Promise<PowerPointTemplateInspection> {
+  const templateSlide = options.templateSlide ?? DEFAULT_TEMPLATE_SLIDE;
+  const presentation = await loadPresentationPackage(
+    template.bytes,
+    templateSlide,
+  );
+  return inspectPresentationSlide(presentation, templateSlide);
+}
+
+async function resolvePopulatePresentationBytes(
+  options: PopulatePresentationBytesOptions,
+): Promise<ResolvedPopulateBytes> {
+  const templateSlide = options.templateSlide ?? DEFAULT_TEMPLATE_SLIDE;
+  const presentation = await loadPresentationPackage(
+    options.template.bytes,
+    templateSlide,
+  );
+  const inspection = await inspectPresentationSlide(
+    presentation,
+    templateSlide,
+  );
+  validateTemplateInspection(inspection);
+
+  const records = await resolveRecords(options);
+  validateRecordsForTemplate(records, inspection, {
+    template: options.template.name,
+    templateSlide,
+  });
+
+  const defaultName = `${withoutPresentationExtension(
+    options.template.name,
+  )}-populated`;
+  const outputName = `${safeNameFragment(
+    withoutPresentationExtension(options.outputName ?? defaultName),
+    "presentation",
+  )}${PRESENTATION_EXTENSION}`;
+
+  return { inspection, outputName, presentation, records };
+}
+
+/**
+ * Report the presentation a population would produce, and the rows it would
+ * skip, without building any bytes.
+ */
+export async function planPopulatePresentationBytes(
+  options: PopulatePresentationBytesOptions,
+): Promise<OperationPlan<PopulatePowerPointTemplatePlanMetric>> {
+  const resolved = await resolvePopulatePresentationBytes(options);
+
+  return {
+    operation: POPULATE_OPERATION,
+    inputs: [
+      options.template.name,
+      ...(options.workbook ? [options.workbook.name] : []),
+    ],
+    outputs: [
+      {
+        kind: "file",
+        mediaType: PRESENTATION_MEDIA_TYPE,
+        path: resolved.outputName,
+        exists: false,
+      },
+    ],
+    warnings: skippedRowsWarnings(resolved.records),
+    metrics: {
+      generatedSlides: resolved.records.rows.length,
+      inputRows: resolved.records.rows.length,
+      outputFiles: 1,
+      placeholderFields: resolved.inspection.placeholders.length,
+      placeholderOccurrences: resolved.inspection.placeholderOccurrences,
+      skippedRows: resolved.records.skippedEmptyRows,
+    },
+  };
+}
+
+/** Populate a template presentation with one slide per record, in memory. */
+export async function populatePresentationBytes(
+  options: PopulatePresentationBytesOptions,
+): Promise<ByteOperationOutcome<PopulatePowerPointTemplateMetric>> {
+  throwIfAborted(options.signal, POPULATE_OPERATION, "memory");
+  const { inspection, outputName, presentation, records } =
+    await resolvePopulatePresentationBytes(options);
+
+  throwIfAborted(options.signal, POPULATE_OPERATION, "memory");
+  const generated = await createOutputPresentation(
+    presentation,
+    records.rows,
+    options,
+    "memory",
+  );
+  // The presentation package was serialized asynchronously; honour a
+  // cancellation that arrived while it was being written.
+  throwIfAborted(options.signal, POPULATE_OPERATION, "memory");
+
+  const output: ByteArtifact = {
+    name: outputName,
+    bytes: generated.bytes,
+    mediaType: PRESENTATION_MEDIA_TYPE,
+  };
+  const warnings = skippedRowsWarnings(records);
+
+  return {
+    result: {
+      operation: POPULATE_OPERATION,
+      artifacts: [
+        {
+          kind: "file",
+          mediaType: PRESENTATION_MEDIA_TYPE,
+          path: output.name,
+        },
+      ],
+      warnings,
+      metrics: {
+        generatedSlides: records.rows.length,
+        inputRows: records.rows.length,
+        outputFiles: 1,
+        placeholderFields: inspection.placeholders.length,
+        placeholderOccurrences: inspection.placeholderOccurrences,
+        replacements: generated.replacements,
+        skippedRows: records.skippedEmptyRows,
+        warnings: warnings.length,
+      },
+    },
+    outputs: [output],
+  };
+}
+
+export { PPTX_ERRORS } from "./shared.js";
+export type {
+  PopulatePowerPointTemplateMetric,
+  PopulatePowerPointTemplatePlanMetric,
+  PowerPointPlaceholder,
+  PowerPointTemplateInspection,
+  PptxErrorCode,
+} from "./shared.js";
+export type { WorkbookInputBytes } from "@consultchimps/xlsx/bytes";

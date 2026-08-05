@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 
 import type { ExcelTableDefinition } from "./excel-tables.js";
 import { XLSX_ERRORS } from "./errors.js";
+import { generatePackageBytes, replacePackagePart } from "./package-zip.js";
 
 interface CellFragment {
   columnIndex: number;
@@ -524,9 +525,9 @@ function filterWorksheetXml(
 }
 
 export async function preserveWorkbookWithFilteredExcelTable(
-  workbookBytes: Buffer,
+  workbookBytes: Uint8Array,
   options: PreserveExcelTableOptions,
-): Promise<Buffer> {
+): Promise<Uint8Array> {
   const archive = await JSZip.loadAsync(workbookBytes);
   const worksheetEntry = archive.file(options.definition.worksheetPart);
   const tableEntry = archive.file(options.definition.tablePart);
@@ -556,10 +557,11 @@ export async function preserveWorkbookWithFilteredExcelTable(
     false,
   );
 
-  archive.file(options.definition.worksheetPart, filtered.worksheetXml);
-  archive.file(options.definition.tablePart, tableXml);
-  return archive.generateAsync({
-    compression: "DEFLATE",
-    type: "nodebuffer",
-  });
+  replacePackagePart(
+    archive,
+    options.definition.worksheetPart,
+    filtered.worksheetXml,
+  );
+  replacePackagePart(archive, options.definition.tablePart, tableXml);
+  return generatePackageBytes(archive);
 }
