@@ -2,7 +2,10 @@ import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 
-import { convertWorkbookToValues } from "../src/values-only.js";
+import {
+  convertWorkbookToValues,
+  convertWorkbookToValuesWithReport,
+} from "../src/values-only.js";
 
 describe("convertWorkbookToValues", () => {
   it("removes formulas and calculation metadata without changing cell formatting", async () => {
@@ -110,5 +113,28 @@ describe("convertWorkbookToValues", () => {
     expect(outputArchive.file("xl/calcChain.xml")).toBeNull();
     expect(outputRelationships).not.toContain("calcChain");
     expect(outputContentTypes).not.toContain("calcChain");
+  });
+
+  it("reports formulas whose cached values are unavailable", async () => {
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.aoa_to_sheet([
+        ["Cached", "Missing"],
+        [
+          { f: "1+1", t: "n", v: 2 },
+          { f: "2+2", t: "n" },
+        ],
+      ]),
+      "Formulas",
+    );
+
+    const conversion = await convertWorkbookToValuesWithReport(
+      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+    );
+    expect(conversion.formulasConverted).toBe(2);
+    expect(conversion.formulasWithoutCachedValues).toEqual([
+      { cell: "B2", worksheetPart: "xl/worksheets/sheet1.xml" },
+    ]);
   });
 });

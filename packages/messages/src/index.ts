@@ -133,6 +133,45 @@ function formatNumber(value: number): string {
   return numberFormatter.format(value);
 }
 
+function workbookSplitSummary(result: OperationResult):
+  | {
+      column: string;
+      copiedUnchangedSheets: string[];
+      filteredSheets: string[];
+      input: string;
+      outputDirectory: string;
+      valuesOnly: boolean;
+    }
+  | undefined {
+  const summary = (result as OperationResult & { summary?: unknown }).summary;
+  if (
+    !summary ||
+    typeof summary !== "object" ||
+    !("column" in summary) ||
+    typeof summary.column !== "string" ||
+    !("input" in summary) ||
+    typeof summary.input !== "string" ||
+    !("outputDirectory" in summary) ||
+    typeof summary.outputDirectory !== "string" ||
+    !("filteredSheets" in summary) ||
+    !Array.isArray(summary.filteredSheets) ||
+    !("copiedUnchangedSheets" in summary) ||
+    !Array.isArray(summary.copiedUnchangedSheets) ||
+    !("valuesOnly" in summary) ||
+    typeof summary.valuesOnly !== "boolean"
+  ) {
+    return undefined;
+  }
+  return summary as {
+    column: string;
+    copiedUnchangedSheets: string[];
+    filteredSheets: string[];
+    input: string;
+    outputDirectory: string;
+    valuesOnly: boolean;
+  };
+}
+
 function quantity(
   value: number,
   singular: string,
@@ -168,12 +207,32 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
   },
   "sheets.split-by-column": {
     title: "Your Excel workbook split is complete.",
-    summary: (result) => [
-      `ConsultChimps read ${quantity(metric(result, "inputRows"), "data row")} from the source workbook.`,
-      `It found ${quantity(metric(result, "groups"), "distinct group")} and created ${quantity(metric(result, "outputFiles"), "separate Excel workbook")}.`,
-      `${quantity(metric(result, "outputRows"), "data row")} ${metric(result, "outputRows") === 1 ? "was" : "were"} written to the new workbooks, and ${quantity(metric(result, "skippedRows"), "row")} ${metric(result, "skippedRows") === 1 ? "was" : "were"} skipped.`,
-      "Your original Excel workbook was not changed.",
-    ],
+    summary: (result) => {
+      const splitSummary = workbookSplitSummary(result);
+      const lines = [
+        `ConsultChimps read ${quantity(metric(result, "inputRows"), "data row")} from the source workbook.`,
+        `It found ${quantity(metric(result, "groups"), "distinct group")} and created ${quantity(metric(result, "outputFiles"), "separate Excel workbook")}.`,
+        `${quantity(metric(result, "outputRows"), "data row")} ${metric(result, "outputRows") === 1 ? "was" : "were"} retained across the new workbooks, and ${quantity(metric(result, "skippedRows"), "row")} ${metric(result, "skippedRows") === 1 ? "was" : "were"} skipped.`,
+      ];
+      if (Object.hasOwn(result.metrics, "sheetsFiltered")) {
+        lines.push(
+          `${quantity(metric(result, "sheetsFiltered"), "worksheet")} contained the split column and ${metric(result, "sheetsFiltered") === 1 ? "was" : "were"} filtered.`,
+          `${quantity(metric(result, "sheetsCopiedUnchanged"), "worksheet")} did not contain the split column and ${metric(result, "sheetsCopiedUnchanged") === 1 ? "was" : "were"} copied unchanged.`,
+          `Values-only mode was ${metric(result, "valuesOnly") === 1 ? "enabled" : "disabled"}.`,
+        );
+      }
+      if (splitSummary) {
+        lines.push(
+          `Input workbook: ${splitSummary.input}`,
+          `Split column: ${splitSummary.column}`,
+          `Worksheets filtered: ${splitSummary.filteredSheets.join(", ")}`,
+          `Worksheets copied unchanged: ${splitSummary.copiedUnchangedSheets.join(", ") || "None"}`,
+          `Output directory: ${splitSummary.outputDirectory}`,
+        );
+      }
+      lines.push("Your original Excel workbook was not changed.");
+      return lines;
+    },
     nextSteps: (vocabulary) => [
       `Open the new workbooks ${vocabulary.artifactListReference} and confirm that each file contains the expected group.`,
       "If rows were skipped, review the warning section to understand why.",
@@ -233,6 +292,12 @@ const metricLabels: Readonly<Record<string, string>> = {
   placeholderOccurrences: "Placeholder occurrences per template slide",
   replacements: "Placeholder replacements made",
   skippedRows: "Rows skipped",
+  rowsDeleted: "Rows deleted across output workbooks",
+  sheetsCopiedUnchanged: "Worksheets copied without filtering",
+  sheetsFiltered: "Worksheets filtered",
+  formulaCellsConverted: "Formula cells converted to cached values",
+  formulaCellsWithoutCachedValues: "Formula cells missing cached values",
+  valuesOnly: "Values-only mode (1 enabled, 0 disabled)",
   warnings: "Warnings reported",
 };
 

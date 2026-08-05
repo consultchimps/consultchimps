@@ -148,31 +148,33 @@ Required:
 
 Options:
   -o, --output <directory>  output directory (default: <input>-split)
-  --sheet <name>            worksheet to split
+  --output-dir <directory>  alias for --output
+  --sheet <name>            use the legacy single-worksheet split mode
   --table <name>            named Excel Table to split instead of the used range
   --header-row <number>     one-based header row
   --hidden                  allow a selected hidden worksheet
-  --preserve-workbook       retain the complete workbook and filter only the table
-  --no-preserve-workbook    create a compact data-only workbook for a table split
+  --preserve-workbook       retain the complete workbook (the default)
+  --no-preserve-workbook    create a compact data-only single-source workbook
   --values                  replace formulas with stored values, preserving formatting
+  --strict                  compare case, whitespace, and value types exactly
   --skip-blank              omit rows whose split-column value is blank
   --prefix <name>           output filename prefix
   -f, --force               replace existing output files
 ```
 
-`--table` limits input to an Excel structured table and ignores cells outside
-its range. Because the table defines its own headers, it cannot be combined with
-`--header-row`. Add `--preserve-workbook` to keep every worksheet and the source
-formatting while replacing only the selected table's data rows. The preservation
-option requires `--table`.
+Without `--table`, `--range`, or `--sheet`, the command collects normalized,
+non-blank values across every worksheet containing the column, then filters a
+complete workbook copy for each value. Worksheets without the column are copied
+unchanged. `--table`, `--range`, and `--sheet` select the established
+single-source modes.
 
 Every spreadsheet command accepts `--values`. It removes worksheet and Excel
 Table formulas while retaining their stored results. The conversion edits the
 underlying workbook cells rather than reconstructing them, so styles, number
 formats, dimensions, and workbook layout are preserved. A formula with no stored
-result becomes a formatted blank cell. Consolidation and compact data-only split
-outputs already contain values, so the option is explicit but does not otherwise
-change those files.
+result becomes a formatted blank cell and produces a warning. Consolidation and
+compact data-only split outputs already contain values, so the option is
+explicit but does not otherwise change those files.
 
 ## PDF splitting
 
