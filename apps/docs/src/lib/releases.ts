@@ -14,6 +14,8 @@ export interface ReleaseEntry {
 
 export interface PackageReleases {
   readonly name: string;
+  /** Folder under packages/, for building changelog links. */
+  readonly folder: string;
   readonly version: string;
   readonly description: string;
   readonly entries: readonly ReleaseEntry[];
@@ -45,6 +47,9 @@ const NOTE_PATTERN = /^- (?:[0-9a-f]{7,}: )?(.+)$/;
 function parseChangelog(markdown: string, limit: number): ReleaseEntry[] {
   const entries: ReleaseEntry[] = [];
   let current: { version: string; notes: string[] } | undefined;
+  // True while the previous line belonged to a kept bullet, so wrapped
+  // continuation lines can be folded back into it.
+  let collecting = false;
 
   for (const line of markdown.split(/\r?\n/)) {
     const headingVersion = /^## (\d+\.\d+\.\d+.*)$/.exec(line)?.[1];
@@ -52,16 +57,38 @@ function parseChangelog(markdown: string, limit: number): ReleaseEntry[] {
       if (current) entries.push(current);
       if (entries.length >= limit) return entries;
       current = { version: headingVersion, notes: [] };
+      collecting = false;
       continue;
     }
     if (!current) continue;
-    const noteText = NOTE_PATTERN.exec(line.trim())?.[1];
+
+    if (line.startsWith("- ")) {
+      const noteText = NOTE_PATTERN.exec(line)?.[1];
+      if (
+        noteText !== undefined &&
+        !noteText.startsWith("Updated dependencies")
+      ) {
+        current.notes.push(noteText);
+        collecting = true;
+      } else {
+        collecting = false;
+      }
+      continue;
+    }
+
+    const continuation = line.trim();
     if (
-      noteText !== undefined &&
-      !line.startsWith("  ") &&
-      !noteText.startsWith("Updated dependencies")
+      collecting &&
+      continuation !== "" &&
+      line.startsWith("  ") &&
+      !continuation.startsWith("- ")
     ) {
-      current.notes.push(noteText);
+      const previous = current.notes.pop();
+      if (previous !== undefined) {
+        current.notes.push(`${previous} ${continuation}`);
+      }
+    } else {
+      collecting = false;
     }
   }
   if (current && entries.length < limit) entries.push(current);
@@ -90,6 +117,7 @@ export function packageReleases(entryLimit = 3): PackageReleases[] {
 
     releases.push({
       name: manifest.name,
+      folder,
       version: manifest.version,
       description: manifest.description ?? "",
       entries,

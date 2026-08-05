@@ -26,7 +26,7 @@ export default function ReleasesPage() {
         </p>
 
         <div className="mt-12 space-y-12">
-          {releases.map(({ name, version, description, entries }) => (
+          {releases.map(({ name, folder, version, description, entries }) => (
             <section key={name}>
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <h2 className="font-mono text-xl font-bold tracking-tight">
@@ -37,7 +37,7 @@ export default function ReleasesPage() {
                 </span>
                 <a
                   className="ml-auto inline-flex items-center gap-1 text-sm text-fd-muted-foreground hover:text-fd-foreground"
-                  href={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/packages/${name.split("/")[1]}/CHANGELOG.md`}
+                  href={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/packages/${folder}/CHANGELOG.md`}
                   rel="noreferrer"
                   target="_blank"
                 >
