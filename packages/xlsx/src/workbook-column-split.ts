@@ -608,7 +608,7 @@ export async function splitFullWorkbookByColumn(
   try {
     for (const [index, group] of resolved.groups.entries()) {
       throwIfAborted(options.signal, SPLIT_OPERATION);
-      let outputBytes = resolved.workbookBytes;
+      let outputBytes: Uint8Array = resolved.workbookBytes;
       let outputFormulaCount = 0;
       let outputMissingFormulaCount = 0;
       const containsFilteredTable = resolved.sheets.some(
@@ -631,7 +631,8 @@ export async function splitFullWorkbookByColumn(
       for (const sheet of resolved.sheets) {
         if (
           sheet.table &&
-          (options.values || (await tableCanBeCompacted(outputBytes, sheet)))
+          (options.values ||
+            (await tableCanBeCompacted(Buffer.from(outputBytes), sheet)))
         ) {
           compactTableSheets.push(sheet);
         } else {
@@ -653,7 +654,7 @@ export async function splitFullWorkbookByColumn(
 
       for (const sheet of compactTableSheets) {
         outputBytes = await preserveWorkbookWithFilteredExcelTable(
-          outputBytes,
+          Buffer.from(outputBytes),
           {
             definition: sheet.table!,
             sourceRows: [...sheet.rowKeys]
@@ -665,7 +666,7 @@ export async function splitFullWorkbookByColumn(
         );
       }
       outputBytes = await filterPlainWorksheets(
-        outputBytes,
+        Buffer.from(outputBytes),
         plainSheets,
         group.key,
       );

@@ -70,13 +70,13 @@ function removeCalculationChainReferences(xml: string): string {
  * package byte-for-byte apart from formula and calculation-chain metadata.
  */
 export async function convertWorkbookToValues(
-  workbookBytes: Buffer,
+  workbookBytes: Uint8Array,
 ): Promise<Buffer> {
   return (await convertWorkbookToValuesWithReport(workbookBytes)).bytes;
 }
 
 export async function convertWorkbookToValuesWithReport(
-  workbookBytes: Buffer,
+  workbookBytes: Uint8Array,
 ): Promise<ValuesOnlyConversion> {
   const archive = await JSZip.loadAsync(workbookBytes);
   const worksheetParts = Object.keys(archive.files).filter((partName) =>

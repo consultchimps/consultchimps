@@ -82,8 +82,6 @@ export type {
   ReadWorkbookNamedRangesOptions,
   ReadWorkbookOptions,
   ReadWorksheetRecordsOptions,
-  SplitWorkbookByColumnMetric,
-  SplitWorkbookByColumnPlanMetric,
   WorkbookExcelTable,
   WorkbookNamedRange,
   WorksheetRecords,

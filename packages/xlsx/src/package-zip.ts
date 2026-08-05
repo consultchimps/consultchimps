@@ -21,9 +21,9 @@ export function replacePackagePart(
 
 export async function generatePackageBytes(
   archive: JSZip,
-): Promise<Uint8Array> {
+): Promise<Buffer> {
   return archive.generateAsync({
     compression: "DEFLATE",
-    type: "uint8array",
+    type: "nodebuffer",
   });
 }
