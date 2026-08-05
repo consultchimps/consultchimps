@@ -1,25 +1,17 @@
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import fc from "fast-check";
+import { describe, expect, it } from "vitest";
 
 import {
   groupTableByColumn,
   type CellValue,
   type Table,
-} from "@consultchimps/tabular";
-import fc from "fast-check";
-import { afterEach, describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
-
-import { splitWorkbookByColumn } from "../src/index.js";
+} from "../src/index.js";
 
 const GROUP_COLUMN = "Group";
 const ROW_ID_COLUMN = "RowId";
 // A fixed seed keeps the suite deterministic, matching the repository's
 // promise that identical inputs always produce identical results.
 const runs = { numRuns: 300, seed: 20260805 };
-
-const encoder = new TextEncoder();
 
 // Values that exercise every branch of the grouping key: blanks, whitespace
 // only strings, numbers, booleans and text that collides across types.
@@ -129,59 +121,5 @@ describe("groupTableByColumn partitions rows", () => {
       }),
       runs,
     );
-  });
-});
-
-const temporaryDirectories: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((directory) => rm(directory, { force: true, recursive: true })),
-  );
-});
-
-describe("split output filenames", () => {
-  it("caps a non-ASCII group value by UTF-8 bytes, not code points", async () => {
-    const directory = await mkdtemp(
-      path.join(tmpdir(), "consultchimps-xlsx-names-"),
-    );
-    temporaryDirectories.push(directory);
-    const input = path.join(directory, "report.xlsx");
-    const output = path.join(directory, "split");
-
-    // Each of these code points encodes to three UTF-8 bytes, so a 100
-    // character group value used to produce a 300 byte filename segment.
-    const longValue = "中".repeat(100);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.aoa_to_sheet([
-        ["Region", "Amount"],
-        [longValue, 1],
-      ]),
-      "Data",
-    );
-    await writeFile(
-      input,
-      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
-    );
-
-    await splitWorkbookByColumn({
-      column: "Region",
-      input,
-      outputDirectory: output,
-    });
-
-    const produced = await readdir(output);
-    expect(produced).toHaveLength(1);
-
-    const filename = produced[0]!;
-    const segment = filename.slice("report-".length, -".xlsx".length);
-    expect(encoder.encode(segment).length).toBeLessThanOrEqual(80);
-    expect(encoder.encode(filename).length).toBeLessThanOrEqual(255);
-    // 80 bytes divided by three bytes per character.
-    expect([...segment]).toHaveLength(26);
   });
 });

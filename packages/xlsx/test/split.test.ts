@@ -366,6 +366,40 @@ describe("splitWorkbookByColumn", () => {
     ).toEqual([{ Amount: 80, Client: "H", Region: "1" }]);
   });
 
+  it("caps a non-ASCII group value by UTF-8 bytes, not code points", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "report.xlsx");
+    const output = path.join(directory, "split");
+    // Each of these code points encodes to three UTF-8 bytes, so a 100
+    // character group value used to produce a 300 byte filename segment.
+    const longValue = "中".repeat(100);
+    await createWorkbook(input, [
+      [
+        "Data",
+        [
+          ["Region", "Amount"],
+          [longValue, 1],
+        ],
+      ],
+    ]);
+
+    await splitWorkbookByColumn({
+      column: "Region",
+      input,
+      outputDirectory: output,
+    });
+
+    const produced = await readdir(output);
+    expect(produced).toHaveLength(1);
+
+    const filename = produced[0]!;
+    const segment = filename.slice("report-".length, -".xlsx".length);
+    // 80 bytes divided by three bytes per character.
+    expect([...segment]).toHaveLength(26);
+    expect(Buffer.byteLength(segment, "utf8")).toBeLessThanOrEqual(80);
+    expect(Buffer.byteLength(filename, "utf8")).toBeLessThanOrEqual(255);
+  });
+
   it("requires an explicit worksheet when more than one table is available", async () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "regions.xlsx");

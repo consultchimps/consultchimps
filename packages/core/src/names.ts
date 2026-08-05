@@ -52,12 +52,16 @@ function withoutControlCharacters(value: string): string {
   return result;
 }
 
+// Used when both the value and the fallback sanitize away to nothing, so the
+// function can promise a non-empty, portable result for every input pair.
+const LAST_RESORT_NAME = "file";
+
 /**
- * Reduce a caller-supplied name to a portable filename fragment. Byte
- * operations never touch a filesystem, but their output names become
- * download and archive entries that must stay valid everywhere.
+ * Apply the character rules and the byte cap. The result is empty when the
+ * input carries nothing usable, which is what makes the fallback chain in
+ * safeNameFragment observable.
  */
-export function safeNameFragment(value: string, fallback: string): string {
+function sanitizedFragment(value: string): string {
   const normalized = trimTrailingDotsAndSpaces(
     withoutControlCharacters(value.normalize("NFKC"))
       .replace(UNSAFE_NAME_CHARACTERS, "-")
@@ -68,9 +72,20 @@ export function safeNameFragment(value: string, fallback: string): string {
   // Cap the fragment by encoded size, truncating at code-point boundaries,
   // so generated names plus their page suffix stay well inside common
   // 255-byte filename limits even for multi-byte scripts and emoji.
-  const limited = trimTrailingDotsAndSpaces(
-    truncateToUtf8Bytes(normalized, 80),
-  );
-  const safe = limited || fallback;
+  return trimTrailingDotsAndSpaces(truncateToUtf8Bytes(normalized, 80));
+}
+
+/**
+ * Reduce a caller-supplied name to a portable filename fragment. Byte
+ * operations never touch a filesystem, but their output names become
+ * download and archive entries that must stay valid everywhere.
+ *
+ * The fallback goes through the same rules as the value, so a caller-supplied
+ * fallback cannot smuggle an unsafe or over-long name past the guarantee. A
+ * fallback that is already a clean fragment is returned unchanged.
+ */
+export function safeNameFragment(value: string, fallback: string): string {
+  const safe =
+    sanitizedFragment(value) || sanitizedFragment(fallback) || LAST_RESORT_NAME;
   return WINDOWS_RESERVED_FILENAME.test(safe) ? `_${safe}` : safe;
 }

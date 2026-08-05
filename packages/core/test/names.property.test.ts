@@ -42,6 +42,21 @@ function withoutReservedGuard(value: string): string {
   return value.startsWith("_") ? value.slice(1) : value;
 }
 
+/** The complete portability guarantee, asserted as one unit. */
+function expectPortableFragment(fragment: string): void {
+  expect(fragment.length).toBeGreaterThan(0);
+  expect(encodedLength(withoutReservedGuard(fragment))).toBeLessThanOrEqual(
+    MAX_FRAGMENT_BYTES,
+  );
+  expect(encodedLength(fragment)).toBeLessThanOrEqual(MAX_GUARDED_BYTES);
+  expect(hasControlCharacters(fragment)).toBe(false);
+  expect(UNSAFE_CHARACTERS.test(fragment)).toBe(false);
+  expect(fragment.endsWith(".")).toBe(false);
+  expect(fragment.endsWith(" ")).toBe(false);
+  expect(RESERVED_DEVICE_NAMES).not.toContain(fragment.toLowerCase());
+  expect(RESERVED_WITH_EXTENSION.test(fragment)).toBe(false);
+}
+
 // Arbitrary text including control characters, astral-plane code points and
 // compatibility characters, so normalization and stripping both get exercised.
 const anyText = fc.string({ unit: "binary", maxLength: 200 });
@@ -143,6 +158,60 @@ describe("safeNameFragment properties", () => {
       }),
       runs,
     );
+  });
+});
+
+// The fallback is part of the public API surface, so a dynamic or untrusted
+// fallback must not be able to bypass the rules the value goes through.
+describe("safeNameFragment sanitizes the fallback", () => {
+  it("holds the whole guarantee for arbitrary value and fallback pairs", () => {
+    fc.assert(
+      fc.property(anyText, anyText, (value, fallback) => {
+        expectPortableFragment(safeNameFragment(value, fallback));
+      }),
+      runs,
+    );
+  });
+
+  it("holds the whole guarantee when the value sanitizes away", () => {
+    fc.assert(
+      fc.property(anyText, (fallback) => {
+        expectPortableFragment(safeNameFragment("", fallback));
+        expectPortableFragment(safeNameFragment("   ", fallback));
+        expectPortableFragment(safeNameFragment("...", fallback));
+      }),
+      runs,
+    );
+  });
+
+  it("leaves the fallbacks used by the operations byte-identical", () => {
+    // Every fallback passed inside @consultchimps/pdf and @consultchimps/xlsx
+    // is already a clean fragment, so no existing output name changes.
+    for (const fallback of ["document", "combined", "split", "value"]) {
+      expect(safeNameFragment("", fallback)).toBe(fallback);
+      expect(safeNameFragment("\u0007", fallback)).toBe(fallback);
+    }
+  });
+
+  it("guards a reserved fallback", () => {
+    expect(safeNameFragment("", "con")).toBe("_con");
+    expect(safeNameFragment("", "  NUL.  ")).toBe("_NUL");
+  });
+
+  it("caps and cleans an unsafe fallback", () => {
+    expect(safeNameFragment("", 'a<b>c:"d/e')).toBe("a-b-c-d-e");
+    expect(safeNameFragment("", "trailing. ")).toBe("trailing");
+    expect(safeNameFragment("", "with\u0007control")).toBe("withcontrol");
+
+    const capped = safeNameFragment("", "\u4e2d".repeat(100));
+    expect(encodedLength(capped)).toBe(78);
+    expect([...capped]).toHaveLength(26);
+  });
+
+  it("returns a hardcoded name when both inputs sanitize away", () => {
+    expect(safeNameFragment("", "")).toBe("file");
+    expect(safeNameFragment("\u0007", "  ...  ")).toBe("file");
+    expect(safeNameFragment("...", "\u0000")).toBe("file");
   });
 });
 
