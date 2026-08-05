@@ -11,7 +11,8 @@ consultchimps [options] [command]
 
 Options:
   -V, --version   output the version number
-  --json          print structured JSON instead of the detailed explanation
+  --json          print one line of machine-readable JSON for automation
+                  instead of the detailed explanation
   -h, --help      display help
 ```
 
@@ -19,6 +20,68 @@ Place `--json` before the subcommand:
 
 ```bash
 consultchimps --json pdf split report.pdf
+```
+
+## Machine-readable output
+
+`--json` works on every command. It replaces the human explanation with exactly
+one JSON object printed on a single line of stdout, so the output can be piped
+straight into a JSON parser without stripping prose first.
+
+A successful operation wraps the operation result in an `ok: true` envelope:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "operation": "pdf.split",
+    "artifacts": [
+      { "kind": "file", "mediaType": "application/pdf", "path": "..." }
+    ],
+    "warnings": [],
+    "metrics": { "inputFiles": 1, "outputFiles": 2, "pages": 2 }
+  }
+}
+```
+
+A failure wraps the message and its stable error code in an `ok: false`
+envelope, and the command still exits with a nonzero status:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "message": "Output already exists: outputs/pages/report-page-001.pdf",
+    "code": "FILES_OUTPUT_EXISTS"
+  }
+}
+```
+
+`code` is a published, stable error reference for expected failures such as
+`FILES_OUTPUT_EXISTS` or `XLSX_SPLIT_NO_TABLE`. It is `null` for unexpected
+errors, which have no stable code to depend on. The same object is repeated on
+stderr so failures remain visible there, but stdout alone is always valid JSON.
+
+Usage errors — an unknown option, an unknown command, or a missing required
+option — are reported the same way under `--json`, with the code `CLI_USAGE`:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "message": "error: required option '-c, --column <name>' not specified",
+    "code": "CLI_USAGE"
+  }
+}
+```
+
+`--help` and `--version` are unaffected by `--json`. They print their usual text
+and exit 0.
+
+Branch on `ok` rather than parsing the message text:
+
+```bash
+consultchimps --json pdf split report.pdf -o pages | jq -e '.ok'
 ```
 
 ## Human-readable output

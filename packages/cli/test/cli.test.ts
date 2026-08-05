@@ -33,6 +33,38 @@ interface CliResult {
   stdout: string;
 }
 
+interface JsonErrorEnvelope {
+  error: { code: string | null; message: string };
+  ok: false;
+}
+
+interface JsonSuccessEnvelope {
+  ok: true;
+  result: Record<string, unknown>;
+}
+
+// --json promises exactly one JSON object on a single line of stdout, so
+// parsing raw stdout and checking it is one line is itself part of the
+// contract under test rather than mere test convenience.
+function parseSingleJsonLine(stdout: string): unknown {
+  expect(stdout.endsWith("\n")).toBe(true);
+  const body = stdout.slice(0, -1);
+  expect(body).not.toContain("\n");
+  return JSON.parse(body);
+}
+
+function parseJsonSuccess(stdout: string): Record<string, unknown> {
+  const envelope = parseSingleJsonLine(stdout) as JsonSuccessEnvelope;
+  expect(envelope.ok).toBe(true);
+  return envelope.result;
+}
+
+function parseJsonError(stdout: string): JsonErrorEnvelope["error"] {
+  const envelope = parseSingleJsonLine(stdout) as JsonErrorEnvelope;
+  expect(envelope.ok).toBe(false);
+  return envelope.error;
+}
+
 async function createTemporaryDirectory(): Promise<string> {
   const directory = await mkdtemp(
     path.join(tmpdir(), "consultchimps-cli-test-"),
@@ -144,71 +176,150 @@ afterEach(async () => {
 });
 
 describe("consultchimps CLI", () => {
-  it(
-    "shows output options in top-level and command help",
-    { timeout: 30_000 },
-    async () => {
-      const topLevelHelp = await runCli(["--help"]);
-      expect(topLevelHelp.stdout).toContain(
-        'consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx',
-      );
-      expect(topLevelHelp.stdout).toContain(
-        "consultchimps pdf split report.pdf -o pages",
-      );
-      expect(topLevelHelp.stdout).toContain("consultchimps pptx populate");
+  it("shows output options in top-level and command help", async () => {
+    const topLevelHelp = await runCli(["--help"]);
+    expect(topLevelHelp.stdout).toContain(
+      'consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx',
+    );
+    expect(topLevelHelp.stdout).toContain(
+      "consultchimps pdf split report.pdf -o pages",
+    );
+    expect(topLevelHelp.stdout).toContain("consultchimps pptx populate");
+    expect(topLevelHelp.stdout).toContain("--json");
+    expect(topLevelHelp.stdout).toContain("Automation with --json:");
+    expect(topLevelHelp.stdout).toContain('{"ok":true,"result":...}');
+    expect(topLevelHelp.stdout).toContain(
+      "consultchimps --json pdf split report.pdf -o pages",
+    );
 
-      const sheetsHelp = await runCli(["sheets", "--help"]);
-      expect(sheetsHelp.stdout).toContain(
-        "consultchimps sheets split clients.xlsx -c Region -o by-region",
-      );
+    // --help and --version terminate through Commander's exit override, so they
+    // must still succeed rather than be treated as usage failures.
+    const version = await runCli(["--version"]);
+    expect(version.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+    expect(version.stderr).toBe("");
 
-      const mergeHelp = await runCli(["sheets", "merge", "--help"]);
-      expect(mergeHelp.stdout).toContain("-o, --output <path>");
-      expect(mergeHelp.stdout).toContain("--no-index");
-      expect(mergeHelp.stdout).toContain("--values");
-      expect(mergeHelp.stdout).toContain(
-        'consultchimps sheets merge "inputs/*.xlsx" --values -o all-sheets.xlsx',
-      );
+    const sheetsHelp = await runCli(["sheets", "--help"]);
+    expect(sheetsHelp.stdout).toContain(
+      "consultchimps sheets split clients.xlsx -c Region -o by-region",
+    );
 
-      const consolidateHelp = await runCli(["sheets", "consolidate", "--help"]);
-      expect(consolidateHelp.stdout).toContain("-o, --output <path>");
-      expect(consolidateHelp.stdout).toContain("--values");
-      expect(consolidateHelp.stdout).toContain(
-        "where to save the new consolidated .xlsx workbook",
-      );
-      expect(consolidateHelp.stdout).toContain("Examples:");
-      expect(consolidateHelp.stdout).toContain("What happens:");
-      expect(consolidateHelp.stdout).toContain(
-        "Your original workbooks are never changed.",
-      );
+    const mergeHelp = await runCli(["sheets", "merge", "--help"]);
+    expect(mergeHelp.stdout).toContain("-o, --output <path>");
+    expect(mergeHelp.stdout).toContain("--no-index");
+    expect(mergeHelp.stdout).toContain("--values");
+    expect(mergeHelp.stdout).toContain(
+      'consultchimps sheets merge "inputs/*.xlsx" --values -o all-sheets.xlsx',
+    );
 
-      const splitHelp = await runCli(["sheets", "split", "--help"]);
-      expect(splitHelp.stdout).toContain("--values");
-      expect(splitHelp.stdout).toContain("preserving formatting");
+    const consolidateHelp = await runCli(["sheets", "consolidate", "--help"]);
+    expect(consolidateHelp.stdout).toContain("-o, --output <path>");
+    expect(consolidateHelp.stdout).toContain("--values");
+    expect(consolidateHelp.stdout).toContain(
+      "where to save the new consolidated .xlsx workbook",
+    );
+    expect(consolidateHelp.stdout).toContain("Examples:");
+    expect(consolidateHelp.stdout).toContain("What happens:");
+    expect(consolidateHelp.stdout).toContain(
+      "Your original workbooks are never changed.",
+    );
 
-      const pdfSplitHelp = await runCli(["pdf", "split", "--help"]);
-      expect(pdfSplitHelp.stdout).toContain("-o, --output <directory>");
-      expect(pdfSplitHelp.stdout).toContain(
-        "folder where the separate page files will be saved",
-      );
-      expect(pdfSplitHelp.stdout).toContain(
-        "consultchimps pdf split report.pdf -o pages",
-      );
-      expect(pdfSplitHelp.stdout).toContain("What happens:");
+    const splitHelp = await runCli(["sheets", "split", "--help"]);
+    expect(splitHelp.stdout).toContain("--values");
+    expect(splitHelp.stdout).toContain("preserving formatting");
 
-      const pptxHelp = await runCli(["pptx", "--help"]);
-      expect(pptxHelp.stdout).toContain("pptx inspect-template");
-      expect(pptxHelp.stdout).toContain("pptx populate");
+    const pdfSplitHelp = await runCli(["pdf", "split", "--help"]);
+    expect(pdfSplitHelp.stdout).toContain("-o, --output <directory>");
+    expect(pdfSplitHelp.stdout).toContain(
+      "folder where the separate page files will be saved",
+    );
+    expect(pdfSplitHelp.stdout).toContain(
+      "consultchimps pdf split report.pdf -o pages",
+    );
+    expect(pdfSplitHelp.stdout).toContain("What happens:");
 
-      const pptxPopulateHelp = await runCli(["pptx", "populate", "--help"]);
-      expect(pptxPopulateHelp.stdout).toContain("--template <path>");
-      expect(pptxPopulateHelp.stdout).toContain("--data <path>");
-      expect(pptxPopulateHelp.stdout).toContain("{{field_name}}");
-      expect(pptxPopulateHelp.stdout).toContain(
-        "Source files are never changed.",
-      );
-    },
-  );
+    const pptxHelp = await runCli(["pptx", "--help"]);
+    expect(pptxHelp.stdout).toContain("pptx inspect-template");
+    expect(pptxHelp.stdout).toContain("pptx populate");
+
+    const pptxPopulateHelp = await runCli(["pptx", "populate", "--help"]);
+    expect(pptxPopulateHelp.stdout).toContain("--template <path>");
+    expect(pptxPopulateHelp.stdout).toContain("--data <path>");
+    expect(pptxPopulateHelp.stdout).toContain("{{field_name}}");
+    expect(pptxPopulateHelp.stdout).toContain(
+      "Source files are never changed.",
+    );
+  });
+
+  it("wraps --json success and failure in a single-line envelope", async () => {
+    const directory = await createTemporaryDirectory();
+    const sourcePath = path.join(directory, "inputs", "source.pdf");
+    const pagesDirectory = path.join(directory, "outputs", "pages");
+    const source = await PDFDocument.create();
+    source.addPage([300, 400]);
+    source.addPage([400, 500]);
+    await writeFile(sourcePath, await source.save());
+
+    const success = await runCli([
+      "--json",
+      "pdf",
+      "split",
+      sourcePath,
+      "--output",
+      pagesDirectory,
+    ]);
+    // Machine-readable mode must not leak any of the human explanation.
+    expect(success.stdout).not.toContain("SUCCESS: ConsultChimps");
+    const result = parseJsonSuccess(success.stdout);
+    expect(result).toMatchObject({
+      metrics: { inputFiles: 1, outputFiles: 2, pages: 2 },
+      operation: "pdf.split",
+      warnings: [],
+    });
+    expect(
+      (result.artifacts as Array<{ path: string }>).map((artifact) =>
+        path.basename(artifact.path),
+      ),
+    ).toEqual(["source-page-001.pdf", "source-page-002.pdf"]);
+
+    // Re-running collides with the outputs just written, which is a stable,
+    // published failure rather than an unexpected crash.
+    const failure = await runCli(
+      ["--json", "pdf", "split", sourcePath, "--output", pagesDirectory],
+      1,
+    );
+    expect(failure.stdout).not.toContain("ERROR: ConsultChimps");
+    const error = parseJsonError(failure.stdout);
+    expect(error.code).toBe("FILES_OUTPUT_EXISTS");
+    expect(typeof error.message).toBe("string");
+    expect(error.message.length).toBeGreaterThan(0);
+  });
+
+  it("reports usage errors through the --json envelope", async () => {
+    // An unknown option fails inside Commander before any command action runs.
+    const unknownOption = await runCli(["--json", "--bogus"], 1);
+    const optionError = parseJsonError(unknownOption.stdout);
+    expect(optionError.code).toBe("CLI_USAGE");
+    expect(optionError.message).toContain("--bogus");
+
+    // A missing required option fails on the subcommand rather than the root
+    // program, which only produces an envelope if the subcommand inherited the
+    // exit override.
+    const missingOption = await runCli(
+      ["--json", "sheets", "split", "clients.xlsx"],
+      1,
+    );
+    const missingError = parseJsonError(missingOption.stdout);
+    expect(missingError.code).toBe("CLI_USAGE");
+    expect(missingError.message).toContain("--column");
+
+    // Without --json, Commander keeps reporting usage errors as prose on
+    // stderr with nothing on stdout.
+    const humanError = await runCli(["sheets", "split", "clients.xlsx"], 1);
+    expect(humanError.stdout).toBe("");
+    expect(humanError.stderr).toContain(
+      "required option '-c, --column <name>' not specified",
+    );
+  });
 
   it("inspects and populates a PowerPoint template through the built command", async () => {
     const directory = await createTemporaryDirectory();
@@ -233,7 +344,7 @@ describe("consultchimps CLI", () => {
       "inspect-template",
       template,
     ]);
-    expect(JSON.parse(inspection.stdout)).toMatchObject({
+    expect(parseJsonSuccess(inspection.stdout)).toMatchObject({
       placeholderOccurrences: 2,
       placeholders: [
         { name: "client_name", occurrences: 1 },
@@ -253,7 +364,7 @@ describe("consultchimps CLI", () => {
       "--output",
       output,
     ]);
-    expect(JSON.parse(populated.stdout)).toMatchObject({
+    expect(parseJsonSuccess(populated.stdout)).toMatchObject({
       metrics: {
         generatedSlides: 2,
         replacements: 4,
@@ -362,7 +473,7 @@ describe("consultchimps CLI", () => {
       "--output",
       output,
     ]);
-    expect(JSON.parse(command.stdout).metrics).toEqual({
+    expect(parseJsonSuccess(command.stdout).metrics).toEqual({
       inputFiles: 2,
       inputTables: 3,
       outputColumns: 7,
@@ -439,7 +550,7 @@ describe("consultchimps CLI", () => {
       output,
     ]);
 
-    expect(JSON.parse(command.stdout).metrics).toEqual({
+    expect(parseJsonSuccess(command.stdout).metrics).toEqual({
       hiddenSheets: 1,
       inputFiles: 2,
       outputSheets: 3,
@@ -509,7 +620,7 @@ describe("consultchimps CLI", () => {
       "--prefix",
       "client-region",
     ]);
-    expect(JSON.parse(command.stdout).metrics).toEqual({
+    expect(parseJsonSuccess(command.stdout).metrics).toEqual({
       groups: 3,
       inputFiles: 1,
       inputRows: 4,
@@ -590,7 +701,7 @@ describe("consultchimps CLI", () => {
       output,
     ]);
 
-    expect(JSON.parse(command.stdout).metrics).toEqual({
+    expect(parseJsonSuccess(command.stdout).metrics).toEqual({
       groups: 2,
       inputFiles: 1,
       inputRows: 3,
@@ -637,7 +748,7 @@ describe("consultchimps CLI", () => {
       output,
     ]);
 
-    expect(JSON.parse(command.stdout).metrics).toMatchObject({
+    expect(parseJsonSuccess(command.stdout).metrics).toMatchObject({
       groups: 2,
       outputFiles: 2,
       outputRows: 3,
@@ -697,7 +808,7 @@ describe("consultchimps CLI", () => {
       output,
     ]);
 
-    expect(JSON.parse(command.stdout).metrics).toMatchObject({
+    expect(parseJsonSuccess(command.stdout).metrics).toMatchObject({
       groups: 2,
       inputRows: 2,
       outputFiles: 2,
@@ -730,7 +841,7 @@ describe("consultchimps CLI", () => {
       "--output",
       pagesDirectory,
     ]);
-    expect(JSON.parse(split.stdout).metrics).toEqual({
+    expect(parseJsonSuccess(split.stdout).metrics).toEqual({
       inputFiles: 1,
       outputFiles: 3,
       pages: 3,
@@ -758,7 +869,7 @@ describe("consultchimps CLI", () => {
       "--output",
       mergedPath,
     ]);
-    expect(JSON.parse(merge.stdout).metrics).toEqual({
+    expect(parseJsonSuccess(merge.stdout).metrics).toEqual({
       inputFiles: 3,
       outputFiles: 1,
       pages: 3,
