@@ -99,12 +99,24 @@ function positiveInteger(value: string): number {
   return parsed;
 }
 
+// The --json envelope is a stable machine-readable contract: exactly one JSON
+// object on a single line, so a consumer can parse stdout without first
+// separating prose from data. "ok" discriminates the two shapes, which lets
+// automation branch on success or failure without inspecting the exit code.
+function jsonEnvelope(payload: unknown): string {
+  return `${JSON.stringify(payload)}\n`;
+}
+
+function printJsonResult(result: unknown): void {
+  process.stdout.write(jsonEnvelope({ ok: true, result }));
+}
+
 function printResult<TMetric extends string>(
   result: OperationResult<TMetric>,
   json: boolean,
 ): void {
   if (json) {
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    printJsonResult(result);
     return;
   }
 
@@ -126,7 +138,7 @@ program
   .version(packageMetadata.version)
   .option(
     "--json",
-    "print structured JSON for automation instead of the detailed explanation",
+    "print one line of machine-readable JSON for automation instead of the detailed explanation",
   )
   .addHelpText(
     "after",
@@ -138,6 +150,15 @@ Quick start:
   consultchimps pptx populate --template profile.pptx --data clients.xlsx --sheet Clients --template-slide 1 -o profiles.pptx
   consultchimps pdf split report.pdf -o pages
   consultchimps pdf merge "inputs/*.pdf" -o combined.pdf
+
+Automation with --json:
+  Place --json before the command to replace the explanation with one line of
+  JSON on stdout. Success prints {"ok":true,"result":...} and failure prints
+  {"ok":false,"error":{"message":...,"code":...}} while keeping the nonzero
+  exit code. Nothing else is written to stdout, so the output can be piped
+  straight into a JSON parser.
+
+  consultchimps --json pdf split report.pdf -o pages
 
 Run consultchimps help <command> or append --help to a command for all options.
 `,
@@ -444,7 +465,7 @@ supported.
       templateSlide: options.templateSlide,
     });
     if (program.opts<GlobalOptions>().json === true) {
-      process.stdout.write(`${JSON.stringify(inspection, null, 2)}\n`);
+      printJsonResult(inspection);
       return;
     }
 
@@ -632,26 +653,29 @@ What happens:
 try {
   await program.parseAsync(process.argv);
 } catch (error) {
-  if (isConsultChimpsError(error)) {
-    const json = program.opts<GlobalOptions>().json === true;
-    const details = json
-      ? `\n${JSON.stringify({ code: error.code, details: error.details }, null, 2)}`
-      : "";
-    process.stderr.write(
-      json
-        ? `consultchimps: ${error.message}${details}\n`
-        : formatHumanError(error.message, error.code, {
-            vocabulary: CLI_VOCABULARY,
-          }),
-    );
+  const json = program.opts<GlobalOptions>().json === true;
+  const expected = isConsultChimpsError(error);
+  const message = expected
+    ? error.message
+    : error instanceof Error
+      ? error.message
+      : String(error);
+  // Only expected operational failures carry a published, stable error code.
+  // Unexpected errors report null rather than inventing a code an automation
+  // could come to depend on.
+  const code = expected ? error.code : null;
+
+  if (json) {
+    const envelope = jsonEnvelope({ ok: false, error: { message, code } });
+    // stdout stays parseable on its own; stderr repeats the same object so the
+    // CLI still reports failures on stderr as every other command does.
+    process.stdout.write(envelope);
+    process.stderr.write(envelope);
   } else {
-    const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(
-      program.opts<GlobalOptions>().json
-        ? `consultchimps: ${message}\n`
-        : formatHumanError(message, undefined, {
-            vocabulary: CLI_VOCABULARY,
-          }),
+      formatHumanError(message, expected ? error.code : undefined, {
+        vocabulary: CLI_VOCABULARY,
+      }),
     );
   }
   process.exitCode = 1;

@@ -130,5 +130,9 @@ pnpm consultchimps --json pdf merge "inputs/**/*.pdf" \
   --output outputs/combined.pdf
 ```
 
-Successful operations return their artifacts, warnings, and metrics as JSON.
-Known ConsultChimps errors include a stable error code and structured details.
+The command prints exactly one JSON object on a single line of stdout.
+Successful operations return `{"ok":true,"result":...}`, where the result
+carries the artifacts, warnings, and metrics. Failures return
+`{"ok":false,"error":{"message":...,"code":...}}` and keep their nonzero exit
+code, where `code` is a stable ConsultChimps error reference. See the
+[CLI reference](./reference/cli) for the full envelope.

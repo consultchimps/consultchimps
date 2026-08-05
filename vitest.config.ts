@@ -2,8 +2,28 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    include: ["packages/**/*.test.ts"],
-    testTimeout: 15_000,
+    projects: [
+      {
+        test: {
+          name: "packages",
+          include: ["packages/**/*.test.ts"],
+          exclude: ["packages/cli/test/**"],
+          testTimeout: 15_000,
+        },
+      },
+      {
+        // The CLI suite spawns the built binary as a subprocess for every
+        // assertion, which is far slower than an in-process test and slower
+        // still on Windows. It gets its own generous budget so a slow machine
+        // reports real failures instead of timeouts.
+        test: {
+          name: "cli",
+          include: ["packages/cli/test/**/*.test.ts"],
+          testTimeout: 120_000,
+          hookTimeout: 120_000,
+        },
+      },
+    ],
     coverage: {
       provider: "v8",
       include: ["packages/*/src/**"],
