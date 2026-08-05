@@ -15,6 +15,7 @@
     "@consultchimps/core": "workspace:*",
     "@consultchimps/messages": "workspace:*",
     "@consultchimps/pdf": "workspace:*",
+    "@consultchimps/xlsx": "workspace:*",
     "cnfast": "^0.1.0",
     "fumadocs-core": "16.12.1",
     "fumadocs-mdx": "15.2.2",

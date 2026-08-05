@@ -43,6 +43,7 @@ export const TOOLS: readonly ConsultTool[] = [
     description:
       "Copy every source worksheet into one workbook while retaining separate tabs and source visibility.",
     docHref: "/docs/tools/spreadsheets#merge-complete-workbooks",
+    browserHref: "/tools/excel-merge",
     icon: FileStack,
   },
   {
@@ -52,6 +53,7 @@ export const TOOLS: readonly ConsultTool[] = [
     description:
       "Create one focused Excel workbook per distinct value while keeping source workbooks unchanged.",
     docHref: "/docs/tools/spreadsheet-split",
+    browserHref: "/tools/excel-split",
     icon: SplitSquareVertical,
   },
   {

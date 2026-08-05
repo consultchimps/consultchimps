@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { createPdfUpload, expectPdfDownload, resultsPanel } from "./fixtures";
+import {
+  createPdfUpload,
+  expectPdfDownload,
+  fileInput,
+  resultArtifacts,
+  resultsPanel,
+} from "./fixtures";
 
 test.describe("/tools/pdf-merge", () => {
   test("merges two single-page PDFs into one document", async ({ page }) => {
@@ -12,32 +18,28 @@ test.describe("/tools/pdf-merge", () => {
       createPdfUpload("cover.pdf", 1),
       createPdfUpload("appendix.pdf", 1),
     ]);
-    await page.getByLabel("Source PDFs").setInputFiles(inputs);
+    await fileInput(page).setInputFiles(inputs);
 
     // Added files keep the order they were picked in; that order is what the
     // merge copies.
-    const sources = page
-      .locator("section")
-      .filter({ has: page.getByRole("heading", { name: "1. Add PDFs" }) })
-      .getByRole("listitem");
+    const sources = page.getByTestId("source-item");
     await expect(sources).toHaveCount(2);
     await expect(sources.nth(0)).toContainText("cover.pdf");
     await expect(sources.nth(1)).toContainText("appendix.pdf");
 
-    await page.getByRole("button", { name: "Run merge" }).click();
+    await page.getByTestId("run-button").click();
 
-    const results = resultsPanel(page);
-    await expect(results).toBeVisible();
-    const outputs = results.getByRole("listitem");
+    await expect(resultsPanel(page)).toBeVisible();
+    const outputs = resultArtifacts(page);
     await expect(outputs).toHaveCount(1);
     await expect(outputs.first()).toContainText("combined.pdf");
-    await expect(results).toContainText(
+    await expect(page.getByTestId("result-message")).toContainText(
       "SUCCESS: ConsultChimps finished your task.",
     );
 
     await expectPdfDownload(
       page,
-      () => outputs.first().getByRole("button", { name: "Download" }).click(),
+      () => outputs.first().getByTestId("artifact-download").click(),
       "combined.pdf",
     );
   });

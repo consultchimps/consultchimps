@@ -128,6 +128,14 @@ rows while resizing its table and AutoFilter range. `--no-preserve-workbook`
 creates compact data-only outputs. Named-range and selected-worksheet modes are
 data-only.
 
+<Callout title="What the online tool does">
+  The [in-browser splitter](/tools/excel-split) runs this single-source split,
+  not the all-worksheet default described above: it reads one worksheet, Excel
+  Table, or named range and writes compact workbooks, naming an Excel Table to
+  preserve the complete workbook. The command line and the browser tool
+  therefore differ by design; the same options are available in both.
+</Callout>
+
 ## Preservation and known limitations
 
 The all-worksheet mode retains the OOXML package and changes only affected
