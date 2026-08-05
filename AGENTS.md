@@ -58,7 +58,9 @@ Pinned major versions reduce differences between local development, CI, and
 published packages. Read package.json and the lockfile before changing them.
 -->
 
-- Use Node.js 24.x.
+- Develop on Node.js 24.x; published packages support Node 22 and newer
+  (`engines: ">=22"`, proven by a Node 22 CI leg). Do not use APIs newer than
+  Node 22 in package source.
 - Use pnpm 11.x through the repository's pinned `packageManager` declaration.
 - TypeScript runs split-toolchain: each package's own `typescript` 7
   devDependency powers `tsc --noEmit` typechecks (native compiler), while the
