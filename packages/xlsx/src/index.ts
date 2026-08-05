@@ -28,8 +28,6 @@ import { type Table, unionTables } from "@consultchimps/tabular";
 import type * as XLSX from "xlsx";
 
 import { XLSX_ERRORS } from "./errors.js";
-import { preserveWorkbookWithFilteredExcelTable } from "./preserve-table-split.js";
-import { convertWorkbookToValues } from "./values-only.js";
 import {
   type FullWorkbookSplitMetric,
   type FullWorkbookSplitSummary,

@@ -19,9 +19,7 @@ export function replacePackagePart(
   });
 }
 
-export async function generatePackageBytes(
-  archive: JSZip,
-): Promise<Buffer> {
+export async function generatePackageBytes(archive: JSZip): Promise<Buffer> {
   return archive.generateAsync({
     compression: "DEFLATE",
     type: "nodebuffer",
