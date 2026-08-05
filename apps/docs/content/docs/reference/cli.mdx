@@ -62,6 +62,22 @@ envelope, and the command still exits with a nonzero status:
 errors, which have no stable code to depend on. The same object is repeated on
 stderr so failures remain visible there, but stdout alone is always valid JSON.
 
+Usage errors — an unknown option, an unknown command, or a missing required
+option — are reported the same way under `--json`, with the code `CLI_USAGE`:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "message": "error: required option '-c, --column <name>' not specified",
+    "code": "CLI_USAGE"
+  }
+}
+```
+
+`--help` and `--version` are unaffected by `--json`. They print their usual text
+and exit 0.
+
 Branch on `ok` rather than parsing the message text:
 
 ```bash

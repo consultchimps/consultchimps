@@ -192,6 +192,12 @@ describe("consultchimps CLI", () => {
       "consultchimps --json pdf split report.pdf -o pages",
     );
 
+    // --help and --version terminate through Commander's exit override, so they
+    // must still succeed rather than be treated as usage failures.
+    const version = await runCli(["--version"]);
+    expect(version.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+    expect(version.stderr).toBe("");
+
     const sheetsHelp = await runCli(["sheets", "--help"]);
     expect(sheetsHelp.stdout).toContain(
       "consultchimps sheets split clients.xlsx -c Region -o by-region",
@@ -286,6 +292,33 @@ describe("consultchimps CLI", () => {
     expect(error.code).toBe("FILES_OUTPUT_EXISTS");
     expect(typeof error.message).toBe("string");
     expect(error.message.length).toBeGreaterThan(0);
+  });
+
+  it("reports usage errors through the --json envelope", async () => {
+    // An unknown option fails inside Commander before any command action runs.
+    const unknownOption = await runCli(["--json", "--bogus"], 1);
+    const optionError = parseJsonError(unknownOption.stdout);
+    expect(optionError.code).toBe("CLI_USAGE");
+    expect(optionError.message).toContain("--bogus");
+
+    // A missing required option fails on the subcommand rather than the root
+    // program, which only produces an envelope if the subcommand inherited the
+    // exit override.
+    const missingOption = await runCli(
+      ["--json", "sheets", "split", "clients.xlsx"],
+      1,
+    );
+    const missingError = parseJsonError(missingOption.stdout);
+    expect(missingError.code).toBe("CLI_USAGE");
+    expect(missingError.message).toContain("--column");
+
+    // Without --json, Commander keeps reporting usage errors as prose on
+    // stderr with nothing on stdout.
+    const humanError = await runCli(["sheets", "split", "clients.xlsx"], 1);
+    expect(humanError.stdout).toBe("");
+    expect(humanError.stderr).toContain(
+      "required option '-c, --column <name>' not specified",
+    );
   });
 
   it("inspects and populates a PowerPoint template through the built command", async () => {

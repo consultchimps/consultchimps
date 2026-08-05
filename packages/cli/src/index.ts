@@ -23,7 +23,7 @@ import {
   formatHumanError,
   formatHumanResult,
 } from "@consultchimps/messages";
-import { Command } from "commander";
+import { Command, CommanderError } from "commander";
 
 interface GlobalOptions {
   json?: boolean;
@@ -111,6 +111,14 @@ function printJsonResult(result: unknown): void {
   process.stdout.write(jsonEnvelope({ ok: true, result }));
 }
 
+function printJsonFailure(message: string, code: string | null): void {
+  const envelope = jsonEnvelope({ ok: false, error: { message, code } });
+  // stdout stays parseable on its own; stderr repeats the same object so the
+  // CLI still reports failures on stderr as every other command does.
+  process.stdout.write(envelope);
+  process.stderr.write(envelope);
+}
+
 function printResult<TMetric extends string>(
   result: OperationResult<TMetric>,
   json: boolean,
@@ -125,7 +133,34 @@ function printResult<TMetric extends string>(
   );
 }
 
+// Usage errors such as an unknown option carry no library error code, so they
+// report one stable code of their own rather than null, which is reserved for
+// genuinely unexpected failures.
+const USAGE_ERROR_CODE = "CLI_USAGE";
+
+// --json has to be read from argv rather than program.opts() because a usage
+// error is thrown before Commander finishes populating the parsed options. A
+// literal "--json" supplied as an option *value* would false-positive here,
+// which is an acceptable trade for making parse failures machine-readable.
+const jsonRequested = process.argv.includes("--json");
+
 const program = new Command();
+
+// Commander exits the process itself on a usage error, which would bypass the
+// --json envelope and leave stdout empty. exitOverride makes it throw a
+// CommanderError so every failure reaches the single handler at the end of this
+// file. This and configureOutput must both be set before any .command() call,
+// because subcommands copy the exit callback and output configuration from
+// their parent at creation time.
+program.exitOverride();
+
+if (jsonRequested) {
+  // Commander writes its usage prose to stderr before throwing. Silence it so
+  // JSON mode emits nothing but the envelope. Help and version text goes
+  // through writeOut and is deliberately left alone.
+  program.configureOutput({ writeErr: () => {} });
+}
+
 const packageMetadata = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 ) as PackageMetadata;
@@ -653,30 +688,40 @@ What happens:
 try {
   await program.parseAsync(process.argv);
 } catch (error) {
-  const json = program.opts<GlobalOptions>().json === true;
-  const expected = isConsultChimpsError(error);
-  const message = expected
-    ? error.message
-    : error instanceof Error
-      ? error.message
-      : String(error);
-  // Only expected operational failures carry a published, stable error code.
-  // Unexpected errors report null rather than inventing a code an automation
-  // could come to depend on.
-  const code = expected ? error.code : null;
-
-  if (json) {
-    const envelope = jsonEnvelope({ ok: false, error: { message, code } });
-    // stdout stays parseable on its own; stderr repeats the same object so the
-    // CLI still reports failures on stderr as every other command does.
-    process.stdout.write(envelope);
-    process.stderr.write(envelope);
+  if (error instanceof CommanderError) {
+    // With exitOverride active Commander reports --help and --version as errors
+    // too. Those are successful terminations whose output Commander has already
+    // written, so there is nothing to add and nothing to fail.
+    if (error.exitCode !== 0) {
+      if (jsonRequested) {
+        printJsonFailure(error.message, USAGE_ERROR_CODE);
+      }
+      // Without --json Commander has already written its own usage prose, so
+      // only its exit status needs carrying over.
+      process.exitCode = error.exitCode;
+    }
   } else {
-    process.stderr.write(
-      formatHumanError(message, expected ? error.code : undefined, {
-        vocabulary: CLI_VOCABULARY,
-      }),
-    );
+    const json = program.opts<GlobalOptions>().json === true;
+    const expected = isConsultChimpsError(error);
+    const message = expected
+      ? error.message
+      : error instanceof Error
+        ? error.message
+        : String(error);
+    // Only expected operational failures carry a published, stable error code.
+    // Unexpected errors report null rather than inventing a code an automation
+    // could come to depend on.
+    const code = expected ? error.code : null;
+
+    if (json) {
+      printJsonFailure(message, code);
+    } else {
+      process.stderr.write(
+        formatHumanError(message, expected ? error.code : undefined, {
+          vocabulary: CLI_VOCABULARY,
+        }),
+      );
+    }
+    process.exitCode = 1;
   }
-  process.exitCode = 1;
 }
