@@ -217,7 +217,8 @@ describe("splitWorkbookByColumn", () => {
     expect(northWorksheetXml).toContain(
       '<x:c r="D7" s="6" t="n"><x:v>60</x:v></x:c>',
     );
-    expect(northWorksheetXml).toContain('<x:c r="D8" s="6" />');
+    // Unmatched rows are physically removed; no empty row shell remains.
+    expect(northWorksheetXml).not.toMatch(/<x:row[^>]*\br="8"/u);
 
     const northTableXml = await northArchive
       .file("xl/tables/table1.xml")!
