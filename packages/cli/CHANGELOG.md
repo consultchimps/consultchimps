@@ -1,5 +1,13 @@
 # consultchimps
 
+## 0.8.1
+
+### Patch Changes
+
+- Updated dependencies [ea3d302]
+  - @consultchimps/pptx@0.5.0
+  - @consultchimps/xlsx@0.9.0
+
 ## 0.8.0
 
 ### Minor Changes
