@@ -6,10 +6,10 @@ icon: Rocket
 
 ## Try without installing
 
-The PDF and Excel tools also run [directly in your browser](/tools) — no
-Node.js, no installation, and your files never leave the browser tab. The
-sections below cover the command line and libraries for repeatable, scripted
-work.
+PDF split and merge, Excel split, and Excel workbook merge also run
+[directly in your browser](/tools) — no Node.js, no installation, and your files
+never leave the browser tab. The other operations, and all repeatable scripted
+work, run through the command line and libraries covered below.
 
 ## Requirements
 
@@ -99,6 +99,11 @@ Every shipped operation has a complete guide:
 - [Populate a PowerPoint template](./tools/powerpoint-populate)
 - [Split a PDF](./tools/pdf-split)
 - [Merge PDFs](./tools/pdf-merge)
+
+The examples below use the globally installed `consultchimps` executable. Inside
+a workspace checkout or a repository-local installation, run them through the
+package manager instead: `pnpm consultchimps ...` in the workspace, or
+`npx consultchimps ...` where the CLI is a development dependency.
 
 For example, split a PDF into individual pages:
 
