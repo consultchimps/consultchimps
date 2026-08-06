@@ -7,6 +7,7 @@ icon: BookOpen
 import {
   Blocks,
   Files,
+  Globe,
   Presentation,
   Scissors,
   SplitSquareVertical,
@@ -14,8 +15,10 @@ import {
 } from "lucide-react";
 
 ConsultChimps turns recurring document and data chores into deterministic tools.
-Use the command-line interface when you need an answer now, or import the
-focused TypeScript packages when you are building a repeatable workflow.
+Use the [online tools](/tools) when a file is already in front of you, the
+command-line interface when you need an answer now, or the focused TypeScript
+packages when you are building a repeatable workflow. All three run the same
+operations and return the same results.
 
 <Callout title="Built for client work">
   Inputs are immutable by default, outputs include provenance, and the core
@@ -25,6 +28,12 @@ focused TypeScript packages when you are building a repeatable workflow.
 ## Start with a tool
 
 <Cards>
+  <Card
+    title="Use the tools online"
+    description="Split and merge PDFs and Excel workbooks in your browser. Files never leave the tab."
+    href="/tools"
+    icon={<Globe />}
+  />
   <Card
     title="Consolidate spreadsheets"
     description="Combine visible, non-empty worksheets into one auditable Excel table."

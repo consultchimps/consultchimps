@@ -4,6 +4,13 @@ description: Install the CLI or individual libraries with npm.
 icon: Rocket
 ---
 
+## Try without installing
+
+The PDF and Excel tools also run [directly in your browser](/tools) — no
+Node.js, no installation, and your files never leave the browser tab. The
+sections below cover the command line and libraries for repeatable, scripted
+work.
+
 ## Requirements
 
 - Node.js 24
@@ -48,8 +55,9 @@ commit the resulting lockfile change:
 npm install --save-dev consultchimps@latest
 ```
 
-Release notes for every version are published on the
-[GitHub releases page](https://github.com/consultchimps/consultchimps/releases).
+What shipped in each version is listed on the site's
+[release history](/releases), which is regenerated from the package changelogs
+on every deploy.
 
 ## Install a library
 
@@ -95,7 +103,7 @@ Every shipped operation has a complete guide:
 For example, split a PDF into individual pages:
 
 ```bash
-pnpm consultchimps pdf split report.pdf --output outputs/report-pages
+consultchimps pdf split report.pdf --output outputs/report-pages
 ```
 
 The CLI refuses to replace existing output files unless you explicitly pass
@@ -104,7 +112,7 @@ The CLI refuses to replace existing output files unless you explicitly pass
 To create a presentation from a designed slide and Excel records:
 
 ```bash
-pnpm consultchimps pptx populate \
+consultchimps pptx populate \
   --template profile-template.pptx \
   --data profiles.xlsx \
   --sheet Profiles \
@@ -126,7 +134,7 @@ Add the global `--json` option before a command when another process will
 consume the result:
 
 ```bash
-pnpm consultchimps --json pdf merge "inputs/**/*.pdf" \
+consultchimps --json pdf merge "inputs/**/*.pdf" \
   --output outputs/combined.pdf
 ```
 

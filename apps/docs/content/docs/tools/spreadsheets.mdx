@@ -11,14 +11,14 @@ one formatted workbook.
 ## Basic usage
 
 ```bash
-pnpm consultchimps sheets consolidate "inputs/**/*.xlsx" \
+consultchimps sheets consolidate "inputs/**/*.xlsx" \
   --output outputs/consolidated.xlsx
 ```
 
 You can mix files, folders, and glob patterns:
 
 ```bash
-pnpm consultchimps sheets consolidate \
+consultchimps sheets consolidate \
   January.xlsx \
   regional-returns/ \
   "late-submissions/*.xlsx" \
@@ -56,7 +56,7 @@ By default, every output row includes:
 Remove these fields only when the output must match a fixed schema:
 
 ```bash
-pnpm consultchimps sheets consolidate inputs/ \
+consultchimps sheets consolidate inputs/ \
   --output outputs/clean.xlsx \
   --no-source
 ```
@@ -66,7 +66,7 @@ pnpm consultchimps sheets consolidate inputs/ \
 To preserve each source worksheet as its own tab, use:
 
 ```bash
-pnpm consultchimps sheets merge "inputs/**/*.xlsx" --output outputs/all-sheets.xlsx
+consultchimps sheets merge "inputs/**/*.xlsx" --output outputs/all-sheets.xlsx
 ```
 
 This copies all worksheets with their separate tabs and formatting/layout
@@ -84,7 +84,7 @@ command line and library only for now.
 Add `--values` when the merged workbook must contain no formulas:
 
 ```bash
-pnpm consultchimps sheets merge "inputs/**/*.xlsx" \
+consultchimps sheets merge "inputs/**/*.xlsx" \
   --values \
   --output outputs/all-sheets-values.xlsx
 ```
@@ -116,7 +116,7 @@ console.log(result.metrics.outputSheets);
 Visible, non-empty worksheets are included by default.
 
 ```bash
-pnpm consultchimps sheets consolidate inputs/ \
+consultchimps sheets consolidate inputs/ \
   --sheet Revenue Pipeline \
   --output outputs/commercial.xlsx
 ```
@@ -130,7 +130,7 @@ The first row containing a value is treated as the header. Override that
 behavior for workbooks with title blocks:
 
 ```bash
-pnpm consultchimps sheets consolidate inputs/ \
+consultchimps sheets consolidate inputs/ \
   --header-row 4 \
   --output outputs/consolidated.xlsx
 ```
@@ -140,7 +140,7 @@ pnpm consultchimps sheets consolidate inputs/ \
 ## Output controls
 
 ```bash
-pnpm consultchimps sheets consolidate inputs/ \
+consultchimps sheets consolidate inputs/ \
   --output outputs/consolidated.xlsx \
   --output-sheet "Client master" \
   --force
