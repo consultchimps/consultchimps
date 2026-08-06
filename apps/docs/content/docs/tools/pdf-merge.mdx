@@ -12,7 +12,7 @@ icon: Files
 ## Basic usage
 
 ```bash
-pnpm consultchimps pdf merge "inputs/**/*.pdf" \
+consultchimps pdf merge "inputs/**/*.pdf" \
   --output outputs/combined.pdf
 ```
 
@@ -24,7 +24,7 @@ Every page from the first resolved PDF is copied before the pages from the next.
 For a hand-curated pack, pass files in the desired naming order:
 
 ```bash
-pnpm consultchimps pdf merge \
+consultchimps pdf merge \
   "pack/01-cover.pdf" \
   "pack/02-summary.pdf" \
   "pack/03-appendix.pdf" \
@@ -44,7 +44,7 @@ pnpm consultchimps pdf merge \
 - A missing or unreadable source produces a structured error.
 
 ```bash
-pnpm consultchimps pdf merge pack/ \
+consultchimps pdf merge pack/ \
   --output outputs/client-pack.pdf \
   --force
 ```

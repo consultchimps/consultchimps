@@ -12,7 +12,7 @@ icon: Scissors
 ## Basic usage
 
 ```bash
-pnpm consultchimps pdf split report.pdf
+consultchimps pdf split report.pdf
 ```
 
 Without an output option, pages are written beside the input:
@@ -30,7 +30,7 @@ order stay aligned.
 ## Choose the destination and prefix
 
 ```bash
-pnpm consultchimps pdf split report.pdf \
+consultchimps pdf split report.pdf \
   --output outputs/exhibits \
   --prefix exhibit
 ```
@@ -45,7 +45,7 @@ target already exists, it stops without partially replacing the set.
 Pass `--force` only when replacement is intentional:
 
 ```bash
-pnpm consultchimps pdf split report.pdf \
+consultchimps pdf split report.pdf \
   --output outputs/exhibits \
   --force
 ```

@@ -4,6 +4,13 @@ description: Install the CLI or individual libraries with npm.
 icon: Rocket
 ---
 
+## Try without installing
+
+PDF split and merge, Excel split, and Excel workbook merge also run
+[directly in your browser](/tools) — no Node.js, no installation, and your files
+never leave the browser tab. The other operations, and all repeatable scripted
+work, run through the command line and libraries covered below.
+
 ## Requirements
 
 - Node.js 24
@@ -48,8 +55,9 @@ commit the resulting lockfile change:
 npm install --save-dev consultchimps@latest
 ```
 
-Release notes for every version are published on the
-[GitHub releases page](https://github.com/consultchimps/consultchimps/releases).
+What shipped in each version is listed on the site's
+[release history](/releases), which is regenerated from the package changelogs
+on every deploy.
 
 ## Install a library
 
@@ -92,10 +100,15 @@ Every shipped operation has a complete guide:
 - [Split a PDF](./tools/pdf-split)
 - [Merge PDFs](./tools/pdf-merge)
 
+The examples below use the globally installed `consultchimps` executable. Inside
+a workspace checkout or a repository-local installation, run them through the
+package manager instead: `pnpm consultchimps ...` in the workspace, or
+`npx consultchimps ...` where the CLI is a development dependency.
+
 For example, split a PDF into individual pages:
 
 ```bash
-pnpm consultchimps pdf split report.pdf --output outputs/report-pages
+consultchimps pdf split report.pdf --output outputs/report-pages
 ```
 
 The CLI refuses to replace existing output files unless you explicitly pass
@@ -104,7 +117,7 @@ The CLI refuses to replace existing output files unless you explicitly pass
 To create a presentation from a designed slide and Excel records:
 
 ```bash
-pnpm consultchimps pptx populate \
+consultchimps pptx populate \
   --template profile-template.pptx \
   --data profiles.xlsx \
   --sheet Profiles \
@@ -126,7 +139,7 @@ Add the global `--json` option before a command when another process will
 consume the result:
 
 ```bash
-pnpm consultchimps --json pdf merge "inputs/**/*.pdf" \
+consultchimps --json pdf merge "inputs/**/*.pdf" \
   --output outputs/combined.pdf
 ```
 
