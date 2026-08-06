@@ -71,7 +71,7 @@ describe("byte-level PDF operations", () => {
     expect(reservedMerge.outputs[0]?.name).toBe("_aux.pdf");
 
     const control = await splitPdfBytes({
-      input: { name: "client.pdf", bytes },
+      input: { name: "cli\u0007ent.pdf", bytes },
     });
     expect(control.outputs[0]?.name).toBe("client-page-001.pdf");
 
