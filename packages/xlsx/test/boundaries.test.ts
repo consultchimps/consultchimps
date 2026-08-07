@@ -21,19 +21,18 @@ const SOURCE_DIRECTORY = fileURLToPath(new URL("../src/", import.meta.url));
 /**
  * Legacy modules that still own ZIP concerns directly.
  *
- * L0 has since absorbed most of them: `package-zip.ts` and `package-paths.ts`
- * were folded into `src/package/`, and `excel-tables.ts`, `values-only.ts` and
- * `preserve-table-split.ts` now reach the archive through `WorkbookPackage`.
- * Only the all-worksheet split still opens one itself; it converges when the
- * split is re-expressed on the layers.
+ * The list is empty: L0 absorbed every one of them. `package-zip.ts` and
+ * `package-paths.ts` were folded into `src/package/`; `excel-tables.ts`,
+ * `values-only.ts` and `preserve-table-split.ts` reach the archive through
+ * `WorkbookPackage`; Phase 1 re-expressed the all-worksheet split on the
+ * layers and the Tier-1 utilities on `WorkbookPackage`, which retired the last
+ * two entries and the `src/tier1/` exemption below with them.
  *
  * The test asserts this list matches the offending files EXACTLY, in both
  * directions, so a new module cannot quietly join it and a migrated module
- * cannot be left on it.
+ * cannot be left on it. `src/package/` is now the only owner of JSZip.
  */
-const JSZIP_ALLOWLIST: readonly string[] = [
-  "workbook-column-split.ts", // migrates in Phase 1 - split re-expressed on L0/L1/L2
-];
+const JSZIP_ALLOWLIST: readonly string[] = [];
 
 interface SourceFile {
   /** Path relative to src/, always with forward slashes. */
@@ -159,13 +158,7 @@ describe("boundaries: src/package/ is the only owner of ZIP concerns", () => {
     const offenders = sourceFiles
       .filter(
         (file) =>
-          importsPackage(file, "jszip") &&
-          !inDirectory(file, "package") &&
-          // Tier-1 utilities predate L0 by design so they could ship the
-          // confidentiality fixes without waiting for the migration; they
-          // re-express onto WorkbookPackage in Phase 2 and this exemption
-          // goes with them.
-          !inDirectory(file, "tier1"),
+          importsPackage(file, "jszip") && !inDirectory(file, "package"),
       )
       .map((file) => file.relativePath)
       .sort();

@@ -11,11 +11,11 @@
  * The removal follows the technique `values-only.ts` uses for the calculation
  * chain: drop the parts, drop the relationship entries that point at them, drop
  * their content-type overrides, and drop the one workbook-level element that
- * would otherwise dangle.
+ * would otherwise dangle. Package access goes through L0, so the deterministic
+ * write rules (fixed timestamps, no folder entries, source part order) apply to
+ * this pass exactly as they do to a model edit.
  */
-import JSZip from "jszip";
-
-import { generatePackageBytes, replacePackagePart } from "./legacy-io.js";
+import { WorkbookPackage } from "../package/index.js";
 
 const PIVOT_PART_PREFIXES = ["xl/pivottables/", "xl/pivotcache/"] as const;
 const PIVOT_TABLE_DEFINITION_PATTERN = /^xl\/pivotTables\/[^/]+\.xml$/iu;
@@ -29,9 +29,10 @@ const PIVOT_CACHES_PATTERN =
   /<(?:[A-Za-z_][\w.-]*:)?pivotCaches\b[^>]*(?:\/\s*>|>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?pivotCaches\s*>)/gu;
 const CONTENT_TYPES_PART = "[Content_Types].xml";
 const WORKBOOK_PART = "xl/workbook.xml";
+const RELATIONSHIPS_PART_PATTERN = /\.rels$/iu;
 
 export interface PivotStripResult {
-  bytes: Buffer;
+  bytes: Uint8Array;
   /** Pivot cache definitions removed, one per cache. */
   removedCaches: number;
   /** Pivot table definitions removed, one per pivot table. */
@@ -43,19 +44,18 @@ function isPivotPart(partPath: string): boolean {
   return PIVOT_PART_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 }
 
-async function replaceIfChanged(
-  archive: JSZip,
+function replaceIfChanged(
+  workbookPackage: WorkbookPackage,
   partPath: string,
   transform: (xml: string) => string,
-): Promise<void> {
-  const entry = archive.file(partPath);
-  if (!entry) {
+): void {
+  const xml = workbookPackage.readText(partPath);
+  if (xml === undefined) {
     return;
   }
-  const xml = await entry.async("text");
   const rewritten = transform(xml);
   if (rewritten !== xml) {
-    replacePackagePart(archive, partPath, rewritten);
+    workbookPackage.writeText(partPath, rewritten);
   }
 }
 
@@ -68,11 +68,11 @@ async function replaceIfChanged(
 export async function stripPivotParts(
   workbookBytes: Uint8Array,
 ): Promise<PivotStripResult> {
-  const archive = await JSZip.loadAsync(workbookBytes);
-  const pivotParts = Object.keys(archive.files).filter(isPivotPart);
+  const workbookPackage = await WorkbookPackage.load(workbookBytes);
+  const pivotParts = workbookPackage.partNames().filter(isPivotPart);
   if (pivotParts.length === 0) {
     return {
-      bytes: Buffer.from(workbookBytes),
+      bytes: workbookBytes,
       removedCaches: 0,
       removedPivotTables: 0,
     };
@@ -85,30 +85,29 @@ export async function stripPivotParts(
     PIVOT_CACHE_DEFINITION_PATTERN.test(partPath),
   ).length;
   for (const partPath of pivotParts) {
-    archive.remove(partPath);
+    workbookPackage.remove(partPath);
   }
 
   // Relationship entries live in the workbook rels and in the rels of whichever
   // worksheet hosted the pivot table, so every remaining rels part is scrubbed.
-  const relationshipParts = Object.keys(archive.files).filter((partPath) =>
-    partPath.toLowerCase().endsWith(".rels"),
-  );
-  for (const partPath of relationshipParts) {
-    await replaceIfChanged(archive, partPath, (xml) =>
+  for (const partPath of workbookPackage.partsMatching(
+    RELATIONSHIPS_PART_PATTERN,
+  )) {
+    replaceIfChanged(workbookPackage, partPath, (xml) =>
       xml.replace(PIVOT_RELATIONSHIP_PATTERN, ""),
     );
   }
-  await replaceIfChanged(archive, CONTENT_TYPES_PART, (xml) =>
+  replaceIfChanged(workbookPackage, CONTENT_TYPES_PART, (xml) =>
     xml.replace(PIVOT_CONTENT_TYPE_PATTERN, ""),
   );
   // The workbook part registers each cache by relationship id; leaving the
   // registry behind would point Excel at a relationship that no longer exists.
-  await replaceIfChanged(archive, WORKBOOK_PART, (xml) =>
+  replaceIfChanged(workbookPackage, WORKBOOK_PART, (xml) =>
     xml.replace(PIVOT_CACHES_PATTERN, ""),
   );
 
   return {
-    bytes: await generatePackageBytes(archive),
+    bytes: await workbookPackage.save(),
     removedCaches,
     removedPivotTables,
   };

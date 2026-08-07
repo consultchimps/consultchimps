@@ -12,11 +12,13 @@
  *
  * Conservative is correct here: an over-cleared cell is a visible blank the
  * caller is warned about, an under-cleared one is a wrong number nobody sees.
+ *
+ * Package access goes through L0, so this pass writes with the same
+ * deterministic rules as a model edit and leaves untouched parts byte-identical.
  */
-import JSZip from "jszip";
-
-import { generatePackageBytes, replacePackagePart } from "./legacy-io.js";
-import { readWorkbookSheetIdentities, unescapeXml } from "./sheets.js";
+import { readWorkbookSheetsFrom } from "../excel-tables.js";
+import { decodeXmlText } from "../model/xml.js";
+import { WorkbookPackage } from "../package/index.js";
 
 const CELL_PATTERN =
   /<(?:[A-Za-z_][\w.-]*:)?c\b[^>]*?(?:\/\s*>|>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?c\s*>)/gu;
@@ -32,7 +34,7 @@ const QUOTED_STRING_PATTERN = /"[^"]*"/gu;
  * An A1 reference, optionally sheet-qualified, in one of the three shapes a
  * formula can name rows with: a cell or cell range, a whole-column range, or a
  * whole-row range. The lookbehind and lookahead are the guard
- * `tableCanBeCompacted` uses to keep function names such as `LOG10(` and
+ * `evaluateFormulaGuard` uses to keep function names such as `LOG10(` and
  * defined names from reading as references.
  */
 const A1_REFERENCE_PATTERN = new RegExp(
@@ -54,7 +56,7 @@ export interface BlankedCachedFormula {
 
 export interface StaleCachedValueReport {
   blankedCells: BlankedCachedFormula[];
-  bytes: Buffer;
+  bytes: Uint8Array;
 }
 
 /** Rows a split will delete, in source row numbers, keyed by worksheet part. */
@@ -94,10 +96,10 @@ function referencesDeletedRows(
   deletedRowsBySheet: ReadonlyMap<string, ReadonlySet<number>>,
 ): boolean {
   // Quoted text can hold anything that looks like a reference; the same trick
-  // `tableCanBeCompacted` uses removes it before scanning. Entities are
+  // `evaluateFormulaGuard` uses removes it before scanning. Entities are
   // resolved first so a fixture that escapes its string delimiters is stripped
   // as reliably as one that does not.
-  const scannable = unescapeXml(formula).replace(QUOTED_STRING_PATTERN, "");
+  const scannable = decodeXmlText(formula).replace(QUOTED_STRING_PATTERN, "");
   for (const match of scannable.matchAll(A1_REFERENCE_PATTERN)) {
     const [, quotedSheet, bareSheet, first, last, firstRow, lastRow] = match;
     const sheet = (quotedSheet?.replaceAll("''", "'") ?? bareSheet ?? ownSheet)
@@ -152,11 +154,11 @@ export async function blankStaleCachedFormulas(
     (rows) => rows.size > 0,
   );
   if (!hasDeletions) {
-    return { blankedCells: [], bytes: Buffer.from(workbookBytes) };
+    return { blankedCells: [], bytes: workbookBytes };
   }
 
-  const archive = await JSZip.loadAsync(workbookBytes);
-  const identities = await readWorkbookSheetIdentities(archive);
+  const workbookPackage = await WorkbookPackage.load(workbookBytes);
+  const identities = readWorkbookSheetsFrom(workbookPackage);
   const deletedRowsByName = new Map<string, ReadonlySet<number>>();
   for (const identity of identities) {
     const rows = deletedRowsBySheet.get(identity.worksheetPart);
@@ -167,12 +169,11 @@ export async function blankStaleCachedFormulas(
 
   const blankedCells: BlankedCachedFormula[] = [];
   for (const identity of identities) {
-    const entry = archive.file(identity.worksheetPart);
-    if (!entry) {
+    const worksheetXml = workbookPackage.readText(identity.worksheetPart);
+    if (worksheetXml === undefined) {
       continue;
     }
     const ownDeletedRows = deletedRowsBySheet.get(identity.worksheetPart);
-    const worksheetXml = await entry.async("text");
     const rewritten = worksheetXml.replace(CELL_PATTERN, (cellXml) => {
       const formula = CELL_FORMULA_PATTERN.exec(cellXml)?.[1];
       if (!formula) {
@@ -203,12 +204,12 @@ export async function blankStaleCachedFormulas(
       return blanked;
     });
     if (rewritten !== worksheetXml) {
-      replacePackagePart(archive, identity.worksheetPart, rewritten);
+      workbookPackage.writeText(identity.worksheetPart, rewritten);
     }
   }
 
   if (blankedCells.length === 0) {
-    return { blankedCells, bytes: Buffer.from(workbookBytes) };
+    return { blankedCells, bytes: workbookBytes };
   }
-  return { blankedCells, bytes: await generatePackageBytes(archive) };
+  return { blankedCells, bytes: await workbookPackage.save() };
 }
