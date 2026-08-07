@@ -53,3 +53,38 @@ export function joinPackagePath(...segments: string[]): string {
     segments.filter((segment) => segment !== "").join("/"),
   );
 }
+
+/** The relationships part that describes `partPath`'s outgoing relationships. */
+export function relationshipsPartPath(partPath: string): string {
+  return joinPackagePath(
+    packagePartDirectory(partPath),
+    "_rels",
+    `${packagePartName(partPath)}.rels`,
+  );
+}
+
+/**
+ * Resolve a relationship target against the part that declares it. Targets
+ * that escape the package are rejected rather than silently clamped.
+ */
+export function resolveRelationshipTarget(
+  sourcePart: string,
+  target: string,
+): string {
+  const candidate = target.startsWith("/")
+    ? target.slice(1)
+    : joinPackagePath(packagePartDirectory(sourcePart), target);
+  const normalized = normalizePackagePath(candidate);
+
+  if (
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    normalized.startsWith("/")
+  ) {
+    throw new Error(
+      `Relationship target escapes the workbook package: ${target}`,
+    );
+  }
+
+  return normalized;
+}

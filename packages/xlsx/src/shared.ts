@@ -19,20 +19,28 @@ import {
 } from "./excel-tables.js";
 import { XLSX_ERRORS } from "./errors.js";
 import { preserveWorkbookWithFilteredExcelTable } from "./preserve-table-split.js";
+import { stripPivotParts } from "./tier1/pivot.js";
 import { convertWorkbookToValues } from "./values-only.js";
 
 export const WORKBOOK_MEDIA_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+export const MACRO_WORKBOOK_MEDIA_TYPE =
+  "application/vnd.ms-excel.sheet.macroEnabled.12";
 export const CONSOLIDATE_OPERATION = "sheets.consolidate";
 export const MERGE_OPERATION = "sheets.merge";
 export const SPLIT_OPERATION = "sheets.split-by-column";
 export const WORKBOOK_EXTENSION = ".xlsx";
+export const MACRO_WORKBOOK_EXTENSION = ".xlsm";
+
+/** Whether an output name asks for a macro-enabled workbook. */
+export function isMacroWorkbookName(name: string): boolean {
+  return name.toLocaleLowerCase().endsWith(MACRO_WORKBOOK_EXTENSION);
+}
 
 // Identical inputs must produce byte-identical outputs, so generated workbooks
 // carry fixed document timestamps instead of the current time.
 const FIXED_WORKBOOK_DATE = new Date(0);
 const WORKBOOK_CREATOR = "ConsultChimps";
-const MAXIMUM_SHEET_NAME_LENGTH = 31;
 
 export type ConsolidateWorkbooksMetric =
   "inputFiles" | "inputTables" | "outputColumns" | "outputRows";
@@ -97,8 +105,6 @@ export interface ParseWorkbookOptions {
   details?: Record<string, unknown> | undefined;
   /** Keep cached display text, which worksheet records report verbatim. */
   cellText?: boolean | undefined;
-  /** Keep cell styles, which the worksheet merge copies into its output. */
-  cellStyles?: boolean | undefined;
 }
 
 /**
@@ -114,7 +120,6 @@ export function parseWorkbookBytes(
   try {
     return XLSX.read(workbookBytes, {
       cellDates: true,
-      cellStyles: options.cellStyles ?? false,
       cellText: options.cellText ?? false,
       dense: false,
       type: "array",
@@ -775,15 +780,11 @@ function applyDeterministicProperties(workbook: XLSX.WorkBook): void {
   };
 }
 
-function serializeWorkbook(
-  workbook: XLSX.WorkBook,
-  options: { cellStyles?: boolean } = {},
-): Uint8Array {
+function serializeWorkbook(workbook: XLSX.WorkBook): Uint8Array {
   applyDeterministicProperties(workbook);
   return new Uint8Array(
     XLSX.write(workbook, {
       bookType: "xlsx",
-      cellStyles: options.cellStyles ?? false,
       compression: true,
       type: "array",
     }) as ArrayBuffer,
@@ -831,145 +832,17 @@ export function buildTableWorkbookBytes(
   return serializeWorkbook(workbook);
 }
 
-export interface MergeWorkbooksBuildOptions {
-  includeSheetIndex?: boolean | undefined;
-  values?: boolean | undefined;
-}
-
-export interface MergeWorkbooksState {
-  hiddenSheets: number;
-  indexRows: string[][];
-  outputSheets: number;
-  usedNames: Set<string>;
-  workbook: XLSX.WorkBook;
-}
-
-export function createMergeState(
-  options: MergeWorkbooksBuildOptions,
-): MergeWorkbooksState {
-  return {
-    hiddenSheets: 0,
-    indexRows: [
-      [
-        "Source file",
-        "Original worksheet",
-        "Final worksheet",
-        "Source visibility",
-      ],
-    ],
-    outputSheets: 0,
-    usedNames: new Set<string>(
-      options.includeSheetIndex === false ? [] : ["sheet index"],
-    ),
-    workbook: XLSX.utils.book_new(),
-  };
-}
-
-function visibilityLabel(visibility: number): string {
-  if (visibility === 2) {
-    return "Very hidden";
-  }
-  return visibility === 1 ? "Hidden" : "Visible";
-}
-
-/**
- * Copy every worksheet of one input workbook into the merged workbook,
- * resolving name collisions and recording provenance for the sheet index.
- */
-export function appendWorkbookSheets(
-  state: MergeWorkbooksState,
-  sourceFile: string,
-  inputWorkbook: XLSX.WorkBook,
-): void {
-  for (const originalName of inputWorkbook.SheetNames) {
-    const worksheet = inputWorkbook.Sheets[originalName];
-    if (!worksheet) {
-      continue;
-    }
-    const baseName =
-      originalName.slice(0, MAXIMUM_SHEET_NAME_LENGTH) || "Sheet";
-    let finalName = baseName;
-    let suffix = 2;
-    while (state.usedNames.has(finalName.toLocaleLowerCase())) {
-      const suffixText = ` (${suffix})`;
-      finalName = `${baseName.slice(
-        0,
-        MAXIMUM_SHEET_NAME_LENGTH - suffixText.length,
-      )}${suffixText}`;
-      suffix += 1;
-    }
-    state.usedNames.add(finalName.toLocaleLowerCase());
-    const visibility =
-      inputWorkbook.Workbook?.Sheets?.find(
-        (sheet) => sheet.name === originalName,
-      )?.Hidden ?? 0;
-    if (visibility !== 0) {
-      state.hiddenSheets += 1;
-    }
-    state.outputSheets += 1;
-    state.indexRows.push([
-      sourceFile,
-      originalName,
-      finalName,
-      visibilityLabel(visibility),
-    ]);
-    XLSX.utils.book_append_sheet(state.workbook, worksheet, finalName);
-    state.workbook.Workbook ??= {};
-    state.workbook.Workbook.Sheets ??= [];
-    state.workbook.Workbook.Sheets.push({
-      name: finalName,
-      Hidden: visibility,
-    });
-  }
-}
-
-export interface MergedWorkbook {
-  bytes: Uint8Array;
-  hiddenSheets: number;
-  outputSheets: number;
-  warnings: string[];
-}
-
-export async function finishMergedWorkbook(
-  state: MergeWorkbooksState,
-  options: MergeWorkbooksBuildOptions,
-): Promise<MergedWorkbook> {
-  if (state.outputSheets === 0) {
-    throw new ConsultChimpsError(
-      XLSX_ERRORS.XLSX_NO_SHEETS,
-      "No worksheets were found in the input workbooks.",
-    );
-  }
-  if (options.includeSheetIndex !== false) {
-    XLSX.utils.book_append_sheet(
-      state.workbook,
-      XLSX.utils.aoa_to_sheet(state.indexRows),
-      "Sheet Index",
-    );
-  }
-
-  let bytes = serializeWorkbook(state.workbook, { cellStyles: true });
-  if (options.values) {
-    bytes = await convertWorkbookToValues(bytes);
-  }
-
-  const warnings: string[] = [];
-  if (state.hiddenSheets > 0) {
-    const plural = state.hiddenSheets === 1 ? " was" : "s were";
-    warnings.push(
-      options.includeSheetIndex === false
-        ? `${state.hiddenSheets} source worksheet${plural} hidden in the merged workbook.`
-        : `${state.hiddenSheets} source worksheet${plural} hidden; see the visible "Sheet Index" worksheet.`,
-    );
-  }
-
-  return {
-    bytes,
-    hiddenSheets: state.hiddenSheets,
-    outputSheets: state.outputSheets,
-    warnings,
-  };
-}
+// The worksheet merge lives in `src/merge/`: it is a part-level transplant on
+// the L0 package rather than a rebuild through a spreadsheet library, so it
+// shares nothing with the readers above beyond the operation constants.
+export {
+  appendWorkbookSheets,
+  createMergeState,
+  finishMergedWorkbook,
+  type MergedWorkbook,
+  type MergeWorkbooksBuildOptions,
+  type MergeWorkbooksState,
+} from "./merge/transplant.js";
 
 export interface SplitSelectionOptions {
   column: string;
@@ -1229,23 +1102,43 @@ export async function preservedSplitTemplateBytes(
   return values ? convertWorkbookToValues(workbookBytes) : workbookBytes;
 }
 
-/** Produce one group's workbook, preserving the source package when asked. */
+/**
+ * Produce one group's workbook, preserving the source package when asked.
+ *
+ * Both branches are deliberately still off the layered engine after Phase 1.
+ * The preserved branch's contract is a refusal, not a repair (see
+ * `preserve-table-split.ts`). The rebuilding branch does not edit a workbook at
+ * all: it writes a fresh single-worksheet package from parsed cell values, so
+ * every structure the corpus tracks is absent by construction rather than lost
+ * by accident, and there is no row to relocate. Migrating it would mean
+ * changing what a compact split *produces*, which is a decision for the phase
+ * that makes it, not a side effect of moving the split engine.
+ */
 export async function buildSplitGroupBytes(
   group: { table: Table },
   context: {
+    /** Called with the pivot tables removed from this group's output. */
+    onPivotTablesRemoved?: ((removed: number) => void) | undefined;
     preservedTableDefinition: ExcelTableDefinition | undefined;
     sheetName: string;
     templateBytes: Uint8Array | undefined;
   },
 ): Promise<Uint8Array> {
   if (context.templateBytes && context.preservedTableDefinition) {
-    return preserveWorkbookWithFilteredExcelTable(context.templateBytes, {
-      definition: context.preservedTableDefinition,
-      sourceRows: group.table.sourceRows ?? [],
-      // Remove complete worksheet rows, including cells outside the table,
-      // rather than leaving styled/empty row shells behind.
-      wholeRows: true,
-    });
+    const preserved = await preserveWorkbookWithFilteredExcelTable(
+      context.templateBytes,
+      {
+        definition: context.preservedTableDefinition,
+        sourceRows: group.table.sourceRows ?? [],
+      },
+    );
+    // Tier-1 wiring: the preserved path copies the source package, pivot caches
+    // included, so this group's recipient would receive every other group's
+    // rows inside the cache. The rebuilding path below cannot leak them because
+    // it writes a fresh package from parsed cell values.
+    const stripped = await stripPivotParts(preserved);
+    context.onPivotTablesRemoved?.(stripped.removedPivotTables);
+    return stripped.bytes;
   }
   return buildTableWorkbookBytes(group.table, context.sheetName);
 }
@@ -1297,7 +1190,7 @@ export function splitOutputFileNames(
 }
 
 export function withoutWorkbookExtension(name: string): string {
-  return name.replace(/\.xlsx$/iu, "");
+  return name.replace(/\.xls[xm]$/iu, "");
 }
 
 export { safeNameFragment } from "@consultchimps/core";

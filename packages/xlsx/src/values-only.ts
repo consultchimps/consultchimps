@@ -1,6 +1,4 @@
-import JSZip from "jszip";
-
-import { generatePackageBytes, replacePackagePart } from "./package-zip.js";
+import { WorkbookPackage } from "./package/index.js";
 
 const CELL_PATTERN =
   /<(?:[A-Za-z_][\w.-]*:)?c\b[^>]*?(?:\/\s*>|>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?c\s*>)/gu;
@@ -8,13 +6,13 @@ const CELL_FORMULA_PATTERN =
   /<(?:[A-Za-z_][\w.-]*:)?f\b[^>]*(?:\/\s*>|>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?f\s*>)/gu;
 const TABLE_FORMULA_PATTERN =
   /<(?:[A-Za-z_][\w.-]*:)?(?:calculatedColumnFormula|totalsRowFormula)\b[^>]*(?:\/\s*>|>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?(?:calculatedColumnFormula|totalsRowFormula)\s*>)/gu;
-const CALC_CHAIN_RELATIONSHIP_PATTERN =
-  /<(?:[A-Za-z_][\w.-]*:)?Relationship\b(?=[^>]*\bType=(?:"[^"]*\/calcChain"|'[^']*\/calcChain'))[^>]*\/\s*>/gu;
-const CALC_CHAIN_CONTENT_TYPE_PATTERN =
-  /<(?:[A-Za-z_][\w.-]*:)?Override\b(?=[^>]*\bPartName=(?:"\/xl\/calcChain\.xml"|'\/xl\/calcChain\.xml'))[^>]*\/\s*>/gu;
 const CACHED_VALUE_PATTERN =
   /<(?:[A-Za-z_][\w.-]*:)?(?:v|is)\b[^>]*(?:\/\s*>|>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?(?:v|is)\s*>)/u;
 const CELL_REFERENCE_PATTERN = /\br=(?:"([^"]+)"|'([^']+)')/u;
+const WORKSHEET_PART_PATTERN = /^xl\/worksheets\/[^/]+\.xml$/iu;
+const TABLE_PART_PATTERN = /^xl\/tables\/[^/]+\.xml$/iu;
+const CALC_CHAIN_PART = "xl/calcChain.xml";
+const WORKBOOK_PART = "xl/workbook.xml";
 
 export interface MissingCachedFormula {
   cell: string;
@@ -22,7 +20,7 @@ export interface MissingCachedFormula {
 }
 
 export interface ValuesOnlyConversion {
-  bytes: Buffer;
+  bytes: Uint8Array;
   formulasConverted: number;
   formulasWithoutCachedValues: MissingCachedFormula[];
 }
@@ -57,12 +55,6 @@ function removeWorksheetFormulas(
   return { formulasConverted, formulasWithoutCachedValues, xml };
 }
 
-function removeCalculationChainReferences(xml: string): string {
-  return xml
-    .replace(CALC_CHAIN_RELATIONSHIP_PATTERN, "")
-    .replace(CALC_CHAIN_CONTENT_TYPE_PATTERN, "");
-}
-
 /**
  * Replace worksheet formulas with their cached values without rebuilding any
  * cells. Editing the OOXML parts directly preserves cell styles, number
@@ -71,71 +63,42 @@ function removeCalculationChainReferences(xml: string): string {
  */
 export async function convertWorkbookToValues(
   workbookBytes: Uint8Array,
-): Promise<Buffer> {
+): Promise<Uint8Array> {
   return (await convertWorkbookToValuesWithReport(workbookBytes)).bytes;
 }
 
 export async function convertWorkbookToValuesWithReport(
   workbookBytes: Uint8Array,
 ): Promise<ValuesOnlyConversion> {
-  const archive = await JSZip.loadAsync(workbookBytes);
-  const worksheetParts = Object.keys(archive.files).filter((partName) =>
-    /^xl\/worksheets\/[^/]+\.xml$/iu.test(partName),
-  );
-  const tableParts = Object.keys(archive.files).filter((partName) =>
-    /^xl\/tables\/[^/]+\.xml$/iu.test(partName),
-  );
+  const workbookPackage = await WorkbookPackage.load(workbookBytes);
+  let formulasConverted = 0;
+  const formulasWithoutCachedValues: MissingCachedFormula[] = [];
 
-  const worksheetConversions = await Promise.all(
-    worksheetParts.map(async (partName) => {
-      const entry = archive.file(partName);
-      if (entry) {
-        const conversion = removeWorksheetFormulas(
-          await entry.async("text"),
-          partName,
-        );
-        replacePackagePart(archive, partName, conversion.xml);
-        return conversion;
-      }
-      return undefined;
-    }),
-  );
-  await Promise.all(
-    tableParts.map(async (partName) => {
-      const entry = archive.file(partName);
-      if (entry) {
-        replacePackagePart(
-          archive,
-          partName,
-          (await entry.async("text")).replace(TABLE_FORMULA_PATTERN, ""),
-        );
-      }
-    }),
-  );
-
-  archive.remove("xl/calcChain.xml");
-  for (const partName of [
-    "xl/_rels/workbook.xml.rels",
-    "[Content_Types].xml",
-  ]) {
-    const entry = archive.file(partName);
-    if (entry) {
-      replacePackagePart(
-        archive,
-        partName,
-        removeCalculationChainReferences(await entry.async("text")),
-      );
-    }
+  for (const partName of workbookPackage.partsMatching(
+    WORKSHEET_PART_PATTERN,
+  )) {
+    const conversion = removeWorksheetFormulas(
+      workbookPackage.requireText(partName),
+      partName,
+    );
+    workbookPackage.writeText(partName, conversion.xml);
+    formulasConverted += conversion.formulasConverted;
+    formulasWithoutCachedValues.push(...conversion.formulasWithoutCachedValues);
   }
 
+  for (const partName of workbookPackage.partsMatching(TABLE_PART_PATTERN)) {
+    workbookPackage.writeText(
+      partName,
+      workbookPackage.requireText(partName).replace(TABLE_FORMULA_PATTERN, ""),
+    );
+  }
+
+  // A workbook with no formulas left has nothing to calculate.
+  workbookPackage.removePartAndReferences(CALC_CHAIN_PART, WORKBOOK_PART);
+
   return {
-    bytes: Buffer.from(await generatePackageBytes(archive)),
-    formulasConverted: worksheetConversions.reduce(
-      (total, conversion) => total + (conversion?.formulasConverted ?? 0),
-      0,
-    ),
-    formulasWithoutCachedValues: worksheetConversions.flatMap(
-      (conversion) => conversion?.formulasWithoutCachedValues ?? [],
-    ),
+    bytes: await workbookPackage.save(),
+    formulasConverted,
+    formulasWithoutCachedValues,
   };
 }

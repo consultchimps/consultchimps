@@ -1,15 +1,26 @@
+/**
+ * The preserved Excel Table split: keep the whole source package and replace
+ * only the selected table's rows.
+ *
+ * This is the one split mode still expressed as an XML rewrite rather than
+ * through the layered engine. It is kept deliberately: its contract is
+ * *refusal*, not repair. When a row that carries a hand-written A1 formula
+ * would move, it raises `XLSX_SPLIT_PRESERVE_FORMULA` and produces nothing,
+ * so the caller decides between converting to values and splitting without
+ * preserving the workbook. Re-expressing it on `TableBinding` would silently
+ * relocate those formulas instead, which is a different promise; making that
+ * change belongs with the phase that decides it, not with this migration.
+ *
+ * Phase 1 did retire the module's dead half: a cell-only rewrite mode that no
+ * caller selected, which cleared table cells in place rather than removing
+ * whole rows.
+ */
 import { ConsultChimpsError } from "@consultchimps/core";
-import JSZip from "jszip";
 import * as XLSX from "xlsx";
 
 import type { ExcelTableDefinition } from "./excel-tables.js";
 import { XLSX_ERRORS } from "./errors.js";
-import { generatePackageBytes, replacePackagePart } from "./package-zip.js";
-
-interface CellFragment {
-  columnIndex: number;
-  xml: string;
-}
+import { WorkbookPackage } from "./package/index.js";
 
 interface RowFragment {
   rowNumber: number;
@@ -20,7 +31,6 @@ export interface PreserveExcelTableOptions {
   definition: ExcelTableDefinition;
   sourceRows: number[];
   values?: boolean | undefined;
-  wholeRows?: boolean | undefined;
 }
 
 const CELL_PATTERN =
@@ -48,21 +58,6 @@ function elementOpeningTag(xml: string): string {
     throw new Error("Encountered an invalid OOXML element.");
   }
   return xml.slice(0, end + 1);
-}
-
-function parseCellFragments(rowXml: string): CellFragment[] {
-  return [...rowXml.matchAll(CELL_PATTERN)].map((match) => {
-    const xml = match[0];
-    const reference = xmlAttribute(elementOpeningTag(xml), "r");
-    if (!reference) {
-      throw new Error("Encountered an OOXML cell without a reference.");
-    }
-
-    return {
-      columnIndex: XLSX.utils.decode_cell(reference).c,
-      xml,
-    };
-  });
 }
 
 function parseRowFragments(sheetDataXml: string): RowFragment[] {
@@ -144,79 +139,6 @@ function relocateCell(
     `$1"${destinationReference}"`,
   );
   return `${relocatedOpeningTag}${preparedXml.slice(openingTag.length)}`;
-}
-
-function clearCell(xml: string): string {
-  const openingTag = elementOpeningTag(xml)
-    .replace(/\s+t=(?:"[^"]*"|'[^']*')/u, "")
-    .replace(/\s*\/?>$/u, " />");
-  return openingTag;
-}
-
-function tableCells(
-  rowXml: string | undefined,
-  firstColumn: number,
-  lastColumn: number,
-): CellFragment[] {
-  if (!rowXml) {
-    return [];
-  }
-  return parseCellFragments(rowXml).filter(
-    (cell) => cell.columnIndex >= firstColumn && cell.columnIndex <= lastColumn,
-  );
-}
-
-function contentOutsideCells(rowBody: string): string {
-  const fragments: string[] = [];
-  let cursor = 0;
-
-  for (const match of rowBody.matchAll(CELL_PATTERN)) {
-    const matchIndex = match.index;
-    fragments.push(rowBody.slice(cursor, matchIndex));
-    cursor = matchIndex + match[0].length;
-  }
-
-  fragments.push(rowBody.slice(cursor));
-  return fragments.join("");
-}
-
-function rewriteRow(
-  rowXml: string | undefined,
-  rowNumber: number,
-  firstColumn: number,
-  lastColumn: number,
-  replacementCells: CellFragment[],
-  rowElementName: string,
-): string | undefined {
-  const existingCells = rowXml ? parseCellFragments(rowXml) : [];
-  const outsideCells = existingCells.filter(
-    (cell) => cell.columnIndex < firstColumn || cell.columnIndex > lastColumn,
-  );
-  const cells = [...outsideCells, ...replacementCells].sort(
-    (left, right) => left.columnIndex - right.columnIndex,
-  );
-
-  if (!rowXml && cells.length === 0) {
-    return undefined;
-  }
-
-  if (!rowXml) {
-    return `<${rowElementName} r="${rowNumber}">${cells
-      .map((cell) => cell.xml)
-      .join("")}</${rowElementName}>`;
-  }
-
-  const openingTag = elementOpeningTag(rowXml);
-  const normalizedOpeningTag = openingTag.replace(/\s*\/>$/u, ">");
-  const closingTag = `</${qualifiedElementName(rowXml)}>`;
-  const body = rowXml.endsWith("/>")
-    ? ""
-    : rowXml.slice(openingTag.length, -closingTag.length);
-  const nonCellBody = contentOutsideCells(body);
-
-  return `${normalizedOpeningTag}${cells
-    .map((cell) => cell.xml)
-    .join("")}${nonCellBody}${closingTag}`;
 }
 
 function replaceElementReference(
@@ -377,175 +299,29 @@ function filterWholeWorksheetRows(
   };
 }
 
-function filterWorksheetXml(
-  worksheetXml: string,
-  definition: ExcelTableDefinition,
-  sourceRows: number[],
-  values: boolean,
-  wholeRows: boolean,
-): {
-  tableDataReference: string;
-  tableReference: string;
-  worksheetXml: string;
-} {
-  if (wholeRows) {
-    return filterWholeWorksheetRows(
-      worksheetXml,
-      definition,
-      sourceRows,
-      values,
-    );
-  }
-  const tableRange = XLSX.utils.decode_range(definition.range);
-  const firstDataRow = tableRange.s.r + 1 + (definition.headerRow ? 1 : 0);
-  const lastDataRow = tableRange.e.r + 1 - (definition.totalsRow ? 1 : 0);
-  if (
-    sourceRows.length === 0 ||
-    sourceRows.some((row) => row < firstDataRow || row > lastDataRow)
-  ) {
-    throw new Error(
-      `Excel Table "${definition.name}" received invalid source rows.`,
-    );
-  }
-
-  const sheetDataOpeningMatch = SHEET_DATA_OPEN_PATTERN.exec(worksheetXml);
-  if (!sheetDataOpeningMatch) {
-    throw new Error(
-      `Worksheet "${definition.sheet}" has no sheetData element.`,
-    );
-  }
-  const sheetDataOpeningTag = sheetDataOpeningMatch[0];
-  if (sheetDataOpeningTag.endsWith("/>")) {
-    throw new Error(`Worksheet "${definition.sheet}" contains no rows.`);
-  }
-  const sheetDataElementName = qualifiedElementName(sheetDataOpeningTag);
-  const sheetDataClosingTag = `</${sheetDataElementName}>`;
-  const sheetDataStart =
-    sheetDataOpeningMatch.index + sheetDataOpeningTag.length;
-  const sheetDataEnd = worksheetXml.indexOf(
-    sheetDataClosingTag,
-    sheetDataStart,
-  );
-  if (sheetDataEnd < 0) {
-    throw new Error(
-      `Worksheet "${definition.sheet}" has invalid sheetData XML.`,
-    );
-  }
-
-  const sheetDataXml = worksheetXml.slice(sheetDataStart, sheetDataEnd);
-  const rowFragments = parseRowFragments(sheetDataXml);
-  const rowByNumber = new Map(
-    rowFragments.map((row) => [row.rowNumber, row.xml] as const),
-  );
-  const rowElementName = rowFragments[0]
-    ? qualifiedElementName(rowFragments[0].xml)
-    : sheetDataElementName.replace(/sheetData$/u, "row");
-  const originalTableEndRow = tableRange.e.r + 1;
-  const newLastDataRow = firstDataRow + sourceRows.length - 1;
-  const newTableEndRow = newLastDataRow + (definition.totalsRow ? 1 : 0);
-  const replacementCellsByRow = new Map<number, CellFragment[]>();
-
-  for (let row = firstDataRow; row <= originalTableEndRow; row += 1) {
-    replacementCellsByRow.set(
-      row,
-      tableCells(rowByNumber.get(row), tableRange.s.c, tableRange.e.c).map(
-        (cell) => ({ ...cell, xml: clearCell(cell.xml) }),
-      ),
-    );
-  }
-
-  sourceRows.forEach((sourceRow, index) => {
-    const destinationRow = firstDataRow + index;
-    replacementCellsByRow.set(
-      destinationRow,
-      tableCells(
-        rowByNumber.get(sourceRow),
-        tableRange.s.c,
-        tableRange.e.c,
-      ).map((cell) => ({
-        ...cell,
-        xml: relocateCell(cell.xml, destinationRow, values),
-      })),
-    );
-  });
-
-  if (definition.totalsRow) {
-    const originalTotalsRow = tableRange.e.r + 1;
-    replacementCellsByRow.set(
-      newTableEndRow,
-      tableCells(
-        rowByNumber.get(originalTotalsRow),
-        tableRange.s.c,
-        tableRange.e.c,
-      ).map((cell) => ({
-        ...cell,
-        xml: relocateCell(cell.xml, newTableEndRow, values),
-      })),
-    );
-  }
-
-  for (const [rowNumber, replacementCells] of replacementCellsByRow) {
-    const rewrittenRow = rewriteRow(
-      rowByNumber.get(rowNumber),
-      rowNumber,
-      tableRange.s.c,
-      tableRange.e.c,
-      replacementCells,
-      rowElementName,
-    );
-    if (rewrittenRow) {
-      rowByNumber.set(rowNumber, rewrittenRow);
-    } else {
-      rowByNumber.delete(rowNumber);
-    }
-  }
-
-  const rewrittenSheetData = [...rowByNumber]
-    .sort(([left], [right]) => left - right)
-    .map(([, rowXml]) => rowXml)
-    .join("");
-  const newWorksheetXml = `${worksheetXml.slice(
-    0,
-    sheetDataStart,
-  )}${rewrittenSheetData}${worksheetXml.slice(sheetDataEnd)}`;
-  const tableReference = XLSX.utils.encode_range({
-    e: { c: tableRange.e.c, r: newTableEndRow - 1 },
-    s: tableRange.s,
-  });
-  const tableDataReference = XLSX.utils.encode_range({
-    e: { c: tableRange.e.c, r: newLastDataRow - 1 },
-    s: tableRange.s,
-  });
-
-  return {
-    tableDataReference,
-    tableReference,
-    worksheetXml: newWorksheetXml,
-  };
-}
-
 export async function preserveWorkbookWithFilteredExcelTable(
   workbookBytes: Uint8Array,
   options: PreserveExcelTableOptions,
 ): Promise<Uint8Array> {
-  const archive = await JSZip.loadAsync(workbookBytes);
-  const worksheetEntry = archive.file(options.definition.worksheetPart);
-  const tableEntry = archive.file(options.definition.tablePart);
-  if (!worksheetEntry || !tableEntry) {
+  const workbookPackage = await WorkbookPackage.load(workbookBytes);
+  const worksheetXml = workbookPackage.readText(
+    options.definition.worksheetPart,
+  );
+  const tableXmlSource = workbookPackage.readText(options.definition.tablePart);
+  if (worksheetXml === undefined || tableXmlSource === undefined) {
     throw new Error(
       `Excel Table "${options.definition.name}" is missing workbook package parts.`,
     );
   }
 
-  const filtered = filterWorksheetXml(
-    await worksheetEntry.async("text"),
+  const filtered = filterWholeWorksheetRows(
+    worksheetXml,
     options.definition,
     options.sourceRows,
     options.values === true,
-    options.wholeRows === true,
   );
   let tableXml = replaceElementReference(
-    await tableEntry.async("text"),
+    tableXmlSource,
     "table",
     filtered.tableReference,
     true,
@@ -557,11 +333,10 @@ export async function preserveWorkbookWithFilteredExcelTable(
     false,
   );
 
-  replacePackagePart(
-    archive,
+  workbookPackage.writeText(
     options.definition.worksheetPart,
     filtered.worksheetXml,
   );
-  replacePackagePart(archive, options.definition.tablePart, tableXml);
-  return generatePackageBytes(archive);
+  workbookPackage.writeText(options.definition.tablePart, tableXml);
+  return workbookPackage.save();
 }

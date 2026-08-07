@@ -19,6 +19,9 @@ import {
   buildSplitGroupBytes,
   createMergeState,
   finishMergedWorkbook,
+  isMacroWorkbookName,
+  MACRO_WORKBOOK_EXTENSION,
+  MACRO_WORKBOOK_MEDIA_TYPE,
   MERGE_OPERATION,
   parseWorkbookBytes,
   preservedSplitTemplateBytes,
@@ -137,7 +140,14 @@ export async function planSplitWorkbookBytes(
   };
 }
 
-/** Split one workbook's rows into one workbook per distinct column value. */
+/**
+ * Split one workbook's rows into one workbook per distinct column value.
+ *
+ * The byte surface offers only the region-selecting modes - an Excel Table, a
+ * named range, or one worksheet - so it reaches the same two builders the file
+ * surface uses for those selections and none of the all-worksheet machinery.
+ * Phase 1 left both builders where they were; `buildSplitGroupBytes` says why.
+ */
 export async function splitWorkbookBytes(
   options: SplitWorkbookBytesOptions,
 ): Promise<ByteOperationOutcome<SplitWorkbookByColumnMetric>> {
@@ -153,6 +163,7 @@ export async function splitWorkbookBytes(
     ? await preservedSplitTemplateBytes(options.input.bytes, options.values)
     : undefined;
   const outputs: ByteArtifact[] = [];
+  let pivotTablesRemoved = 0;
 
   for (const [index, group] of grouped.groups.entries()) {
     throwIfAborted(options.signal, SPLIT_OPERATION, "memory");
@@ -160,6 +171,9 @@ export async function splitWorkbookBytes(
     outputs.push({
       name,
       bytes: await buildSplitGroupBytes(group, {
+        onPivotTablesRemoved: (removed) => {
+          pivotTablesRemoved += removed;
+        },
         preservedTableDefinition,
         sheetName: table.source?.sheet ?? "Split",
         templateBytes,
@@ -187,7 +201,14 @@ export async function splitWorkbookBytes(
         mediaType: WORKBOOK_MEDIA_TYPE,
         path: output.name,
       })),
-      warnings: grouped.skippedRows > 0 ? [skippedRowsWarning(grouped)] : [],
+      warnings: [
+        ...(grouped.skippedRows > 0 ? [skippedRowsWarning(grouped)] : []),
+        ...(pivotTablesRemoved > 0
+          ? [
+              `Removed ${pivotTablesRemoved} pivot table${pivotTablesRemoved === 1 ? "" : "s"}: their caches contained rows from other groups, and a cache travels inside the workbook whether or not the pivot is opened. Rebuild the pivot in Excel from each output's own rows if it is required.`,
+            ]
+          : []),
+      ],
       metrics: {
         groups: grouped.groups.length,
         inputFiles: 1,
@@ -219,22 +240,21 @@ export async function mergeWorkbooksBytes(
     );
   }
 
+  const requested = options.outputName ?? `merged${WORKBOOK_EXTENSION}`;
+  // A caller that asks for a macro-enabled name keeps it, because that is what
+  // decides whether a single input's macro project may travel (see the merge
+  // transplant). Every other name lands on .xlsx, as it always has.
+  const macroOutput = isMacroWorkbookName(requested);
   const outputName = `${safeNameFragment(
-    withoutWorkbookExtension(options.outputName ?? "merged.xlsx"),
+    withoutWorkbookExtension(requested),
     "merged",
-  )}${WORKBOOK_EXTENSION}`;
-  const state = createMergeState(options);
+  )}${macroOutput ? MACRO_WORKBOOK_EXTENSION : WORKBOOK_EXTENSION}`;
+  const buildOptions = { ...options, macroOutput };
+  const state = createMergeState(buildOptions);
 
   for (const [index, input] of options.inputs.entries()) {
     throwIfAborted(options.signal, MERGE_OPERATION, "memory");
-    appendWorkbookSheets(
-      state,
-      input.name,
-      parseWorkbookBytes(input.bytes, input.name, {
-        cellStyles: true,
-        details: { source: input.name },
-      }),
-    );
+    await appendWorkbookSheets(state, input.name, input.bytes);
     options.onProgress?.({
       operation: MERGE_OPERATION,
       stage: "merging-inputs",
@@ -244,11 +264,14 @@ export async function mergeWorkbooksBytes(
     });
   }
 
-  const merged = await finishMergedWorkbook(state, options);
+  const merged = await finishMergedWorkbook(state, buildOptions);
+  const mediaType = merged.macroEnabled
+    ? MACRO_WORKBOOK_MEDIA_TYPE
+    : WORKBOOK_MEDIA_TYPE;
   const output: ByteArtifact = {
     name: outputName,
     bytes: merged.bytes,
-    mediaType: WORKBOOK_MEDIA_TYPE,
+    mediaType,
   };
   // The merged workbook was serialized asynchronously; honour a cancellation
   // that arrived while it was being written.
@@ -260,7 +283,7 @@ export async function mergeWorkbooksBytes(
       artifacts: [
         {
           kind: "file",
-          mediaType: WORKBOOK_MEDIA_TYPE,
+          mediaType,
           path: output.name,
         },
       ],
