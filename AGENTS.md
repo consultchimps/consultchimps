@@ -121,6 +121,11 @@ Put behavior at the lowest reusable layer and keep the CLI as an adapter.
 | `.github`           | CI, security analysis, issue templates, and release automation |
 | `.changeset`        | Pending public package release notes and version intent        |
 
+The xlsx package has a binding architecture document at
+`packages/xlsx/ARCHITECTURE.md`. Read it before changing that package; it
+defines the layer boundaries, the DataRegion model, the conformance contract,
+and the contribution cookbook that changes there must follow.
+
 When adding behavior:
 
 1. Put shared contracts and stable error types in `packages/core`.
