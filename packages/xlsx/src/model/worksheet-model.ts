@@ -34,8 +34,10 @@ import type {
   CellModel,
   CellRange,
   CellRef,
+  CellValue,
   DeleteRowsReport,
   FormulaKind,
+  RelocateRowsOptions,
   RowModel,
   RowNumber,
   SheetInfo,
@@ -51,6 +53,14 @@ export interface RelocationCounters {
   formulaReferences: number;
   tableRefs: number;
   calcChainEntries: number;
+  /**
+   * Calculation-chain entries dropped outright, a subset of
+   * `calcChainEntries`. The split reports removals and renumberings under
+   * different metric names, so the pass counts them separately.
+   */
+  calcChainEntriesRemoved: number;
+  /** `<dimension ref>` declarations rewritten to the surviving extent. */
+  dimensions: number;
   /**
    * Comment anchors moved: `<comment ref>` in the comments part and the
    * zero-based `<x:Row>` in its legacy VML drawing. The frozen
@@ -69,23 +79,30 @@ export function emptyCounters(): RelocationCounters {
     formulaReferences: 0,
     tableRefs: 0,
     calcChainEntries: 0,
+    calcChainEntriesRemoved: 0,
+    dimensions: 0,
     comments: 0,
   };
 }
 
 /** A cell value in the shapes a grouping key can be built from. */
-export type WorksheetCellValue = Date | number | boolean | string | undefined;
+export type WorksheetCellValue = CellValue;
 
 /**
  * What a worksheet needs from its workbook: the parts that live above the
  * worksheet but describe its rows and resolve its cell values.
  */
 export interface WorksheetHost {
-  /** Resize the Excel Tables anchored on this worksheet. */
+  /**
+   * Resize the Excel Tables anchored on this worksheet. `resizeTables` is
+   * false for the one binding that deliberately leaves a table claiming its
+   * original range.
+   */
   relocateTables(
     sheetName: string,
     relocation: RowRelocation,
     counters: RelocationCounters,
+    resizeTables: boolean,
   ): void;
   /** Drop and renumber this worksheet's calculation-chain entries. */
   relocateCalcChain(
@@ -620,13 +637,18 @@ export class WorksheetModel implements WorksheetModelContract {
    *  5. `dataValidation/@sqref`, with the container's count.
    *  6. `hyperlink/@ref`.
    *  7. The sheet-level `autoFilter/@ref`.
-   *  8. Excel Table `ref` and the table's own `autoFilter`.
-   *  9. Calculation-chain entries for this worksheet.
+   *  8. The declared `dimension/@ref`, so the sheet does not advertise an
+   *     extent that reaches past its last surviving row.
+   *  9. Excel Table `ref` and the table's own `autoFilter`.
+   * 10. Calculation-chain entries for this worksheet.
    *
    * Anything left describing only deleted rows is removed rather than kept
    * pointing at a row that no longer exists.
    */
-  applyRowRelocation(relocation: RowRelocation): DeleteRowsReport {
+  applyRowRelocation(
+    relocation: RowRelocation,
+    options: RelocateRowsOptions | undefined = undefined,
+  ): DeleteRowsReport {
     this.#changed = true;
     this.#host.markWorksheetChanged(this.info.name);
     const counters = emptyCounters();
@@ -659,8 +681,9 @@ export class WorksheetModel implements WorksheetModelContract {
     }
     this.#segments = surviving;
 
-    // 3-7. Merged ranges, conditional formatting, data validation, hyperlinks
-    //      and the sheet autoFilter all live outside sheetData.
+    // 3-8. Merged ranges, conditional formatting, data validation, hyperlinks,
+    //      the sheet autoFilter and the declared dimension all live outside
+    //      sheetData.
     this.#suffix = relocateDependentStructures(
       this.#suffix,
       relocation,
@@ -673,7 +696,12 @@ export class WorksheetModel implements WorksheetModelContract {
     );
 
     // 8-10. Parts above the worksheet that still describe its rows.
-    this.#host.relocateTables(this.info.name, relocation, counters);
+    this.#host.relocateTables(
+      this.info.name,
+      relocation,
+      counters,
+      options?.resizeTables !== false,
+    );
     this.#host.relocateCalcChain(this.info.name, relocation, counters);
     this.#host.relocateComments(this.info.name, relocation, counters);
 
@@ -792,6 +820,25 @@ function relocateDependentStructures(
     return relocated === undefined
       ? undefined
       : `${relocated}${text.slice(element.openTag.length)}`;
+  });
+
+  // The declared extent is metadata, not content: it is rewritten to the span
+  // its rows now occupy, and never removed. A sheet whose every listed row
+  // disappeared keeps the declaration it arrived with rather than gaining a
+  // `#REF!` where a range belongs.
+  result = editElements(result, "dimension", (element, text) => {
+    const reference = getAttribute(element.openTag, "ref");
+    if (reference === undefined) {
+      return text;
+    }
+    const relocated = relocateReference(reference, relocation);
+    if (relocated === reference || relocated.includes(DELETED_REFERENCE)) {
+      return text;
+    }
+    counters.dimensions += 1;
+    return `${setAttribute(element.openTag, "ref", relocated)}${text.slice(
+      element.openTag.length,
+    )}`;
   });
 
   return result;

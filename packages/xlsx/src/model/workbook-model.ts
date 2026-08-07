@@ -86,6 +86,7 @@ export class WorkbookModel implements WorkbookModelContract, WorksheetHost {
   #tableScope: readonly ExcelTableDefinition[] | undefined;
   #calcChain: CalcChainModel | undefined;
   #calcChainChanged = false;
+  #calcChainEntriesRemoved = 0;
   #sourceBytes: Uint8Array | undefined;
   #values: XLSX.WorkBook | undefined;
   #strings: string[] | undefined;
@@ -223,6 +224,15 @@ export class WorkbookModel implements WorkbookModelContract, WorksheetHost {
   /** Excel Table definitions in the package-level shape the readers produce. */
   get tableDefinitions(): readonly ExcelTableDefinition[] {
     return this.#tables;
+  }
+
+  /**
+   * Calculation-chain entries this model has dropped because the cell they
+   * named was deleted, across every edit so far. Renumbered entries are not
+   * counted: the split reports the two under different metric names.
+   */
+  get calcChainEntriesRemoved(): number {
+    return this.#calcChainEntriesRemoved;
   }
 
   /**
@@ -402,7 +412,11 @@ export class WorkbookModel implements WorkbookModelContract, WorksheetHost {
     sheetName: string,
     relocation: RowRelocation,
     counters: RelocationCounters,
+    resizeTables: boolean,
   ): void {
+    if (!resizeTables) {
+      return;
+    }
     const scope = this.#tableScope ?? this.#tables;
     for (const table of scope) {
       if (table.sheet === sheetName) {
@@ -425,8 +439,10 @@ export class WorkbookModel implements WorkbookModelContract, WorksheetHost {
     }
     this.#calcChain ??= new CalcChainModel(xml);
     const adjusted = this.#calcChain.relocate(entry.sheetId, relocation);
-    counters.calcChainEntries += adjusted;
-    if (adjusted > 0) {
+    counters.calcChainEntries += adjusted.removed + adjusted.renumbered;
+    counters.calcChainEntriesRemoved += adjusted.removed;
+    this.#calcChainEntriesRemoved += adjusted.removed;
+    if (adjusted.removed + adjusted.renumbered > 0) {
       this.#calcChainChanged = true;
     }
   }
@@ -653,25 +669,29 @@ class CalcChainModel {
   }
 
   /** Drop entries for deleted cells and renumber the rest; count the changes. */
-  relocate(sheetId: number, relocation: RowRelocation): number {
-    let adjusted = 0;
+  relocate(
+    sheetId: number,
+    relocation: RowRelocation,
+  ): { removed: number; renumbered: number } {
+    let removed = 0;
+    let renumbered = 0;
     this.#entries = this.#entries.filter((chainEntry) => {
       if (chainEntry.sheetId !== sheetId) {
         return true;
       }
       const relocated = relocateReference(chainEntry.reference, relocation);
       if (relocated.includes(DELETED_REFERENCE)) {
-        adjusted += 1;
+        removed += 1;
         return false;
       }
       if (relocated !== chainEntry.reference) {
         chainEntry.openTag = setAttribute(chainEntry.openTag, "r", relocated);
         chainEntry.reference = relocated;
-        adjusted += 1;
+        renumbered += 1;
       }
       return true;
     });
-    return adjusted;
+    return { removed, renumbered };
   }
 
   toXml(): string {
