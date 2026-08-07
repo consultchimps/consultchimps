@@ -329,9 +329,11 @@ describe("corpus: all-worksheet split", () => {
       'ref="A3:F10"',
     );
     const dataXml = await readPackagePart(alpha, CORPUS_PARTS.dataSheet);
-    // The array formula's own row survives, and its range reference and cached
-    // value are copied through without adjustment.
-    expect(dataXml).toContain('<f t="array" ref="G4:G4">SUM(D4:D9)</f>');
+    // Phase 1: the array formula's own row survives and its range reference
+    // now follows the rows it spans (it read SUM(D4:D9) before the migration).
+    // The cached value is still the whole workbook's answer - recalculation is
+    // Excel's job, and a values-only split clears it instead.
+    expect(dataXml).toContain('<f t="array" ref="G4:G4">SUM(D4:D6)</f>');
     expect(worksheetCellValue(dataXml, "G4")).toBe("210");
   });
 

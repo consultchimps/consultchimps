@@ -9,11 +9,12 @@
  * expectation. Pairing them also guarantees the expected failure fails for the
  * documented reason rather than because the fixture broke.
  *
- * The first three gaps -- pivot caches crossing outputs, stale cached
- * aggregates in values mode, and the stale calculation chain -- are now closed
- * by the Tier-1 utilities in `src/tier1/`, so their `.fails` twins have become
- * `Tier-1 fix: ...` tests and their pins record the new output. The
- * dependent-reference gaps below are still open.
+ * Every gap this file was opened for is now closed: pivot caches crossing
+ * outputs, stale cached aggregates in values mode and the stale calculation
+ * chain by the Tier-1 utilities, and the dependent references by Phase 1's
+ * move onto the layered engine. There are no `it.fails` tests left here; each
+ * `.fails` twin became a `Tier-1 fix: ...` test and its pin records the new
+ * output.
  */
 import path from "node:path";
 
@@ -209,27 +210,22 @@ describe("corpus: Tier-1 fix - stale calculation chain", () => {
   });
 });
 
-describe("corpus: Tier-1 gap - dependent references after row compaction", () => {
+describe("corpus: Tier-1 fix - dependent references after row compaction", () => {
   /**
-   * INVESTIGATION RESULT: broken, on both bindings.
+   * Phase 1 closed this gap, on both bindings.
    *
-   * 128a310 taught `removeWorksheetRows` to renumber the `r` attribute of each
-   * surviving `<row>` and of every `<c>` inside it. Nothing else in the
-   * worksheet part is adjusted: `mergeCells`, `conditionalFormatting/@sqref`,
-   * `dataValidation/@sqref`, `hyperlink/@ref`, shared-formula `@ref` and the
-   * text inside `<f>` all keep their original row numbers while the cells they
-   * describe move up. `filterPlainWorksheets` is the only editor on this path,
-   * and it rewrites nothing outside `<sheetData>`.
+   * The previous engine renumbered the `r` attribute of each surviving `<row>`
+   * and of every `<c>` inside it, and nothing else: `mergeCells`,
+   * `conditionalFormatting/@sqref`, `dataValidation/@sqref`, `hyperlink/@ref`,
+   * `dimension/@ref`, shared-formula `@ref` and the text inside `<f>` all kept
+   * their original row numbers while the cells they described moved up.
    *
-   * The Excel Table path is no safer. `preserve-table-split.ts` guards A1
-   * formulas with `assertRelocatableFormula` (the XLSX_SPLIT_PRESERVE_FORMULA
-   * refusal), but that guard only covers formulas inside relocated cells, and
-   * `workbook-column-split.ts` sidesteps it entirely: `tableCanBeCompacted`
-   * routes any sheet holding an A1 formula onto the plain path instead of
-   * refusing. Merged ranges and sqrefs are never checked on either path.
+   * The split now edits through L1, whose row-relocation pass rewrites every
+   * one of those in the same traversal, so the bug class is unrepresentable
+   * rather than merely fixed: there is no way to move a row that skips it.
    */
 
-  it("pins: dependent references currently keep their original row numbers", async () => {
+  it("pins: dependent references follow the rows they describe", async () => {
     const dataXml = await readPackagePart(
       await alphaOutput({ shape: "range", sharedFormula: true }),
       CORPUS_PARTS.dataSheet,
@@ -238,108 +234,120 @@ describe("corpus: Tier-1 gap - dependent references after row compaction", () =>
     // Row 6 (an Alpha record) moved to row 5; row 9 moved to row 6.
     expect(worksheetCellValue(dataXml, "D5")).toBe("30");
     expect(worksheetCellValue(dataXml, "D6")).toBe("60");
-    // Everything that referred to those rows still refers to the old numbers.
-    expect(mergedCellReferences(dataXml)).toEqual(["A1:F1", "H6:I6"]);
-    expect(conditionalFormattingSqref(dataXml)).toBe("D4:D9");
-    expect(dataValidationSqref(dataXml)).toBe("A4:A9");
-    expect(hyperlinkReferences(dataXml)).toEqual(["A6"]);
-    expect(worksheetCellFormula(dataXml, "E5")).toBe("D6*2");
-    expect(dataXml).toContain('ref="F4:F9"');
+    // Everything that referred to those rows refers to their new numbers.
+    expect(mergedCellReferences(dataXml)).toEqual(["A1:F1", "H5:I5"]);
+    expect(conditionalFormattingSqref(dataXml)).toBe("D4:D6");
+    expect(dataValidationSqref(dataXml)).toBe("A4:A6");
+    expect(hyperlinkReferences(dataXml)).toEqual(["A5"]);
+    expect(worksheetCellFormula(dataXml, "E5")).toBe("D5*2");
+    expect(dataXml).toContain('ref="F4:F6"');
   });
 
-  it.fails(
-    "Tier-1 gap: merged ranges must follow the rows they cover",
-    async () => {
-      const dataXml = await readPackagePart(
+  it("Tier-1 fix: merged ranges follow the rows they cover", async () => {
+    const dataXml = await readPackagePart(
+      await alphaOutput({ shape: "range" }),
+      CORPUS_PARTS.dataSheet,
+    );
+
+    // H6:I6 covered the record that now lives on row 5.
+    expect(mergedCellReferences(dataXml)).toEqual(["A1:F1", "H5:I5"]);
+  });
+
+  it("Tier-1 fix: conditional-formatting sqref shrinks with the rows it covers", async () => {
+    const dataXml = await readPackagePart(
+      await alphaOutput({ shape: "range" }),
+      CORPUS_PARTS.dataSheet,
+    );
+
+    expect(conditionalFormattingSqref(dataXml)).toBe("D4:D6");
+  });
+
+  it("Tier-1 fix: data-validation sqref shrinks with the rows it covers", async () => {
+    const dataXml = await readPackagePart(
+      await alphaOutput({ shape: "range" }),
+      CORPUS_PARTS.dataSheet,
+    );
+
+    expect(dataValidationSqref(dataXml)).toBe("A4:A6");
+  });
+
+  it("Tier-1 fix: hyperlinks follow the row they decorate", async () => {
+    const dataXml = await readPackagePart(
+      await alphaOutput({ shape: "range" }),
+      CORPUS_PARTS.dataSheet,
+    );
+
+    expect(hyperlinkReferences(dataXml)).toEqual(["A5"]);
+  });
+
+  it("Tier-1 fix: A1 formulas on a plain worksheet are rewritten when their row moves", async () => {
+    const dataXml = await readPackagePart(
+      await alphaOutput({ shape: "range" }),
+      CORPUS_PARTS.dataSheet,
+    );
+
+    // E5 doubles the amount on its own row. Before compaction that amount was
+    // D6; it is D5 now, and the formula says so, so the cell still doubles the
+    // record it was written for instead of a different one.
+    expect(worksheetCellFormula(dataXml, "E5")).toBe("D5*2");
+    expect(worksheetCellFormula(dataXml, "E6")).toBe("D6*2");
+  });
+
+  it("Tier-1 fix: shared-formula ranges shrink with the rows they span", async () => {
+    const dataXml = await readPackagePart(
+      await alphaOutput({ shape: "range", sharedFormula: true }),
+      CORPUS_PARTS.dataSheet,
+    );
+
+    expect(dataXml).toContain('ref="F4:F6"');
+    expect(dataXml).not.toContain('ref="F4:F9"');
+  });
+
+  it("Tier-1 fix: the Excel Table binding fixes dependent references too", async () => {
+    // The compacting table path resizes the table part and its autoFilter; the
+    // guarantee is that everything else on the worksheet moves with it.
+    const dataXml = await readPackagePart(
+      await alphaOutput({ shape: "table", formulas: "structured" }),
+      CORPUS_PARTS.dataSheet,
+    );
+
+    expect(conditionalFormattingSqref(dataXml)).toBe("D4:D6");
+    expect(dataValidationSqref(dataXml)).toBe("A4:A6");
+    expect(mergedCellReferences(dataXml)).toEqual(["A1:F1", "H5:I5"]);
+    expect(hyperlinkReferences(dataXml)).toEqual(["A5"]);
+  });
+
+  it("Tier-1 fix: a cell comment and its VML shape follow the row they annotate", async () => {
+    const alpha = await alphaOutput({ shape: "range" });
+
+    // The note is anchored twice: an A1 reference in the comments part and a
+    // zero-based row in the legacy VML drawing that draws its box. Data!B6 is
+    // an Alpha record, so both have to land on row 5 (VML row 4).
+    expect(await readPackagePart(alpha, CORPUS_PARTS.comments)).toContain(
+      'ref="B5"',
+    );
+    expect(
+      await readPackagePart(alpha, "xl/drawings/vmlDrawing1.vml"),
+    ).toContain("<x:Row>4</x:Row>");
+  });
+
+  it("Tier-1 fix: the declared dimension shrinks to the surviving extent", async () => {
+    // DECIDED IN PHASE 1: a stale `dimension/@ref` is a dependent reference
+    // like any other, so the invariant pass rewrites it. The corpus sheet
+    // declares A1:I12; Alpha keeps rows 1, 3, 4, 5 and 6 (H6:I6 having moved
+    // to H5:I5), so the surviving extent is A1:I6. The table binding keeps its
+    // footer block on row 12 and therefore keeps the declared extent.
+    expect(
+      await readPackagePart(
         await alphaOutput({ shape: "range" }),
         CORPUS_PARTS.dataSheet,
-      );
-
-      // H6:I6 covered the record that now lives on row 5.
-      expect(mergedCellReferences(dataXml)).toEqual(["A1:F1", "H5:I5"]);
-    },
-  );
-
-  it.fails(
-    "Tier-1 gap: conditional-formatting sqref must shrink with the rows it covers",
-    async () => {
-      const dataXml = await readPackagePart(
-        await alphaOutput({ shape: "range" }),
-        CORPUS_PARTS.dataSheet,
-      );
-
-      expect(conditionalFormattingSqref(dataXml)).toBe("D4:D6");
-    },
-  );
-
-  it.fails(
-    "Tier-1 gap: data-validation sqref must shrink with the rows it covers",
-    async () => {
-      const dataXml = await readPackagePart(
-        await alphaOutput({ shape: "range" }),
-        CORPUS_PARTS.dataSheet,
-      );
-
-      expect(dataValidationSqref(dataXml)).toBe("A4:A6");
-    },
-  );
-
-  it.fails(
-    "Tier-1 gap: hyperlinks must follow the row they decorate",
-    async () => {
-      const dataXml = await readPackagePart(
-        await alphaOutput({ shape: "range" }),
-        CORPUS_PARTS.dataSheet,
-      );
-
-      expect(hyperlinkReferences(dataXml)).toEqual(["A5"]);
-    },
-  );
-
-  it.fails(
-    "Tier-1 gap: A1 formulas on a plain worksheet must be rewritten when their row moves",
-    async () => {
-      const dataXml = await readPackagePart(
-        await alphaOutput({ shape: "range" }),
-        CORPUS_PARTS.dataSheet,
-      );
-
-      // E5 doubles the amount on its own row. After compaction that amount is
-      // D5, but the formula still reads D6 and therefore doubles a different
-      // record; had row 9 been dropped instead it would read a deleted cell.
-      expect(worksheetCellFormula(dataXml, "E5")).toBe("D5*2");
-      expect(worksheetCellFormula(dataXml, "E6")).toBe("D6*2");
-    },
-  );
-
-  it.fails(
-    "Tier-1 gap: shared-formula ranges must shrink with the rows they span",
-    async () => {
-      const dataXml = await readPackagePart(
-        await alphaOutput({ shape: "range", sharedFormula: true }),
-        CORPUS_PARTS.dataSheet,
-      );
-
-      expect(dataXml).toContain('ref="F4:F6"');
-      expect(dataXml).not.toContain('ref="F4:F9"');
-    },
-  );
-
-  it.fails(
-    "Tier-1 gap: the Excel Table binding must fix dependent references too",
-    async () => {
-      // The compacting table path resizes the table part and its autoFilter,
-      // which proves it knows the new geometry, yet it leaves every other
-      // dependent reference on the worksheet alone.
-      const dataXml = await readPackagePart(
+      ),
+    ).toContain('<dimension ref="A1:I6"/>');
+    expect(
+      await readPackagePart(
         await alphaOutput({ shape: "table", formulas: "structured" }),
         CORPUS_PARTS.dataSheet,
-      );
-
-      expect(conditionalFormattingSqref(dataXml)).toBe("D4:D6");
-      expect(dataValidationSqref(dataXml)).toBe("A4:A6");
-      expect(mergedCellReferences(dataXml)).toEqual(["A1:F1", "H5:I5"]);
-      expect(hyperlinkReferences(dataXml)).toEqual(["A5"]);
-    },
-  );
+      ),
+    ).toContain('<dimension ref="A1:I12"/>');
+  });
 });

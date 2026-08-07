@@ -14,7 +14,7 @@ Nothing here touches `src/`.
 | `split.corpus.test.ts`             | Every split mode (all-worksheet, table, named range, worksheet, bytes) against both bindings.  |
 | `merge-consolidate.corpus.test.ts` | Merge and consolidate, including everything the merge currently loses.                         |
 | `invariants.corpus.test.ts`        | Preservation, determinism and output-safety guarantees the engine already makes.               |
-| `tier1-gaps.corpus.test.ts`        | The Tier-1 gaps: one passing pin plus one `it.fails` per gap.                                  |
+| `tier1-gaps.corpus.test.ts`        | The Tier-1 gaps, now all closed: a pin plus a `Tier-1 fix:` test per gap.                      |
 
 ## The pairing convention
 
@@ -124,9 +124,11 @@ Naming convention for test titles:
 
 ## Known gaps documented here
 
-All four are listed under Phase 0 in ARCHITECTURE.md. The first three are now
-closed by the Tier-1 utilities in `src/tier1/`; their `it.fails` twins have
-become `Tier-1 fix: ...` tests and their pins record the new output.
+All four are listed under Phase 0 in ARCHITECTURE.md, and **all four are now
+closed**. The first three were closed by the Tier-1 utilities in `src/tier1/`;
+the fourth by Phase 1's move onto the layered engine. Every `it.fails` twin has
+become a `Tier-1 fix: ...` test and every pin records the new output, so the
+corpus contains no expected-failure tests.
 
 1. ~~Pivot-cache records of one group reach another group's split output.~~
    Fixed: `stripPivotParts` removes every pivot table and cache from each
@@ -140,21 +142,19 @@ become `Tier-1 fix: ...` tests and their pins record the new output.
    `pruneCalcChain` drops the entries for deleted cells and renumbers the
    survivors, removing the part, its relationship and its content-type override
    when nothing is left.
-4. Dependent references (merged ranges, conditional-formatting and
+4. ~~Dependent references (merged ranges, conditional-formatting and
    data-validation `sqref`, hyperlink `ref`, shared-formula `ref`, and A1
-   formula text) are not adjusted when rows compact - on **both** bindings.
-   `tier1-gaps.corpus.test.ts` documents the mechanism.
+   formula text) are not adjusted when rows compact - on **both** bindings.~~
+   Fixed in Phase 1: the split edits through L1, whose row-relocation pass
+   rewrites all of them in one traversal, together with two references the
+   corpus did not previously assert - the `<comment ref>` and the `<x:Row>`
+   anchor inside `xl/drawings/vmlDrawing1.vml` that pin a cell comment to a row,
+   and the worksheet's declared `dimension/@ref`.
 
-One further dependent reference is not yet asserted: the `<x:Row>` anchor inside
-`xl/drawings/vmlDrawing1.vml`, which pins a cell comment to a row number. It
-moves for exactly the same reason and is a natural next fixture.
-
-A fifth, smaller finding is pinned in `invariants.corpus.test.ts` rather than
-listed as a Tier-1 gap: `filterPlainWorksheets` in
-`src/workbook-column-split.ts` writes replaced parts with JSZip's defaults
-instead of through `src/package-zip.ts`, so all-worksheet split outputs take the
-current wall-clock time on every rewritten part and gain folder entries the
-source package never had. Their contents are reproducible; their bytes are only
-reproducible within one DOS timestamp tick. The preserved table split, which
-does go through `package-zip.ts`, is byte-reproducible - the corpus asserts
-both. L0 is where the two writers converge.
+A fifth, smaller finding was pinned in `invariants.corpus.test.ts` rather than
+listed as a Tier-1 gap: the all-worksheet split wrote replaced parts with
+JSZip's defaults instead of through the deterministic package writer, so its
+outputs took the current wall-clock time on every rewritten part and gained
+folder entries the source package never had. Their contents were reproducible;
+their bytes only within one DOS timestamp tick. That pin is now an invariant:
+every write goes through L0, and both split paths are byte-reproducible.

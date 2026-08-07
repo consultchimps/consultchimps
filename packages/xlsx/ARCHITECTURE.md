@@ -195,14 +195,12 @@ cell for every operation.
 
 **Move a module into a layer.** `test/boundaries.test.ts` enforces guardrail 2
 over `src/**/*.ts` — source text, not `dist/`, so a misplaced import fails
-before it is bundled. It carries a temporary allowlist of the legacy top-level
-modules that still import JSZip (`excel-tables.ts`, `package-zip.ts`,
-`preserve-table-split.ts`, `values-only.ts`, `workbook-column-split.ts`), each
-annotated with the phase that retires it. The allowlist is asserted to match the
-offending files _exactly_, so migrating a module means deleting its entry in the
-same pull request, and a new module cannot join it unnoticed. The "operations
-never regex-edit XML" half of guardrail 2 is not yet asserted; `src/operations/`
-does not exist, and the rule lands with it.
+before it is bundled. It carried a temporary allowlist of the legacy top-level
+modules that still imported JSZip; Phase 1 emptied it, so `src/package/` is now
+the only owner of ZIP concerns. The allowlist is asserted to match the offending
+files _exactly_, so a new module cannot join it unnoticed. The "operations never
+regex-edit XML" half of guardrail 2 is not yet asserted; `src/operations/` does
+not exist, and the rule lands with it.
 
 **Declare a contract cell.** `src/contract.ts` holds the L4 table as data, with
 each cell citing the corpus test that holds it up. `split` cells state the
@@ -225,13 +223,20 @@ introduce a second implementation of anything L0–L2 owns.
   stale cached aggregates in values-mode splits, calcChain left stale after row
   deletion, and dependent-range references after row compaction. Zero behavior
   change.
-- **Phase 1** — L0/L1/L2 built; split re-expressed on them behind the existing
-  public API; symmetry harness and boundary tests active.
+- **Phase 1** — L0/L1/L2 built; the all-worksheet split re-expressed on them
+  behind the existing public API; symmetry harness and boundary tests active;
+  Phase 0's dependent-reference expected failures flipped to passing. The
+  compact rebuild modes (`preserveWorkbook: false`, named-range and worksheet
+  selections) and the preserved table-selection split stay on their previous
+  implementations: the first two rebuild a workbook from parsed values rather
+  than editing one, and the third's contract is a refusal
+  (`XLSX_SPLIT_PRESERVE_FORMULA`) rather than a repair. Both decisions are
+  recorded in `src/preserve-table-split.ts` and pinned by the corpus.
 - **Phase 1b** — merge rebuilt as a part-level transplant on the model (styles
   remapped, shared strings deduped, defined-name and table-name collisions
   handled). Pinned merge expectations updated deliberately.
-- **Phase 2** — Tier-1 contract cells implemented; Phase 0's expected failures
-  flip to passing.
+- **Phase 2** — the remaining contract cells decided: defined names, drawings
+  and charts, external links, and the totals-row asymmetry between bindings.
 - **Later** — group mapping (many values → one output), multi-column split keys,
   table-aware consolidate, region-aware browser workbench chaining.
 

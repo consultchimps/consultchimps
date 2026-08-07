@@ -31,12 +31,20 @@ import {
 } from "./fixtures.js";
 
 const SHAPES: readonly CorpusShape[] = ["table", "range"];
+// Phase 1: the comments part and its VML drawing left this list because a
+// split now legitimately edits them - a note anchored on a record follows that
+// record's row - so "unchanged" would no longer be the correct guarantee.
 const UNFILTERED_PARTS = [
   CORPUS_PARTS.summarySheet,
   CORPUS_PARTS.veryHiddenSheet,
-  CORPUS_PARTS.comments,
   CORPUS_PARTS.sharedStrings,
   "xl/styles.xml",
+];
+// A values-only conversion rewrites formulas and nothing else, so the comment
+// anchors are still untouched on that path.
+const VALUES_UNCHANGED_PARTS = [
+  ...UNFILTERED_PARTS,
+  CORPUS_PARTS.comments,
   "xl/drawings/vmlDrawing1.vml",
 ];
 
@@ -158,32 +166,33 @@ describe("corpus: preservation invariants", () => {
     );
   });
 
-  it("pins: the all-worksheet split path bypasses the deterministic package writer", async () => {
+  it("invariant: the all-worksheet split writes through the deterministic package writer", async () => {
     const directory = await createCorpusDirectory();
     const input = await writeCorpusWorkbook(directory, "corpus.xlsx", {
       shape: "range",
     });
-    await splitWorkbookByColumn({
-      column: CORPUS_SPLIT_COLUMN,
-      input,
-      outputDirectory: path.join(directory, "out"),
-    });
+    for (const run of ["first", "second"]) {
+      await splitWorkbookByColumn({
+        column: CORPUS_SPLIT_COLUMN,
+        input,
+        outputDirectory: path.join(directory, run),
+      });
+    }
 
-    const archive = await JSZip.loadAsync(
-      await readFile(path.join(directory, "out", "Alpha.xlsx")),
+    // Phase 1 replaced the pin that recorded the opposite. The old path wrote
+    // replaced parts with JSZip's defaults, so a rewritten worksheet took the
+    // current wall-clock time and folder entries appeared that the source
+    // package never had; reproducibility held only within one DOS timestamp
+    // tick. Every write now goes through L0: fixed stamps, no folder entries.
+    const first = await readFile(path.join(directory, "first", "Alpha.xlsx"));
+    const archive = await JSZip.loadAsync(first);
+    for (const part of [CORPUS_PARTS.summarySheet, CORPUS_PARTS.dataSheet]) {
+      expect(archive.file(part)!.date.getUTCFullYear()).toBe(1980);
+    }
+    expect(Object.values(archive.files).some((entry) => entry.dir)).toBe(false);
+    expect(first).toEqual(
+      await readFile(path.join(directory, "second", "Alpha.xlsx")),
     );
-    // filterPlainWorksheets writes replaced parts with JSZip's defaults rather
-    // than through package-zip.ts, so the rewritten worksheet takes the
-    // current wall-clock time while untouched parts keep the source stamp, and
-    // folder entries appear that the source package never had. Byte-level
-    // reproducibility therefore holds only within one DOS timestamp tick.
-    expect(archive.file(CORPUS_PARTS.summarySheet)!.date.getUTCFullYear()).toBe(
-      1980,
-    );
-    expect(
-      archive.file(CORPUS_PARTS.dataSheet)!.date.getUTCFullYear(),
-    ).toBeGreaterThan(1980);
-    expect(Object.values(archive.files).some((entry) => entry.dir)).toBe(true);
   });
 
   it.each(SHAPES)(
@@ -200,7 +209,7 @@ describe("corpus: preservation invariants", () => {
       expect(convertedParts).toEqual(
         sourceParts.filter((part) => part !== CORPUS_PARTS.calcChain),
       );
-      for (const part of UNFILTERED_PARTS.filter(
+      for (const part of VALUES_UNCHANGED_PARTS.filter(
         (candidate) => candidate !== CORPUS_PARTS.summarySheet,
       )) {
         expect(await readPackagePart(converted, part)).toBe(

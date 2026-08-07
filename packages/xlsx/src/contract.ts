@@ -74,12 +74,11 @@ export type Operation = (typeof OPERATIONS)[number];
 /**
  * The declared behaviors.
  *
- * Only `split` is populated in Phase 1, and its cells encode the POST-Phase-1
- * intent: once the split runs on the L1 model, the invariant pass named in
- * `DeleteRowsReport.adjusted` fixes dependent references natively, so those
- * structures are declared `fix` even though the corpus currently pins them as
- * broken (`test/corpus/tier1-gaps.corpus.test.ts` carries the matching
- * `it.fails` pair for each one).
+ * Only `split` is populated. Phase 1 declared these cells ahead of the
+ * migration and then made them true: the split runs on the L1 model, whose
+ * invariant pass fixes every dependent reference named in
+ * `DeleteRowsReport.adjusted`, and `test/corpus/tier1-gaps.corpus.test.ts`
+ * holds each one up with a passing test rather than an expected failure.
  *
  * Every cell cites the corpus test that holds it up. `%s` in a cited name is
  * the shape parameter of an `it.each(SHAPES)` run.
@@ -89,21 +88,21 @@ export const CONTRACT: Record<
   Partial<Record<Structure, ContractBehavior>>
 > = {
   split: {
-    // Tier-1 gap: merged ranges must follow the rows they cover
+    // Tier-1 fix: merged ranges follow the rows they cover
     "merged-cells": "fix",
-    // Tier-1 gap: conditional-formatting sqref must shrink with the rows it covers
+    // Tier-1 fix: conditional-formatting sqref shrinks with the rows it covers
     "conditional-formatting": "fix",
-    // Tier-1 gap: data-validation sqref must shrink with the rows it covers
+    // Tier-1 fix: data-validation sqref shrinks with the rows it covers
     "data-validation": "fix",
-    // Tier-1 gap: hyperlinks must follow the row they decorate
+    // Tier-1 fix: hyperlinks follow the row they decorate
     hyperlinks: "fix",
-    // pins: the %s binding copies every source package part into every output
-    // (the part survives; its VML <x:Row> anchor still has to follow the row,
-    // which is why this is `fix` and not `preserve` - see corpus/README.md)
+    // Tier-1 fix: a cell comment and its VML shape follow the row they annotate
+    // (the part survives, and its ref and VML <x:Row> anchor move with the
+    // record, which is why this is `fix` and not `preserve`)
     comments: "fix",
     // pins: structured-reference formulas let the table binding compact its table part
     "excel-tables": "fix",
-    // Tier-1 fix: the calculation chain must not reference cells a split deleted
+    // Tier-1 fix: the calculation chain does not reference cells a split deleted
     "calc-chain": "fix",
     // Tier-1 fix: pivot caches carried other groups' rows into every output;
     // decided as strip-warn (rebuildable in Excel, never silently leaked)
@@ -120,10 +119,15 @@ export const CONTRACT: Record<
     // (the uncached Summary!B4 is reported, never silently invented; a plain
     // split carries the formula through unchanged)
     "formulas-uncached": "preserve",
-    // Tier-1 gap: shared-formula ranges must shrink with the rows they span
+    // Tier-1 fix: shared-formula ranges shrink with the rows they span
     "formulas-shared": "fix",
-    // Tier-1 gap: A1 formulas on a plain worksheet must be rewritten when their row moves
+    // Tier-1 fix: A1 formulas on a plain worksheet are rewritten when their row moves
     "formulas-a1": "fix",
+    // pins: a single array formula anywhere on the sheet withdraws table compaction
+    // (DECIDED IN PHASE 1: the array formula's own `ref` span and its A1 text
+    // follow the rows, so the formula stays valid; what the array formula still
+    // withdraws is the table-part resize, which is warned about, not silent)
+    "formulas-array": "fix",
     // pins: structured-reference formulas let the table binding compact its table part
     // (row-relative by construction, so compaction cannot invalidate them)
     "formulas-structured-ref": "preserve",
@@ -150,11 +154,9 @@ export const UNDECIDED_SPLIT_STRUCTURES: Readonly<Record<string, string>> = {
   "drawings-charts":
     "No corpus fixture yet: the generator only emits the legacy VML drawing that belongs to a comment.",
   "defined-names":
-    "Dependent on deleted rows, but DeleteRowsReport.adjusted does not cover them and no split test pins them.",
+    "Checked in Phase 1 and deliberately left undeclared: the L1 invariant pass reads defined names but does not relocate them, so the honest answer is still open rather than `fix`. A workbook-scoped name over a filtered region keeps its source rows today.",
   "excel-table-totals-row":
     "The bindings disagree (pins: the range binding deletes the footer block, the table binding keeps it); one cell cannot state both.",
   "external-links":
     "No corpus fixture yet; the generator has no external-link part.",
-  "formulas-array":
-    "pins: a single array formula anywhere on the sheet withdraws table compaction - whether Phase 1 fixes the array ref or keeps warning is open.",
 };

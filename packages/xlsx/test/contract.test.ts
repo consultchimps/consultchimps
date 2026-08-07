@@ -36,7 +36,6 @@ const EXPECTED_MISSING_FOR_SPLIT: readonly Structure[] = [
   "defined-names",
   "excel-table-totals-row",
   "external-links",
-  "formulas-array",
 ];
 
 /** Operations with no column yet; each is wholly undeclared. */
