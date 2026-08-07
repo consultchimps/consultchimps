@@ -153,6 +153,26 @@ validation, hyperlinks, comments, drawings/charts, defined names, Excel Tables
 styles/number formats, VBA (`.xlsm`), external links, formulas (cached,
 uncached, shared, array, A1, structured-ref).
 
+#### The merge's removals
+
+Preservation is the merge's default, so its four removals are the part of the
+contract worth stating in prose. Each is reported as a warning in the
+`OperationResult` except where noted.
+
+| Removed        | Why a merge cannot carry it                                                                                                                                                                                                                       |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| pivot tables   | A cache is a private copy of its source rows and the `pivotCaches` registry is workbook-scoped. Same Tier-1 policy as the split.                                                                                                                  |
+| external links | An external reference is addressed by its position in one workbook's `externalReferences` list, and formulas cite that position; two lists cannot interleave.                                                                                     |
+| calcChain      | A derived index keyed by sheet id, and every transplanted sheet takes a new one. Dropped, and `calcPr fullCalcOnLoad` asks Excel to rebuild it. No warning: nothing authored is lost, which is why the cell reads `fix` rather than `strip-warn`. |
+| VBA project    | Two `vbaProject.bin` files cannot be combined. One travels, but only when a single input carries it and the output is named `.xlsm`, because a package whose content type contradicts its file name is one Excel opens with a corruption warning. |
+
+Two workbook-unique namespaces are repaired rather than dropped: Excel Table
+names (and ids) and workbook-scoped defined names. First claim wins; a later
+duplicate takes a numeric suffix, the rename is warned about, and every formula
+that named it - structured references included - is rewritten to follow it.
+Sheet-scoped defined names never collide and simply follow their sheet's new
+index.
+
 ### L5 — Surfaces (`src/index.ts`, `src/bytes.ts`, CLI, browser)
 
 Thin adapters only. The filesystem surface adds the staged
@@ -207,11 +227,15 @@ does not exist, and the rule lands with it.
 **Declare a contract cell.** `src/contract.ts` holds the L4 table as data, with
 each cell citing the corpus test that holds it up. `split` cells state the
 _post-Phase-1_ intent, so a cell can read `fix` while
-`tier1-gaps.corpus.test.ts` still pins the gap. A structure whose behavior is
-genuinely undecided has **no cell**: `test/contract.test.ts` asserts the exact
-missing set (with a reason per entry in `UNDECIDED_SPLIT_STRUCTURES`), which
-makes the debt enumerable and shrinking it deliberate, rather than failing the
-build during migration.
+`tier1-gaps.corpus.test.ts` still pins the gap; `merge` cells describe shipped
+behavior, held up by `merge-consolidate.corpus.test.ts` today. A structure whose
+behavior is genuinely undecided has **no cell**: `test/contract.test.ts` asserts
+the exact missing set (with a reason per entry in `UNDECIDED_SPLIT_STRUCTURES`
+and `UNDECIDED_MERGE_STRUCTURES`), which makes the debt enumerable and shrinking
+it deliberate, rather than failing the build during migration. A cell the corpus
+cannot exercise is not a contract: merge's `external-links` stays absent until
+the generator grows an external-link fixture, even though the engine already
+strips and warns about it.
 
 **Never**: edit raw worksheet XML from an operation; add an option to one
 operation that duplicates a policy; change an existing error-code value;
@@ -229,7 +253,12 @@ introduce a second implementation of anything L0–L2 owns.
   public API; symmetry harness and boundary tests active.
 - **Phase 1b** — merge rebuilt as a part-level transplant on the model (styles
   remapped, shared strings deduped, defined-name and table-name collisions
-  handled). Pinned merge expectations updated deliberately.
+  handled). Pinned merge expectations updated deliberately. **Landed**, in
+  `src/merge/`: the first input seeds the output package and later inputs'
+  worksheet parts are copied into it with their dependents, so the only things
+  rewritten are part paths, relationship ids, the two per-workbook index spaces
+  (shared strings, styles/dxfs) and the names a collision forced to change. Its
+  contract column is populated; see "The merge's removals" below.
 - **Phase 2** — Tier-1 contract cells implemented; Phase 0's expected failures
   flip to passing.
 - **Later** — group mapping (many values → one output), multi-column split keys,

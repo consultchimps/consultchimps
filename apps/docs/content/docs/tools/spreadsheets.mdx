@@ -74,6 +74,19 @@ supported by Excel. A visible `Sheet Index` tab records the source file,
 original and final tab names, and hidden/visible status. Duplicate worksheet
 names receive a suffix; use `--no-index` to omit the index.
 
+The merge copies each source worksheet as it is stored rather than rebuilding
+it, so conditional formatting, data validation, merged cells, hyperlinks, cell
+comments, Excel Tables, defined names, number formats and cell styles arrive
+with their worksheets. Names that have to stay unique across one workbook are
+made unique: a duplicate Excel Table or defined name takes a numeric suffix, and
+formulas that referenced a renamed worksheet or table are updated to follow it.
+Four things are removed, each reported as a warning in the result: pivot tables
+and their caches (a cache holds a private copy of its source rows), external
+links (they are addressed by position in a single workbook's list), the
+calculation chain (Excel rebuilds it, and the merged workbook asks it to), and a
+macro project unless exactly one input carries one and the output is named
+`.xlsm`.
+
 The workbook merge is also the tool the "Try it online" button at the top of
 this page opens: [merge workbooks in your browser](/tools/excel-merge) to
 combine tabs without installing anything. Consolidation, described above, is

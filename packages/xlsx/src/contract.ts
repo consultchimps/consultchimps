@@ -74,12 +74,19 @@ export type Operation = (typeof OPERATIONS)[number];
 /**
  * The declared behaviors.
  *
- * Only `split` is populated in Phase 1, and its cells encode the POST-Phase-1
- * intent: once the split runs on the L1 model, the invariant pass named in
- * `DeleteRowsReport.adjusted` fixes dependent references natively, so those
- * structures are declared `fix` even though the corpus currently pins them as
- * broken (`test/corpus/tier1-gaps.corpus.test.ts` carries the matching
- * `it.fails` pair for each one).
+ * `split` cells encode the POST-Phase-1 intent: once the split runs on the L1
+ * model, the invariant pass named in `DeleteRowsReport.adjusted` fixes
+ * dependent references natively, so those structures are declared `fix` even
+ * though the corpus currently pins them as broken
+ * (`test/corpus/tier1-gaps.corpus.test.ts` carries the matching `it.fails`
+ * pair for each one).
+ *
+ * `merge` cells describe the Phase-1b transplant in `src/merge/`, which is
+ * already the shipped behavior: `merge-consolidate.corpus.test.ts` holds every
+ * one of them up today. `preserve` there means the structure is copied with
+ * its worksheet part and never rewritten; `fix` means the merge had to repair
+ * something a second workbook made ambiguous - a name two inputs both claim,
+ * or an index into a table that is per-workbook.
  *
  * Every cell cites the corpus test that holds it up. `%s` in a cited name is
  * the shape parameter of an `it.each(SHAPES)` run.
@@ -130,9 +137,69 @@ export const CONTRACT: Record<
 
     // ABSENT, deliberately - see UNDECIDED_SPLIT_STRUCTURES below.
   },
-  // Phase 1b rebuilds merge as a part-level transplant; declaring cells before
-  // that work would pin behavior the corpus already records as lossy.
-  merge: {},
+  merge: {
+    // invariant: merge keeps merged ranges, hyperlinks, comments and formulas
+    // (worksheet-local geometry; a part-level copy never moves a cell)
+    "merged-cells": "preserve",
+    // invariant: merge carries conditional formatting and data validation on a
+    // %s-shape input (the rule travels; the dxf it names is copied beside it)
+    "conditional-formatting": "preserve",
+    // invariant: merge carries conditional formatting and data validation on a %s-shape input
+    "data-validation": "preserve",
+    // invariant: a transplanted worksheet keeps its own dependents and comment
+    // part (the external target survives; only its relationship id is renumbered)
+    hyperlinks: "preserve",
+    // invariant: a transplanted worksheet keeps its own dependents and comment part
+    comments: "preserve",
+    // invariant: a transplanted worksheet keeps its own dependents and comment
+    // part - the legacy VML drawing that draws a comment box is copied with it
+    "drawings-charts": "preserve",
+    // invariant: merge carries defined names and renames a workbook-scoped
+    // collision (first wins; a later duplicate takes a suffix, sheet-scoped
+    // names follow their sheet's new index)
+    "defined-names": "fix",
+    // invariant: merge carries Excel Table parts and renames a %s-shape name
+    // collision (table names and ids must be unique across one workbook)
+    "excel-tables": "fix",
+    // invariant: merge carries Excel Table parts and renames a %s-shape name
+    // collision - the totals row is worksheet content plus `totalsRowCount`,
+    // and a merge moves neither, so both bindings agree here
+    "excel-table-totals-row": "preserve",
+    // invariant: merge strips pivot tables and their caches, and says so
+    // (same Tier-1 policy as the split: a cache is a private copy of rows)
+    "pivot-tables": "strip-warn",
+    // invariant: merge keeps one shared string table and remaps every
+    // transplanted index - the chain is a derived index keyed by sheet id and
+    // every transplanted sheet takes a new one, so the repair that keeps the
+    // output valid is to drop it and ask for a full recalculation on open
+    "calc-chain": "fix",
+    // invariant: merge keeps one shared string table and remaps every transplanted index
+    "shared-strings": "fix",
+    // invariant: merge copies a %s-shape input's number format with the cells
+    // that use it (referenced entries are copied, resolved and deduplicated)
+    "styles-number-formats": "fix",
+    // invariant: a macro project travels only into an .xlsm output - carried
+    // from a single macro-bearing input into a macro-enabled output name, and
+    // removed with a warning in every other case
+    "vba-project": "strip-warn",
+    // invariant: merge keeps merged ranges, hyperlinks, comments and formulas
+    "formulas-cached": "preserve",
+    // invariant: merge carries shared, array and uncached formulas verbatim
+    "formulas-uncached": "preserve",
+    // invariant: merge carries shared, array and uncached formulas verbatim
+    // (`si` and `ref` are worksheet-local, so a copy cannot invalidate them)
+    "formulas-shared": "preserve",
+    // invariant: merge carries shared, array and uncached formulas verbatim
+    "formulas-array": "preserve",
+    // invariant: cross-sheet formulas follow a worksheet renamed by a collision
+    "formulas-a1": "fix",
+    // invariant: merge carries Excel Table parts and renames a %s-shape name
+    // collision (a structured reference names its table, so it is rewritten
+    // with it)
+    "formulas-structured-ref": "fix",
+
+    // ABSENT, deliberately - see UNDECIDED_MERGE_STRUCTURES below.
+  },
   // Phase "Later" - table-aware consolidate.
   consolidate: {},
   // `values` is a policy on other operations today, not a standalone L3
@@ -157,4 +224,18 @@ export const UNDECIDED_SPLIT_STRUCTURES: Readonly<Record<string, string>> = {
     "No corpus fixture yet; the generator has no external-link part.",
   "formulas-array":
     "pins: a single array formula anywhere on the sheet withdraws table compaction - whether Phase 1 fixes the array ref or keeps warning is open.",
+};
+
+/**
+ * Why each merge cell is still absent.
+ *
+ * The transplant already removes external links and warns about it - two
+ * workbooks' `externalReferences` lists are addressed positionally and cannot
+ * be interleaved - but a declared cell must be held up by the corpus, and the
+ * generator has no external-link part to build one from. The cell lands with
+ * the fixture.
+ */
+export const UNDECIDED_MERGE_STRUCTURES: Readonly<Record<string, string>> = {
+  "external-links":
+    "No corpus fixture yet; the generator has no external-link part, and a cell the corpus cannot exercise is not a contract.",
 };

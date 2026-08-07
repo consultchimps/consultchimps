@@ -55,6 +55,13 @@ export interface CorpusWorkbookOptions {
   pivot?: boolean | undefined;
   /** Macro-enabled package: a stub `xl/vbaProject.bin` and the .xlsm content types. */
   macro?: boolean | undefined;
+  /**
+   * Format the `Amount` column with a workbook-defined number format, through
+   * a third `cellXfs` entry. The merge remaps style indexes between workbooks,
+   * so a fixture that formats a cell is the only way to pin that the format
+   * arrives with the cell it formats.
+   */
+  numberFormat?: boolean | undefined;
 }
 
 export interface CorpusDataRow {
@@ -112,6 +119,11 @@ export const CORPUS_LOCAL_NAME = "LocalNote";
 export const CORPUS_SIDE_NOTE = "Alpha side note";
 /** Text of the cell comment anchored on Data!B6. */
 export const CORPUS_COMMENT_TEXT = "Corpus comment on an Alpha row";
+/** The format code `numberFormat` fixtures define, as it reads in Excel. */
+export const CORPUS_NUMBER_FORMAT_CODE = '"$"#,##0.00';
+/** The `cellXfs` index `numberFormat` fixtures put on the `Amount` column. */
+export const CORPUS_NUMBER_FORMAT_STYLE = 2;
+
 /** Stub macro project bytes carried by macro-enabled fixtures. */
 export const CORPUS_VBA_BYTES: readonly number[] = [
   0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1,
@@ -174,6 +186,7 @@ interface ResolvedOptions {
   formulas: CorpusFormulaFlavor;
   hiddenSheets: boolean;
   macro: boolean;
+  numberFormat: boolean;
   pivot: boolean;
   shape: CorpusShape;
   sharedFormula: boolean;
@@ -301,6 +314,7 @@ function resolveOptions(options: CorpusWorkbookOptions): ResolvedOptions {
     formulas,
     hiddenSheets: options.hiddenSheets ?? true,
     macro: options.macro ?? false,
+    numberFormat: options.numberFormat ?? false,
     pivot,
     shape: options.shape,
     sharedFormula: options.sharedFormula ?? false,
@@ -421,7 +435,11 @@ function buildDataSheet(
         type: "s",
         value: String(strings.index(entry.group)),
       },
-      { ref: `D${entry.row}`, value: String(entry.amount) },
+      {
+        ref: `D${entry.row}`,
+        style: resolved.numberFormat ? CORPUS_NUMBER_FORMAT_STYLE : undefined,
+        value: String(entry.amount),
+      },
       doubledCell(resolved, entry),
       ratioCell(resolved, entry),
     ];
@@ -455,6 +473,7 @@ function buildDataSheet(
         },
         {
           ref: `D${CORPUS_TOTALS_ROW}`,
+          style: resolved.numberFormat ? CORPUS_NUMBER_FORMAT_STYLE : undefined,
           formula:
             resolved.formulas === "none"
               ? undefined
@@ -754,8 +773,19 @@ function buildVeryHiddenSheet(strings: StringTable): string {
   )}</sheetData><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`;
 }
 
-function buildStyles(): string {
-  return `${XML_DECLARATION}<styleSheet xmlns="${NAMESPACE_MAIN}"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles><dxfs count="1"><dxf><font><color rgb="FF9C0006"/></font></dxf></dxfs></styleSheet>`;
+function buildStyles(resolved: ResolvedOptions): string {
+  // `numberFormat` adds a workbook-defined format and the third `cellXfs`
+  // entry that applies it, so the style index of a formatted cell is 2.
+  const numberFormats = resolved.numberFormat
+    ? `<numFmts count="1"><numFmt numFmtId="164" formatCode="${escapeXml(
+        CORPUS_NUMBER_FORMAT_CODE,
+      )}"/></numFmts>`
+    : "";
+  const formattedXf = resolved.numberFormat
+    ? '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
+    : "";
+  const cellXfCount = resolved.numberFormat ? 3 : 2;
+  return `${XML_DECLARATION}<styleSheet xmlns="${NAMESPACE_MAIN}">${numberFormats}<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${cellXfCount}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>${formattedXf}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles><dxfs count="1"><dxf><font><color rgb="FF9C0006"/></font></dxf></dxfs></styleSheet>`;
 }
 
 function buildComments(): string {
@@ -1026,7 +1056,7 @@ export async function buildCorpusWorkbook(
   write("_rels/.rels", packageRelationships.xml());
   write(CORPUS_PARTS.workbook, workbookXml);
   write("xl/_rels/workbook.xml.rels", workbookRelationships.xml());
-  write("xl/styles.xml", buildStyles());
+  write("xl/styles.xml", buildStyles(resolved));
   for (const sheet of sheets) {
     write(sheet.partName, sheet.xml);
     if (sheet.relationships.size > 0) {
@@ -1161,6 +1191,46 @@ export function worksheetCellValue(
   );
   const body = pattern.exec(worksheetXml)?.[1];
   return /<v>([\s\S]*?)<\/v>/u.exec(body ?? "")?.[1];
+}
+
+/** The style index of one cell in a worksheet part; 0 when it declares none. */
+export function worksheetCellStyle(
+  worksheetXml: string,
+  reference: string,
+): number {
+  const pattern = new RegExp(`<c\\b[^>]*\\br="${reference}"[^>]*>`, "u");
+  const openTag = pattern.exec(worksheetXml)?.[0] ?? "";
+  const style = /\bs="(\d+)"/u.exec(openTag)?.[1];
+  return style === undefined ? 0 : Number(style);
+}
+
+/**
+ * The number-format code a `cellXfs` entry applies, resolved through the
+ * workbook's `numFmts`. Returns undefined for a built-in format id, which the
+ * styles part does not spell out.
+ */
+export function styleNumberFormatCode(
+  stylesXml: string,
+  styleIndex: number,
+): string | undefined {
+  const cellXfs = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/u.exec(stylesXml)?.[1];
+  const entries = [...(cellXfs ?? "").matchAll(/<xf\b[^>]*?\/?>/gu)].map(
+    (match) => match[0],
+  );
+  const formatId = /\bnumFmtId="(\d+)"/u.exec(entries[styleIndex] ?? "")?.[1];
+  if (formatId === undefined) {
+    return undefined;
+  }
+  const declared = new RegExp(
+    `<numFmt\\b[^>]*\\bnumFmtId="${formatId}"[^>]*\\bformatCode="([^"]*)"`,
+    "u",
+  ).exec(stylesXml)?.[1];
+  return declared
+    ?.replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
 }
 
 /** The `sqref` of the first `<conditionalFormatting>` block in a worksheet part. */
