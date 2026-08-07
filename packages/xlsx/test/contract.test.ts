@@ -35,7 +35,6 @@ const EXPECTED_MISSING_FOR_SPLIT: readonly Structure[] = [
   "drawings-charts",
   "defined-names",
   "excel-table-totals-row",
-  "pivot-tables",
   "external-links",
   "formulas-array",
 ];

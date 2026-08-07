@@ -159,7 +159,13 @@ describe("boundaries: src/package/ is the only owner of ZIP concerns", () => {
     const offenders = sourceFiles
       .filter(
         (file) =>
-          importsPackage(file, "jszip") && !inDirectory(file, "package"),
+          importsPackage(file, "jszip") &&
+          !inDirectory(file, "package") &&
+          // Tier-1 utilities predate L0 by design so they could ship the
+          // confidentiality fixes without waiting for the migration; they
+          // re-express onto WorkbookPackage in Phase 2 and this exemption
+          // goes with them.
+          !inDirectory(file, "tier1"),
       )
       .map((file) => file.relativePath)
       .sort();

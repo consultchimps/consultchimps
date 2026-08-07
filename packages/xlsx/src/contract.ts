@@ -103,8 +103,11 @@ export const CONTRACT: Record<
     comments: "fix",
     // pins: structured-reference formulas let the table binding compact its table part
     "excel-tables": "fix",
-    // Tier-1 gap: the calculation chain must not reference cells a split deleted
+    // Tier-1 fix: the calculation chain must not reference cells a split deleted
     "calc-chain": "fix",
+    // Tier-1 fix: pivot caches carried other groups' rows into every output;
+    // decided as strip-warn (rebuildable in Excel, never silently leaked)
+    "pivot-tables": "strip-warn",
     // invariant: parts the %s split does not filter pass through byte-identical
     "shared-strings": "preserve",
     // invariant: parts the %s split does not filter pass through byte-identical
@@ -150,8 +153,6 @@ export const UNDECIDED_SPLIT_STRUCTURES: Readonly<Record<string, string>> = {
     "Dependent on deleted rows, but DeleteRowsReport.adjusted does not cover them and no split test pins them.",
   "excel-table-totals-row":
     "The bindings disagree (pins: the range binding deletes the footer block, the table binding keeps it); one cell cannot state both.",
-  "pivot-tables":
-    "Tier-1 gap: pivot-cache records of another group must not reach a group's split output - strip-warn versus fix is open.",
   "external-links":
     "No corpus fixture yet; the generator has no external-link part.",
   "formulas-array":
