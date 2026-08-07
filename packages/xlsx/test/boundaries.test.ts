@@ -19,20 +19,20 @@ import { beforeAll, describe, expect, it } from "vitest";
 const SOURCE_DIRECTORY = fileURLToPath(new URL("../src/", import.meta.url));
 
 /**
- * Legacy modules that still own ZIP concerns directly. ARCHITECTURE.md's L0
- * section names the first three explicitly ("the previous parallel
- * implementations ... converge here"); the other two are the readers and
- * writers those three are built on.
+ * Legacy modules that still own ZIP concerns directly.
  *
- * The test asserts this list matches the offending files EXACTLY, so a new
- * module cannot quietly join it.
+ * L0 has since absorbed most of them: `package-zip.ts` and `package-paths.ts`
+ * were folded into `src/package/`, and `excel-tables.ts`, `values-only.ts` and
+ * `preserve-table-split.ts` now reach the archive through `WorkbookPackage`.
+ * Only the all-worksheet split still opens one itself; it converges when the
+ * split is re-expressed on the layers.
+ *
+ * The test asserts this list matches the offending files EXACTLY, in both
+ * directions, so a new module cannot quietly join it and a migrated module
+ * cannot be left on it.
  */
 const JSZIP_ALLOWLIST: readonly string[] = [
-  "excel-tables.ts", // migrates in Phase 1 - becomes WorkbookModel.tables()
-  "package-zip.ts", // migrates in Phase 1 - becomes the L0 deterministic writer (type-only import today)
-  "preserve-table-split.ts", // migrates in Phase 1 - split re-expressed on L0/L1/L2
-  "values-only.ts", // migrates in Phase 1 - converges into the L0 package model
-  "workbook-column-split.ts", // migrates in Phase 1 - converges into the L0 package model
+  "workbook-column-split.ts", // migrates in Phase 1 - split re-expressed on L0/L1/L2
 ];
 
 interface SourceFile {

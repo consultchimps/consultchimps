@@ -1,10 +1,9 @@
 import { ConsultChimpsError } from "@consultchimps/core";
-import JSZip from "jszip";
 import * as XLSX from "xlsx";
 
 import type { ExcelTableDefinition } from "./excel-tables.js";
 import { XLSX_ERRORS } from "./errors.js";
-import { generatePackageBytes, replacePackagePart } from "./package-zip.js";
+import { WorkbookPackage } from "./package/index.js";
 
 interface CellFragment {
   columnIndex: number;
@@ -528,24 +527,26 @@ export async function preserveWorkbookWithFilteredExcelTable(
   workbookBytes: Uint8Array,
   options: PreserveExcelTableOptions,
 ): Promise<Uint8Array> {
-  const archive = await JSZip.loadAsync(workbookBytes);
-  const worksheetEntry = archive.file(options.definition.worksheetPart);
-  const tableEntry = archive.file(options.definition.tablePart);
-  if (!worksheetEntry || !tableEntry) {
+  const workbookPackage = await WorkbookPackage.load(workbookBytes);
+  const worksheetXml = workbookPackage.readText(
+    options.definition.worksheetPart,
+  );
+  const tableXmlSource = workbookPackage.readText(options.definition.tablePart);
+  if (worksheetXml === undefined || tableXmlSource === undefined) {
     throw new Error(
       `Excel Table "${options.definition.name}" is missing workbook package parts.`,
     );
   }
 
   const filtered = filterWorksheetXml(
-    await worksheetEntry.async("text"),
+    worksheetXml,
     options.definition,
     options.sourceRows,
     options.values === true,
     options.wholeRows === true,
   );
   let tableXml = replaceElementReference(
-    await tableEntry.async("text"),
+    tableXmlSource,
     "table",
     filtered.tableReference,
     true,
@@ -557,11 +558,10 @@ export async function preserveWorkbookWithFilteredExcelTable(
     false,
   );
 
-  replacePackagePart(
-    archive,
+  workbookPackage.writeText(
     options.definition.worksheetPart,
     filtered.worksheetXml,
   );
-  replacePackagePart(archive, options.definition.tablePart, tableXml);
-  return generatePackageBytes(archive);
+  workbookPackage.writeText(options.definition.tablePart, tableXml);
+  return workbookPackage.save();
 }
