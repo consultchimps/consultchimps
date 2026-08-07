@@ -20,6 +20,7 @@ import {
   CORPUS_SPLIT_COLUMN,
   CORPUS_TABLE_NAME,
   createCorpusDirectory,
+  hasPackagePart,
   packagePartNames,
   readPackagePart,
   readWorkbookBytes,
@@ -60,15 +61,20 @@ describe("corpus: preservation invariants", () => {
         path.join(directory, "out", "Alpha.xlsx"),
       );
 
+      for (const part of UNFILTERED_PARTS) {
+        expect(await readPackagePart(alpha, part)).toBe(
+          await readPackagePart(sourceBytes, part),
+        );
+      }
+      // The pivot parts used to belong in this list. They are now removed
+      // rather than preserved, because a pivot cache holds a private copy of
+      // every group's rows; tier1-gaps.corpus.test.ts owns that expectation.
       for (const part of [
-        ...UNFILTERED_PARTS,
         CORPUS_PARTS.pivotTable,
         CORPUS_PARTS.pivotCacheDefinition,
         CORPUS_PARTS.pivotCacheRecords,
       ]) {
-        expect(await readPackagePart(alpha, part)).toBe(
-          await readPackagePart(sourceBytes, part),
-        );
+        expect(await hasPackagePart(alpha, part)).toBe(false);
       }
     },
   );
