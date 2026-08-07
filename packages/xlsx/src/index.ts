@@ -540,8 +540,11 @@ export async function planSplitWorkbookByColumn(
     outputs,
     warnings,
     metrics: {
+      calcChainEntriesRemoved: 0,
+      formulaCellsBlankedForRemovedRows: 0,
       formulaCellsConverted: 0,
       formulaCellsWithoutCachedValues: 0,
+      pivotTablesRemoved: 0,
       groups: resolved.grouped.groups.length,
       inputFiles: 1,
       inputRows: resolved.table.rows.length,
@@ -594,6 +597,7 @@ export async function splitWorkbookByColumn(
   const templateBytes = preserveWorkbook
     ? await preservedSplitTemplateBytes(workbookBytes, options.values)
     : undefined;
+  let pivotTablesRemoved = 0;
 
   try {
     for (const [index, group] of grouped.groups.entries()) {
@@ -605,6 +609,9 @@ export async function splitWorkbookByColumn(
       await writeFile(
         stagedOutput,
         await buildSplitGroupBytes(group, {
+          onPivotTablesRemoved: (removed) => {
+            pivotTablesRemoved += removed;
+          },
           preservedTableDefinition,
           sheetName: table.source?.sheet ?? "Split",
           templateBytes,
@@ -695,6 +702,11 @@ export async function splitWorkbookByColumn(
   }
 
   const warnings = grouped.skippedRows > 0 ? [skippedRowsWarning(grouped)] : [];
+  if (pivotTablesRemoved > 0) {
+    warnings.push(
+      `Removed ${pivotTablesRemoved} pivot table${pivotTablesRemoved === 1 ? "" : "s"}: their caches contained rows from other groups, and a cache travels inside the workbook whether or not the pivot is opened. Rebuild the pivot in Excel from each output's own rows if it is required.`,
+    );
+  }
 
   return {
     operation: SPLIT_OPERATION,
@@ -705,8 +717,11 @@ export async function splitWorkbookByColumn(
     })),
     warnings,
     metrics: {
+      calcChainEntriesRemoved: 0,
+      formulaCellsBlankedForRemovedRows: 0,
       formulaCellsConverted: 0,
       formulaCellsWithoutCachedValues: 0,
+      pivotTablesRemoved,
       groups: grouped.groups.length,
       inputFiles: 1,
       inputRows: table.rows.length,

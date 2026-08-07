@@ -31,6 +31,9 @@ import {
 import { XLSX_ERRORS } from "./errors.js";
 import { preserveWorkbookWithFilteredExcelTable } from "./preserve-table-split.js";
 import { safeFilenameSegment, splitOutputPaths } from "./split-filenames.js";
+import { pruneCalcChain } from "./tier1/calc-chain.js";
+import { stripPivotParts } from "./tier1/pivot.js";
+import { blankStaleCachedFormulas } from "./tier1/stale-values.js";
 import { convertWorkbookToValuesWithReport } from "./values-only.js";
 
 const SPLIT_OPERATION = "sheets.split-by-column";
@@ -40,6 +43,8 @@ const XLSM_MEDIA_TYPE = "application/vnd.ms-excel.sheet.macroEnabled.12";
 const ROW_PATTERN =
   /<(?:[A-Za-z_][\w.-]*:)?row\b[^>]*?(?:\/\s*>|>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?row\s*>)/gu;
 const CELL_REFERENCE_ATTRIBUTE_PATTERN = /(\br=)(["'])([A-Z]{1,3})\d+\2/gu;
+const CELL_REFERENCE_CAPTURE_PATTERN =
+  /<(?:[A-Za-z_][\w.-]*:)?c\b[^>]*?\br=(?:"([^"]+)"|'([^']+)')/gu;
 const SHEET_DATA_OPEN_PATTERN = /<(?:[A-Za-z_][\w.-]*:)?sheetData\b[^>]*>/u;
 const FORMULA_XML_PATTERN =
   /<(?:[A-Za-z_][\w.-]*:)?f\b([^>]*?)(?:\/\s*>|>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?f\s*>)/gu;
@@ -47,9 +52,12 @@ const NUMERIC_TEXT_PATTERN =
   /^[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:e[+-]?\d+)?$/iu;
 
 export type FullWorkbookSplitMetric =
+  | "calcChainEntriesRemoved"
+  | "formulaCellsBlankedForRemovedRows"
   | "formulaCellsConverted"
   | "formulaCellsWithoutCachedValues"
   | "groups"
+  | "pivotTablesRemoved"
   | "inputFiles"
   | "inputRows"
   | "outputFiles"
@@ -245,12 +253,25 @@ function xmlAttribute(xml: string, name: string): string | undefined {
   return match?.[1] ?? match?.[2];
 }
 
+interface WorksheetRowRemoval {
+  /** References of the cells that left with their rows, e.g. `E7`. */
+  deletedCells: Set<string>;
+  /** Source row to destination row, for every row that survived. */
+  renumberedRows: Map<number, number>;
+  xml: string;
+}
+
 function removeWorksheetRows(
   worksheetXml: string,
   rowsToDelete: ReadonlySet<number>,
-): string {
+): WorksheetRowRemoval {
+  // The deleted cells and the surviving rows' new numbers are the input the
+  // Tier-1 calculation-chain pruner needs; collecting them here keeps the
+  // single pass over the rows that already knows both.
+  const deletedCells = new Set<string>();
+  const renumberedRows = new Map<number, number>();
   if (rowsToDelete.size === 0) {
-    return worksheetXml;
+    return { deletedCells, renumberedRows, xml: worksheetXml };
   }
   const openMatch = SHEET_DATA_OPEN_PATTERN.exec(worksheetXml);
   if (!openMatch?.[0] || openMatch.index === undefined) {
@@ -273,9 +294,13 @@ function removeWorksheetRows(
     );
     if (rowsToDelete.has(rowNumber)) {
       deletedBefore += 1;
+      for (const cell of rowXml.matchAll(CELL_REFERENCE_CAPTURE_PATTERN)) {
+        deletedCells.add((cell[1] ?? cell[2] ?? "").toUpperCase());
+      }
       return "";
     }
     const destinationRow = rowNumber - deletedBefore;
+    renumberedRows.set(rowNumber, destinationRow);
     if (destinationRow === rowNumber) {
       return rowXml;
     }
@@ -286,16 +311,40 @@ function removeWorksheetRows(
       )
       .replace(CELL_REFERENCE_ATTRIBUTE_PATTERN, `$1$2$3${destinationRow}$2`);
   });
-  return `${worksheetXml.slice(0, openEnd)}${filtered}${worksheetXml.slice(closeStart)}`;
+  return {
+    deletedCells,
+    renumberedRows,
+    xml: `${worksheetXml.slice(0, openEnd)}${filtered}${worksheetXml.slice(closeStart)}`,
+  };
+}
+
+/** The source rows a group's output drops from one analysed worksheet. */
+function rowsRemovedFromSheet(
+  sheet: SheetAnalysis,
+  groupKey: string,
+): Set<number> {
+  const rowsToDelete = new Set<number>();
+  for (let row = sheet.firstDataRow; row <= sheet.lastDataRow; row += 1) {
+    if (sheet.rowKeys.get(row) !== groupKey) {
+      rowsToDelete.add(row);
+    }
+  }
+  return rowsToDelete;
+}
+
+interface PlainWorksheetFilter {
+  bytes: Buffer;
+  deletedCells: Map<string, Set<string>>;
+  renumberedRows: Map<string, Map<number, number>>;
 }
 
 async function filterPlainWorksheets(
   workbookBytes: Buffer,
   sheets: SheetAnalysis[],
   groupKey: string,
-): Promise<Buffer> {
+): Promise<PlainWorksheetFilter> {
   const archive = await JSZip.loadAsync(workbookBytes);
-  await Promise.all(
+  const removals = await Promise.all(
     sheets.map(async (sheet) => {
       const entry = archive.file(sheet.worksheetPart);
       if (!entry) {
@@ -303,19 +352,26 @@ async function filterPlainWorksheets(
           `Worksheet "${sheet.name}" is missing from the workbook package.`,
         );
       }
-      const rowsToDelete = new Set<number>();
-      for (let row = sheet.firstDataRow; row <= sheet.lastDataRow; row += 1) {
-        if (sheet.rowKeys.get(row) !== groupKey) {
-          rowsToDelete.add(row);
-        }
-      }
-      archive.file(
-        sheet.worksheetPart,
-        removeWorksheetRows(await entry.async("text"), rowsToDelete),
+      const removal = removeWorksheetRows(
+        await entry.async("text"),
+        rowsRemovedFromSheet(sheet, groupKey),
       );
+      archive.file(sheet.worksheetPart, removal.xml);
+      return [sheet.worksheetPart, removal] as const;
     }),
   );
-  return archive.generateAsync({ compression: "DEFLATE", type: "nodebuffer" });
+  return {
+    bytes: await archive.generateAsync({
+      compression: "DEFLATE",
+      type: "nodebuffer",
+    }),
+    deletedCells: new Map(
+      removals.map(([partName, removal]) => [partName, removal.deletedCells]),
+    ),
+    renumberedRows: new Map(
+      removals.map(([partName, removal]) => [partName, removal.renumberedRows]),
+    ),
+  };
 }
 
 async function tableCanBeCompacted(
@@ -575,12 +631,15 @@ export async function planFullWorkbookSplit(
     })),
     warnings,
     metrics: {
+      calcChainEntriesRemoved: 0,
+      formulaCellsBlankedForRemovedRows: 0,
       formulaCellsConverted: 0,
       formulaCellsWithoutCachedValues: 0,
       groups: resolved.groups.length,
       inputFiles: 1,
       inputRows: resolved.inputRows,
       outputFiles: resolved.outputPaths.length,
+      pivotTablesRemoved: 0,
       rowsDeleted: 0,
       sheetsCopiedUnchanged: resolved.unchangedSheets.length,
       sheetsFiltered: resolved.sheets.length,
@@ -609,10 +668,14 @@ export async function splitFullWorkbookByColumn(
   const backups = new Map<string, string>();
   const outputDetails: SplitOutputDetail[] = [];
   const missingFormulaLocations = new Set<string>();
+  const staleAggregateLocations = new Set<string>();
   const tableFallbackSheets = new Set<string>();
+  let calcChainEntriesRemoved = 0;
+  let formulaCellsBlankedForRemovedRows = 0;
   let formulaCellsConverted = 0;
   let formulaCellsWithoutCachedValues = 0;
   let outputRows = 0;
+  let pivotTablesRemoved = 0;
   let rowsDeleted = 0;
   const worksheetNameByPart = new Map(
     (await readWorkbookWorksheetParts(resolved.workbookBytes)).map(
@@ -629,6 +692,32 @@ export async function splitFullWorkbookByColumn(
       const containsFilteredTable = resolved.sheets.some(
         (sheet) => sheet.table !== undefined,
       );
+      // Tier-1 wiring: a values-only conversion bakes each formula's cached
+      // result into the output, so any result computed over rows this group
+      // does not receive is cleared first. This is the sole call site, placed
+      // ahead of both conversion branches so it always sees source row
+      // numbers; the conversion then reports the cleared cells as formulas
+      // that lost their value.
+      const deletedRowsByPart = new Map(
+        resolved.sheets.map(
+          (sheet) =>
+            [
+              sheet.worksheetPart,
+              rowsRemovedFromSheet(sheet, group.key),
+            ] as const,
+        ),
+      );
+      if (options.values) {
+        const staleValues = await blankStaleCachedFormulas(
+          outputBytes,
+          deletedRowsByPart,
+        );
+        outputBytes = staleValues.bytes;
+        formulaCellsBlankedForRemovedRows += staleValues.blankedCells.length;
+        staleValues.blankedCells.forEach((blanked) => {
+          staleAggregateLocations.add(`${blanked.sheet}!${blanked.cell}`);
+        });
+      }
       if (options.values && containsFilteredTable) {
         const conversion = await convertWorkbookToValuesWithReport(outputBytes);
         outputBytes = conversion.bytes;
@@ -680,11 +769,12 @@ export async function splitFullWorkbookByColumn(
           },
         );
       }
-      outputBytes = await filterPlainWorksheets(
+      const plainFilter = await filterPlainWorksheets(
         Buffer.from(outputBytes),
         plainSheets,
         group.key,
       );
+      outputBytes = plainFilter.bytes;
 
       if (options.values && !containsFilteredTable) {
         const conversion = await convertWorkbookToValuesWithReport(outputBytes);
@@ -700,6 +790,26 @@ export async function splitFullWorkbookByColumn(
       }
       formulaCellsConverted += outputFormulaCount;
       formulaCellsWithoutCachedValues += outputMissingFormulaCount;
+
+      // Tier-1 wiring: the calculation chain still names the cells the filter
+      // deleted and the rows the survivors left. A values-only output has no
+      // chain left to repair, so only the formula-preserving path prunes it.
+      if (!options.values) {
+        const prunedChain = await pruneCalcChain(
+          outputBytes,
+          plainFilter.deletedCells,
+          plainFilter.renumberedRows,
+        );
+        outputBytes = prunedChain.bytes;
+        calcChainEntriesRemoved += prunedChain.removedEntries;
+      }
+
+      // Tier-1 wiring: a pivot cache is a private copy of every source row, so
+      // it would hand this group's recipient every other group's data. It
+      // leaves with the rows it cached, on every output.
+      const strippedPivots = await stripPivotParts(outputBytes);
+      outputBytes = strippedPivots.bytes;
+      pivotTablesRemoved += strippedPivots.removedPivotTables;
 
       const stagedOutput = path.join(
         transactionDirectory,
@@ -804,6 +914,18 @@ export async function splitFullWorkbookByColumn(
       `${formulaCellsWithoutCachedValues} formula cell${formulaCellsWithoutCachedValues === 1 ? " had" : "s had"} no cached value and became formatted blank cells in values-only output. Affected source locations: ${shown}${locations.length > 20 ? `, and ${locations.length - 20} more` : ""}. Open and recalculate the source workbook in Excel, save it, and rerun the split if these values are required.`,
     );
   }
+  if (pivotTablesRemoved > 0) {
+    warnings.push(
+      `Removed ${pivotTablesRemoved} pivot table${pivotTablesRemoved === 1 ? "" : "s"}: their caches contained rows from other groups, and a cache travels inside the workbook whether or not the pivot is opened. Rebuild the pivot in Excel from each output's own rows if it is required.`,
+    );
+  }
+  if (formulaCellsBlankedForRemovedRows > 0) {
+    const locations = [...staleAggregateLocations];
+    const shown = locations.slice(0, 20).join(", ");
+    warnings.push(
+      `${formulaCellsBlankedForRemovedRows} cached formula result${formulaCellsBlankedForRemovedRows === 1 ? " covered rows" : "s covered rows"} that are not part of this group and ${formulaCellsBlankedForRemovedRows === 1 ? "was" : "were"} cleared, so the values-only output shows a blank cell instead of a total computed over every group's rows. Affected locations: ${shown}${locations.length > 20 ? `, and ${locations.length - 20} more` : ""}. Recalculate them in Excel against the delivered rows if these values are required.`,
+    );
+  }
   if (tableFallbackSheets.size > 0) {
     warnings.push(
       `Excel Table${tableFallbackSheets.size === 1 ? "" : "s"} on ${[...tableFallbackSheets].join(", ")} contained formulas tied to row positions, so unmatched rows were removed without compacting the table range. The table's formatting and formulas were preserved; review the range in Excel before delivery.`,
@@ -819,6 +941,8 @@ export async function splitFullWorkbookByColumn(
     })),
     warnings,
     metrics: {
+      calcChainEntriesRemoved,
+      formulaCellsBlankedForRemovedRows,
       formulaCellsConverted,
       formulaCellsWithoutCachedValues,
       groups: resolved.groups.length,
@@ -826,6 +950,7 @@ export async function splitFullWorkbookByColumn(
       inputRows: resolved.inputRows,
       outputFiles: resolved.outputPaths.length,
       outputRows,
+      pivotTablesRemoved,
       rowsDeleted,
       sheetsCopiedUnchanged: resolved.unchangedSheets.length,
       sheetsFiltered: resolved.sheets.length,

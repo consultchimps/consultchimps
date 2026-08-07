@@ -153,6 +153,7 @@ export async function splitWorkbookBytes(
     ? await preservedSplitTemplateBytes(options.input.bytes, options.values)
     : undefined;
   const outputs: ByteArtifact[] = [];
+  let pivotTablesRemoved = 0;
 
   for (const [index, group] of grouped.groups.entries()) {
     throwIfAborted(options.signal, SPLIT_OPERATION, "memory");
@@ -160,6 +161,9 @@ export async function splitWorkbookBytes(
     outputs.push({
       name,
       bytes: await buildSplitGroupBytes(group, {
+        onPivotTablesRemoved: (removed) => {
+          pivotTablesRemoved += removed;
+        },
         preservedTableDefinition,
         sheetName: table.source?.sheet ?? "Split",
         templateBytes,
@@ -187,7 +191,14 @@ export async function splitWorkbookBytes(
         mediaType: WORKBOOK_MEDIA_TYPE,
         path: output.name,
       })),
-      warnings: grouped.skippedRows > 0 ? [skippedRowsWarning(grouped)] : [],
+      warnings: [
+        ...(grouped.skippedRows > 0 ? [skippedRowsWarning(grouped)] : []),
+        ...(pivotTablesRemoved > 0
+          ? [
+              `Removed ${pivotTablesRemoved} pivot table${pivotTablesRemoved === 1 ? "" : "s"}: their caches contained rows from other groups, and a cache travels inside the workbook whether or not the pivot is opened. Rebuild the pivot in Excel from each output's own rows if it is required.`,
+            ]
+          : []),
+      ],
       metrics: {
         groups: grouped.groups.length,
         inputFiles: 1,

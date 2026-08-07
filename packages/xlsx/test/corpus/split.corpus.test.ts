@@ -132,11 +132,16 @@ describe("corpus: all-worksheet split", () => {
       const alpha = await readWorkbookBytes(
         path.join(directory, "out", "Alpha.xlsx"),
       );
-      expect(await packagePartNames(alpha)).toEqual(sourceParts);
-      // Comments, drawings, pivot parts and the calculation chain all survive
-      // untouched, whether or not they still describe the filtered rows.
+      // Every source part reaches the output except the pivot parts, which
+      // the Tier-1 confidentiality pass removes because a pivot cache carries
+      // a private copy of every group's rows (tier1-gaps.corpus.test.ts).
+      expect(await packagePartNames(alpha)).toEqual(
+        sourceParts.filter((part) => !part.startsWith("xl/pivot")),
+      );
+      // Comments, drawings and the calculation chain all survive, whether or
+      // not they still describe the filtered rows.
       expect(await hasPackagePart(alpha, CORPUS_PARTS.comments)).toBe(true);
-      expect(await hasPackagePart(alpha, CORPUS_PARTS.pivotTable)).toBe(true);
+      expect(await hasPackagePart(alpha, CORPUS_PARTS.pivotTable)).toBe(false);
       expect(await hasPackagePart(alpha, CORPUS_PARTS.calcChain)).toBe(true);
     },
   );
@@ -348,7 +353,18 @@ describe("corpus: all-worksheet split", () => {
       expect(result.metrics.valuesOnly).toBe(1);
       expect(result.metrics.formulaCellsConverted).toBeGreaterThan(0);
       // Reported once per output workbook, because each output is converted.
-      expect(result.metrics.formulaCellsWithoutCachedValues).toBe(3);
+      // Summary!B4 has never been calculated, so it contributes three. The
+      // rest are results the Tier-1 pass cleared before the conversion because
+      // they covered rows the group does not receive: Summary!B2 in every
+      // output and Summary!B3 in the two that lose Data row 4, plus the totals
+      // row and the footer aggregate on the table binding, whose data rows are
+      // filtered while those two rows stay.
+      expect(result.metrics.formulaCellsBlankedForRemovedRows).toBe(
+        shape === "table" ? 11 : 5,
+      );
+      expect(result.metrics.formulaCellsWithoutCachedValues).toBe(
+        shape === "table" ? 14 : 8,
+      );
       expect(result.warnings.join("\n")).toMatch(/Summary!B4/u);
 
       const alpha = await readWorkbookBytes(

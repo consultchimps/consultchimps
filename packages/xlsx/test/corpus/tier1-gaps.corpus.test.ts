@@ -8,12 +8,21 @@
  * executable form; Phase 2 deletes the `.fails` and the pin flips to the new
  * expectation. Pairing them also guarantees the expected failure fails for the
  * documented reason rather than because the fixture broke.
+ *
+ * The first three gaps -- pivot caches crossing outputs, stale cached
+ * aggregates in values mode, and the stale calculation chain -- are now closed
+ * by the Tier-1 utilities in `src/tier1/`, so their `.fails` twins have become
+ * `Tier-1 fix: ...` tests and their pins record the new output. The
+ * dependent-reference gaps below are still open.
  */
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { splitWorkbookByColumn } from "../../src/index.js";
+import {
+  splitWorkbookByColumn,
+  type SplitWorkbookByColumnResult,
+} from "../../src/index.js";
 import {
   calcChainReferences,
   cleanupCorpusDirectories,
@@ -22,8 +31,10 @@ import {
   CORPUS_SPLIT_COLUMN,
   createCorpusDirectory,
   dataValidationSqref,
+  hasPackagePart,
   hyperlinkReferences,
   mergedCellReferences,
+  packagePartNames,
   readPackagePart,
   readWorkbookBytes,
   worksheetCellFormula,
@@ -31,19 +42,21 @@ import {
   writeCorpusWorkbook,
 } from "./fixtures.js";
 
-/** Alpha holds records 1, 3 and 6, so its per-group amount total is 100. */
-const ALPHA_TOTAL = 100;
-
-afterEach(cleanupCorpusDirectories);
-
-/** Split the corpus by Group and return the Alpha output's bytes. */
-async function alphaOutput(options: {
+interface CorpusSplitOptions {
   shape: "table" | "range";
   formulas?: "a1" | "structured";
   pivot?: boolean;
   sharedFormula?: boolean;
   values?: boolean;
-}): Promise<Uint8Array> {
+}
+
+afterEach(cleanupCorpusDirectories);
+
+/** Split the corpus by Group and return the Alpha output with its report. */
+async function alphaSplit(options: CorpusSplitOptions): Promise<{
+  bytes: Uint8Array;
+  result: SplitWorkbookByColumnResult;
+}> {
   const directory = await createCorpusDirectory();
   const input = await writeCorpusWorkbook(directory, "corpus.xlsx", {
     formulas: options.formulas ?? "a1",
@@ -52,109 +65,148 @@ async function alphaOutput(options: {
     sharedFormula: options.sharedFormula ?? false,
   });
   const outputDirectory = path.join(directory, "out");
-  await splitWorkbookByColumn({
+  const result = await splitWorkbookByColumn({
     column: CORPUS_SPLIT_COLUMN,
     input,
     outputDirectory,
     values: options.values ?? false,
   });
-  return readWorkbookBytes(path.join(outputDirectory, "Alpha.xlsx"));
+  return {
+    bytes: await readWorkbookBytes(path.join(outputDirectory, "Alpha.xlsx")),
+    result,
+  };
 }
 
-describe("corpus: Tier-1 gap - pivot caches cross split outputs", () => {
-  it("pins: a split output currently carries the complete pivot cache", async () => {
-    const records = await readPackagePart(
-      await alphaOutput({ shape: "range", pivot: true }),
-      CORPUS_PARTS.pivotCacheRecords,
-    );
+/** Split the corpus by Group and return the Alpha output's bytes. */
+async function alphaOutput(options: CorpusSplitOptions): Promise<Uint8Array> {
+  return (await alphaSplit(options)).bytes;
+}
 
-    expect(records).toContain('<s v="Beta"/>');
-    expect(records).toContain('<s v="Client D"/>');
-    expect(records).toContain('count="6"');
+describe("corpus: Tier-1 fix - pivot caches cross split outputs", () => {
+  it("pins: a split output carries no pivot part, relationship or content type", async () => {
+    const alpha = await alphaOutput({ shape: "range", pivot: true });
+
+    // A pivot cache cannot be filtered alongside the rows it caches yet, so
+    // the whole pivot leaves with them: parts, both relationship entries, the
+    // content-type overrides and the workbook's pivotCaches registry.
+    expect(
+      (await packagePartNames(alpha)).filter((part) =>
+        part.startsWith("xl/pivot"),
+      ),
+    ).toEqual([]);
+    expect(await readPackagePart(alpha, CORPUS_PARTS.contentTypes)).not.toMatch(
+      /pivot/u,
+    );
+    expect(await readPackagePart(alpha, CORPUS_PARTS.workbook)).not.toMatch(
+      /pivotCache/u,
+    );
+    expect(
+      await readPackagePart(alpha, "xl/_rels/workbook.xml.rels"),
+    ).not.toMatch(/pivotCacheDefinition/u);
+    expect(
+      await readPackagePart(alpha, "xl/worksheets/_rels/sheet2.xml.rels"),
+    ).not.toMatch(/pivotTable/u);
   });
 
-  it.fails(
-    "Tier-1 gap: pivot-cache records of another group must not reach a group's split output",
-    async () => {
-      const alpha = await alphaOutput({ shape: "range", pivot: true });
-      const records = await readPackagePart(
-        alpha,
-        CORPUS_PARTS.pivotCacheRecords,
-      );
-      const definition = await readPackagePart(
-        alpha,
-        CORPUS_PARTS.pivotCacheDefinition,
-      );
+  it("Tier-1 fix: pivot-cache records of another group never reach a group's split output", async () => {
+    const alpha = await alphaSplit({ shape: "range", pivot: true });
 
-      // Confidentiality: the Alpha recipient must not be able to read Beta's
-      // and Gamma's rows out of the pivot cache that travelled with the file.
-      expect(records).not.toContain("Beta");
-      expect(records).not.toContain("Gamma");
-      expect(records).not.toContain("Client D");
-      expect(definition).not.toContain("Beta");
-    },
-  );
+    // Confidentiality: the Alpha recipient must not be able to read Beta's and
+    // Gamma's rows out of a pivot cache that travelled with the file.
+    for (const part of [
+      CORPUS_PARTS.pivotCacheRecords,
+      CORPUS_PARTS.pivotCacheDefinition,
+      CORPUS_PARTS.pivotTable,
+    ]) {
+      expect(await hasPackagePart(alpha.bytes, part)).toBe(false);
+    }
+    expect(alpha.result.warnings.join("\n")).toMatch(
+      /their caches contained rows from other groups/u,
+    );
+    // One pivot table removed from each of the three outputs.
+    expect(alpha.result.metrics.pivotTablesRemoved).toBe(3);
+  });
 });
 
-describe("corpus: Tier-1 gap - stale cached aggregates in values mode", () => {
-  it("pins: a values-only split currently bakes the all-rows total into every output", async () => {
+describe("corpus: Tier-1 fix - stale cached aggregates in values mode", () => {
+  it("pins: a values-only split blanks a cross-group aggregate and keeps a single-row reference", async () => {
     const summary = await readPackagePart(
       await alphaOutput({ shape: "range", values: true }),
       CORPUS_PARTS.summarySheet,
     );
 
+    // Summary!B2 is SUM(Data!D4:D9); rows 5, 7 and 8 left with the other
+    // groups, so its cached 210 no longer describes anything in this file.
     expect(worksheetCellFormula(summary, "B2")).toBeUndefined();
-    // Summary!B2 is SUM(Data!D4:D9) with a cached 210 covering every group.
-    expect(worksheetCellValue(summary, "B2")).toBe("210");
+    expect(worksheetCellValue(summary, "B2")).toBeUndefined();
+    // Summary!B3 is Data!D4, a row Alpha keeps, so its cached value stands.
+    expect(worksheetCellFormula(summary, "B3")).toBeUndefined();
+    expect(worksheetCellValue(summary, "B3")).toBe("10");
   });
 
-  it.fails(
-    "Tier-1 gap: a values-only split must not bake an aggregate computed over every group's rows",
-    async () => {
-      const summary = await readPackagePart(
-        await alphaOutput({ shape: "range", values: true }),
-        CORPUS_PARTS.summarySheet,
-      );
+  it("Tier-1 fix: a values-only split does not bake an aggregate computed over every group's rows", async () => {
+    const alpha = await alphaSplit({ shape: "range", values: true });
+    const summary = await readPackagePart(
+      alpha.bytes,
+      CORPUS_PARTS.summarySheet,
+    );
 
-      // The Alpha workbook contains only Alpha's rows, so a total presented as
-      // "Total across every record" must equal Alpha's own total.
-      expect(Number(worksheetCellValue(summary, "B2"))).toBe(ALPHA_TOTAL);
-    },
-  );
+    // A total presented as "Total across every record" must not read as this
+    // group's total when it was computed over every group's rows. Blanking is
+    // the conservative answer: the cell is visibly empty and reported, rather
+    // than quietly wrong.
+    expect(worksheetCellValue(summary, "B2")).toBeUndefined();
+    expect(alpha.result.warnings.join("\n")).toMatch(/Summary!B2/u);
+    expect(alpha.result.warnings.join("\n")).toMatch(
+      /rows that are not part of this group/u,
+    );
+    // Summary!B2 clears in all three outputs; Summary!B3 reads Data!D4, which
+    // only Alpha keeps, so it clears in the Beta and Gamma outputs too.
+    expect(alpha.result.metrics.formulaCellsBlankedForRemovedRows).toBe(5);
+  });
 });
 
-describe("corpus: Tier-1 gap - stale calculation chain", () => {
-  it("pins: a non-values split currently leaves the calculation chain untouched", async () => {
+describe("corpus: Tier-1 fix - stale calculation chain", () => {
+  it("pins: a non-values split prunes and renumbers the calculation chain", async () => {
     const calcChain = await readPackagePart(
       await alphaOutput({ shape: "range" }),
       CORPUS_PARTS.calcChain,
     );
 
-    const references = calcChainReferences(calcChain);
-    // Rows 7, 8 and 9 were deleted, and rows 10 and 12 no longer exist either.
-    expect(references).toContain("E7");
-    expect(references).toContain("E8");
-    expect(references).toContain("E9");
-    expect(references).toContain("B12");
+    // E4 stays put, E6 and E9 follow their rows to 5 and 6, and the entries
+    // for the deleted rows 5, 7, 8 and the footer's B12 are gone. The Summary
+    // entries are untouched because that sheet lost no rows.
+    expect(calcChainReferences(calcChain)).toEqual([
+      "E4",
+      "E5",
+      "E6",
+      "B2",
+      "B3",
+    ]);
   });
 
-  it.fails(
-    "Tier-1 gap: the calculation chain must not reference cells a split deleted",
-    async () => {
-      const calcChain = await readPackagePart(
-        await alphaOutput({ shape: "range" }),
-        CORPUS_PARTS.calcChain,
-      );
+  it("Tier-1 fix: the calculation chain does not reference cells a split deleted", async () => {
+    const alpha = await alphaSplit({ shape: "range" });
+    // The chain is kept whenever entries survive, and removed outright when
+    // none do; either way nothing in it may name a deleted cell.
+    const references = (await hasPackagePart(
+      alpha.bytes,
+      CORPUS_PARTS.calcChain,
+    ))
+      ? calcChainReferences(
+          await readPackagePart(alpha.bytes, CORPUS_PARTS.calcChain),
+        )
+      : [];
 
-      // Alpha keeps three data rows, so only E4, E5 and E6 remain calculable
-      // on the Data worksheet.
-      expect(
-        calcChainReferences(calcChain).filter((reference) =>
-          reference.startsWith("E"),
-        ),
-      ).toEqual(["E4", "E5", "E6"]);
-    },
-  );
+    // Alpha keeps three data rows, so only E4, E5 and E6 remain calculable on
+    // the Data worksheet.
+    expect(references.filter((reference) => reference.startsWith("E"))).toEqual(
+      ["E4", "E5", "E6"],
+    );
+    expect(references).not.toContain("B12");
+    // Four entries for Alpha, five for Beta and six for Gamma.
+    expect(alpha.result.metrics.calcChainEntriesRemoved).toBe(15);
+  });
 });
 
 describe("corpus: Tier-1 gap - dependent references after row compaction", () => {

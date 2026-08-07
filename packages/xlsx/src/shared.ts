@@ -19,6 +19,7 @@ import {
 } from "./excel-tables.js";
 import { XLSX_ERRORS } from "./errors.js";
 import { preserveWorkbookWithFilteredExcelTable } from "./preserve-table-split.js";
+import { stripPivotParts } from "./tier1/pivot.js";
 import { convertWorkbookToValues } from "./values-only.js";
 
 export const WORKBOOK_MEDIA_TYPE =
@@ -1233,19 +1234,31 @@ export async function preservedSplitTemplateBytes(
 export async function buildSplitGroupBytes(
   group: { table: Table },
   context: {
+    /** Called with the pivot tables removed from this group's output. */
+    onPivotTablesRemoved?: ((removed: number) => void) | undefined;
     preservedTableDefinition: ExcelTableDefinition | undefined;
     sheetName: string;
     templateBytes: Uint8Array | undefined;
   },
 ): Promise<Uint8Array> {
   if (context.templateBytes && context.preservedTableDefinition) {
-    return preserveWorkbookWithFilteredExcelTable(context.templateBytes, {
-      definition: context.preservedTableDefinition,
-      sourceRows: group.table.sourceRows ?? [],
-      // Remove complete worksheet rows, including cells outside the table,
-      // rather than leaving styled/empty row shells behind.
-      wholeRows: true,
-    });
+    const preserved = await preserveWorkbookWithFilteredExcelTable(
+      context.templateBytes,
+      {
+        definition: context.preservedTableDefinition,
+        sourceRows: group.table.sourceRows ?? [],
+        // Remove complete worksheet rows, including cells outside the table,
+        // rather than leaving styled/empty row shells behind.
+        wholeRows: true,
+      },
+    );
+    // Tier-1 wiring: the preserved path copies the source package, pivot caches
+    // included, so this group's recipient would receive every other group's
+    // rows inside the cache. The rebuilding path below cannot leak them because
+    // it writes a fresh package from parsed cell values.
+    const stripped = await stripPivotParts(preserved);
+    context.onPivotTablesRemoved?.(stripped.removedPivotTables);
+    return stripped.bytes;
   }
   return buildTableWorkbookBytes(group.table, context.sheetName);
 }
