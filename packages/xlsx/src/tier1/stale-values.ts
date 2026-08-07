@@ -15,7 +15,7 @@
  */
 import JSZip from "jszip";
 
-import { generatePackageBytes, replacePackagePart } from "../package-zip.js";
+import { generatePackageBytes, replacePackagePart } from "./legacy-io.js";
 import { readWorkbookSheetIdentities, unescapeXml } from "./sheets.js";
 
 const CELL_PATTERN =

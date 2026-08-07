@@ -13,7 +13,7 @@
  */
 import JSZip from "jszip";
 
-import { generatePackageBytes, replacePackagePart } from "../package-zip.js";
+import { generatePackageBytes, replacePackagePart } from "./legacy-io.js";
 import { readWorkbookSheetIdentities, tagAttribute } from "./sheets.js";
 
 const CALC_CHAIN_PART = "xl/calcChain.xml";

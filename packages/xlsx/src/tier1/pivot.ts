@@ -15,7 +15,7 @@
  */
 import JSZip from "jszip";
 
-import { generatePackageBytes, replacePackagePart } from "../package-zip.js";
+import { generatePackageBytes, replacePackagePart } from "./legacy-io.js";
 
 const PIVOT_PART_PREFIXES = ["xl/pivottables/", "xl/pivotcache/"] as const;
 const PIVOT_TABLE_DEFINITION_PATTERN = /^xl\/pivotTables\/[^/]+\.xml$/iu;

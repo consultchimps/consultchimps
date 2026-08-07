@@ -9,7 +9,7 @@
  */
 import type JSZip from "jszip";
 
-import { joinPackagePath, packagePartDirectory } from "../package-paths.js";
+import { joinPackagePath, packagePartDirectory } from "../package/index.js";
 
 const WORKBOOK_PART = "xl/workbook.xml";
 const WORKBOOK_RELATIONSHIPS_PART = "xl/_rels/workbook.xml.rels";
