@@ -113,6 +113,34 @@ describe("model: deleteRows maintains row-dependent invariants", () => {
     expect(references).toContain("B3");
   });
 
+  it("moves comment anchors and their VML shapes with the row", async () => {
+    const { bytes } = await deleteAlphaRows({});
+
+    // The note sits on B6, an Alpha record that lands on row 5.
+    expect(await readPackagePart(bytes, CORPUS_PARTS.comments)).toContain(
+      '<comment ref="B5"',
+    );
+    // The legacy drawing anchors the same note by a zero-based row.
+    expect(
+      await readPackagePart(bytes, "xl/drawings/vmlDrawing1.vml"),
+    ).toContain("<x:Row>4</x:Row>");
+  });
+
+  it("removes a comment whose row was deleted", async () => {
+    const source = await buildCorpusWorkbook({ shape: "range" });
+    const model = await WorkbookModel.load(source);
+    // Row 6 carries the only comment; deleting it must take the note too.
+    model.deleteRows(CORPUS_SHEET, [6], { renumber: true });
+    const bytes = await model.save();
+
+    expect(await readPackagePart(bytes, CORPUS_PARTS.comments)).not.toContain(
+      "<comment ",
+    );
+    expect(
+      await readPackagePart(bytes, "xl/drawings/vmlDrawing1.vml"),
+    ).not.toContain("<x:Row>");
+  });
+
   it("leaves cross-sheet formulas alone", async () => {
     const { bytes } = await deleteAlphaRows({});
     const summary = await readPackagePart(bytes, CORPUS_PARTS.summarySheet);
@@ -130,14 +158,14 @@ describe("model: deleteRows maintains row-dependent invariants", () => {
     model.deleteRows(CORPUS_SHEET, REMOVED_DATA_ROWS, { renumber: true });
     const bytes = await model.save();
 
+    // Comments and their VML drawing are deliberately absent: they anchor on
+    // rows this edit moved, so the invariant pass maintains them.
     for (const part of [
       CORPUS_PARTS.summarySheet,
       CORPUS_PARTS.veryHiddenSheet,
-      CORPUS_PARTS.comments,
       CORPUS_PARTS.sharedStrings,
       CORPUS_PARTS.pivotCacheRecords,
       "xl/styles.xml",
-      "xl/drawings/vmlDrawing1.vml",
     ]) {
       expect(await readPackagePart(bytes, part)).toBe(
         await readPackagePart(source, part),

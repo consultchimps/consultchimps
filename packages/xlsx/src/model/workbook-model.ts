@@ -431,6 +431,112 @@ export class WorkbookModel implements WorkbookModelContract, WorksheetHost {
     }
   }
 
+  /**
+   * Move cell-comment anchors with the rows they annotate.
+   *
+   * A comment is anchored twice: by an A1 reference in the comments part, and
+   * by a zero-based row in the legacy VML drawing that draws its box. Both
+   * have to move together, or Excel shows the note beside the wrong record.
+   */
+  relocateComments(
+    sheetName: string,
+    relocation: RowRelocation,
+    counters: RelocationCounters,
+  ): void {
+    const entry = this.#entries.find(
+      (candidate) => candidate.name === sheetName,
+    );
+    if (!entry) {
+      return;
+    }
+
+    for (const relationship of this.#package.relationshipsOf(
+      entry.worksheetPart,
+    )) {
+      if (relationship.targetMode === "External") {
+        continue;
+      }
+      const partPath = this.#package.resolvePart(
+        entry.worksheetPart,
+        relationship.target,
+      );
+      if (relationship.type.endsWith("/comments")) {
+        this.#relocateCommentList(partPath, relocation, counters);
+      } else if (relationship.type.endsWith("/vmlDrawing")) {
+        this.#relocateVmlAnchors(partPath, relocation, counters);
+      }
+    }
+  }
+
+  #relocateCommentList(
+    partPath: string,
+    relocation: RowRelocation,
+    counters: RelocationCounters,
+  ): void {
+    const xml = this.#package.readText(partPath);
+    if (xml === undefined) {
+      return;
+    }
+    const rewritten = editElements(xml, "comment", (element, text) => {
+      const reference = getAttribute(element.openTag, "ref");
+      if (reference === undefined) {
+        return text;
+      }
+      const relocated = relocateReference(reference, relocation);
+      if (relocated.includes(DELETED_REFERENCE)) {
+        counters.comments += 1;
+        return undefined;
+      }
+      if (relocated !== reference) {
+        counters.comments += 1;
+      }
+      return `${setAttribute(element.openTag, "ref", relocated)}${text.slice(
+        element.openTag.length,
+      )}`;
+    });
+    if (rewritten !== xml) {
+      this.#package.writeText(partPath, rewritten);
+    }
+  }
+
+  #relocateVmlAnchors(
+    partPath: string,
+    relocation: RowRelocation,
+    counters: RelocationCounters,
+  ): void {
+    const xml = this.#package.readText(partPath);
+    if (xml === undefined) {
+      return;
+    }
+    const rewritten = editElements(xml, "shape", (shape, shapeText) => {
+      const anchor = findElement(shapeText, "Row");
+      if (!anchor || anchor.selfClosing) {
+        return shapeText;
+      }
+      // The VML anchor counts rows from zero; the relocation plan from one.
+      const sourceRow =
+        Number(shapeText.slice(anchor.innerStart, anchor.innerEnd)) + 1;
+      if (!Number.isInteger(sourceRow)) {
+        return shapeText;
+      }
+      const destination = relocation.target(sourceRow);
+      if (destination === null) {
+        counters.comments += 1;
+        return undefined;
+      }
+      if (destination === sourceRow) {
+        return shapeText;
+      }
+      counters.comments += 1;
+      return `${shapeText.slice(0, anchor.innerStart)}${destination - 1}${shapeText.slice(
+        anchor.innerEnd,
+      )}`;
+    });
+    if (rewritten !== xml) {
+      this.#package.writeText(partPath, rewritten);
+    }
+  }
+
   // -- Internals -----------------------------------------------------------
 
   #requireWorksheet(sheetName: string): WorksheetModel {

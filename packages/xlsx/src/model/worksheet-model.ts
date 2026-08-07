@@ -51,6 +51,13 @@ export interface RelocationCounters {
   formulaReferences: number;
   tableRefs: number;
   calcChainEntries: number;
+  /**
+   * Comment anchors moved: `<comment ref>` in the comments part and the
+   * zero-based `<x:Row>` in its legacy VML drawing. The frozen
+   * `DeleteRowsReport.adjusted` has no field for these, so the count stays
+   * internal until the seam gains one.
+   */
+  comments: number;
 }
 
 export function emptyCounters(): RelocationCounters {
@@ -62,6 +69,7 @@ export function emptyCounters(): RelocationCounters {
     formulaReferences: 0,
     tableRefs: 0,
     calcChainEntries: 0,
+    comments: 0,
   };
 }
 
@@ -81,6 +89,12 @@ export interface WorksheetHost {
   ): void;
   /** Drop and renumber this worksheet's calculation-chain entries. */
   relocateCalcChain(
+    sheetName: string,
+    relocation: RowRelocation,
+    counters: RelocationCounters,
+  ): void;
+  /** Move this worksheet's cell-comment anchors and their VML shapes. */
+  relocateComments(
     sheetName: string,
     relocation: RowRelocation,
     counters: RelocationCounters,
@@ -658,14 +672,25 @@ export class WorksheetModel implements WorksheetModelContract {
       counters,
     );
 
-    // 8-9. Parts above the worksheet that still describe its rows.
+    // 8-10. Parts above the worksheet that still describe its rows.
     this.#host.relocateTables(this.info.name, relocation, counters);
     this.#host.relocateCalcChain(this.info.name, relocation, counters);
+    this.#host.relocateComments(this.info.name, relocation, counters);
 
     return {
       deletedRows,
       retainedRows: destinations.length,
-      adjusted: counters,
+      // The seam fixes this shape, so it is built field by field rather than
+      // handing over the internal counters wholesale.
+      adjusted: {
+        mergedRanges: counters.mergedRanges,
+        conditionalFormatting: counters.conditionalFormatting,
+        dataValidations: counters.dataValidations,
+        hyperlinks: counters.hyperlinks,
+        formulaReferences: counters.formulaReferences,
+        tableRefs: counters.tableRefs,
+        calcChainEntries: counters.calcChainEntries,
+      },
     };
   }
 
