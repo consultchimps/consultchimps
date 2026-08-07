@@ -298,6 +298,38 @@ describe("corpus: all-worksheet split", () => {
     );
   });
 
+  it("pins: a single array formula anywhere on the sheet withdraws table compaction", async () => {
+    const directory = await createCorpusDirectory();
+    const input = await writeCorpusWorkbook(directory, "corpus.xlsx", {
+      arrayFormula: true,
+      formulas: "structured",
+      shape: "table",
+    });
+    const result = await splitWorkbookByColumn({
+      column: CORPUS_SPLIT_COLUMN,
+      input,
+      outputDirectory: path.join(directory, "out"),
+    });
+
+    // tableCanBeCompacted scans the whole worksheet part, not just the table
+    // range, so one t="array" formula outside the table is enough to send the
+    // sheet down the plain row-removal path.
+    expect(result.warnings.join("\n")).toMatch(
+      /contained formulas tied to row positions/u,
+    );
+    const alpha = await readWorkbookBytes(
+      path.join(directory, "out", "Alpha.xlsx"),
+    );
+    expect(await readPackagePart(alpha, CORPUS_PARTS.table)).toContain(
+      'ref="A3:F10"',
+    );
+    const dataXml = await readPackagePart(alpha, CORPUS_PARTS.dataSheet);
+    // The array formula's own row survives, and its range reference and cached
+    // value are copied through without adjustment.
+    expect(dataXml).toContain('<f t="array" ref="G4:G4">SUM(D4:D9)</f>');
+    expect(worksheetCellValue(dataXml, "G4")).toBe("210");
+  });
+
   it.each(SHAPES)(
     "invariant: a values-only %s split bakes cached values and removes the calculation chain",
     async (shape) => {
