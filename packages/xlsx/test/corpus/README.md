@@ -8,13 +8,13 @@ Nothing here touches `src/`.
 
 ## Layout
 
-| File                               | Contents                                                                                       |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `fixtures.ts`                      | The generator. Builds complete OOXML packages by hand, plus the readers the tests assert with. |
-| `split.corpus.test.ts`             | Every split mode (all-worksheet, table, named range, worksheet, bytes) against both bindings.  |
-| `merge-consolidate.corpus.test.ts` | Merge and consolidate, including everything the merge currently loses.                         |
-| `invariants.corpus.test.ts`        | Preservation, determinism and output-safety guarantees the engine already makes.               |
-| `tier1-gaps.corpus.test.ts`        | The Tier-1 gaps, now all closed: a pin plus a `Tier-1 fix:` test per gap.                      |
+| File                               | Contents                                                                                          |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `fixtures.ts`                      | The generator. Builds complete OOXML packages by hand, plus the readers the tests assert with.    |
+| `split.corpus.test.ts`             | Every split mode (all-worksheet, table, named range, worksheet, bytes) against both bindings.     |
+| `merge-consolidate.corpus.test.ts` | Merge and consolidate: what the Phase-1b transplant preserves, and what it strips with a warning. |
+| `invariants.corpus.test.ts`        | Preservation, determinism and output-safety guarantees the engine already makes.                  |
+| `tier1-gaps.corpus.test.ts`        | The Tier-1 gaps, now all closed: a pin plus a `Tier-1 fix:` test per gap.                         |
 
 ## The pairing convention
 
@@ -77,6 +77,7 @@ build the smallest workbook that exhibits the thing it pins:
 | `calcChain`       | formulas present    | `xl/calcChain.xml`.                                                   |
 | `pivot`           | `false`             | Pivot table, cache definition and cache records, with their rels.     |
 | `macro`           | `false`             | A stub `xl/vbaProject.bin` and the macro-enabled content types.       |
+| `numberFormat`    | `false`             | A workbook-defined number format on `Amount`, as a third `cellXfs`.   |
 
 The pivot cache records deliberately carry **literal per-row values** rather
 than shared-item indexes, so a confidentiality assertion can grep one group's
@@ -113,6 +114,29 @@ Follow the ARCHITECTURE.md cookbook ("Fix a discovered edge case"):
    comment naming the gap. Never leave a gap as a skipped test.
 5. **Never fix the gap in an operation.** Per the cookbook, invariant fixes
    belong in the model (L1) and Table/range-specific fixes in the binding (L2).
+
+## Flipping a pin
+
+A `pins:` test records behaviour without endorsing it, so replacing one is the
+normal way an engine improves. Phase 1b flipped every "merge currently drops X"
+pin in `merge-consolidate.corpus.test.ts` at once, and the convention that made
+that reviewable is worth repeating:
+
+1. **One assertion per flip.** Keep the test that pinned the loss, rename it
+   from `pins:` to `invariant:`, and rewrite its body to assert the structure
+   survives. The diff then shows the loss and its replacement side by side.
+2. **Say why on the assertion.** Each flipped test carries a `FLIPPED (was ...)`
+   comment naming the pin it replaces and the mechanism that makes the new
+   behaviour true. A flip with no stated mechanism is a test that will be
+   re-flipped by the next regression.
+3. **A loss that stays is still pinned, with its warning.** Pivot caches,
+   external links and an untravellable macro project remain removed; their tests
+   assert the removal AND the warning text, so "silently dropped" can never come
+   back disguised as "declared behaviour".
+4. **Declare the cell in the same change.** `src/contract.ts` and
+   `test/contract.test.ts` move with the corpus; `test/contract.test.ts` fails
+   when a structure gains or loses a declared cell without the expected-missing
+   list being edited on purpose.
 
 Naming convention for test titles:
 

@@ -13,6 +13,7 @@ import {
   CONTRACT,
   OPERATIONS,
   TRACKED_STRUCTURES,
+  UNDECIDED_MERGE_STRUCTURES,
   UNDECIDED_SPLIT_STRUCTURES,
   type Operation,
   type Structure,
@@ -38,9 +39,15 @@ const EXPECTED_MISSING_FOR_SPLIT: readonly Structure[] = [
   "external-links",
 ];
 
+/**
+ * The merge cells still owed a decision. Phase 1b declared everything the
+ * conformance corpus can exercise; each entry here is explained in
+ * UNDECIDED_MERGE_STRUCTURES.
+ */
+const EXPECTED_MISSING_FOR_MERGE: readonly Structure[] = ["external-links"];
+
 /** Operations with no column yet; each is wholly undeclared. */
 const UNDECLARED_OPERATIONS: readonly Operation[] = [
-  "merge",
   "consolidate",
   "values",
   "describe",
@@ -91,6 +98,33 @@ describe("contract: completeness", () => {
       expect(undeclaredStructures(operation)).toEqual([...TRACKED_STRUCTURES]);
     },
   );
+
+  it("owes merge exactly the structures recorded as undecided", () => {
+    expect([...undeclaredStructures("merge")].sort()).toEqual(
+      [...EXPECTED_MISSING_FOR_MERGE].sort(),
+    );
+  });
+
+  it("explains every missing merge cell", () => {
+    expect(Object.keys(UNDECIDED_MERGE_STRUCTURES).sort()).toEqual(
+      [...EXPECTED_MISSING_FOR_MERGE].sort(),
+    );
+    for (const reason of Object.values(UNDECIDED_MERGE_STRUCTURES)) {
+      expect(reason.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("reports the declared cells for merge", () => {
+    const declared = CONTRACT.merge;
+    expect(Object.keys(declared)).toHaveLength(
+      TRACKED_STRUCTURES.length - EXPECTED_MISSING_FOR_MERGE.length,
+    );
+    // The three shapes of merge behavior, one example each: a structure the
+    // transplant never touches, one it repairs, and one it refuses to carry.
+    expect(declared["merged-cells"]).toBe("preserve");
+    expect(declared["excel-tables"]).toBe("fix");
+    expect(declared["pivot-tables"]).toBe("strip-warn");
+  });
 
   it("reports the declared cells for split", () => {
     const declared = CONTRACT.split;

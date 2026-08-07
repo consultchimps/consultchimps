@@ -42,6 +42,8 @@ import {
   CONSOLIDATE_OPERATION,
   createMergeState,
   finishMergedWorkbook,
+  isMacroWorkbookName,
+  MACRO_WORKBOOK_MEDIA_TYPE,
   MERGE_OPERATION,
   parseExcelTableDefinitions,
   parseWorkbookBytes,
@@ -158,12 +160,28 @@ function isMissingPathError(error: unknown): boolean {
 }
 
 /**
+ * Read a workbook's bytes from disk, reporting a missing or unreadable file as
+ * the stable read error the parsing readers also raise.
+ */
+async function readWorkbookBytes(absolutePath: string): Promise<Uint8Array> {
+  try {
+    return await readFile(absolutePath);
+  } catch (error) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_READ_FAILED,
+      `Could not read workbook: ${absolutePath}`,
+      { cause: error, details: { filePath: absolutePath } },
+    );
+  }
+}
+
+/**
  * Read and parse a workbook from disk, reporting both a missing file and an
  * unreadable workbook as the same stable error.
  */
 async function readWorkbookFile(
   absolutePath: string,
-  options: { cellStyles?: boolean; cellText?: boolean } = {},
+  options: { cellText?: boolean } = {},
 ): Promise<WorkbookFile> {
   const details = { filePath: absolutePath };
   let bytes: Buffer;
@@ -393,14 +411,21 @@ export async function mergeWorkbooks(
   refuseInputOverwrite(absoluteOutput, absoluteInputs);
   await ensureOutputAvailable(absoluteOutput, { overwrite: options.overwrite });
 
-  const state = createMergeState(options);
+  const buildOptions = {
+    ...options,
+    // The user names the output, so the extension decides whether a macro
+    // project may travel: a package must never claim a type its name denies.
+    macroOutput: isMacroWorkbookName(absoluteOutput),
+  };
+  const state = createMergeState(buildOptions);
   for (const inputPath of absoluteInputs) {
-    const { workbook } = await readWorkbookFile(inputPath, {
-      cellStyles: true,
-    });
-    appendWorkbookSheets(state, path.basename(inputPath), workbook);
+    await appendWorkbookSheets(
+      state,
+      path.basename(inputPath),
+      await readWorkbookBytes(inputPath),
+    );
   }
-  const merged = await finishMergedWorkbook(state, options);
+  const merged = await finishMergedWorkbook(state, buildOptions);
 
   await ensureParentDirectory(absoluteOutput);
   await writeFile(absoluteOutput, merged.bytes);
@@ -410,7 +435,9 @@ export async function mergeWorkbooks(
     artifacts: [
       {
         kind: "file",
-        mediaType: WORKBOOK_MEDIA_TYPE,
+        mediaType: merged.macroEnabled
+          ? MACRO_WORKBOOK_MEDIA_TYPE
+          : WORKBOOK_MEDIA_TYPE,
         path: absoluteOutput,
       },
     ],
