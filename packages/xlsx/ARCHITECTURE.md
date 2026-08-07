@@ -193,6 +193,26 @@ both bindings. Expose through file + bytes surfaces; CLI last.
 collection, wire it into the invariant pass, add paired fixtures, declare its
 cell for every operation.
 
+**Move a module into a layer.** `test/boundaries.test.ts` enforces guardrail 2
+over `src/**/*.ts` — source text, not `dist/`, so a misplaced import fails
+before it is bundled. It carries a temporary allowlist of the legacy top-level
+modules that still import JSZip (`excel-tables.ts`, `package-zip.ts`,
+`preserve-table-split.ts`, `values-only.ts`, `workbook-column-split.ts`), each
+annotated with the phase that retires it. The allowlist is asserted to match the
+offending files _exactly_, so migrating a module means deleting its entry in the
+same pull request, and a new module cannot join it unnoticed. The "operations
+never regex-edit XML" half of guardrail 2 is not yet asserted; `src/operations/`
+does not exist, and the rule lands with it.
+
+**Declare a contract cell.** `src/contract.ts` holds the L4 table as data, with
+each cell citing the corpus test that holds it up. `split` cells state the
+_post-Phase-1_ intent, so a cell can read `fix` while
+`tier1-gaps.corpus.test.ts` still pins the gap. A structure whose behavior is
+genuinely undecided has **no cell**: `test/contract.test.ts` asserts the exact
+missing set (with a reason per entry in `UNDECIDED_SPLIT_STRUCTURES`), which
+makes the debt enumerable and shrinking it deliberate, rather than failing the
+build during migration.
+
 **Never**: edit raw worksheet XML from an operation; add an option to one
 operation that duplicates a policy; change an existing error-code value;
 introduce a second implementation of anything L0–L2 owns.
