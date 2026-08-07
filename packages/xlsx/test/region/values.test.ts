@@ -9,7 +9,6 @@ import {
   parseCellRef,
   parseColumnLetters,
   parseSheetRange,
-  typedCellValue,
 } from "../../src/region/values.js";
 
 // Non-ASCII inputs are written as escapes so the file stays pure ASCII.
@@ -94,36 +93,6 @@ describe("normalizeSplitValue", () => {
   it("leaves text that only looks numeric alone", () => {
     expect(normalizeSplitValue("100a", false)?.key).toBe("string:100a");
     expect(normalizeSplitValue("1,000", false)?.key).toBe("string:1,000");
-  });
-});
-
-describe("typedCellValue", () => {
-  it("reads an absent type as a number", () => {
-    expect(typedCellValue(undefined, "42")).toBe(42);
-    expect(typedCellValue("n", "-1.5")).toBe(-1.5);
-  });
-
-  it("reports a blank numeric cell as blank", () => {
-    expect(typedCellValue(undefined, "  ")).toBeUndefined();
-  });
-
-  it("falls back to text when a numeric cell does not parse", () => {
-    expect(typedCellValue("n", "not-a-number")).toBe("not-a-number");
-  });
-
-  it("reads booleans and shared strings", () => {
-    expect(typedCellValue("b", "1")).toBe(true);
-    expect(typedCellValue("b", "0")).toBe(false);
-    expect(typedCellValue("s", "North")).toBe("North");
-    expect(typedCellValue("str", "North")).toBe("North");
-  });
-
-  it("reads ISO date cells as dates", () => {
-    const value = typedCellValue("d", "2026-01-02T00:00:00.000Z");
-    expect(value).toBeInstanceOf(Date);
-    expect(normalizeSplitValue(value, false)?.key).toBe(
-      "date:2026-01-02T00:00:00.000Z",
-    );
   });
 });
 

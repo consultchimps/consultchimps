@@ -5,8 +5,7 @@
  * and `normalizeHeader` from `src/workbook-column-split.ts`. The old engine
  * read values through SheetJS (which handed back JavaScript `Date`, `number`,
  * `boolean`, and `string` values); the region layer reads them through the L1
- * document model instead, so `typedCellValue` reconstructs the same typed
- * values from the OOXML cell type plus its text. Key shapes (`date:`,
+ * document model instead, which types cells the same way. Key shapes (`date:`,
  * `number:`, `boolean:`, `string:`) are unchanged so grouping stays stable
  * across the migration.
  *
@@ -107,51 +106,16 @@ export function normalizeSplitValue(
 }
 
 /**
- * Rebuild the typed value SheetJS used to hand the split engine from the
- * OOXML cell type (`t`) and the cell's resolved text. An absent `t` means a
- * number, which is also how Excel stores dates — the model does not expose
- * number formats at this seam, so serial dates arrive as numbers and key as
- * `number:` rather than `date:`.
+ * Typed value of one cell, or `undefined` when the cell is absent or blank.
+ *
+ * Typing is L1's job: the model resolves shared strings, reads the OOXML `t`
+ * attribute, and consults the cell's number format so a date-formatted serial
+ * arrives as a `Date`. That last part is why the region layer does not do this
+ * itself - a `date:` key and a `number:` key produce different output
+ * filenames, and the previous engine read dates through SheetJS `cellDates`.
  */
-export function typedCellValue(
-  type: string | undefined,
-  text: string,
-): unknown {
-  switch (type) {
-    case undefined:
-    case "n": {
-      const trimmed = text.trim();
-      if (trimmed === "") {
-        return undefined;
-      }
-      const numeric = Number(trimmed);
-      return Number.isFinite(numeric) ? numeric : trimmed;
-    }
-    case "b":
-      return text.trim() === "1" || normalizeHeader(text) === "true";
-    case "d": {
-      const parsed = new Date(text);
-      return Number.isNaN(parsed.getTime()) ? text : parsed;
-    }
-    default:
-      return text;
-  }
-}
-
-/** The OOXML `t` attribute of a cell, when the sheet has that cell at all. */
-function cellType(worksheet: WorksheetModel, ref: CellRef): string | undefined {
-  return worksheet
-    .row(ref.row)
-    ?.cells.find((cell) => cell.ref.column === ref.column)?.type;
-}
-
-/** Typed value of one cell, or `undefined` when the cell is absent or blank. */
 export function cellValue(worksheet: WorksheetModel, ref: CellRef): unknown {
-  const text = worksheet.cellText(ref);
-  if (text === undefined) {
-    return undefined;
-  }
-  return typedCellValue(cellType(worksheet, ref), text);
+  return worksheet.cellValue(ref);
 }
 
 /**

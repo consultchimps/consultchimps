@@ -187,8 +187,24 @@ describe("TableBinding", () => {
       (row) => keys.get(row) === "string:north",
     );
 
-    expect(report).toEqual({ deletedRows: 1, retainedRows: 2 });
-    expect(worksheet.deleteCalls).toEqual([{ renumber: true, rows: [3] }]);
+    expect(report).toMatchObject({
+      deletedRows: 1,
+      retainedRows: 2,
+      tableResized: true,
+    });
+    // The survivors close up under the header and the totals row follows them.
+    expect(worksheet.relocateCalls).toEqual([
+      {
+        moves: [
+          [1, 1],
+          [2, 2],
+          [3, null],
+          [4, 3],
+          [5, 4],
+        ],
+        resizeTables: true,
+      },
+    ]);
   });
 
   it("deletes every body row when nothing is kept", () => {
@@ -206,9 +222,13 @@ describe("TableBinding", () => {
 
     const report = binding.filterRows(() => false);
 
-    expect(report).toEqual({ deletedRows: 3, retainedRows: 0 });
-    expect(worksheet.deleteCalls).toEqual([
-      { renumber: true, rows: [2, 3, 4] },
+    expect(report).toMatchObject({ deletedRows: 3, retainedRows: 0 });
+    expect(worksheet.relocateCalls[0]?.moves).toEqual([
+      [1, 1],
+      [2, null],
+      [3, null],
+      [4, null],
+      [5, 2],
     ]);
     // Header row 1 and totals row 5 survive.
     expect(worksheet.row(1)?.cells[0]?.value).toBe("Region");
@@ -230,8 +250,8 @@ describe("TableBinding", () => {
 
     const report = binding.filterRows(() => true);
 
-    expect(report).toEqual({ deletedRows: 0, retainedRows: 3 });
-    expect(worksheet.deleteCalls).toEqual([]);
+    expect(report).toMatchObject({ deletedRows: 0, retainedRows: 3 });
+    expect(worksheet.relocateCalls).toEqual([]);
   });
 
   it("handles a table with a header and a totals row but no body", () => {
@@ -255,14 +275,14 @@ describe("TableBinding", () => {
 
     expect(binding.body.end.row).toBe(1);
     expect([...binding.rowKeys(binding.columns[0]!, TOLERANT)]).toEqual([]);
-    expect(binding.filterRows(() => false)).toEqual({
+    expect(binding.filterRows(() => false)).toMatchObject({
       deletedRows: 0,
       retainedRows: 0,
     });
-    expect(worksheet.deleteCalls).toEqual([]);
+    expect(worksheet.relocateCalls).toEqual([]);
   });
 
-  it("renumbers even when the sheet holds formulas, because structured references move with the table", () => {
+  it("leaves the table part alone when a formula ties the sheet to row positions", () => {
     const worksheet = new FakeWorksheetModel({
       grid: [
         ["Region", "Amount"],
@@ -283,8 +303,43 @@ describe("TableBinding", () => {
       }),
     );
 
-    binding.filterRows(() => false);
+    const report = binding.filterRows(() => false);
 
-    expect(worksheet.deleteCalls[0]?.renumber).toBe(true);
+    // Rows still leave and still compact - the invariant pass rewrites the
+    // array formula's span with them - but the table keeps the range the
+    // author drew rather than being narrowed around a hand-placed formula.
+    expect(report).toMatchObject({ tableResized: false });
+    expect(report.formulaGuard).toMatchObject({ reason: "array-formula" });
+    expect(worksheet.relocateCalls).toEqual([
+      {
+        moves: [
+          [1, 1],
+          [2, null],
+          [3, null],
+          [4, 2],
+        ],
+        resizeTables: false,
+      },
+    ]);
+  });
+
+  it("compacts as a table when every formula is a structured reference", () => {
+    const worksheet = salesSheet();
+    const binding = new TableBinding(
+      worksheet,
+      fakeTable({
+        columnNames: ["Region", "Amount"],
+        name: "Sales",
+        ref: "A1:B5",
+        sheetName: "Data",
+        totalsRow: true,
+      }),
+    );
+
+    const report = binding.filterRows((row) => row === 4);
+
+    expect(report).toMatchObject({ tableResized: true });
+    expect(report.formulaGuard).toEqual({ canRenumber: true });
+    expect(worksheet.relocateCalls[0]?.resizeTables).toBe(true);
   });
 });

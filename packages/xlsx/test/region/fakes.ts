@@ -8,15 +8,18 @@
  * asked for renumbering.
  */
 
+import { RowRelocation } from "../../src/model/references.js";
 import type {
   CellFormula,
   CellModel,
   CellRange,
   CellRef,
+  CellValue,
   ColumnIndex,
   DefinedNameEntry,
   DeleteRowsOptions,
   DeleteRowsReport,
+  RelocateRowsOptions,
   RowModel,
   RowNumber,
   SheetInfo,
@@ -56,6 +59,12 @@ export interface DeleteRowsCall {
   readonly rows: readonly RowNumber[];
 }
 
+/** One observed relocation, as `[sourceRow, destination]` pairs. */
+export interface RelocateRowsCall {
+  readonly moves: ReadonlyArray<readonly [RowNumber, RowNumber | null]>;
+  readonly resizeTables: boolean;
+}
+
 interface FakeRow {
   attributes: Record<string, string>;
   cells: Map<ColumnIndex, CellModel>;
@@ -83,6 +92,7 @@ function toCellSpec(input: FakeCellInput): FakeCellSpec | undefined {
 
 export class FakeWorksheetModel implements WorksheetModel {
   readonly deleteCalls: DeleteRowsCall[] = [];
+  readonly relocateCalls: RelocateRowsCall[] = [];
   readonly info: SheetInfo;
   private rowsByNumber: Map<RowNumber, FakeRow>;
 
@@ -161,6 +171,43 @@ export class FakeWorksheetModel implements WorksheetModel {
     return this.rowsByNumber.get(ref.row)?.cells.get(ref.column)?.value;
   }
 
+  /**
+   * The typing the real model performs, minus number formats: the grid has no
+   * styles, so a numeric cell is always a number rather than a date.
+   */
+  cellValue(ref: CellRef): CellValue {
+    const cell = this.rowsByNumber.get(ref.row)?.cells.get(ref.column);
+    const text = cell?.value;
+    if (!cell || text === undefined) {
+      return undefined;
+    }
+    switch (cell.type) {
+      case "b":
+        return text.trim() === "1" || text.trim().toLowerCase() === "true";
+      case "d": {
+        const parsed = new Date(text);
+        return Number.isNaN(parsed.getTime()) ? text : parsed;
+      }
+      case undefined: {
+        const trimmed = text.trim();
+        if (trimmed === "") {
+          return undefined;
+        }
+        const numeric = Number(trimmed);
+        return Number.isFinite(numeric) ? numeric : trimmed;
+      }
+      default:
+        return text;
+    }
+  }
+
+  get lastRow(): RowNumber {
+    return [...this.rowsByNumber.keys()].reduce(
+      (last, row) => Math.max(last, row),
+      0,
+    );
+  }
+
   deleteRows(
     rows: ReadonlySet<RowNumber>,
     options: DeleteRowsOptions,
@@ -169,14 +216,32 @@ export class FakeWorksheetModel implements WorksheetModel {
       renumber: options.renumber,
       rows: [...rows].sort((left, right) => left - right),
     });
-    const survivors = [...this.rowsByNumber.entries()]
-      .filter(([number]) => !rows.has(number))
-      .sort(([left], [right]) => left - right);
+    return this.applyRowRelocation(
+      RowRelocation.compacting(
+        rows,
+        Math.max(this.lastRow, ...rows, 0),
+        options.renumber,
+      ),
+    );
+  }
+
+  applyRowRelocation(
+    relocation: RowRelocation,
+    options: RelocateRowsOptions | undefined = undefined,
+  ): DeleteRowsReport {
+    const moves: Array<readonly [RowNumber, RowNumber | null]> = [];
     const rewritten = new Map<RowNumber, FakeRow>();
-    for (const [number, entry] of survivors) {
-      const destination = options.renumber
-        ? number - [...rows].filter((deleted) => deleted < number).length
-        : number;
+    let deletedRows = 0;
+
+    for (const [number, entry] of [...this.rowsByNumber.entries()].sort(
+      ([left], [right]) => left - right,
+    )) {
+      const destination = relocation.target(number);
+      moves.push([number, destination]);
+      if (destination === null) {
+        deletedRows += 1;
+        continue;
+      }
       rewritten.set(destination, {
         attributes: entry.attributes,
         cells: new Map(
@@ -187,6 +252,11 @@ export class FakeWorksheetModel implements WorksheetModel {
         ),
       });
     }
+
+    this.relocateCalls.push({
+      moves,
+      resizeTables: options?.resizeTables !== false,
+    });
     this.rowsByNumber = rewritten;
     return {
       adjusted: {
@@ -198,7 +268,7 @@ export class FakeWorksheetModel implements WorksheetModel {
         mergedRanges: 0,
         tableRefs: 0,
       },
-      deletedRows: rows.size,
+      deletedRows,
       retainedRows: rewritten.size,
     };
   }

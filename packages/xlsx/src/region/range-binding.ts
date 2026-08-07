@@ -6,19 +6,21 @@
  * explicit `Sheet!A1:F200`; the columns are read from the header cells; and
  * deletion carries the formula-safety guard inherited from the split engine.
  *
- * The guard is the port of `tableCanBeCompacted` in
- * `src/workbook-column-split.ts`. That function decided whether rows could be
- * removed with compaction by scanning worksheet XML for `t="shared"` /
- * `t="array"` formulas and for A1-style references in formula text. The same
- * decision is made here over the model's structured formula data instead of
- * over raw XML, which removes two sources of error: XML entity escaping, and
- * string literals that had to be stripped with a regex before the reference
- * scan could run.
+ * The guard is the port of `tableCanBeCompacted`, the function the previous
+ * split engine used to decide whether rows could be removed with compaction:
+ * it scanned worksheet XML for `t="shared"` / `t="array"` formulas and for
+ * A1-style references in formula text. The same decision is made here over the
+ * model's structured formula data instead of over raw XML, which removes two
+ * sources of error: XML entity escaping, and string literals that had to be
+ * stripped with a regex before the reference scan could run.
  *
- * Once L1's invariant pass adjusts formula references natively this guard is
- * belt and braces. It stays as the conservative default, and the decision is
- * reported (`RangeEditReport.formulaGuard`) so an operation can raise the same
- * warning the split engine raised.
+ * Phase 1 relaxed what the guard *does*. L1's invariant pass now rewrites
+ * formula text, shared and array `ref` spans, merged ranges, sqrefs and
+ * hyperlinks as part of the same edit, so refusing to renumber no longer
+ * protects anything - it only leaves a sheet full of holes. Rows are therefore
+ * always renumbered, and the guard survives as a *signal*: its verdict rides
+ * along in `RangeEditReport.formulaGuard` so an operation can still say which
+ * formula tied the sheet to row positions.
  */
 
 import type {
@@ -48,21 +50,26 @@ const A1_REFERENCE_PATTERN =
 /** Quoted text inside a formula never contains a live reference. */
 const STRING_LITERAL_PATTERN = /"[^"]*"/gu;
 
-/** Why renumbering was refused, or `undefined` when it was allowed. */
+/** Why a formula ties the sheet to row positions, when one does. */
 export type FormulaGuardReason =
   "array-formula" | "a1-reference" | "shared-formula";
 
 export interface FormulaGuardVerdict {
+  /**
+   * True when no formula on the sheet is written against row positions. Rows
+   * are renumbered either way; this only says whether anything had to be
+   * rewritten to keep pointing at the same records.
+   */
   readonly canRenumber: boolean;
   readonly reason?: FormulaGuardReason | undefined;
-  /** A1 address of the first formula that blocked renumbering. */
+  /** A1 address of the first formula that ties the sheet to row positions. */
   readonly cell?: string | undefined;
 }
 
 /**
  * A `RegionEditReport` widened with the guard decision. Returning a subtype
  * keeps `DataRegion.filterRows` satisfied while giving operations enough to
- * warn that a sheet was filtered without compaction.
+ * report which formula tied a filtered sheet to row positions.
  */
 export interface RangeEditReport extends RegionEditReport {
   readonly formulaGuard: FormulaGuardVerdict;
@@ -197,12 +204,15 @@ export class RangeBinding implements DataRegion {
       }
     }
     if (doomed.size > 0) {
-      this.worksheet.deleteRows(doomed, { renumber: formulaGuard.canRenumber });
+      // Always compacting: the invariant pass rewrites everything that
+      // described the moved rows, so leaving gaps would be a worse output,
+      // not a safer one.
+      this.worksheet.deleteRows(doomed, { renumber: true });
     }
     return {
       deletedRows: doomed.size,
       formulaGuard,
-      renumbered: formulaGuard.canRenumber,
+      renumbered: true,
       retainedRows,
     };
   }

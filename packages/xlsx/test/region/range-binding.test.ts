@@ -202,15 +202,17 @@ describe("RangeBinding.filterRows", () => {
     expect(worksheet.deleteCalls).toEqual([{ renumber: true, rows: [3] }]);
   });
 
-  it("deletes without renumbering when the guard refuses", () => {
+  it("renumbers even when the guard finds a position-dependent formula", () => {
     const worksheet = sheetWithFormula(formulaCell("SUM(B2:B3)"));
     const binding = bindingFor(worksheet);
 
     const report = binding.filterRows((row) => row === 2);
 
-    expect(report).toMatchObject({ deletedRows: 1, renumbered: false });
+    // The guard is a signal now, not a veto: L1 rewrites the reference as part
+    // of the same edit, so leaving a gap would only make the output worse.
+    expect(report).toMatchObject({ deletedRows: 1, renumbered: true });
     expect(report.formulaGuard).toMatchObject({ reason: "a1-reference" });
-    expect(worksheet.deleteCalls).toEqual([{ renumber: false, rows: [3] }]);
+    expect(worksheet.deleteCalls).toEqual([{ renumber: true, rows: [3] }]);
   });
 
   it("leaves the model alone when every row is kept", () => {
