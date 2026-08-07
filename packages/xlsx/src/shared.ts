@@ -1230,7 +1230,18 @@ export async function preservedSplitTemplateBytes(
   return values ? convertWorkbookToValues(workbookBytes) : workbookBytes;
 }
 
-/** Produce one group's workbook, preserving the source package when asked. */
+/**
+ * Produce one group's workbook, preserving the source package when asked.
+ *
+ * Both branches are deliberately still off the layered engine after Phase 1.
+ * The preserved branch's contract is a refusal, not a repair (see
+ * `preserve-table-split.ts`). The rebuilding branch does not edit a workbook at
+ * all: it writes a fresh single-worksheet package from parsed cell values, so
+ * every structure the corpus tracks is absent by construction rather than lost
+ * by accident, and there is no row to relocate. Migrating it would mean
+ * changing what a compact split *produces*, which is a decision for the phase
+ * that makes it, not a side effect of moving the split engine.
+ */
 export async function buildSplitGroupBytes(
   group: { table: Table },
   context: {
@@ -1247,9 +1258,6 @@ export async function buildSplitGroupBytes(
       {
         definition: context.preservedTableDefinition,
         sourceRows: group.table.sourceRows ?? [],
-        // Remove complete worksheet rows, including cells outside the table,
-        // rather than leaving styled/empty row shells behind.
-        wholeRows: true,
       },
     );
     // Tier-1 wiring: the preserved path copies the source package, pivot caches

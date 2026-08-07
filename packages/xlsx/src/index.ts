@@ -558,6 +558,16 @@ export async function planSplitWorkbookByColumn(
   };
 }
 
+/**
+ * Split a workbook into one file per distinct value of a column.
+ *
+ * Two engines sit behind one signature. With no `table`, `range` or `sheet`
+ * selection the split keeps the whole workbook and filters every worksheet
+ * that carries the column: that path runs on the layered engine, so every
+ * reference describing a moved row moves with it. Selecting a region instead
+ * asks for one of the older, narrower modes - a preserved Excel Table rewrite,
+ * or a compact single-worksheet rebuild - which `shared.ts` still owns.
+ */
 export async function splitWorkbookByColumn(
   options: SplitWorkbookByColumnOptions,
 ): Promise<SplitWorkbookByColumnResult> {

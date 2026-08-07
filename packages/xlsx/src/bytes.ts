@@ -137,7 +137,14 @@ export async function planSplitWorkbookBytes(
   };
 }
 
-/** Split one workbook's rows into one workbook per distinct column value. */
+/**
+ * Split one workbook's rows into one workbook per distinct column value.
+ *
+ * The byte surface offers only the region-selecting modes - an Excel Table, a
+ * named range, or one worksheet - so it reaches the same two builders the file
+ * surface uses for those selections and none of the all-worksheet machinery.
+ * Phase 1 left both builders where they were; `buildSplitGroupBytes` says why.
+ */
 export async function splitWorkbookBytes(
   options: SplitWorkbookBytesOptions,
 ): Promise<ByteOperationOutcome<SplitWorkbookByColumnMetric>> {
