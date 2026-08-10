@@ -1,5 +1,79 @@
 # @consultchimps/xlsx
 
+## 0.10.0
+
+### Minor Changes
+
+- d12d6b0: The workbook merge now preserves Excel Tables, defined names,
+  conditional formatting, data validation, cell comments, styles and number
+  formats at the package level instead of rebuilding each worksheet through a
+  spreadsheet library.
+
+  `mergeWorkbooks` and `mergeWorkbooksBytes` keep their signatures, their
+  metrics and their error codes. What changed is the engine underneath: the
+  first input now seeds the output package and every later input's worksheet
+  parts are copied into it with the parts they depend on, so a structure
+  survives unless carrying it would be wrong.
+
+  - **Preserved**: merged cells, conditional formatting, data validation,
+    hyperlinks, comments and their drawings, Excel Tables including totals rows,
+    cell styles and number formats, and shared, array and uncached formulas.
+  - **Repaired**: shared-string and style indexes are remapped into one merged
+    table per workbook (identical entries collapse); duplicate Excel Table names
+    and workbook-scoped defined names take a numeric suffix, with a warning
+    listing every rename; formulas that named a renamed worksheet or table -
+    structured references included - are rewritten to follow it.
+  - **Removed, each with a warning**: pivot tables and their caches, external
+    links, and a macro project that cannot travel. A macro project is carried
+    only when a single input has one and the output is named `.xlsm`; the byte
+    surface now keeps an `.xlsm` output name a caller asks for, and reports the
+    macro-enabled media type for it.
+  - The calculation chain is dropped without a warning and the merged workbook
+    asks Excel to recalculate on open, because a chain is a derived index keyed
+    by sheet ids that every transplanted worksheet changes.
+
+- d12d6b0: Fix every reference that pointed at a row a workbook split moved, and
+  make split outputs byte-reproducible.
+
+  Splitting a workbook by column removes the rows that belong to other groups
+  and closes the gaps they leave. Until now only the rows and their cells were
+  renumbered: everything else that described those rows kept its original row
+  number, so a delivered workbook could highlight the wrong cells, validate the
+  wrong column, link from the wrong row, or double the wrong record.
+
+  All of it now moves with the rows, on both worksheet ranges and Excel Tables:
+
+  - merged cells,
+  - conditional-formatting and data-validation ranges,
+  - hyperlinks,
+  - cell comments, including the drawing anchor that positions the note,
+  - formulas, including shared and array formulas and the spans they claim,
+  - the worksheet's declared used range.
+
+  The split also writes every output through one deterministic package writer,
+  so splitting the same workbook twice now produces byte-identical files rather
+  than files whose contents match but whose timestamps do not. Parts the split
+  does not touch still travel through byte for byte.
+
+  Public API, error codes, metrics and warning shapes are unchanged.
+
+- d12d6b0: Close the first three Tier-1 gaps in the workbook split.
+
+  - Pivot caches no longer leak other groups' rows into split outputs. A pivot
+    cache is a private copy of the source rows that travels inside the package,
+    so every pivot table and cache part is now removed from each output,
+    together with its relationships, content-type overrides and the workbook's
+    `pivotCaches` registry. The result reports how many were removed and warns
+    that the pivot has to be rebuilt.
+  - Values-mode splits no longer bake aggregates computed over removed rows.
+    Before the values conversion runs, the cached result of any formula whose A1
+    references reach into rows the group does not receive -- including
+    cross-sheet references -- is cleared, so the output shows a reported blank
+    cell rather than another group's total presented as this one's.
+  - The calculation chain is kept consistent. Entries naming cells a split
+    deleted are dropped, entries whose rows moved are renumbered, and an emptied
+    chain is removed along with its relationship and content-type override.
+
 ## 0.9.2
 
 ### Patch Changes
