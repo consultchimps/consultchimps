@@ -380,7 +380,7 @@ describe("all-worksheet workbook splitting", () => {
     expect(definition).toBeDefined();
     const output = await preserveWorkbookWithFilteredExcelTable(
       await readFile(structuredTableFixture),
-      { definition: definition!, sourceRows: [], wholeRows: true },
+      { definition: definition!, sourceRows: [] },
     );
     const outputArchive = await JSZip.loadAsync(output);
     const tableXml = await outputArchive
@@ -397,12 +397,7 @@ describe("all-worksheet workbook splitting", () => {
     expect(definition).toBeDefined();
     const output = await preserveWorkbookWithFilteredExcelTable(
       await readFile(structuredTableFixture),
-      {
-        definition: definition!,
-        sourceRows: [5],
-        wholeRows: true,
-        values: true,
-      },
+      { definition: definition!, sourceRows: [5], values: true },
     );
     const outputArchive = await JSZip.loadAsync(output);
     const worksheetXml = await outputArchive
@@ -413,17 +408,6 @@ describe("all-worksheet workbook splitting", () => {
     expect(worksheetXml).toContain('<x:row r="6">');
     expect(worksheetXml).not.toContain('<x:row r="7">');
     expect(worksheetXml).not.toContain('<x:row r="8">');
-
-    // Exercise the legacy cell-only mode as a compatibility guard.
-    const cellOnlyOutput = await preserveWorkbookWithFilteredExcelTable(
-      await readFile(structuredTableFixture),
-      { definition: definition!, sourceRows: [5], wholeRows: false },
-    );
-    const cellOnlyArchive = await JSZip.loadAsync(cellOnlyOutput);
-    const cellOnlyXml = await cellOnlyArchive
-      .file(definition!.worksheetPart)!
-      .async("text");
-    expect(cellOnlyXml).toContain('<x:row r="6">');
   });
 
   it("retains macro package content and the .xlsm extension", async () => {
