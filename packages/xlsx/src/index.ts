@@ -103,7 +103,7 @@ export interface ConsolidateWorkbooksOptions
   values?: boolean | undefined;
 }
 
-export interface MergeWorkbooksOptions {
+export interface MergeWorkbooksOptions extends OperationControlOptions {
   includeSheetIndex?: boolean | undefined;
   overwrite?: boolean | undefined;
   values?: boolean | undefined;
@@ -400,6 +400,7 @@ export async function mergeWorkbooks(
   outputPath: string,
   options: MergeWorkbooksOptions = {},
 ): Promise<OperationResult<MergeWorkbooksMetric>> {
+  throwIfAborted(options.signal, MERGE_OPERATION);
   if (inputPaths.length === 0) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_NO_INPUTS,
@@ -418,17 +419,33 @@ export async function mergeWorkbooks(
     macroOutput: isMacroWorkbookName(absoluteOutput),
   };
   const state = createMergeState(buildOptions);
-  for (const inputPath of absoluteInputs) {
+  for (const [index, inputPath] of absoluteInputs.entries()) {
+    throwIfAborted(options.signal, MERGE_OPERATION);
     await appendWorkbookSheets(
       state,
       path.basename(inputPath),
       await readWorkbookBytes(inputPath),
     );
+    options.onProgress?.({
+      operation: MERGE_OPERATION,
+      stage: "merging-inputs",
+      completed: index + 1,
+      total: absoluteInputs.length,
+      detail: path.basename(inputPath),
+    });
   }
   const merged = await finishMergedWorkbook(state, buildOptions);
 
+  throwIfAborted(options.signal, MERGE_OPERATION);
   await ensureParentDirectory(absoluteOutput);
   await writeFile(absoluteOutput, merged.bytes);
+  options.onProgress?.({
+    operation: MERGE_OPERATION,
+    stage: "writing-output",
+    completed: 1,
+    total: 1,
+    detail: path.basename(absoluteOutput),
+  });
 
   return {
     operation: MERGE_OPERATION,
