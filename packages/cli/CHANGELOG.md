@@ -1,5 +1,51 @@
 # consultchimps
 
+## 0.9.0
+
+### Minor Changes
+
+- a969491: Show live progress on stderr during long-running CLI commands.
+  `sheets consolidate`, `sheets merge`, `sheets split`, `pdf split`,
+  `pdf merge`, and `pptx populate` now report the current stage and item count
+  while they work (for example `Reading workbooks 3/14: report.xlsx`), so large
+  jobs no longer sit silent until the final report. In an interactive terminal
+  the line updates in place; when output is redirected, plain lines are printed
+  instead. Progress goes only to stderr, never interleaves with the final
+  report, and is fully suppressed under `--json`.
+
+  `mergeWorkbooks` in `@consultchimps/xlsx` now accepts the standard operation
+  controls (`onProgress`, `signal`), emitting `merging-inputs` events per input
+  workbook and a final `writing-output` event, matching `consolidateWorkbooks`
+  and the in-memory `mergeWorkbooksBytes`.
+
+- 98c77a7: Consolidation can now match columns whose headers differ only in
+  case, spacing, or punctuation. Different systems often export the same schema
+  with different header conventions - "Failed Checks" in one file,
+  "Failed_Checks" in another, "Reviewer: Lead Contact" versus
+  "Reviewer_Lead_Contact" - and until now each spelling became its own
+  mostly-empty output column.
+
+  Opt in with `--normalize-headers` on `consultchimps sheets consolidate`, or
+  `normalizeHeaders: true` on `consolidateWorkbooks` and `unionTables`. Matching
+  ignores case and treats any run of spaces or punctuation as one separator; the
+  first spelling seen names the output column. The default behaviour is
+  unchanged. The tabular package also exports the new `normalizedColumnKey`
+  helper behind this matching.
+
+### Patch Changes
+
+- c44f6e6: Clarify the difference between `sheets merge` and
+  `sheets consolidate` in CLI help. Each command's description now states the
+  shape of the result up front (merge keeps every worksheet as its own tab;
+  consolidate stacks all rows into one combined sheet, matching columns by
+  header), and each command's help now points to the other command for when that
+  result is what you want.
+- Updated dependencies [a969491]
+- Updated dependencies [98c77a7]
+- Updated dependencies [d1f8524]
+  - @consultchimps/xlsx@0.11.0
+  - @consultchimps/pptx@0.5.4
+
 ## 0.8.4
 
 ### Patch Changes
