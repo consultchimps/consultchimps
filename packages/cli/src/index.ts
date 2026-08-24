@@ -25,6 +25,8 @@ import {
 } from "@consultchimps/messages";
 import { Command, CommanderError } from "commander";
 
+import { createCliProgress, finishActiveProgress } from "./progress.js";
+
 interface GlobalOptions {
   json?: boolean;
 }
@@ -259,11 +261,16 @@ When you want one combined sheet instead of separate tabs:
   )
   .action(async (inputs: string[], options: SheetMergeOptions) => {
     const inputPaths = await discoverFiles(inputs, { extensions: [".xlsx"] });
+    const progress = createCliProgress(
+      program.opts<GlobalOptions>().json === true,
+    );
     const result = await mergeWorkbooks(inputPaths, options.output, {
       includeSheetIndex: options.index,
+      onProgress: progress.report,
       overwrite: options.force === true,
       values: options.values === true,
     });
+    progress.finish();
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
@@ -331,17 +338,22 @@ When you want each worksheet kept as its own tab instead:
   )
   .action(async (inputs: string[], options: ConsolidateOptions) => {
     const inputPaths = await discoverFiles(inputs, { extensions: [".xlsx"] });
+    const progress = createCliProgress(
+      program.opts<GlobalOptions>().json === true,
+    );
     const result = await consolidateWorkbooks({
       inputs: inputPaths,
       output: options.output,
       addSourceColumns: options.source !== false,
       headerRow: options.headerRow,
       includeHiddenSheets: options.hidden === true,
+      onProgress: progress.report,
       outputSheetName: options.outputSheet,
       overwrite: options.force === true,
       sheets: options.sheet,
       values: options.values === true,
     });
+    progress.finish();
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
@@ -460,6 +472,9 @@ Your original workbook is never changed.
       options.outputDir ??
       options.output ??
       path.join(path.dirname(inputPath), `${path.parse(inputPath).name}-split`);
+    const progress = createCliProgress(
+      program.opts<GlobalOptions>().json === true,
+    );
     const result = await splitWorkbookByColumn({
       input: inputPath,
       outputDirectory,
@@ -468,6 +483,7 @@ Your original workbook is never changed.
       headerRow: options.headerRow,
       includeBlank: options.skipBlank !== true,
       includeHiddenSheets: options.hidden === true,
+      onProgress: progress.report,
       overwrite: options.force === true,
       preserveWorkbook: options.preserveWorkbook,
       range: options.range,
@@ -476,6 +492,7 @@ Your original workbook is never changed.
       strict: options.strict === true,
       values: options.values === true,
     });
+    progress.finish();
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
@@ -598,8 +615,12 @@ The output contains only the generated slides. Source files are never changed.
 `,
   )
   .action(async (options: PptxPopulateOptions) => {
+    const progress = createCliProgress(
+      program.opts<GlobalOptions>().json === true,
+    );
     const result = await populatePowerPointTemplate({
       headerRow: options.headerRow,
+      onProgress: progress.report,
       outputPath: options.output,
       overwrite: options.force === true,
       templatePath: options.template,
@@ -607,6 +628,7 @@ The output contains only the generated slides. Source files are never changed.
       workbookPath: options.data,
       worksheet: options.sheet,
     });
+    progress.finish();
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
@@ -663,12 +685,17 @@ What happens:
     const outputDirectory =
       options.output ??
       path.join(path.dirname(inputPath), `${path.parse(inputPath).name}-pages`);
+    const progress = createCliProgress(
+      program.opts<GlobalOptions>().json === true,
+    );
     const result = await splitPdf({
       input: inputPath,
       outputDirectory,
       filenamePrefix: options.prefix,
+      onProgress: progress.report,
       overwrite: options.force === true,
     });
+    progress.finish();
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
@@ -702,17 +729,25 @@ What happens:
   )
   .action(async (inputs: string[], options: MergeOptions) => {
     const inputPaths = await discoverFiles(inputs, { extensions: [".pdf"] });
+    const progress = createCliProgress(
+      program.opts<GlobalOptions>().json === true,
+    );
     const result = await mergePdfs({
       inputs: inputPaths,
+      onProgress: progress.report,
       output: options.output,
       overwrite: options.force === true,
     });
+    progress.finish();
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
 try {
   await program.parseAsync(process.argv);
 } catch (error) {
+  // A failed operation can leave a partially rendered TTY progress line; clear
+  // it before any error output so the two never interleave.
+  finishActiveProgress();
   if (error instanceof CommanderError) {
     // With exitOverride active Commander reports --help and --version as errors
     // too. Those are successful terminations whose output Commander has already
