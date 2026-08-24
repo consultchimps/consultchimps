@@ -40,6 +40,7 @@ import type { OperationPlan } from "@consultchimps/core";
 // Type-only: the runtime module is loaded inside the worker.
 import type { SplitWorkbookByColumnPlanMetric } from "@consultchimps/xlsx/bytes";
 import { ArrowDown, ArrowUp, FileText, Trash2 } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 
 const WORKBOOK_MEDIA_TYPE =
@@ -637,12 +638,12 @@ export function ExcelMergeTool() {
       <p className="text-sm text-fd-muted-foreground">
         Looking for one combined table instead of separate tabs? That is the
         `sheets consolidate` command, which runs from the command line —{" "}
-        <a
+        <Link
           className="font-semibold text-fd-primary hover:underline"
           href="/docs/tools/spreadsheets#which-one-do-i-want"
         >
           which one do I want?
-        </a>
+        </Link>
       </p>
       <section className={sectionClass} data-testid="source-section">
         <h2 className="text-xl font-bold tracking-[-0.03em]">
