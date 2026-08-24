@@ -183,6 +183,150 @@ describe("consolidateWorkbooks", () => {
     }
   });
 
+  it("normalizes header variants across differently exported workbooks", async () => {
+    // Simulates one schema exported by different systems: the same headers
+    // written with spaces, underscores, colon spacing, case drift, trailing
+    // spaces, extra columns, and a hidden summary sheet.
+    const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
+
+    const createLogWorkbook = async (
+      filePath: string,
+      sheets: Array<{
+        hidden?: boolean;
+        name: string;
+        rows: Array<Array<string | number>>;
+      }>,
+    ): Promise<void> => {
+      const workbook = XLSX.utils.book_new();
+      for (const sheet of sheets) {
+        XLSX.utils.book_append_sheet(
+          workbook,
+          XLSX.utils.aoa_to_sheet(sheet.rows),
+          sheet.name,
+        );
+      }
+      workbook.Workbook = {
+        Sheets: sheets.map((sheet) => ({
+          name: sheet.name,
+          Hidden: sheet.hidden === true ? 1 : 0,
+        })),
+      };
+      await writeFile(
+        filePath,
+        XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+      );
+    };
+
+    try {
+      const alpha = path.join(directory, "north.xlsx");
+      const bravo = path.join(directory, "south.xlsx");
+      const charlie = path.join(directory, "east.xlsx");
+      const output = path.join(directory, "consolidated.xlsx");
+
+      await createLogWorkbook(alpha, [
+        {
+          name: "Review Log",
+          rows: [
+            [
+              "Case_ID",
+              "Failed Checks",
+              "Total Checks",
+              "Reviewer: Lead Contact",
+            ],
+            ["R-1", 5, 100, "Reviewer A"],
+          ],
+        },
+        {
+          hidden: true,
+          name: "Summary",
+          rows: [
+            ["Category", "Count"],
+            ["Complete", 3],
+          ],
+        },
+      ]);
+      await createLogWorkbook(bravo, [
+        {
+          name: "vF",
+          rows: [
+            [
+              "S.No.",
+              "Case_ID",
+              "Failed_Checks",
+              "Total_Checks",
+              "Reviewer_Lead_Contact",
+            ],
+            [1, "R-2", 7, 200, "Reviewer B"],
+          ],
+        },
+      ]);
+      await createLogWorkbook(charlie, [
+        {
+          name: "Sheet1",
+          rows: [
+            [
+              "Case_ID",
+              "Failed Checks ",
+              "Total  Checks",
+              "Reviewer:Lead Contact",
+            ],
+            ["R-3", 9, 300, "Reviewer C"],
+          ],
+        },
+        {
+          name: "Lookup",
+          rows: [["Case_ID"], ["R-4"]],
+        },
+      ]);
+
+      const result = await consolidateWorkbooks({
+        inputs: [alpha, bravo, charlie],
+        output,
+        normalizeHeaders: true,
+      });
+      expect(result.metrics).toMatchObject({
+        inputFiles: 3,
+        inputTables: 4,
+        outputColumns: 8,
+        outputRows: 4,
+      });
+
+      const workbook = XLSX.read(await readFile(output), { type: "buffer" });
+      expect(
+        XLSX.utils.sheet_to_json(workbook.Sheets.Consolidated!, {
+          defval: null,
+          header: 1,
+          raw: true,
+        }),
+      ).toEqual([
+        [
+          "Case_ID",
+          "Failed Checks",
+          "Total Checks",
+          "Reviewer: Lead Contact",
+          "S.No.",
+          "_source_file",
+          "_source_sheet",
+          "_source_row",
+        ],
+        ["R-1", 5, 100, "Reviewer A", null, "north.xlsx", "Review Log", 2],
+        ["R-2", 7, 200, "Reviewer B", 1, "south.xlsx", "vF", 2],
+        ["R-3", 9, 300, "Reviewer C", null, "east.xlsx", "Sheet1", 2],
+        ["R-4", null, null, null, null, "east.xlsx", "Lookup", 2],
+      ]);
+
+      // Without the option the variants stay separate - the behaviour that
+      // turns one shared schema into a doubled-up column list.
+      const exact = await consolidateWorkbooks({
+        inputs: [alpha, bravo, charlie],
+        output: path.join(directory, "exact.xlsx"),
+      });
+      expect(exact.metrics.outputColumns).toBe(13);
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
   it("produces byte-identical output for identical inputs", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
 

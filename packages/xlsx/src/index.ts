@@ -98,6 +98,12 @@ export interface ConsolidateWorkbooksOptions
   inputs: string[];
   output: string;
   addSourceColumns?: boolean | undefined;
+  /**
+   * Match columns whose headers differ only in case, spacing, or punctuation
+   * (for example "Failed Checks" and "Failed_Checks") instead of requiring
+   * the exact same header in every worksheet.
+   */
+  normalizeHeaders?: boolean | undefined;
   outputSheetName?: string | undefined;
   overwrite?: boolean | undefined;
   values?: boolean | undefined;
@@ -362,6 +368,7 @@ export async function consolidateWorkbooks(
 
   const table = unionTables(tables, {
     addSourceColumns: options.addSourceColumns,
+    normalizeHeaders: options.normalizeHeaders,
   });
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
   const output = await writeTable(absoluteOutput, table, {

@@ -39,6 +39,7 @@ interface ConsolidateOptions {
   force?: boolean;
   headerRow?: number;
   hidden?: boolean;
+  normalizeHeaders?: boolean;
   output: string;
   outputSheet?: string;
   sheet?: string[];
@@ -298,6 +299,10 @@ sheets
   )
   .option("--hidden", "include hidden worksheets as well as visible ones")
   .option(
+    "--normalize-headers",
+    'match columns whose headers differ only in case, spacing, or punctuation, such as "Failed Checks" and "Failed_Checks"',
+  )
+  .option(
     "--no-source",
     "leave out columns that identify each row's source file, worksheet, and row",
   )
@@ -347,6 +352,7 @@ When you want each worksheet kept as its own tab instead:
       addSourceColumns: options.source !== false,
       headerRow: options.headerRow,
       includeHiddenSheets: options.hidden === true,
+      normalizeHeaders: options.normalizeHeaders === true,
       onProgress: progress.report,
       outputSheetName: options.outputSheet,
       overwrite: options.force === true,
