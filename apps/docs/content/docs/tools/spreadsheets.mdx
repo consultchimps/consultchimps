@@ -43,6 +43,33 @@ The first spelling encountered becomes the output header. Missing values are
 written as blank cells. Duplicate headers inside one worksheet gain a numeric
 suffix, and blank headers become `column_1`, `column_2`, and so on.
 
+### Match headers that differ in spacing or punctuation
+
+Different systems often export the same schema with different header
+conventions: `Failed Checks` in one file, `Failed_Checks` in another,
+`Reviewer: Lead Contact` versus `Reviewer_Lead_Contact`. By default each
+spelling becomes its own, mostly empty, output column. Add `--normalize-headers`
+to treat them as the same column:
+
+```bash
+consultchimps sheets consolidate "inputs/**/*.xlsx" \
+  --normalize-headers \
+  --output outputs/consolidated.xlsx
+```
+
+Normalized matching ignores letter case and treats any run of spaces,
+underscores, or other punctuation as a single separator, so these headers all
+become one output column named by the first spelling encountered:
+
+```text
+Failed Checks
+Failed_Checks
+failed  checks
+```
+
+Headers that differ in their words, such as `Name` and `Client Name`, remain
+separate columns.
+
 ## Keep provenance
 
 By default, every output row includes:

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   groupTableByColumn,
+  normalizedColumnKey,
   unionTables,
   uniqueHeaders,
   type Table,
@@ -63,6 +64,97 @@ describe("unionTables", () => {
         _source_row: 7,
       },
     ]);
+  });
+});
+
+describe("normalizedColumnKey", () => {
+  // Spelling variants of the kind different source systems produce when they
+  // each export the same schema slightly differently.
+  it("maps spacing, punctuation, and case variants to one key", () => {
+    expect(normalizedColumnKey("Failed Checks")).toBe("failed_checks");
+    expect(normalizedColumnKey("Failed_Checks")).toBe("failed_checks");
+    expect(normalizedColumnKey("Failed  Checks ")).toBe("failed_checks");
+    expect(normalizedColumnKey("Reviewer: Lead Contact")).toBe(
+      "reviewer_lead_contact",
+    );
+    expect(normalizedColumnKey("Reviewer:Lead Contact")).toBe(
+      "reviewer_lead_contact",
+    );
+    expect(normalizedColumnKey("Reviewer_Lead_Contact")).toBe(
+      "reviewer_lead_contact",
+    );
+    expect(normalizedColumnKey("Modified_ON")).toBe("modified_on");
+    expect(normalizedColumnKey("Modified On")).toBe("modified_on");
+    expect(normalizedColumnKey("S.No.")).toBe("s_no");
+  });
+
+  it("keeps distinct names distinct and survives symbol-only headers", () => {
+    expect(normalizedColumnKey("Client Name")).not.toBe(
+      normalizedColumnKey("Name"),
+    );
+    expect(normalizedColumnKey("Total Checks")).not.toBe(
+      normalizedColumnKey("Failed Checks"),
+    );
+    expect(normalizedColumnKey("###")).toBe("###");
+  });
+});
+
+describe("unionTables with normalizeHeaders", () => {
+  const spaced: Table = {
+    columns: ["Case_ID", "Failed Checks", "Reviewer: Lead Contact"],
+    rows: [{ Case_ID: 1, "Failed Checks": 5, "Reviewer: Lead Contact": "A" }],
+    source: { file: "spaced.xlsx", sheet: "Log" },
+  };
+  const underscored: Table = {
+    columns: ["Case_ID", "Failed_Checks", "Reviewer_Lead_Contact"],
+    rows: [{ Case_ID: 2, Failed_Checks: 7, Reviewer_Lead_Contact: "B" }],
+    source: { file: "underscored.xlsx", sheet: "Log" },
+  };
+
+  it("merges header variants into the first-seen spelling", () => {
+    const result = unionTables([spaced, underscored], {
+      addSourceColumns: false,
+      normalizeHeaders: true,
+    });
+
+    expect(result.columns).toEqual([
+      "Case_ID",
+      "Failed Checks",
+      "Reviewer: Lead Contact",
+    ]);
+    expect(result.rows).toEqual([
+      { Case_ID: 1, "Failed Checks": 5, "Reviewer: Lead Contact": "A" },
+      { Case_ID: 2, "Failed Checks": 7, "Reviewer: Lead Contact": "B" },
+    ]);
+  });
+
+  it("keeps the exact-match behaviour when the option is off", () => {
+    const result = unionTables([spaced, underscored], {
+      addSourceColumns: false,
+    });
+
+    expect(result.columns).toEqual([
+      "Case_ID",
+      "Failed Checks",
+      "Reviewer: Lead Contact",
+      "Failed_Checks",
+      "Reviewer_Lead_Contact",
+    ]);
+  });
+
+  it("resolves same-table collisions to the first column", () => {
+    const result = unionTables(
+      [
+        {
+          columns: ["Failed Checks", "Failed_Checks"],
+          rows: [{ "Failed Checks": 5, Failed_Checks: 9 }],
+        },
+      ],
+      { addSourceColumns: false, normalizeHeaders: true },
+    );
+
+    expect(result.columns).toEqual(["Failed Checks"]);
+    expect(result.rows).toEqual([{ "Failed Checks": 5 }]);
   });
 });
 
