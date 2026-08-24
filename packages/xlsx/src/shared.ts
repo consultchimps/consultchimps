@@ -785,6 +785,12 @@ function serializeWorkbook(workbook: XLSX.WorkBook): Uint8Array {
   return new Uint8Array(
     XLSX.write(workbook, {
       bookType: "xlsx",
+      // Deduplicate repeated text through the workbook's shared-strings table,
+      // as Excel itself does. Without it every cell carries its own text, so
+      // repetitive tables serialize considerably larger than their inputs. The
+      // table is built in first-encounter order, which keeps identical inputs
+      // producing byte-identical outputs.
+      bookSST: true,
       compression: true,
       type: "array",
     }) as ArrayBuffer,
