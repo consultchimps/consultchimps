@@ -628,12 +628,22 @@ export function ExcelMergeTool() {
 
   return (
     <ToolShell
-      description="Add the workbooks you want to combine, arrange them in the order their tabs should appear, and merge them without uploading anything."
+      description="Add the workbooks you want to combine, arrange them in the order their tabs should appear, and merge them without uploading anything. Every source worksheet stays its own separate tab — no rows are stacked into one sheet."
       guideHref="/docs/tools/spreadsheets"
       guideLabel="Read the spreadsheet guide"
       kicker="Online tool · Excel merge"
       title="Merge Excel workbooks"
     >
+      <p className="text-sm text-fd-muted-foreground">
+        Looking for one combined table instead of separate tabs? That is the
+        `sheets consolidate` command, which runs from the command line —{" "}
+        <a
+          className="font-semibold text-fd-primary hover:underline"
+          href="/docs/tools/spreadsheets#which-one-do-i-want"
+        >
+          which one do I want?
+        </a>
+      </p>
       <section className={sectionClass} data-testid="source-section">
         <h2 className="text-xl font-bold tracking-[-0.03em]">
           1. Add workbooks
