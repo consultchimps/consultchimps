@@ -250,6 +250,39 @@ describe("consultchimps CLI", () => {
     );
   });
 
+  it("distinguishes merge from consolidate in sheets help", async () => {
+    // Commander hard-wraps help output at ~80 columns, so full sentences are
+    // asserted against whitespace-normalized stdout.
+    const mergeHelp = await runCli(["sheets", "merge", "--help"]);
+    const mergeHelpText = mergeHelp.stdout.replace(/\s+/g, " ");
+    expect(mergeHelpText).toContain(
+      "copy every worksheet from multiple Excel workbooks into one workbook, keeping each sheet separate",
+    );
+    expect(mergeHelp.stdout).toContain(
+      "When you want one combined sheet instead of separate tabs:",
+    );
+    expect(mergeHelpText).toContain(
+      "Use consultchimps sheets consolidate to stack the rows from every worksheet into a single sheet, matching columns by header.",
+    );
+
+    const consolidateHelp = await runCli(["sheets", "consolidate", "--help"]);
+    const consolidateHelpText = consolidateHelp.stdout.replace(/\s+/g, " ");
+    expect(consolidateHelpText).toContain(
+      "stack the rows from every worksheet into one combined sheet, matching columns by header",
+    );
+    expect(consolidateHelp.stdout).toContain(
+      "When you want each worksheet kept as its own tab instead:",
+    );
+    expect(consolidateHelpText).toContain(
+      "Use consultchimps sheets merge to copy every worksheet into one workbook without combining any rows.",
+    );
+
+    const sheetsHelp = await runCli(["sheets", "--help"]);
+    expect(sheetsHelp.stdout).toContain(
+      'consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx',
+    );
+  });
+
   it("wraps --json success and failure in a single-line envelope", async () => {
     const directory = await createTemporaryDirectory();
     const sourcePath = path.join(directory, "inputs", "source.pdf");
