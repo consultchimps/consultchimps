@@ -12,9 +12,9 @@ import {
  * Single source of truth for every ConsultChimps tool surfaced on the site.
  *
  * `browserHref` doubles as a feature flag: when a tool has an in-browser
- * version, setting it lights up the "Try it online" button on the tool's
- * guide page, adds a tab to the online-tools sub-bar, and links the landing
- * card — all without touching those surfaces.
+ * version, setting it lights up the "Try <tabLabel> online" button on the
+ * tool's guide page, adds a tab to the online-tools sub-bar, and links the
+ * landing card — all without touching those surfaces.
  */
 export interface ConsultTool {
   readonly slug: string;
