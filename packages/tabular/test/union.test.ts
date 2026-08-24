@@ -97,6 +97,13 @@ describe("normalizedColumnKey", () => {
     );
     expect(normalizedColumnKey("###")).toBe("###");
   });
+
+  it("stays linear on long runs of separators", () => {
+    const hostile = `${"_".repeat(50_000)}x${"_".repeat(50_000)}`;
+    const start = performance.now();
+    expect(normalizedColumnKey(hostile)).toBe("x");
+    expect(performance.now() - start).toBeLessThan(1_000);
+  });
 });
 
 describe("unionTables with normalizeHeaders", () => {

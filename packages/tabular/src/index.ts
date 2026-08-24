@@ -65,10 +65,14 @@ export function columnKey(column: string): string {
  * any script are kept; every other run of characters becomes one underscore.
  */
 export function normalizedColumnKey(column: string): string {
+  // The first replace collapses every separator run - underscores included -
+  // to one "_", so the edge trims below never face repeated underscores and
+  // stay linear on any input.
   const normalized = column
     .toLocaleLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, "_")
-    .replace(/^_+|_+$/g, "");
+    .replace(/^_/, "")
+    .replace(/_$/, "");
   return normalized === "" ? columnKey(column) : normalized;
 }
 
