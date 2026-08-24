@@ -211,6 +211,7 @@ const sheets = program
     `
 Examples:
   consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
+  consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx
   consultchimps sheets split clients.xlsx -c Region -o by-region
 
 Safety:
@@ -224,7 +225,7 @@ Run consultchimps sheets help <command> for all command options.
 sheets
   .command("merge")
   .description(
-    "copy every worksheet from multiple Excel workbooks into one workbook",
+    "copy every worksheet from multiple Excel workbooks into one workbook, keeping each sheet separate",
   )
   .argument(
     "<inputs...>",
@@ -250,6 +251,10 @@ Examples:
 Every source worksheet remains a separate tab. Sheet Index records source names
 and hidden/visible status. Duplicate tab names receive a suffix. --values
 removes formulas but always retains cell and workbook formatting.
+
+When you want one combined sheet instead of separate tabs:
+  Use consultchimps sheets consolidate to stack the rows from every worksheet
+  into a single sheet, matching columns by header.
 `,
   )
   .action(async (inputs: string[], options: SheetMergeOptions) => {
@@ -265,7 +270,7 @@ removes formulas but always retains cell and workbook formatting.
 sheets
   .command("consolidate")
   .description(
-    "combine visible, non-empty worksheets into one new Excel workbook",
+    "stack the rows from every worksheet into one combined sheet, matching columns by header",
   )
   .argument(
     "<inputs...>",
@@ -318,6 +323,10 @@ What happens:
 Your original workbooks are never changed.
 Consolidation already writes stored values rather than copying formulas;
 --values makes that requirement explicit.
+
+When you want each worksheet kept as its own tab instead:
+  Use consultchimps sheets merge to copy every worksheet into one workbook
+  without combining any rows.
 `,
   )
   .action(async (inputs: string[], options: ConsolidateOptions) => {
