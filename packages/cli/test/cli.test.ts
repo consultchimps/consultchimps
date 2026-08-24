@@ -250,6 +250,39 @@ describe("consultchimps CLI", () => {
     );
   });
 
+  it("distinguishes merge from consolidate in sheets help", async () => {
+    // Commander hard-wraps help output at ~80 columns, so full sentences are
+    // asserted against whitespace-normalized stdout.
+    const mergeHelp = await runCli(["sheets", "merge", "--help"]);
+    const mergeHelpText = mergeHelp.stdout.replace(/\s+/g, " ");
+    expect(mergeHelpText).toContain(
+      "copy every worksheet from multiple Excel workbooks into one workbook, keeping each sheet separate",
+    );
+    expect(mergeHelp.stdout).toContain(
+      "When you want one combined sheet instead of separate tabs:",
+    );
+    expect(mergeHelpText).toContain(
+      "Use consultchimps sheets consolidate to stack the rows from every worksheet into a single sheet, matching columns by header.",
+    );
+
+    const consolidateHelp = await runCli(["sheets", "consolidate", "--help"]);
+    const consolidateHelpText = consolidateHelp.stdout.replace(/\s+/g, " ");
+    expect(consolidateHelpText).toContain(
+      "stack the rows from every worksheet into one combined sheet, matching columns by header",
+    );
+    expect(consolidateHelp.stdout).toContain(
+      "When you want each worksheet kept as its own tab instead:",
+    );
+    expect(consolidateHelpText).toContain(
+      "Use consultchimps sheets merge to copy every worksheet into one workbook without combining any rows.",
+    );
+
+    const sheetsHelp = await runCli(["sheets", "--help"]);
+    expect(sheetsHelp.stdout).toContain(
+      'consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx',
+    );
+  });
+
   it("wraps --json success and failure in a single-line envelope", async () => {
     const directory = await createTemporaryDirectory();
     const sourcePath = path.join(directory, "inputs", "source.pdf");
@@ -479,6 +512,9 @@ describe("consultchimps CLI", () => {
       outputColumns: 7,
       outputRows: 4,
     });
+    // --json promises machine-readable output only: no progress narration may
+    // reach stderr on success.
+    expect(command.stderr).toBe("");
 
     const workbook = XLSX.read(await readFile(output), { type: "buffer" });
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
@@ -506,17 +542,20 @@ describe("consultchimps CLI", () => {
       1,
     );
     expect(overwrite.stderr).toContain("FILES_OUTPUT_EXISTS");
-    await expect(
-      runCli([
-        "--json",
-        "sheets",
-        "consolidate",
-        path.join(inputs, "*.xlsx"),
-        "--output",
-        output,
-        "--force",
-      ]),
-    ).resolves.toMatchObject({ exitCode: 0 });
+
+    // Without --json the CLI narrates progress on stderr while it works; the
+    // non-TTY test process receives it as plain newline-delimited lines.
+    const force = await runCli([
+      "sheets",
+      "consolidate",
+      path.join(inputs, "*.xlsx"),
+      "--output",
+      output,
+      "--force",
+    ]);
+    expect(force.stderr).toContain("Reading workbooks 1/2: north.xlsx");
+    expect(force.stderr).toContain("Reading workbooks 2/2: south.xlsx");
+    expect(force.stderr).toContain("Writing output 1/1: consolidated.xlsx");
   });
 
   it("merges worksheets through the built command", async () => {
@@ -555,6 +594,8 @@ describe("consultchimps CLI", () => {
       inputFiles: 2,
       outputSheets: 3,
     });
+    // --json suppresses the stderr progress narration entirely on success.
+    expect(command.stderr).toBe("");
     const workbook = XLSX.read(await readFile(output), { type: "buffer" });
     expect(workbook.SheetNames).toEqual([
       "Summary",
@@ -575,6 +616,10 @@ describe("consultchimps CLI", () => {
       "--values",
     ]);
     expect(human.stdout).toContain("Your Excel workbook merge is complete.");
+    // Human mode narrates each merged input and the final write on stderr.
+    expect(human.stderr).toContain("Merging inputs 1/2: north.xlsx");
+    expect(human.stderr).toContain("Merging inputs 2/2: south.xlsx");
+    expect(human.stderr).toContain("Writing output 1/1: human.xlsx");
     expect(human.stdout).toContain("3 worksheets");
     expect(human.stdout).toContain(
       "1 source worksheet was hidden in the merged workbook.",
