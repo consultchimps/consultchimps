@@ -90,6 +90,7 @@ pnpm test:run packages/xlsx/test/split.test.ts  # one test file
 pnpm test:coverage                              # tests + coverage thresholds (used by check)
 pnpm test                                       # build, then vitest
 pnpm package:check                              # package metadata and publishability
+pnpm docs:check                                 # CLI reference page covers every CLI command and option (used by check)
 pnpm check                                      # full verification sequence
 pnpm consultchimps <args>                       # run the built CLI (packages/cli/dist)
 pnpm docs:dev                                   # Fumadocs site (apps/docs)
