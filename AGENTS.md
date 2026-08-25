@@ -647,10 +647,10 @@ Before handing work back:
 
 ### Issue tracker
 
-Issues live in this repo's GitHub Issues, operated through the `gh` CLI.
-See `docs/agents/issue-tracker.md`.
+Issues live in this repo's GitHub Issues, operated through the `gh` CLI. See
+`docs/agents/issue-tracker.md`.
 
 ### Domain docs
 
-Single-context: one `CONTEXT.md` and one `docs/adr/` directory at the repo
-root cover every package. See `docs/agents/domain.md`.
+Single-context: one `CONTEXT.md` and one `docs/adr/` directory at the repo root
+cover every package. See `docs/agents/domain.md`.
