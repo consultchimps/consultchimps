@@ -97,4 +97,22 @@ test.describe("tool guides", () => {
       await expect(tryOnline).toHaveAttribute("href", guide.tool);
     });
   }
+
+  // The populate guide covers two operations (populate and template
+  // inspection); neither runs in the browser, so the page must not promise
+  // an online tool at all.
+  test("/docs/tools/powerpoint-populate offers no online tool", async ({
+    page,
+  }) => {
+    await page.goto("/docs/tools/powerpoint-populate");
+    await expect(
+      page.getByRole("heading", {
+        level: 1,
+        name: "Populate a PowerPoint template",
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: /^Try .+ online$/u }),
+    ).toHaveCount(0);
+  });
 });

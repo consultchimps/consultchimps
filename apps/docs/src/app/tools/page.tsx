@@ -1,4 +1,4 @@
-import { BROWSER_TOOLS, TOOLS } from "@/lib/tools";
+import { BROWSER_TOOLS, isBrowserTool, TOOLS } from "@/lib/tools";
 import { ArrowRight, BookOpen } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -9,7 +9,7 @@ export const metadata: Metadata = {
     "Run ConsultChimps document tools directly in your browser. Files never leave your machine — everything happens in this tab.",
 };
 
-const guideOnlyTools = TOOLS.filter((tool) => tool.browserHref === undefined);
+const guideOnlyTools = TOOLS.filter((tool) => !isBrowserTool(tool));
 
 export default function Page() {
   return (
@@ -27,10 +27,10 @@ export default function Page() {
 
         <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {BROWSER_TOOLS.map(
-            ({ slug, title, description, browserHref, icon: Icon }) => (
+            ({ slug, title, description, surfaces, icon: Icon }) => (
               <Link
                 className="tool-card"
-                href={browserHref ?? "/tools"}
+                href={surfaces.browser.href}
                 key={slug}
               >
                 <div>
