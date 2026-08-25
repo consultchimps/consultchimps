@@ -64,7 +64,7 @@ export const TOOLS: readonly ConsultTool[] = [
     tabLabel: "Consolidate",
     description:
       "Stack rows from every useful worksheet into one auditable table, even when columns arrive in different orders.",
-    docHref: "/docs/tools/spreadsheets",
+    docHref: "/docs/tools/spreadsheet-consolidate",
     surfaces: {
       cli: "works",
       library: "works",
@@ -78,7 +78,7 @@ export const TOOLS: readonly ConsultTool[] = [
     tabLabel: "Merge tabs",
     description:
       "Copy every source worksheet into one workbook as its own separate tab, never stacking rows into one sheet.",
-    docHref: "/docs/tools/spreadsheets#merge-complete-workbooks",
+    docHref: "/docs/tools/workbook-merge",
     surfaces: {
       cli: "works",
       library: "works",
@@ -164,9 +164,10 @@ export const BROWSER_TOOLS: readonly BrowserTool[] =
 /**
  * Find the tool whose working browser surface a docs page should offer.
  * Keyed off browser status, not entry order: when several operations share
- * one guide page (consolidate and merge both live on the spreadsheets
- * guide), the button belongs to the operation that actually runs in the
- * browser — or to none at all.
+ * one guide page (populate and template inspection both live on the
+ * PowerPoint guide), the button belongs to the operation that actually runs
+ * in the browser — or to none at all. Fragments are stripped so an anchored
+ * docHref still resolves to its page.
  */
 export function findToolByDocUrl(url: string): BrowserTool | undefined {
   return BROWSER_TOOLS.find((tool) => tool.docHref.split("#")[0] === url);

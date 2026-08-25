@@ -1,228 +1,32 @@
 ---
 title: Work with spreadsheets
-description: Consolidate tabular data or merge complete Excel workbook tabs.
+description:
+  This guide moved. Consolidation and workbook merging now have their own pages.
 icon: TableProperties
 ---
 
-The spreadsheet consolidator discovers `.xlsx` files, reads each selected
-worksheet as a table, unions columns by case-insensitive header name, and writes
-one formatted workbook.
+This guide is now two pages, one per operation:
+
+<Cards>
+  <Card
+    title="Consolidate spreadsheets"
+    description="Stack rows from every selected worksheet into one auditable Excel table."
+    href="/docs/tools/spreadsheet-consolidate"
+  />
+  <Card
+    title="Merge workbook tabs"
+    description="Copy every source worksheet into one workbook as its own separate tab."
+    href="/docs/tools/workbook-merge"
+  />
+</Cards>
 
 ## Which one do I want?
 
-Both operations combine several Excel workbooks into one file; they differ in
-the shape of the result. `sheets merge` keeps every source worksheet as its own
-tab, while `sheets consolidate` stacks all rows into a single table.
-
-|                   | `sheets merge`                                                                                      | `sheets consolidate`                                                                                                         |
-| ----------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Result shape      | One workbook, every source worksheet kept as its own tab                                            | One worksheet, all rows stacked into a single table                                                                          |
-| When to use       | Keep sheets intact side by side for reference                                                       | Analyze all rows together — filter or pivot across sources                                                                   |
-| What carries over | Formatting, formulas as stored, conditional formatting, layout — nothing is combined into one table | Cell values only — columns matched by header name, optional provenance columns; formatting and formulas are not carried over |
-
-Rule of thumb: tabs kept means merge; rows stacked into one sheet means
-consolidate. Merging also runs [in your browser](/tools/excel-merge);
-consolidation is command line and library only.
-
-## Basic usage
-
-```bash
-consultchimps sheets consolidate "inputs/**/*.xlsx" \
-  --output outputs/consolidated.xlsx
-```
-
-You can mix files, folders, and glob patterns:
-
-```bash
-consultchimps sheets consolidate \
-  January.xlsx \
-  regional-returns/ \
-  "late-submissions/*.xlsx" \
-  --output outputs/q1-master.xlsx
-```
-
-Inputs are resolved to absolute paths, deduplicated, filtered to `.xlsx`, and
-sorted before processing.
-
-## How columns are matched
-
-Header matching ignores surrounding whitespace and letter case. These headers
-therefore become one output column:
-
-```text
-Client
- client
-CLIENT
-```
-
-The first spelling encountered becomes the output header. Missing values are
-written as blank cells. Duplicate headers inside one worksheet gain a numeric
-suffix, and blank headers become `column_1`, `column_2`, and so on.
-
-### Match headers that differ in spacing or punctuation
-
-Different systems often export the same schema with different header
-conventions: `Failed Checks` in one file, `Failed_Checks` in another,
-`Reviewer: Lead Contact` versus `Reviewer_Lead_Contact`. By default each
-spelling becomes its own, mostly empty, output column. Add `--normalize-headers`
-to treat them as the same column:
-
-```bash
-consultchimps sheets consolidate "inputs/**/*.xlsx" \
-  --normalize-headers \
-  --output outputs/consolidated.xlsx
-```
-
-Normalized matching ignores letter case and treats any run of spaces,
-underscores, or other punctuation as a single separator, so these headers all
-become one output column named by the first spelling encountered:
-
-```text
-Failed Checks
-Failed_Checks
-failed  checks
-```
-
-Headers that differ in their words, such as `Name` and `Client Name`, remain
-separate columns.
-
-## Keep provenance
-
-By default, every output row includes:
-
-| Column          | Meaning                                      |
-| --------------- | -------------------------------------------- |
-| `_source_file`  | Original workbook filename                   |
-| `_source_sheet` | Original worksheet name                      |
-| `_source_row`   | One-based row number in the source worksheet |
-
-Remove these fields only when the output must match a fixed schema:
-
-```bash
-consultchimps sheets consolidate inputs/ \
-  --output outputs/clean.xlsx \
-  --no-source
-```
+Both pages open with the same comparison table: see
+[which one do I want?](/docs/tools/spreadsheet-consolidate#which-one-do-i-want)
+on the consolidate guide.
 
 ## Merge complete workbooks
 
-To preserve each source worksheet as its own tab, use:
-
-```bash
-consultchimps sheets merge "inputs/**/*.xlsx" --output outputs/all-sheets.xlsx
-```
-
-This copies all worksheets with their separate tabs and formatting/layout
-supported by Excel. A visible `Sheet Index` tab records the source file,
-original and final tab names, and hidden/visible status. Duplicate worksheet
-names receive a suffix; use `--no-index` to omit the index.
-
-The merge copies each source worksheet as it is stored rather than rebuilding
-it, so conditional formatting, data validation, merged cells, hyperlinks, cell
-comments, Excel Tables, defined names, number formats and cell styles arrive
-with their worksheets. Names that have to stay unique across one workbook are
-made unique: a duplicate Excel Table or defined name takes a numeric suffix, and
-formulas that referenced a renamed worksheet or table are updated to follow it.
-Four things are removed, each reported as a warning in the result: pivot tables
-and their caches (a cache holds a private copy of its source rows), external
-links (they are addressed by position in a single workbook's list), the
-calculation chain (Excel rebuilds it, and the merged workbook asks it to), and a
-macro project unless exactly one input carries one and the output is named
-`.xlsm`.
-
-The workbook merge is also the tool the "Try Merge tabs online" button at the
-top of this page opens: [merge workbooks in your browser](/tools/excel-merge) to
-combine tabs without installing anything. Consolidation, described above, is
-command line and library only for now.
-
-### Replace formulas with values
-
-Add `--values` when the merged workbook must contain no formulas:
-
-```bash
-consultchimps sheets merge "inputs/**/*.xlsx" \
-  --values \
-  --output outputs/all-sheets-values.xlsx
-```
-
-ConsultChimps replaces each formula with the result stored in the source file.
-It edits the workbook cell in place, so number formats, fonts, fills, borders,
-alignment, row heights, column widths, hidden state, and workbook layout are
-preserved. A formula that has never been calculated and therefore has no stored
-result becomes a blank cell with its formatting intact. Excel Table calculated
-column and totals formulas are also removed so Excel does not recreate them.
-
-The library operation accepts resolved input paths in the order they should
-appear:
-
-```ts
-import { mergeWorkbooks } from "@consultchimps/xlsx";
-
-const result = await mergeWorkbooks(
-  ["north.xlsx", "south.xlsx"],
-  "outputs/all-sheets.xlsx",
-  { includeSheetIndex: true, overwrite: false, values: true },
-);
-
-console.log(result.metrics.outputSheets);
-```
-
-## Select worksheets
-
-Visible, non-empty worksheets are included by default.
-
-```bash
-consultchimps sheets consolidate inputs/ \
-  --sheet Revenue Pipeline \
-  --output outputs/commercial.xlsx
-```
-
-Worksheet matching is case-insensitive. Include hidden worksheets with
-`--hidden`.
-
-## Choose a header row
-
-The first row containing a value is treated as the header. Override that
-behavior for workbooks with title blocks:
-
-```bash
-consultchimps sheets consolidate inputs/ \
-  --header-row 4 \
-  --output outputs/consolidated.xlsx
-```
-
-`--header-row` is one-based, matching the row number shown in Excel.
-
-## Output controls
-
-```bash
-consultchimps sheets consolidate inputs/ \
-  --output outputs/consolidated.xlsx \
-  --output-sheet "Client master" \
-  --force
-```
-
-- `--output-sheet` changes the destination worksheet name.
-- `--force` replaces an existing output file.
-- `--values` explicitly requests values-only output. Consolidation already reads
-  stored cell results and never copies formulas.
-- The output table receives an autofilter and practical column widths.
-- The command refuses to use any input workbook as its output.
-
-## TypeScript API
-
-```ts
-import { consolidateWorkbooks } from "@consultchimps/xlsx";
-
-const result = await consolidateWorkbooks({
-  inputs: ["north.xlsx", "south.xlsx"],
-  output: "outputs/master.xlsx",
-  addSourceColumns: true,
-  headerRow: 2,
-  outputSheetName: "Master",
-  sheets: ["Revenue"],
-  values: true,
-});
-
-console.log(result.metrics.outputRows);
-```
+Workbook merging is documented in
+[Merge workbook tabs](/docs/tools/workbook-merge).

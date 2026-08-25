@@ -78,10 +78,8 @@ test.describe("tool guides", () => {
       tool: "/tools/excel-split",
       label: "Split Excel",
     },
-    // The guide page covers both consolidate and merge; the button must name
-    // the tool it opens so a reader is not promised an online consolidate.
     {
-      url: "/docs/tools/spreadsheets",
+      url: "/docs/tools/workbook-merge",
       tool: "/tools/excel-merge",
       label: "Merge tabs",
     },
@@ -98,21 +96,29 @@ test.describe("tool guides", () => {
     });
   }
 
-  // The populate guide covers two operations (populate and template
-  // inspection); neither runs in the browser, so the page must not promise
-  // an online tool at all.
-  test("/docs/tools/powerpoint-populate offers no online tool", async ({
-    page,
-  }) => {
-    await page.goto("/docs/tools/powerpoint-populate");
-    await expect(
-      page.getByRole("heading", {
-        level: 1,
-        name: "Populate a PowerPoint template",
-      }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("link", { name: /^Try .+ online$/u }),
-    ).toHaveCount(0);
-  });
+  // Guides for operations without a browser surface must not promise an
+  // online tool at all — neither consolidation nor the populate guide's two
+  // operations (populate and template inspection) run in the browser.
+  const GUIDES_WITHOUT_TOOL = [
+    {
+      url: "/docs/tools/spreadsheet-consolidate",
+      heading: "Consolidate spreadsheets into one table",
+    },
+    {
+      url: "/docs/tools/powerpoint-populate",
+      heading: "Populate a PowerPoint template",
+    },
+  ] as const;
+
+  for (const guide of GUIDES_WITHOUT_TOOL) {
+    test(`${guide.url} offers no online tool`, async ({ page }) => {
+      await page.goto(guide.url);
+      await expect(
+        page.getByRole("heading", { level: 1, name: guide.heading }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("link", { name: /^Try .+ online$/u }),
+      ).toHaveCount(0);
+    });
+  }
 });

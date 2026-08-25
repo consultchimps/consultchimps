@@ -630,8 +630,8 @@ export function ExcelMergeTool() {
   return (
     <ToolShell
       description="Add the workbooks you want to combine, arrange them in the order their tabs should appear, and merge them without uploading anything. Every source worksheet stays its own separate tab — no rows are stacked into one sheet."
-      guideHref="/docs/tools/spreadsheets"
-      guideLabel="Read the spreadsheet guide"
+      guideHref="/docs/tools/workbook-merge"
+      guideLabel="Read the merge guide"
       kicker="Online tool · Excel merge"
       title="Merge Excel workbooks"
     >
@@ -640,7 +640,7 @@ export function ExcelMergeTool() {
         `sheets consolidate` command, which runs from the command line —{" "}
         <Link
           className="font-semibold text-fd-primary hover:underline"
-          href="/docs/tools/spreadsheets#which-one-do-i-want"
+          href="/docs/tools/workbook-merge#which-one-do-i-want"
         >
           which one do I want?
         </Link>
