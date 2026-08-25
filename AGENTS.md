@@ -642,3 +642,15 @@ Before handing work back:
 - [ ] `git status --short --branch` contains only intended changes.
 - [ ] The final report states what changed, what was verified, and any known
       limitation or unrelated failure.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in this repo's GitHub Issues, operated through the `gh` CLI. See
+`docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` and one `docs/adr/` directory at the repo root
+cover every package. See `docs/agents/domain.md`.
