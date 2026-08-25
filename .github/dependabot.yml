@@ -3,25 +3,33 @@ version: 2
 updates:
   # The pnpm workspace is resolved from the root manifest and lockfile, so a
   # single "/" entry covers every package under apps/* and packages/*.
+  #
+  # Routine npm version-update pull requests are disabled: an
+  # open-pull-requests-limit of 0 tells Dependabot to keep checking versions
+  # but never open version-update pull requests. Security updates are governed
+  # by the repository's "Dependabot security updates" setting, which stays
+  # enabled, so pull requests that fix known vulnerabilities still arrive.
   - package-ecosystem: npm
     directory: "/"
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     groups:
-      # Minor and patch updates travel together; majors stay individual so each
-      # breaking upgrade can be reviewed on its own.
-      minor-and-patch:
+      # Group the security-update pull requests so related fixes travel
+      # together instead of arriving as one pull request per advisory.
+      npm-security:
+        applies-to: security-updates
         patterns:
           - "*"
-        update-types:
-          - minor
-          - patch
 
+  # GitHub Actions has no security-only update mode: zeroing this entry's
+  # pull-request limit would stop action updates entirely. Keep version
+  # updates on a monthly cadence instead so pinned actions still receive
+  # fixes, at a lower review volume than weekly.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 5
     groups:
       github-actions:
