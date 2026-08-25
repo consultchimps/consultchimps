@@ -3,7 +3,8 @@
   "icon": "Wrench",
   "defaultOpen": true,
   "pages": [
-    "spreadsheets",
+    "spreadsheet-consolidate",
+    "workbook-merge",
     "spreadsheet-split",
     "powerpoint-populate",
     "pdf-split",
