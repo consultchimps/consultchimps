@@ -1,5 +1,47 @@
 # @consultchimps/xlsx
 
+## 0.11.0
+
+### Minor Changes
+
+- a969491: Show live progress on stderr during long-running CLI commands.
+  `sheets consolidate`, `sheets merge`, `sheets split`, `pdf split`,
+  `pdf merge`, and `pptx populate` now report the current stage and item count
+  while they work (for example `Reading workbooks 3/14: report.xlsx`), so large
+  jobs no longer sit silent until the final report. In an interactive terminal
+  the line updates in place; when output is redirected, plain lines are printed
+  instead. Progress goes only to stderr, never interleaves with the final
+  report, and is fully suppressed under `--json`.
+
+  `mergeWorkbooks` in `@consultchimps/xlsx` now accepts the standard operation
+  controls (`onProgress`, `signal`), emitting `merging-inputs` events per input
+  workbook and a final `writing-output` event, matching `consolidateWorkbooks`
+  and the in-memory `mergeWorkbooksBytes`.
+
+- 98c77a7: Consolidation can now match columns whose headers differ only in
+  case, spacing, or punctuation. Different systems often export the same schema
+  with different header conventions - "Failed Checks" in one file,
+  "Failed_Checks" in another, "Reviewer: Lead Contact" versus
+  "Reviewer_Lead_Contact" - and until now each spelling became its own
+  mostly-empty output column.
+
+  Opt in with `--normalize-headers` on `consultchimps sheets consolidate`, or
+  `normalizeHeaders: true` on `consolidateWorkbooks` and `unionTables`. Matching
+  ignores case and treats any run of spaces or punctuation as one separator; the
+  first spelling seen names the output column. The default behaviour is
+  unchanged. The tabular package also exports the new `normalizedColumnKey`
+  helper behind this matching.
+
+### Patch Changes
+
+- d1f8524: Write consolidated and rebuilt split workbooks with a shared-strings
+  table instead of per-cell strings, matching how Excel stores text. Outputs
+  with repetitive text now serialize noticeably smaller — roughly 13-20% on
+  synthetic benchmarks, with the biggest gains when repeated values are spread
+  far apart in large workbooks.
+- Updated dependencies [98c77a7]
+  - @consultchimps/tabular@0.3.0
+
 ## 0.10.0
 
 ### Minor Changes
