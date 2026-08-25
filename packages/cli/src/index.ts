@@ -25,6 +25,8 @@ import {
 } from "@consultchimps/messages";
 import { Command, CommanderError } from "commander";
 
+import { createCliProgress, finishActiveProgress } from "./progress.js";
+
 interface GlobalOptions {
   json?: boolean;
 }
@@ -37,6 +39,7 @@ interface ConsolidateOptions {
   force?: boolean;
   headerRow?: number;
   hidden?: boolean;
+  normalizeHeaders?: boolean;
   output: string;
   outputSheet?: string;
   sheet?: string[];
@@ -211,6 +214,7 @@ const sheets = program
     `
 Examples:
   consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
+  consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx
   consultchimps sheets split clients.xlsx -c Region -o by-region
 
 Safety:
@@ -224,7 +228,7 @@ Run consultchimps sheets help <command> for all command options.
 sheets
   .command("merge")
   .description(
-    "copy every worksheet from multiple Excel workbooks into one workbook",
+    "copy every worksheet from multiple Excel workbooks into one workbook, keeping each sheet separate",
   )
   .argument(
     "<inputs...>",
@@ -250,22 +254,31 @@ Examples:
 Every source worksheet remains a separate tab. Sheet Index records source names
 and hidden/visible status. Duplicate tab names receive a suffix. --values
 removes formulas but always retains cell and workbook formatting.
+
+When you want one combined sheet instead of separate tabs:
+  Use consultchimps sheets consolidate to stack the rows from every worksheet
+  into a single sheet, matching columns by header.
 `,
   )
   .action(async (inputs: string[], options: SheetMergeOptions) => {
     const inputPaths = await discoverFiles(inputs, { extensions: [".xlsx"] });
+    const progress = createCliProgress(
+      program.opts<GlobalOptions>().json === true,
+    );
     const result = await mergeWorkbooks(inputPaths, options.output, {
       includeSheetIndex: options.index,
+      onProgress: progress.report,
       overwrite: options.force === true,
       values: options.values === true,
     });
+    progress.finish();
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
 sheets
   .command("consolidate")
   .description(
-    "combine visible, non-empty worksheets into one new Excel workbook",
+    "stack the rows from every worksheet into one combined sheet, matching columns by header",
   )
   .argument(
     "<inputs...>",
@@ -285,6 +298,10 @@ sheets
     positiveInteger,
   )
   .option("--hidden", "include hidden worksheets as well as visible ones")
+  .option(
+    "--normalize-headers",
+    'match columns whose headers differ only in case, spacing, or punctuation, such as "Failed Checks" and "Failed_Checks"',
+  )
   .option(
     "--no-source",
     "leave out columns that identify each row's source file, worksheet, and row",
@@ -318,21 +335,31 @@ What happens:
 Your original workbooks are never changed.
 Consolidation already writes stored values rather than copying formulas;
 --values makes that requirement explicit.
+
+When you want each worksheet kept as its own tab instead:
+  Use consultchimps sheets merge to copy every worksheet into one workbook
+  without combining any rows.
 `,
   )
   .action(async (inputs: string[], options: ConsolidateOptions) => {
     const inputPaths = await discoverFiles(inputs, { extensions: [".xlsx"] });
+    const progress = createCliProgress(
+      program.opts<GlobalOptions>().json === true,
+    );
     const result = await consolidateWorkbooks({
       inputs: inputPaths,
       output: options.output,
       addSourceColumns: options.source !== false,
       headerRow: options.headerRow,
       includeHiddenSheets: options.hidden === true,
+      normalizeHeaders: options.normalizeHeaders === true,
+      onProgress: progress.report,
       outputSheetName: options.outputSheet,
       overwrite: options.force === true,
       sheets: options.sheet,
       values: options.values === true,
     });
+    progress.finish();
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
@@ -451,6 +478,9 @@ Your original workbook is never changed.
       options.outputDir ??
       options.output ??
       path.join(path.dirname(inputPath), `${path.parse(inputPath).name}-split`);
+    const progress = createCliProgress(
+      program.opts<GlobalOptions>().json === true,
+    );
     const result = await splitWorkbookByColumn({
       input: inputPath,
       outputDirectory,
@@ -459,6 +489,7 @@ Your original workbook is never changed.
       headerRow: options.headerRow,
       includeBlank: options.skipBlank !== true,
       includeHiddenSheets: options.hidden === true,
+      onProgress: progress.report,
       overwrite: options.force === true,
       preserveWorkbook: options.preserveWorkbook,
       range: options.range,
@@ -467,6 +498,7 @@ Your original workbook is never changed.
       strict: options.strict === true,
       values: options.values === true,
     });
+    progress.finish();
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
@@ -589,8 +621,12 @@ The output contains only the generated slides. Source files are never changed.
 `,
   )
   .action(async (options: PptxPopulateOptions) => {
+    const progress = createCliProgress(
+      program.opts<GlobalOptions>().json === true,
+    );
     const result = await populatePowerPointTemplate({
       headerRow: options.headerRow,
+      onProgress: progress.report,
       outputPath: options.output,
       overwrite: options.force === true,
       templatePath: options.template,
@@ -598,6 +634,7 @@ The output contains only the generated slides. Source files are never changed.
       workbookPath: options.data,
       worksheet: options.sheet,
     });
+    progress.finish();
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
@@ -654,12 +691,17 @@ What happens:
     const outputDirectory =
       options.output ??
       path.join(path.dirname(inputPath), `${path.parse(inputPath).name}-pages`);
+    const progress = createCliProgress(
+      program.opts<GlobalOptions>().json === true,
+    );
     const result = await splitPdf({
       input: inputPath,
       outputDirectory,
       filenamePrefix: options.prefix,
+      onProgress: progress.report,
       overwrite: options.force === true,
     });
+    progress.finish();
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
@@ -693,17 +735,25 @@ What happens:
   )
   .action(async (inputs: string[], options: MergeOptions) => {
     const inputPaths = await discoverFiles(inputs, { extensions: [".pdf"] });
+    const progress = createCliProgress(
+      program.opts<GlobalOptions>().json === true,
+    );
     const result = await mergePdfs({
       inputs: inputPaths,
+      onProgress: progress.report,
       output: options.output,
       overwrite: options.force === true,
     });
+    progress.finish();
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
 try {
   await program.parseAsync(process.argv);
 } catch (error) {
+  // A failed operation can leave a partially rendered TTY progress line; clear
+  // it before any error output so the two never interleave.
+  finishActiveProgress();
   if (error instanceof CommanderError) {
     // With exitOverride active Commander reports --help and --version as errors
     // too. Those are successful terminations whose output Commander has already

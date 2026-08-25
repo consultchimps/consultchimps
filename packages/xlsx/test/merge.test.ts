@@ -2,7 +2,11 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { isConsultChimpsError } from "@consultchimps/core";
+import {
+  isConsultChimpsError,
+  OPERATION_ABORTED,
+  type OperationProgress,
+} from "@consultchimps/core";
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 
@@ -157,6 +161,72 @@ describe("mergeWorkbooks", () => {
         ["south.xlsx", "Summary", "Summary (2)", "Visible"],
         ["south.xlsx", "Sheet Index", "Sheet Index (2)", "Visible"],
       ]);
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("reports deterministic progress and honours cancellation", async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "consultchimps-merge-"),
+    );
+
+    try {
+      const first = path.join(directory, "north.xlsx");
+      const second = path.join(directory, "south.xlsx");
+      const output = path.join(directory, "merged.xlsx");
+      await createWorkbook(first, [
+        { name: "Summary", rows: [["Region"], ["North"]] },
+      ]);
+      await createWorkbook(second, [
+        { name: "Summary", rows: [["Region"], ["South"]] },
+      ]);
+
+      const events: OperationProgress[] = [];
+      await mergeWorkbooks([first, second], output, {
+        onProgress: (progress) => events.push(progress),
+      });
+      expect(events).toEqual([
+        {
+          operation: "sheets.merge",
+          stage: "merging-inputs",
+          completed: 1,
+          total: 2,
+          detail: "north.xlsx",
+        },
+        {
+          operation: "sheets.merge",
+          stage: "merging-inputs",
+          completed: 2,
+          total: 2,
+          detail: "south.xlsx",
+        },
+        {
+          operation: "sheets.merge",
+          stage: "writing-output",
+          completed: 1,
+          total: 1,
+          detail: "merged.xlsx",
+        },
+      ]);
+
+      const controller = new AbortController();
+      controller.abort();
+      let thrown: unknown;
+      try {
+        await mergeWorkbooks(
+          [first, second],
+          path.join(directory, "cancelled.xlsx"),
+          { signal: controller.signal },
+        );
+      } catch (error) {
+        thrown = error;
+      }
+      expect(isConsultChimpsError(thrown)).toBe(true);
+      expect((thrown as { code: string }).code).toBe(OPERATION_ABORTED);
+      await expect(
+        readFile(path.join(directory, "cancelled.xlsx")),
+      ).rejects.toThrow();
     } finally {
       await rm(directory, { force: true, recursive: true });
     }

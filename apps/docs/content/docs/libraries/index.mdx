@@ -58,6 +58,38 @@ The output columns are `Client`, `Amount`, `Status`, and the three provenance
 columns. Case-insensitive headers are aligned without changing the original
 spelling of the first header encountered.
 
+## Read workbooks without writing anything
+
+The xlsx package also exposes the readers the operations are built on, for
+callers that want the data rather than an output file:
+
+```ts
+import {
+  readWorkbookTables,
+  readWorksheetRecords,
+  readWorkbookExcelTables,
+  readWorkbookNamedRanges,
+} from "@consultchimps/xlsx";
+
+// Every visible, non-empty worksheet as a Table (columns, rows, source).
+const tables = await readWorkbookTables("clients.xlsx");
+
+// One worksheet as records keyed by header, using Excel's stored display text.
+const records = await readWorksheetRecords("clients.xlsx", {
+  worksheet: "Clients",
+});
+
+// Defined Excel Tables and named ranges, with their data.
+const excelTables = await readWorkbookExcelTables("clients.xlsx");
+const namedRanges = await readWorkbookNamedRanges("clients.xlsx");
+```
+
+`readWorkbookTables` accepts the consolidator's selection options — `sheets`, a
+one-based `headerRow`, and `includeHiddenSheets`. `readWorksheetRecords` selects
+one `worksheet` and a `headerRow`; the Excel Table and named-range readers
+filter by `sheets` plus `tables` or `names`. The `writeTable` counterpart writes
+one in-memory `Table` to a new formatted workbook.
+
 ## Write values without losing Excel formatting
 
 The Excel consolidation, merge, and split operations accept `values: true`. For

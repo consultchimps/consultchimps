@@ -98,12 +98,18 @@ export interface ConsolidateWorkbooksOptions
   inputs: string[];
   output: string;
   addSourceColumns?: boolean | undefined;
+  /**
+   * Match columns whose headers differ only in case, spacing, or punctuation
+   * (for example "Failed Checks" and "Failed_Checks") instead of requiring
+   * the exact same header in every worksheet.
+   */
+  normalizeHeaders?: boolean | undefined;
   outputSheetName?: string | undefined;
   overwrite?: boolean | undefined;
   values?: boolean | undefined;
 }
 
-export interface MergeWorkbooksOptions {
+export interface MergeWorkbooksOptions extends OperationControlOptions {
   includeSheetIndex?: boolean | undefined;
   overwrite?: boolean | undefined;
   values?: boolean | undefined;
@@ -362,6 +368,7 @@ export async function consolidateWorkbooks(
 
   const table = unionTables(tables, {
     addSourceColumns: options.addSourceColumns,
+    normalizeHeaders: options.normalizeHeaders,
   });
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
   const output = await writeTable(absoluteOutput, table, {
@@ -400,6 +407,7 @@ export async function mergeWorkbooks(
   outputPath: string,
   options: MergeWorkbooksOptions = {},
 ): Promise<OperationResult<MergeWorkbooksMetric>> {
+  throwIfAborted(options.signal, MERGE_OPERATION);
   if (inputPaths.length === 0) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_NO_INPUTS,
@@ -418,17 +426,33 @@ export async function mergeWorkbooks(
     macroOutput: isMacroWorkbookName(absoluteOutput),
   };
   const state = createMergeState(buildOptions);
-  for (const inputPath of absoluteInputs) {
+  for (const [index, inputPath] of absoluteInputs.entries()) {
+    throwIfAborted(options.signal, MERGE_OPERATION);
     await appendWorkbookSheets(
       state,
       path.basename(inputPath),
       await readWorkbookBytes(inputPath),
     );
+    options.onProgress?.({
+      operation: MERGE_OPERATION,
+      stage: "merging-inputs",
+      completed: index + 1,
+      total: absoluteInputs.length,
+      detail: path.basename(inputPath),
+    });
   }
   const merged = await finishMergedWorkbook(state, buildOptions);
 
+  throwIfAborted(options.signal, MERGE_OPERATION);
   await ensureParentDirectory(absoluteOutput);
   await writeFile(absoluteOutput, merged.bytes);
+  options.onProgress?.({
+    operation: MERGE_OPERATION,
+    stage: "writing-output",
+    completed: 1,
+    total: 1,
+    detail: path.basename(absoluteOutput),
+  });
 
   return {
     operation: MERGE_OPERATION,

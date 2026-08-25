@@ -12,9 +12,9 @@ import {
  * Single source of truth for every ConsultChimps tool surfaced on the site.
  *
  * `browserHref` doubles as a feature flag: when a tool has an in-browser
- * version, setting it lights up the "Try it online" button on the tool's
- * guide page, adds a tab to the online-tools sub-bar, and links the landing
- * card — all without touching those surfaces.
+ * version, setting it lights up the "Try <tabLabel> online" button on the
+ * tool's guide page, adds a tab to the online-tools sub-bar, and links the
+ * landing card — all without touching those surfaces.
  */
 export interface ConsultTool {
   readonly slug: string;
@@ -32,7 +32,7 @@ export const TOOLS: readonly ConsultTool[] = [
     title: "Consolidate spreadsheets",
     tabLabel: "Consolidate",
     description:
-      "Union every useful worksheet into one auditable table, even when columns arrive in different orders.",
+      "Stack rows from every useful worksheet into one auditable table, even when columns arrive in different orders.",
     docHref: "/docs/tools/spreadsheets",
     icon: TableProperties,
   },
@@ -41,7 +41,7 @@ export const TOOLS: readonly ConsultTool[] = [
     title: "Merge workbook tabs",
     tabLabel: "Merge tabs",
     description:
-      "Copy every source worksheet into one workbook while retaining separate tabs and source visibility.",
+      "Copy every source worksheet into one workbook as its own separate tab, never stacking rows into one sheet.",
     docHref: "/docs/tools/spreadsheets#merge-complete-workbooks",
     browserHref: "/tools/excel-merge",
     icon: FileStack,

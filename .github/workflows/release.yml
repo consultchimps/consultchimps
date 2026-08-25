@@ -36,7 +36,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Create or update the release pull request
-        uses: changesets/action@v1
+        uses: changesets/action@v2
         with:
           version: pnpm version-packages
           title: Release packages
