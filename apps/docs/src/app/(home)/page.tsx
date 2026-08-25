@@ -1,5 +1,5 @@
 import { cliVersion } from "@/lib/releases";
-import { TOOLS } from "@/lib/tools";
+import { isBrowserTool, TOOLS } from "@/lib/tools";
 import {
   ArrowRight,
   FileStack,
@@ -123,13 +123,12 @@ export default function HomePage() {
 
         <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           {TOOLS.map((tool, index) => {
-            const {
-              title,
-              description,
-              docHref,
-              browserHref,
-              icon: Icon,
-            } = tool;
+            const { title, description, docHref, icon: Icon } = tool;
+            // Only a working browser surface may light up the online link;
+            // `planned` and `none` fall back to the guide (ADR 0001).
+            const browserHref = isBrowserTool(tool)
+              ? tool.surfaces.browser.href
+              : undefined;
             return (
               <Link
                 className="tool-card"

@@ -31,15 +31,15 @@ export function ToolsTabs() {
           <LayoutGrid className="size-4" aria-hidden="true" />
           All tools
         </Link>
-        {BROWSER_TOOLS.map(({ slug, tabLabel, browserHref, icon: Icon }) => (
+        {BROWSER_TOOLS.map(({ slug, tabLabel, surfaces, icon: Icon }) => (
           <Link
             className={
               baseTabClass +
-              (pathname === browserHref
+              (pathname === surfaces.browser.href
                 ? " border-fd-primary text-fd-foreground"
                 : " border-transparent text-fd-muted-foreground hover:text-fd-foreground")
             }
-            href={browserHref ?? "/tools"}
+            href={surfaces.browser.href}
             key={slug}
           >
             <Icon className="size-4" aria-hidden="true" />
