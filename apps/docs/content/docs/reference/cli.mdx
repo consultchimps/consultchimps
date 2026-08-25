@@ -101,6 +101,12 @@ include a stable error reference that can be shared with support. Use `--json`
 to replace these explanations with the compact structured result needed by an
 automation.
 
+Long-running operations additionally report progress on standard error while
+they work — the current stage with counts, such as
+`Reading workbooks 3/14: report.xlsx` — updated in place on an interactive
+terminal and printed as plain lines elsewhere. Progress never appears under
+`--json`, so piped output stays clean.
+
 ## Spreadsheet consolidation
 
 ```text
@@ -113,6 +119,8 @@ Options:
   --sheet <names...>        include only these worksheet names
   --header-row <number>     one-based header row
   --hidden                  include hidden worksheets
+  --normalize-headers       match headers that differ only in case, spacing,
+                            or punctuation
   --no-source               omit file, sheet, and row provenance
   --output-sheet <name>     output worksheet name (default: Consolidated)
   --values                  write values instead of formulas, preserving formatting
@@ -151,6 +159,7 @@ Options:
   --output-dir <directory>  alias for --output
   --sheet <name>            use the legacy single-worksheet split mode
   --table <name>            named Excel Table to split instead of the used range
+  --range <name>            named range to split instead of the used range
   --header-row <number>     one-based header row
   --hidden                  allow a selected hidden worksheet
   --preserve-workbook       retain the complete workbook (the default)

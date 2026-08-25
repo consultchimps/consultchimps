@@ -63,16 +63,36 @@ test.describe("/tools", () => {
 
 test.describe("tool guides", () => {
   const GUIDES = [
-    { url: "/docs/tools/pdf-split", tool: "/tools/pdf-split" },
-    { url: "/docs/tools/pdf-merge", tool: "/tools/pdf-merge" },
-    { url: "/docs/tools/spreadsheet-split", tool: "/tools/excel-split" },
-    { url: "/docs/tools/spreadsheets", tool: "/tools/excel-merge" },
+    {
+      url: "/docs/tools/pdf-split",
+      tool: "/tools/pdf-split",
+      label: "Split PDF",
+    },
+    {
+      url: "/docs/tools/pdf-merge",
+      tool: "/tools/pdf-merge",
+      label: "Merge PDFs",
+    },
+    {
+      url: "/docs/tools/spreadsheet-split",
+      tool: "/tools/excel-split",
+      label: "Split Excel",
+    },
+    // The guide page covers both consolidate and merge; the button must name
+    // the tool it opens so a reader is not promised an online consolidate.
+    {
+      url: "/docs/tools/spreadsheets",
+      tool: "/tools/excel-merge",
+      label: "Merge tabs",
+    },
   ] as const;
 
   for (const guide of GUIDES) {
     test(`${guide.url} offers the online tool`, async ({ page }) => {
       await page.goto(guide.url);
-      const tryOnline = page.getByRole("link", { name: "Try it online" });
+      const tryOnline = page.getByRole("link", {
+        name: `Try ${guide.label} online`,
+      });
       await expect(tryOnline).toBeVisible();
       await expect(tryOnline).toHaveAttribute("href", guide.tool);
     });

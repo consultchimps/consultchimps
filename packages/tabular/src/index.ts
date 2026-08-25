@@ -18,6 +18,12 @@ export interface Table {
 
 export interface UnionTablesOptions {
   addSourceColumns?: boolean | undefined;
+  /**
+   * Treat headers that differ only in case, spacing, or punctuation - such as
+   * "Failed Checks", "Failed_Checks", and "Failed  Checks " - as the same
+   * column. The first spelling seen names the output column.
+   */
+  normalizeHeaders?: boolean | undefined;
   sourceColumnNames?:
     | {
         file: string;
@@ -50,6 +56,24 @@ const DEFAULT_SOURCE_COLUMNS = {
 
 export function columnKey(column: string): string {
   return column.trim().toLocaleLowerCase();
+}
+
+/**
+ * Matching key that also ignores spacing and punctuation differences, so
+ * "Failed Checks", "Failed_Checks", and "Reviewer: Lead Contact" versus
+ * "Reviewer_Lead_Contact" resolve to the same column. Letters and digits in
+ * any script are kept; every other run of characters becomes one underscore.
+ */
+export function normalizedColumnKey(column: string): string {
+  // The first replace collapses every separator run - underscores included -
+  // to one "_", so the edge trims below never face repeated underscores and
+  // stay linear on any input.
+  const normalized = column
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "_")
+    .replace(/^_/, "")
+    .replace(/_$/, "");
+  return normalized === "" ? columnKey(column) : normalized;
 }
 
 export function uniqueHeaders(values: Array<string | null>): string[] {
@@ -172,11 +196,13 @@ export function unionTables(
 
   const addSourceColumns = options.addSourceColumns ?? true;
   const sourceColumns = options.sourceColumnNames ?? DEFAULT_SOURCE_COLUMNS;
+  const keyOf =
+    options.normalizeHeaders === true ? normalizedColumnKey : columnKey;
   const outputColumnByKey = new Map<string, string>();
 
   for (const table of tables) {
     for (const column of table.columns) {
-      const key = columnKey(column);
+      const key = keyOf(column);
       if (!outputColumnByKey.has(key)) {
         outputColumnByKey.set(key, column);
       }
@@ -185,7 +211,7 @@ export function unionTables(
 
   if (addSourceColumns) {
     for (const column of Object.values(sourceColumns)) {
-      const key = columnKey(column);
+      const key = keyOf(column);
       if (outputColumnByKey.has(key)) {
         throw new ConsultChimpsError(
           "TABLE_SOURCE_COLUMN_COLLISION",
@@ -201,9 +227,13 @@ export function unionTables(
   const rows: TableRow[] = [];
 
   for (const table of tables) {
-    const inputColumnByKey = new Map(
-      table.columns.map((column) => [columnKey(column), column] as const),
-    );
+    const inputColumnByKey = new Map<string, string>();
+    for (const column of table.columns) {
+      const key = keyOf(column);
+      if (!inputColumnByKey.has(key)) {
+        inputColumnByKey.set(key, column);
+      }
+    }
 
     table.rows.forEach((inputRow, index) => {
       const outputRow: TableRow = {};
@@ -212,9 +242,9 @@ export function unionTables(
         if (
           addSourceColumns &&
           [
-            columnKey(sourceColumns.file),
-            columnKey(sourceColumns.sheet),
-            columnKey(sourceColumns.row),
+            keyOf(sourceColumns.file),
+            keyOf(sourceColumns.sheet),
+            keyOf(sourceColumns.row),
           ].includes(key)
         ) {
           continue;

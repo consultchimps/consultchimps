@@ -8,6 +8,22 @@ The spreadsheet consolidator discovers `.xlsx` files, reads each selected
 worksheet as a table, unions columns by case-insensitive header name, and writes
 one formatted workbook.
 
+## Which one do I want?
+
+Both operations combine several Excel workbooks into one file; they differ in
+the shape of the result. `sheets merge` keeps every source worksheet as its own
+tab, while `sheets consolidate` stacks all rows into a single table.
+
+|                   | `sheets merge`                                                                                      | `sheets consolidate`                                                                                                         |
+| ----------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Result shape      | One workbook, every source worksheet kept as its own tab                                            | One worksheet, all rows stacked into a single table                                                                          |
+| When to use       | Keep sheets intact side by side for reference                                                       | Analyze all rows together — filter or pivot across sources                                                                   |
+| What carries over | Formatting, formulas as stored, conditional formatting, layout — nothing is combined into one table | Cell values only — columns matched by header name, optional provenance columns; formatting and formulas are not carried over |
+
+Rule of thumb: tabs kept means merge; rows stacked into one sheet means
+consolidate. Merging also runs [in your browser](/tools/excel-merge);
+consolidation is command line and library only.
+
 ## Basic usage
 
 ```bash
@@ -42,6 +58,33 @@ CLIENT
 The first spelling encountered becomes the output header. Missing values are
 written as blank cells. Duplicate headers inside one worksheet gain a numeric
 suffix, and blank headers become `column_1`, `column_2`, and so on.
+
+### Match headers that differ in spacing or punctuation
+
+Different systems often export the same schema with different header
+conventions: `Failed Checks` in one file, `Failed_Checks` in another,
+`Reviewer: Lead Contact` versus `Reviewer_Lead_Contact`. By default each
+spelling becomes its own, mostly empty, output column. Add `--normalize-headers`
+to treat them as the same column:
+
+```bash
+consultchimps sheets consolidate "inputs/**/*.xlsx" \
+  --normalize-headers \
+  --output outputs/consolidated.xlsx
+```
+
+Normalized matching ignores letter case and treats any run of spaces,
+underscores, or other punctuation as a single separator, so these headers all
+become one output column named by the first spelling encountered:
+
+```text
+Failed Checks
+Failed_Checks
+failed  checks
+```
+
+Headers that differ in their words, such as `Name` and `Client Name`, remain
+separate columns.
 
 ## Keep provenance
 
@@ -87,8 +130,8 @@ calculation chain (Excel rebuilds it, and the merged workbook asks it to), and a
 macro project unless exactly one input carries one and the output is named
 `.xlsm`.
 
-The workbook merge is also the tool the "Try it online" button at the top of
-this page opens: [merge workbooks in your browser](/tools/excel-merge) to
+The workbook merge is also the tool the "Try Merge tabs online" button at the
+top of this page opens: [merge workbooks in your browser](/tools/excel-merge) to
 combine tabs without installing anything. Consolidation, described above, is
 command line and library only for now.
 

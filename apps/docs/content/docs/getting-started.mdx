@@ -114,7 +114,9 @@ consultchimps pdf split report.pdf --output outputs/report-pages
 The CLI refuses to replace existing output files unless you explicitly pass
 `--force`.
 
-To create a presentation from a designed slide and Excel records:
+To create a presentation from a designed slide and Excel records (run
+`consultchimps pptx inspect-template <file>` first to list the template's
+placeholders without creating anything):
 
 ```bash
 consultchimps pptx populate \

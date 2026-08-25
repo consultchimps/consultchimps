@@ -41,7 +41,7 @@ export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
             className="inline-flex items-center gap-1.5 rounded-lg bg-fd-primary px-3 py-1.5 text-sm font-semibold text-fd-primary-foreground no-underline transition-opacity hover:opacity-90"
             href={browserTool.browserHref}
           >
-            Try it online
+            Try {browserTool.tabLabel} online
             <ArrowRight className="size-3.5" aria-hidden="true" />
           </Link>
         ) : null}

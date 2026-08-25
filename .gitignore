@@ -25,6 +25,12 @@ scratch/
 tmp/
 *.log
 
+# Loose working documents at the repo root (test inputs/outputs)
+/*.xlsx
+/*.xlsm
+/*.pdf
+/*.pptx
+
 # Editors and operating systems
 .DS_Store
 .idea/

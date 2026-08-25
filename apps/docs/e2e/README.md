@@ -31,7 +31,7 @@ command when `out/` is missing.
 - `excel-merge.spec.ts` — merging two workbooks into one, reordering and
   removing sources, and downloading the result.
 - `tools-navigation.spec.ts` — the `/tools` index, the sub-bar tabs, and the
-  "Try it online" button each guide gains from the tool registry.
+  tool-named "Try ... online" button each guide gains from the tool registry.
 
 Every downloaded PDF is checked for the `%PDF-` header and every downloaded
 workbook for the `PK` ZIP header, so a tool that "finishes" while producing
