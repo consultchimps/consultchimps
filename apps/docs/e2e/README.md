@@ -113,7 +113,10 @@ document that has already been replaced. And because a changed option applies to
 Run at once, a preview or report is shown only while it still matches the page:
 changing an input replaces it with `preview-pending` or `inspection-pending`
 until the recomputed answer arrives. Both transient states last at least the 250
-ms preview debounce, so they are safe to assert.
+ms preview debounce, so they are safe to assert. A finished deck is withdrawn on
+the same rule: changing any option removes `results-section` entirely, because a
+worksheet change can produce a deck with the identical filename from different
+rows.
 
 The preview and results panels also carry accessible names, so
 `getByRole("region", { name: "Results" })` works where a role-based query reads

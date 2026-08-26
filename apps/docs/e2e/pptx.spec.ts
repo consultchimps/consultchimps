@@ -250,6 +250,35 @@ test.describe("/tools/pptx-populate", () => {
     );
   });
 
+  test("withdraws a finished deck when an option changes", async ({ page }) => {
+    await page.goto("/tools/pptx-populate");
+
+    const [template, records] = await Promise.all([
+      createPresentationUpload("review-template.pptx", REVIEW_TEMPLATE),
+      createWorkbookUpload("records.xlsx", RECORDS),
+    ]);
+    await templateInput(page).setInputFiles(template);
+    await recordsInput(page).setInputFiles(records);
+    await expect(
+      previewPanel(page).getByTestId("planned-outputs"),
+    ).toBeVisible();
+
+    await page.getByTestId("run-button").click();
+    await expect(resultArtifacts(page).first()).toContainText(
+      "review-template-populated.pptx",
+    );
+
+    // A finished deck belongs to the options that made it. Changing the
+    // worksheet would produce a deck with this very filename from different
+    // rows, so leaving the old one downloadable beside the new preview is how
+    // someone ends up shipping the wrong data under the right name.
+    const recordsSection = page.getByTestId("records-section");
+    await openAdvancedOptions(recordsSection);
+    await recordsSection.getByTestId("worksheet-input").fill("Records");
+
+    await expect(resultsPanel(page)).toHaveCount(0);
+  });
+
   test("withdraws the preview while a changed option is replanned", async ({
     page,
   }) => {

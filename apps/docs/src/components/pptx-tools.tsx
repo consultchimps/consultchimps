@@ -475,17 +475,32 @@ export function PptxPopulateTool() {
     };
   }, [hasUnusableNumber, options, previewKey, template, workbook]);
 
+  // The key the finished deck was built from. A deck belongs to the options
+  // that made it, so changing any of them withdraws it rather than leaving it
+  // on offer beside a preview that now describes something else — a worksheet
+  // change can even produce a deck with the identical filename.
+  const ranKey = useRef<string | null>(null);
+  const { reset: resetRun } = runState;
+
+  useEffect(() => {
+    if (ranKey.current !== null && ranKey.current !== previewKey) {
+      ranKey.current = null;
+      resetRun();
+    }
+  }, [previewKey, resetRun]);
+
   const start = useCallback(() => {
     if (!template || !workbook || hasUnusableNumber) {
       return;
     }
+    ranKey.current = previewKey;
     void runState.run({
       kind: "pptx.populate",
       template: { bytes: template.bytes, name: template.name },
       workbook: { bytes: workbook.bytes, name: workbook.name },
       options,
     });
-  }, [hasUnusableNumber, options, runState, template, workbook]);
+  }, [hasUnusableNumber, options, previewKey, runState, template, workbook]);
 
   return (
     <ToolShell
