@@ -36,7 +36,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Create or update the release pull request
-        uses: changesets/action@v2
+        # Pinned to v1: changesets/action v2 requires Changesets CLI v3, and
+        # this workspace is on CLI v2. Dependabot ignores this major bump
+        # (see .github/dependabot.yml); revisit when upgrading the CLI.
+        uses: changesets/action@v1
         with:
           version: pnpm version-packages
           title: Release packages
