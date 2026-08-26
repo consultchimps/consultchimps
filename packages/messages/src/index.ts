@@ -274,6 +274,27 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
       "Check longer replacement values for fit because this version does not shrink or truncate text automatically.",
     ],
   },
+  // An inspection reads one slide and creates nothing, so its wording never
+  // points at output files. Its warnings are the useful part: each one is a
+  // reason a population would refuse the same template.
+  "pptx.inspect-template": {
+    title: "Your PowerPoint template inspection is complete.",
+    summary: (result) => [
+      `ConsultChimps found ${quantity(
+        metric(result, "placeholderFields"),
+        "distinct placeholder field",
+      )} on the inspected template slide, used ${quantity(
+        metric(result, "placeholderOccurrences"),
+        "time",
+      )} in total.`,
+      "Nothing was created or changed. An inspection only reads the template.",
+    ],
+    nextSteps: (vocabulary) => [
+      "Give the Excel workbook one column header for every placeholder field listed above, spelled exactly the same way.",
+      "Review any warnings above before populating: each one is a reason the population would refuse this template.",
+      vocabulary.powerPointExampleReference,
+    ],
+  },
 };
 
 const metricLabels: Readonly<Record<string, string>> = {
@@ -283,6 +304,7 @@ const metricLabels: Readonly<Record<string, string>> = {
   inputFiles: "Input files read",
   inputRows: "Source data rows read",
   inputTables: "Visible worksheets combined",
+  malformedPlaceholderLocations: "Locations with malformed placeholder braces",
   outputColumns: "Columns in the finished spreadsheet",
   outputFiles: "New files created",
   outputRows: "Data rows written",
@@ -295,6 +317,9 @@ const metricLabels: Readonly<Record<string, string>> = {
   rowsDeleted: "Rows deleted across output workbooks",
   sheetsCopiedUnchanged: "Worksheets copied without filtering",
   sheetsFiltered: "Worksheets filtered",
+  unsupportedPlacementPlaceholders:
+    "Placeholders outside a supported text shape",
+  unsupportedSplitRunPlaceholders: "Placeholders split across text runs",
   formulaCellsConverted: "Formula cells converted to cached values",
   formulaCellsWithoutCachedValues: "Formula cells missing cached values",
   valuesOnly: "Values-only mode (1 enabled, 0 disabled)",

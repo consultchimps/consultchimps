@@ -572,6 +572,36 @@ describe("byte-level presentation population", () => {
       }),
     ).rejects.toMatchObject({ code: OPERATION_ABORTED });
   });
+
+  it("cancels a plan instead of parsing packages nobody is waiting for", async () => {
+    const template = {
+      name: "template.pptx",
+      bytes: await singlePlaceholderTemplate(),
+    };
+    const records = [{ amount: "1", client: "A" }];
+
+    // Planning reads both packages in full, so a caller that has moved on —
+    // a page replanning after a keystroke — must be able to stop that work
+    // rather than only discard its answer.
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await expect(
+      planPopulatePresentationBytes({
+        template,
+        records,
+        signal: cancelled.signal,
+      }),
+    ).rejects.toMatchObject({ code: OPERATION_ABORTED });
+
+    // A signal that never aborts leaves the plan exactly as it was.
+    const live = new AbortController();
+    await expect(
+      planPopulatePresentationBytes({ template, records, signal: live.signal }),
+    ).resolves.toMatchObject({
+      operation: "pptx.populate",
+      outputs: [{ path: "template-populated.pptx" }],
+    });
+  });
 });
 
 describe("byte entry point packaging", () => {

@@ -370,15 +370,22 @@ export function PptxPopulateTool() {
       return;
     }
     let active = true;
+    // Planning reads both packages in full, so a superseded attempt is
+    // cancelled rather than merely ignored: several abandoned parses queued
+    // behind each other would make the run the visitor actually wants wait.
+    const controller = new AbortController();
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
-          const plan = await runOperation({
-            kind: "pptx.plan-populate",
-            template: { bytes: template.bytes, name: template.name },
-            workbook: { bytes: workbook.bytes, name: workbook.name },
-            options,
-          });
+          const plan = await runOperation(
+            {
+              kind: "pptx.plan-populate",
+              template: { bytes: template.bytes, name: template.name },
+              workbook: { bytes: workbook.bytes, name: workbook.name },
+              options,
+            },
+            { signal: controller.signal },
+          );
           if (active) {
             setPlanned({ error: null, key: previewKey, plan });
           }
@@ -397,6 +404,7 @@ export function PptxPopulateTool() {
     return () => {
       active = false;
       window.clearTimeout(timer);
+      controller.abort();
     };
   }, [hasUnusableNumber, options, previewKey, template, workbook]);
 

@@ -12,3 +12,8 @@ supported text shape, placeholders split across text runs, and a slide with no
 usable placeholders at all. Identical templates and options produce an identical
 result. The existing `inspectPresentationBytes()` is unchanged and still returns
 the placeholder report on its own.
+
+`planPopulatePresentationBytes()` now honours the `signal` its options already
+accepted. Planning reads the template package and the records workbook in full,
+so a caller that has moved on — a page replanning after a keystroke — can stop
+that work rather than only discard its answer.

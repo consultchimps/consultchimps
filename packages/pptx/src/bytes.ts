@@ -176,14 +176,22 @@ export async function inspectPresentationOutcomeBytes(
   return { inspection, result: templateInspectionResult(inspection) };
 }
 
+/**
+ * Resolving reads two whole packages, which is the slow half of both planning
+ * and populating. The abort checks sit between those reads so a caller that
+ * has moved on — a page replanning after a keystroke, say — stops paying for
+ * work whose answer it will discard, instead of only ignoring it at the end.
+ */
 async function resolvePopulatePresentationBytes(
   options: PopulatePresentationBytesOptions,
 ): Promise<ResolvedPopulateBytes> {
   const templateSlide = options.templateSlide ?? DEFAULT_TEMPLATE_SLIDE;
+  throwIfAborted(options.signal, POPULATE_OPERATION, "memory");
   const presentation = await loadPresentationPackage(
     options.template.bytes,
     templateSlide,
   );
+  throwIfAborted(options.signal, POPULATE_OPERATION, "memory");
   const inspection = await inspectPresentationSlide(
     presentation,
     templateSlide,
@@ -191,6 +199,7 @@ async function resolvePopulatePresentationBytes(
   validateTemplateInspection(inspection);
 
   const records = await resolveRecords(options);
+  throwIfAborted(options.signal, POPULATE_OPERATION, "memory");
   validateRecordsForTemplate(records, inspection, {
     template: options.template.name,
     templateSlide,

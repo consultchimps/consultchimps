@@ -192,6 +192,7 @@ async function perform(
         await import("@consultchimps/pptx/bytes");
       return answerWithValue(
         await planPopulatePresentationBytes({
+          ...controls,
           ...task.options,
           template: { bytes: task.template.bytes, name: task.template.name },
           workbook: { bytes: task.workbook.bytes, name: task.workbook.name },
