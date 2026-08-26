@@ -35,3 +35,10 @@ updates:
       github-actions:
         patterns:
           - "*"
+    ignore:
+      # changesets/action v2 requires Changesets CLI v3; this workspace is
+      # on CLI v2, and the v2 bump (PR #79) broke the release-PR workflow.
+      # Remove this once the workspace upgrades to Changesets CLI v3.
+      - dependency-name: changesets/action
+        update-types:
+          - version-update:semver-major
