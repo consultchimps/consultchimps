@@ -1,5 +1,71 @@
 # @consultchimps/xlsx
 
+## 0.12.0
+
+### Minor Changes
+
+- 6c683ec: Split whole workbooks by default without a filesystem, so the
+  in-browser splitter now works the way the command line does.
+
+  `splitWorkbookBytes` and `planSplitWorkbookBytes` previously read a single
+  worksheet and wrote compact, data-only workbooks. They now collect the values
+  of the chosen column across every worksheet and give back one complete copy of
+  the source workbook per value:
+
+  - a worksheet that carries the column keeps its header and only that value's
+    rows;
+  - a worksheet that does not carry the column is copied through untouched; and
+  - sheet order and visibility, formatting, merged cells, conditional
+    formatting, data validation, hyperlinks, comments, images, charts, defined
+    names, and the macro parts of an `.xlsm` file all survive.
+
+  `.xlsm` workbooks are accepted as input and produce `.xlsm` outputs.
+
+  A workbook whose contents disagree with its file extension is now refused, on
+  both the command line and in the browser, with a new
+  `XLSX_SPLIT_PACKAGE_TYPE_MISMATCH` error naming which side to correct. An
+  ordinary workbook renamed `.xlsm`, or a macro-enabled one renamed `.xlsx`,
+  used to be split into files Excel could open with a corruption warning; the
+  split now stops before writing anything.
+
+  Strict matching is available, so case, surrounding whitespace, and value type
+  can be kept distinct instead of `North`, `north`, and `North ` becoming one
+  workbook.
+
+  Results report more of what happened: how many worksheets were filtered, how
+  many were copied unchanged, and, for each output workbook, the rows kept and
+  removed per worksheet. The values-only, pivot-cache and stale-cached-total
+  warnings match the ones the command line reports.
+
+  The single-source split is still available for narrower jobs: name an Excel
+  Table, a named range, or a worksheet, or turn off whole-workbook preservation
+  for compact data-only outputs.
+
+- c7ccb8d: Consolidate workbooks without a filesystem.
+  `@consultchimps/xlsx/bytes` now exports `consolidateWorkbooksBytes`, which
+  takes named in-memory workbooks and returns one combined workbook's bytes
+  alongside the same structured result the path-based `consolidateWorkbooks`
+  reports. It accepts the same `normalizeHeaders`, `addSourceColumns`,
+  worksheet-selection, and header-row options, reports progress, and can be
+  cancelled, and it produces byte-identical output to the path-based operation
+  for the same workbooks and options — so a browser and the command line agree
+  exactly.
+
+### Patch Changes
+
+- aabc58b: Installing this package no longer requires network access to the
+  SheetJS CDN. SheetJS was declared as a runtime dependency pointing at a
+  tarball URL, so every `npm install` of `@consultchimps/xlsx` — and of the
+  `consultchimps` CLI that depends on it — had to reach `cdn.sheetjs.com`.
+  Installs failed outright behind registry-only allowlists, corporate proxies,
+  private mirrors, and locked-down CI runners.
+
+  SheetJS is now compiled into the published `dist` output instead, so the
+  package installs from the npm registry alone. Behaviour, the public API, and
+  the generated type declarations are unchanged; the published bundle is
+  correspondingly larger. The bundled Apache-2.0 code is attributed in the
+  package's `THIRD-PARTY-LICENSES.md`.
+
 ## 0.11.0
 
 ### Minor Changes
