@@ -144,16 +144,39 @@ export async function inspectPresentationBytes(
   options: InspectPresentationBytesOptions = {},
 ): Promise<PowerPointTemplateInspection> {
   const templateSlide = options.templateSlide ?? DEFAULT_TEMPLATE_SLIDE;
-  // Opening the package and decompressing its parts is the whole cost here,
-  // so the checks bracket that read: a page inspecting a different slide has
-  // no use for this one's answer and should not queue behind it.
+  // Two package reads make up the whole cost: opening the archive, then
+  // decompressing the selected slide. Both boundaries carry an abort check —
+  // a page inspecting a different slide has no use for this answer and should
+  // not queue behind it — and a progress event, so a caller can show which of
+  // the two a large deck is currently in. The stages and their counts depend
+  // only on the operation, never on the template, so they are identical for
+  // identical inputs.
   throwIfAborted(options.signal, INSPECT_OPERATION, "memory");
   const presentation = await loadPresentationPackage(
     template.bytes,
     templateSlide,
   );
+
   throwIfAborted(options.signal, INSPECT_OPERATION, "memory");
-  return inspectPresentationSlide(presentation, templateSlide);
+  options.onProgress?.({
+    operation: INSPECT_OPERATION,
+    stage: "reading-slide",
+    completed: 1,
+    total: 2,
+  });
+  const inspection = await inspectPresentationSlide(
+    presentation,
+    templateSlide,
+  );
+
+  throwIfAborted(options.signal, INSPECT_OPERATION, "memory");
+  options.onProgress?.({
+    operation: INSPECT_OPERATION,
+    stage: "inspecting-placeholders",
+    completed: 2,
+    total: 2,
+  });
+  return inspection;
 }
 
 /**

@@ -588,11 +588,40 @@ describe("byte-level presentation population", () => {
       inspectPresentationOutcomeBytes(template, { signal: cancelled.signal }),
     ).rejects.toMatchObject({ code: OPERATION_ABORTED });
 
-    // A signal that never aborts leaves the report exactly as it was.
-    const live = new AbortController();
+    // Cancelling while the slide part is being decompressed still rejects,
+    // rather than returning a report nobody is waiting for.
+    const duringSlideRead = new AbortController();
     await expect(
-      inspectPresentationBytes(template, { signal: live.signal }),
+      inspectPresentationBytes(template, {
+        signal: duringSlideRead.signal,
+        onProgress: () => duringSlideRead.abort(),
+      }),
+    ).rejects.toMatchObject({ code: OPERATION_ABORTED });
+
+    // A signal that never aborts leaves the report exactly as it was, and the
+    // progress events are the same for every template.
+    const live = new AbortController();
+    const events: OperationProgress[] = [];
+    await expect(
+      inspectPresentationBytes(template, {
+        signal: live.signal,
+        onProgress: (progress) => events.push(progress),
+      }),
     ).resolves.toMatchObject({ placeholders: [{ name: "client" }] });
+    expect(events).toEqual([
+      {
+        operation: "pptx.inspect-template",
+        stage: "reading-slide",
+        completed: 1,
+        total: 2,
+      },
+      {
+        operation: "pptx.inspect-template",
+        stage: "inspecting-placeholders",
+        completed: 2,
+        total: 2,
+      },
+    ]);
   });
 
   it("cancels a plan instead of parsing packages nobody is waiting for", async () => {
