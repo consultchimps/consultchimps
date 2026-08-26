@@ -87,6 +87,10 @@ function clientRows(): Array<[string, CellInput[][]]> {
   ];
 }
 
+function sheetNames(bytes: Uint8Array): string[] {
+  return XLSX.read(bytes, { type: "array" }).SheetNames;
+}
+
 function readSheet(
   bytes: Uint8Array,
   sheetName: string,
@@ -126,12 +130,21 @@ describe("byte-level workbook splitting", () => {
 
     expect(result.operation).toBe("sheets.split-by-column");
     expect(result.metrics).toEqual({
+      calcChainEntriesRemoved: 0,
+      formulaCellsBlankedForRemovedRows: 0,
+      formulaCellsConverted: 0,
+      formulaCellsWithoutCachedValues: 0,
       groups: 2,
       inputFiles: 1,
       inputRows: 3,
       outputFiles: 2,
       outputRows: 3,
+      pivotTablesRemoved: 0,
+      rowsDeleted: 3,
+      sheetsCopiedUnchanged: 0,
+      sheetsFiltered: 1,
       skippedRows: 0,
+      valuesOnly: 0,
     });
     expect(outputs.map((output) => output.name)).toEqual([
       "client list-North.xlsx",
@@ -159,6 +172,181 @@ describe("byte-level workbook splitting", () => {
     expect(readSheet(outputs[1]!.bytes, "Clients")).toEqual([
       { Amount: 20, Client: "B", Region: "South" },
     ]);
+
+    // The all-worksheet default reports which worksheets it filtered and how
+    // many rows each output kept, the same detail the file surface reports.
+    expect(result.summary).toEqual({
+      column: " region ",
+      copiedUnchangedSheets: [],
+      filteredSheets: ["Clients"],
+      input: "client list.xlsx",
+      valuesOnly: false,
+    });
+    expect(result.outputs).toEqual([
+      {
+        formulaCellsConverted: 0,
+        formulaCellsWithoutCachedValues: 0,
+        output: "client list-North.xlsx",
+        sheets: [{ deletedRows: 1, retainedRows: 2, sheet: "Clients" }],
+        value: "North",
+      },
+      {
+        formulaCellsConverted: 0,
+        formulaCellsWithoutCachedValues: 0,
+        output: "client list-South.xlsx",
+        sheets: [{ deletedRows: 2, retainedRows: 1, sheet: "Clients" }],
+        value: "South",
+      },
+    ]);
+  });
+
+  it("keeps every worksheet, filtered or not, in each output", async () => {
+    const input = {
+      name: "regions.xlsx",
+      bytes: workbookBytes([
+        [
+          "Current",
+          [
+            ["Client", "Region"],
+            ["A", "North"],
+            ["B", "South"],
+          ],
+        ],
+        [
+          "Archive",
+          [
+            ["Client", "Region"],
+            ["C", "South"],
+          ],
+        ],
+        [
+          "Notes",
+          [
+            ["Measure", "Value"],
+            ["Total", 99],
+          ],
+        ],
+      ]),
+    };
+
+    const { outputs, result } = await splitWorkbookBytes({
+      input,
+      column: "Region",
+    });
+
+    // Every worksheet survives in every output: the two that carry the column
+    // keep only their group's rows, and the one that does not is copied
+    // through untouched. The compact single-source split cannot do this - it
+    // writes one worksheet built from the values it read.
+    expect(outputs.map((output) => output.name)).toEqual([
+      "regions-North.xlsx",
+      "regions-South.xlsx",
+    ]);
+    for (const output of outputs) {
+      expect(sheetNames(output.bytes)).toEqual(["Current", "Archive", "Notes"]);
+      expect(readSheet(output.bytes, "Notes")).toEqual([
+        { Measure: "Total", Value: 99 },
+      ]);
+    }
+    expect(readSheet(outputs[0]!.bytes, "Current")).toEqual([
+      { Client: "A", Region: "North" },
+    ]);
+    expect(readSheet(outputs[0]!.bytes, "Archive")).toEqual([]);
+    expect(readSheet(outputs[1]!.bytes, "Archive")).toEqual([
+      { Client: "C", Region: "South" },
+    ]);
+    expect(result.summary).toMatchObject({
+      copiedUnchangedSheets: ["Notes"],
+      filteredSheets: ["Current", "Archive"],
+    });
+    expect(result.metrics).toMatchObject({
+      groups: 2,
+      inputRows: 3,
+      sheetsCopiedUnchanged: 1,
+      sheetsFiltered: 2,
+    });
+  });
+
+  it("still rebuilds one compact worksheet when asked not to preserve", async () => {
+    const input = {
+      name: "regions.xlsx",
+      bytes: workbookBytes([
+        [
+          "Clients",
+          [
+            ["Client", "Region"],
+            ["A", "North"],
+            ["B", "South"],
+          ],
+        ],
+        [
+          "Notes",
+          [
+            ["Measure", "Value"],
+            ["Total", 99],
+          ],
+        ],
+      ]),
+    };
+
+    const { outputs, result } = await splitWorkbookBytes({
+      input,
+      column: "Region",
+      preserveWorkbook: false,
+      sheet: "Clients",
+    });
+
+    expect(sheetNames(outputs[0]!.bytes)).toEqual(["Clients"]);
+    expect(result.metrics).toMatchObject({
+      groups: 2,
+      sheetsCopiedUnchanged: 0,
+      sheetsFiltered: 1,
+    });
+    // The narrower modes report no all-worksheet detail, so a caller can tell
+    // which engine ran without inspecting the outputs.
+    expect(result.outputs).toBeUndefined();
+    expect(result.summary).toBeUndefined();
+  });
+
+  it("compares values strictly on request", async () => {
+    const input = {
+      name: "regions.xlsx",
+      bytes: workbookBytes([
+        [
+          "Clients",
+          [
+            ["Client", "Region"],
+            ["A", "North"],
+            ["B", " north "],
+            ["C", "NORTH"],
+          ],
+        ],
+      ]),
+    };
+
+    // Default matching folds case and surrounding whitespace, so the three
+    // spellings are one group; strict matching keeps them apart.
+    const tolerant = await splitWorkbookBytes({ input, column: "Region" });
+    expect(tolerant.result.metrics.groups).toBe(1);
+    expect(tolerant.outputs.map((output) => output.name)).toEqual([
+      "regions-North.xlsx",
+    ]);
+
+    const strict = await splitWorkbookBytes({
+      input,
+      column: "Region",
+      strict: true,
+    });
+    expect(strict.result.metrics.groups).toBe(3);
+    expect(strict.result.outputs?.map((output) => output.value)).toEqual([
+      "North",
+      "north",
+      "NORTH",
+    ]);
+    // Three values that sanitize to one filename are told apart by a stable
+    // suffix, compared case-insensitively because Windows would treat the
+    // unsuffixed names as one file.
+    expect(new Set(strict.outputs.map((output) => output.name)).size).toBe(3);
   });
 
   it("plans a split, including skipped rows, without producing any bytes", async () => {
@@ -190,14 +378,23 @@ describe("byte-level workbook splitting", () => {
     ]);
     expect(plan.outputs.every((output) => output.exists === false)).toBe(true);
     expect(plan.warnings).toEqual([
-      'Skipped 1 row with blank values in "Region".',
+      'Skipped 1 row with blank values in "Region"; no blank-value workbook was created.',
     ]);
     expect(plan.metrics).toEqual({
+      calcChainEntriesRemoved: 0,
+      formulaCellsBlankedForRemovedRows: 0,
+      formulaCellsConverted: 0,
+      formulaCellsWithoutCachedValues: 0,
       groups: 2,
       inputFiles: 1,
       inputRows: 3,
       outputFiles: 2,
+      pivotTablesRemoved: 0,
+      rowsDeleted: 0,
+      sheetsCopiedUnchanged: 0,
+      sheetsFiltered: 1,
       skippedRows: 1,
+      valuesOnly: 0,
     });
 
     const executed = await splitWorkbookBytes({
@@ -207,6 +404,13 @@ describe("byte-level workbook splitting", () => {
     });
     expect(executed.result.warnings).toEqual(plan.warnings);
     expect(executed.result.metrics.skippedRows).toBe(1);
+    // A plan reads the source but builds nothing, so the metrics that describe
+    // reading match the split's and the metrics that describe writing are zero
+    // until the workbooks exist.
+    expect(plan.metrics.rowsDeleted).toBe(0);
+    // Every output drops the rows that are not its own, so the count is the
+    // sum across outputs rather than a count of source rows.
+    expect(executed.result.metrics.rowsDeleted).toBe(4);
   });
 
   it("keeps the whole workbook when splitting a named Excel Table", async () => {
@@ -337,11 +541,15 @@ describe("byte-level workbook splitting", () => {
         table: "ClientData",
       }),
     ).rejects.toMatchObject({ code: "XLSX_SPLIT_TABLE_RANGE_CONFLICT" });
+    // Whole-workbook preservation is the default with no source named, so the
+    // refusal now only reaches a caller who named a source that cannot offer
+    // it - a named range, or a worksheet.
     await expect(
       splitWorkbookBytes({
         input,
         column: "Region",
         preserveWorkbook: true,
+        range: "ClientRange",
       }),
     ).rejects.toMatchObject({ code: "XLSX_SPLIT_PRESERVE_REQUIRES_TABLE" });
     await expect(
@@ -371,8 +579,16 @@ describe("byte-level workbook splitting", () => {
       ]),
     };
 
+    // Two worksheets carrying the column are what the all-worksheet default
+    // exists for; it filters both. Only the compact rebuild, which writes a
+    // single worksheet, still has to be told which one to read.
+    const both = await splitWorkbookBytes({ input, column: "Region" });
+    expect(both.result.metrics).toMatchObject({
+      groups: 2,
+      sheetsFiltered: 2,
+    });
     await expect(
-      splitWorkbookBytes({ input, column: "Region" }),
+      splitWorkbookBytes({ input, column: "Region", preserveWorkbook: false }),
     ).rejects.toMatchObject({ code: "XLSX_SPLIT_MULTIPLE_TABLES" });
 
     const selected = await splitWorkbookBytes({
@@ -425,11 +641,23 @@ describe("byte-level workbook splitting", () => {
       input: { name: "cli*ent<>report.xlsx", bytes },
       column: "Region",
     });
+    // The all-worksheet split never writes a workbook for a blank key, so the
+    // third row is skipped rather than named "blank".
     expect(outputs.map((output) => output.name)).toEqual([
       "cli-ent-report-North-West.xlsx",
       "cli-ent-report-North-West-2.xlsx",
-      "cli-ent-report-blank.xlsx",
     ]);
+
+    const blankIncluded = await splitWorkbookBytes({
+      input: { name: "cli*ent<>report.xlsx", bytes },
+      column: "Region",
+      includeBlank: true,
+      preserveWorkbook: false,
+      sheet: "Data",
+    });
+    expect(blankIncluded.outputs.at(-1)?.name).toBe(
+      "cli-ent-report-blank.xlsx",
+    );
 
     const reserved = await splitWorkbookBytes({
       input: { name: "CON.xlsx", bytes },
@@ -475,9 +703,15 @@ describe("byte-level workbook splitting", () => {
       bytes: await structuredTableBytes(),
     };
 
+    const firstAllWorksheets = await splitWorkbookBytes({
+      input: plain,
+      column: "Region",
+    });
     const firstPlain = await splitWorkbookBytes({
       input: plain,
       column: "Region",
+      preserveWorkbook: false,
+      sheet: "Clients",
     });
     const firstPreserved = await splitWorkbookBytes({
       input: preserved,
@@ -485,9 +719,15 @@ describe("byte-level workbook splitting", () => {
       table: "ClientData",
     });
     await new Promise((resolve) => setTimeout(resolve, CLOCK_TICK));
+    const secondAllWorksheets = await splitWorkbookBytes({
+      input: plain,
+      column: "Region",
+    });
     const secondPlain = await splitWorkbookBytes({
       input: plain,
       column: "Region",
+      preserveWorkbook: false,
+      sheet: "Clients",
     });
     const secondPreserved = await splitWorkbookBytes({
       input: preserved,
@@ -496,9 +736,11 @@ describe("byte-level workbook splitting", () => {
     });
 
     for (const [first, second] of [
+      [firstAllWorksheets, secondAllWorksheets],
       [firstPlain, secondPlain],
       [firstPreserved, secondPreserved],
     ] as const) {
+      expect(first.outputs).not.toHaveLength(0);
       for (let index = 0; index < first.outputs.length; index += 1) {
         expect(
           Buffer.compare(
@@ -598,12 +840,84 @@ describe("byte-level workbook splitting", () => {
       }),
     ).rejects.toMatchObject({ code: "XLSX_SPLIT_NO_GROUPS" });
 
+    // No worksheet carries the column, which the all-worksheet split reports
+    // as the missing column rather than as a missing source: it never asked
+    // for one source in particular.
     await expect(
       splitWorkbookBytes({
         input: { name: "empty.xlsx", bytes: workbookBytes([["Data", []]]) },
         column: "Region",
       }),
+    ).rejects.toMatchObject({ code: "XLSX_SPLIT_COLUMN_NOT_FOUND" });
+    await expect(
+      splitWorkbookBytes({
+        input: { name: "empty.xlsx", bytes: workbookBytes([["Data", []]]) },
+        column: "Region",
+        preserveWorkbook: false,
+      }),
     ).rejects.toMatchObject({ code: "XLSX_SPLIT_NO_TABLE" });
+  });
+
+  it("refuses a name that is not an Excel workbook before reading it", async () => {
+    // The name decides the outputs' extension as well as whether the split can
+    // open the input at all, so it is checked before the bytes are parsed.
+    await expect(
+      splitWorkbookBytes({
+        input: { name: "clients.csv", bytes: workbookBytes(clientRows()) },
+        column: "Region",
+      }),
+    ).rejects.toMatchObject({ code: "XLSX_SPLIT_UNSUPPORTED_FILE" });
+    await expect(
+      planSplitWorkbookBytes({
+        input: { name: "clients", bytes: workbookBytes(clientRows()) },
+        column: "Region",
+      }),
+    ).rejects.toMatchObject({ code: "XLSX_SPLIT_UNSUPPORTED_FILE" });
+  });
+
+  it("keeps a macro workbook macro-enabled", async () => {
+    const source = workbookBytes(clientRows());
+    const archive = await JSZip.loadAsync(source);
+    archive.file("xl/vbaProject.bin", Buffer.from([0xd0, 0xcf, 0x11, 0xe0]));
+    const contentTypes = await archive
+      .file("[Content_Types].xml")!
+      .async("text");
+    archive.file(
+      "[Content_Types].xml",
+      contentTypes.replace(
+        "</Types>",
+        '<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/></Types>',
+      ),
+    );
+    const macroBytes = await archive.generateAsync({
+      compression: "DEFLATE",
+      type: "uint8array",
+    });
+
+    const { outputs, result } = await splitWorkbookBytes({
+      input: { name: "clients.xlsm", bytes: macroBytes },
+      column: "Region",
+    });
+
+    expect(outputs.map((output) => output.name)).toEqual([
+      "clients-North.xlsm",
+      "clients-South.xlsm",
+    ]);
+    expect(
+      outputs.every(
+        (output) =>
+          output.mediaType === "application/vnd.ms-excel.sheet.macroEnabled.12",
+      ),
+    ).toBe(true);
+    expect(result.artifacts.map((artifact) => artifact.mediaType)).toEqual(
+      outputs.map((output) => output.mediaType),
+    );
+    // The macro project travels with the workbook it belongs to; a package
+    // whose content type contradicts its name is one Excel refuses to open.
+    for (const output of outputs) {
+      const produced = await JSZip.loadAsync(output.bytes);
+      expect(produced.file("xl/vbaProject.bin")).not.toBeNull();
+    }
   });
 });
 

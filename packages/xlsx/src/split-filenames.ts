@@ -1,10 +1,8 @@
 import path from "node:path";
 
-import { safeNameFragment } from "@consultchimps/core";
+import { safeFilenameSegment, splitOutputFilenames } from "./split/names.js";
 
-export function safeFilenameSegment(value: string, fallback: string): string {
-  return safeNameFragment(value, fallback);
-}
+export { safeFilenameSegment };
 
 export function splitOutputPaths(
   outputDirectory: string,
@@ -12,21 +10,7 @@ export function splitOutputPaths(
   values: Array<boolean | null | number | string>,
   extension = ".xlsx",
 ): string[] {
-  const usedFilenames = new Set<string>();
-
-  return values.map((value) => {
-    const segment =
-      value === null ? "blank" : safeFilenameSegment(String(value), "value");
-    const base = filenamePrefix ? `${filenamePrefix}-${segment}` : segment;
-    let filename = `${base}${extension}`;
-    let suffix = 2;
-
-    while (usedFilenames.has(filename.toLocaleLowerCase())) {
-      filename = `${base}-${suffix}${extension}`;
-      suffix += 1;
-    }
-
-    usedFilenames.add(filename.toLocaleLowerCase());
-    return path.join(outputDirectory, filename);
-  });
+  return splitOutputFilenames(filenamePrefix, values, extension).map(
+    (filename) => path.join(outputDirectory, filename),
+  );
 }

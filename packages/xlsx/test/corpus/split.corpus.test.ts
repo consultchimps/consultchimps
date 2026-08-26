@@ -10,7 +10,12 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 
-import { splitWorkbookBytes, planSplitWorkbookBytes } from "../../src/bytes.js";
+import {
+  splitWorkbookBytes,
+  planSplitWorkbookBytes,
+  type SplitOutputDetail,
+  type SplitWorkbookBytesOutcome,
+} from "../../src/bytes.js";
 import {
   planSplitWorkbookByColumn,
   splitWorkbookByColumn,
@@ -40,6 +45,12 @@ import {
 } from "./fixtures.js";
 
 const SHAPES: readonly CorpusShape[] = ["table", "range"];
+/** The media type a macro-enabled output declares on both surfaces. */
+const MACRO_MEDIA_TYPE = "application/vnd.ms-excel.sheet.macroEnabled.12";
+// A DOS timestamp has two-second resolution, so a shorter pause could hide a
+// clock-dependent byte difference inside one tick. test/bytes.test.ts waits the
+// same amount for the same reason.
+const CLOCK_TICK = 2_100;
 
 afterEach(cleanupCorpusDirectories);
 
@@ -632,6 +643,23 @@ describe("corpus: worksheet-selection split", () => {
   });
 });
 
+/**
+ * One output's detail minus the single field the two surfaces are meant to
+ * disagree about: the file surface names an absolute path, the byte surface a
+ * portable download name. Everything else is the engine's own answer and must
+ * match across surfaces exactly.
+ */
+function outputDetailWithoutName(
+  detail: SplitOutputDetail,
+): Omit<SplitOutputDetail, "output"> {
+  return {
+    formulaCellsConverted: detail.formulaCellsConverted,
+    formulaCellsWithoutCachedValues: detail.formulaCellsWithoutCachedValues,
+    sheets: detail.sheets,
+    value: detail.value,
+  };
+}
+
 describe("corpus: byte surface", () => {
   it("pins: splitWorkbookBytes mirrors the table-selection file split", async () => {
     const bytes = await buildCorpusWorkbook({
@@ -681,4 +709,317 @@ describe("corpus: byte surface", () => {
     ]);
     expect(plan.outputs.every((output) => output.exists)).toBe(false);
   });
+
+  it.each(SHAPES)(
+    "invariant: the %s binding's default split is one engine behind two surfaces",
+    async (shape) => {
+      const directory = await createCorpusDirectory();
+      const input = await writeCorpusWorkbook(directory, "corpus.xlsx", {
+        shape,
+      });
+      const bytes = await buildCorpusWorkbook({ shape });
+      const outputDirectory = path.join(directory, "out");
+
+      const file = await splitWorkbookByColumn({
+        column: CORPUS_SPLIT_COLUMN,
+        input,
+        outputDirectory,
+      });
+      const outcome = await splitWorkbookBytes({
+        column: CORPUS_SPLIT_COLUMN,
+        input: { bytes, name: "corpus.xlsx" },
+      });
+
+      // The one deliberate difference is naming. A file split writes into a
+      // directory the caller chose, so the group value alone identifies an
+      // output; a byte split hands back downloads with no directory to keep one
+      // job's results apart from another's, so it keeps the source prefix.
+      expect(
+        file.artifacts.map((artifact) => path.basename(artifact.path)),
+      ).toEqual(["Alpha.xlsx", "Beta.xlsx", "Gamma.xlsx"]);
+      expect(outcome.outputs.map((output) => output.name)).toEqual([
+        "corpus-Alpha.xlsx",
+        "corpus-Beta.xlsx",
+        "corpus-Gamma.xlsx",
+      ]);
+
+      // Same groups, same order, same count, and the same per-worksheet story
+      // about each one.
+      expect(outcome.result.outputs?.map((detail) => detail.value)).toEqual([
+        "Alpha",
+        "Beta",
+        "Gamma",
+      ]);
+      expect(outcome.result.outputs?.map(outputDetailWithoutName)).toEqual(
+        file.outputs?.map(outputDetailWithoutName),
+      );
+      expect(outcome.result.metrics).toEqual(file.metrics);
+      expect(outcome.result.warnings).toEqual(file.warnings);
+
+      // The summary differs only where the surfaces differ: the file split adds
+      // the directory it wrote into, and names its input the way it was given
+      // it - an absolute path, against the byte surface's upload name.
+      expect(outcome.result.summary).toEqual({
+        column: file.summary!.column,
+        copiedUnchangedSheets: file.summary!.copiedUnchangedSheets,
+        filteredSheets: file.summary!.filteredSheets,
+        input: "corpus.xlsx",
+        valuesOnly: file.summary!.valuesOnly,
+      });
+      expect(file.summary).toMatchObject({
+        input: path.resolve(input),
+        outputDirectory: path.resolve(outputDirectory),
+      });
+      expect(outcome.result.summary).not.toHaveProperty("outputDirectory");
+
+      // The strongest available statement that the engine was ported rather
+      // than forked: the same source through either surface serializes to the
+      // same bytes, so nothing about having a filesystem reaches the workbook.
+      for (const [index, artifact] of file.artifacts.entries()) {
+        expect(
+          Buffer.compare(
+            Buffer.from(await readWorkbookBytes(artifact.path)),
+            Buffer.from(outcome.outputs[index]!.bytes),
+          ),
+        ).toBe(0);
+      }
+    },
+  );
+
+  it.each(SHAPES)(
+    "invariant: a %s byte split keeps the whole workbook, not just the filtered region",
+    async (shape) => {
+      const bytes = await buildCorpusWorkbook({ shape, pivot: true });
+
+      const outcome = await splitWorkbookBytes({
+        column: CORPUS_SPLIT_COLUMN,
+        input: { bytes, name: "corpus.xlsx" },
+      });
+
+      const alpha = outcome.outputs[0]!.bytes;
+      expect(outcome.outputs[0]!.name).toBe("corpus-Alpha.xlsx");
+      // Every source part reaches the output except the pivot parts: a cache is
+      // a private copy of every group's rows, so it leaves with them on every
+      // surface (tier1-gaps.corpus.test.ts holds the file-surface half).
+      expect(await packagePartNames(alpha)).toEqual(
+        (await packagePartNames(bytes)).filter(
+          (part) => !part.startsWith("xl/pivot"),
+        ),
+      );
+      expect(await hasPackagePart(alpha, CORPUS_PARTS.pivotTable)).toBe(false);
+      expect(await hasPackagePart(alpha, CORPUS_PARTS.pivotCacheRecords)).toBe(
+        false,
+      );
+      expect(await hasPackagePart(alpha, CORPUS_PARTS.comments)).toBe(true);
+      expect(await hasPackagePart(alpha, CORPUS_PARTS.calcChain)).toBe(true);
+
+      // A worksheet the split never touched is not merely present: it is the
+      // source's own part, unread and unrewritten.
+      for (const untouched of [
+        CORPUS_PARTS.summarySheet,
+        CORPUS_PARTS.veryHiddenSheet,
+      ]) {
+        expect(await readPackagePart(alpha, untouched)).toBe(
+          await readPackagePart(bytes, untouched),
+        );
+      }
+      expect(outcome.result.summary?.copiedUnchangedSheets).toEqual([
+        "Summary",
+        "VeryHidden",
+      ]);
+
+      const dataXml = await readPackagePart(alpha, CORPUS_PARTS.dataSheet);
+      // Alpha keeps records 1, 3 and 6 from source rows 4, 6 and 9, which
+      // compact onto 4, 5 and 6. The two bindings diverge only below that - the
+      // table binding keeps the totals row and footer block the range binding
+      // deletes - so the shared prefix is what both must agree on.
+      expect(worksheetRowNumbers(dataXml).slice(0, 5)).toEqual([1, 3, 4, 5, 6]);
+      expect(worksheetCellValue(dataXml, "A4")).toBe("1");
+      expect(worksheetCellValue(dataXml, "A5")).toBe("3");
+      expect(worksheetCellValue(dataXml, "A6")).toBe("6");
+      // The dependent structures followed the rows, exactly as they do on the
+      // file surface, because the same L1 relocation pass rewrote them.
+      expect(conditionalFormattingSqref(dataXml)).toBe("D4:D6");
+      expect(dataValidationSqref(dataXml)).toBe("A4:A6");
+
+      // The hidden worksheet carries the split column, so it is filtered too:
+      // visibility does not excuse a sheet from an all-worksheet split.
+      const hiddenXml = await readPackagePart(alpha, CORPUS_PARTS.hiddenSheet);
+      expect(worksheetRowNumbers(hiddenXml)).toEqual([1, 2, 3]);
+    },
+  );
+
+  it("invariant: splitting the same bytes twice produces byte-identical outputs", async () => {
+    const input = {
+      bytes: await buildCorpusWorkbook({ shape: "table" }),
+      name: "corpus.xlsx",
+    };
+
+    const first = await splitWorkbookBytes({
+      column: CORPUS_SPLIT_COLUMN,
+      input,
+    });
+    // The cross-surface parity test above cannot stand in for this one: its two
+    // runs are milliseconds apart, well inside a single DOS timestamp tick, so
+    // it would agree even if every rewritten part took the wall clock.
+    await new Promise((resolve) => setTimeout(resolve, CLOCK_TICK));
+    const second = await splitWorkbookBytes({
+      column: CORPUS_SPLIT_COLUMN,
+      input,
+    });
+
+    expect(second.outputs.map((output) => output.name)).toEqual(
+      first.outputs.map((output) => output.name),
+    );
+    for (const [index, output] of first.outputs.entries()) {
+      expect(
+        Buffer.compare(
+          Buffer.from(output.bytes),
+          Buffer.from(second.outputs[index]!.bytes),
+        ),
+      ).toBe(0);
+    }
+  });
+
+  it.each(SHAPES)(
+    "invariant: the %s binding round-trips a macro workbook as .xlsm through bytes",
+    async (shape) => {
+      const bytes = await buildCorpusWorkbook({ shape, macro: true });
+
+      const outcome = await splitWorkbookBytes({
+        column: CORPUS_SPLIT_COLUMN,
+        input: { bytes, name: "corpus.xlsm" },
+      });
+
+      expect(outcome.outputs.map((output) => output.name)).toEqual([
+        "corpus-Alpha.xlsm",
+        "corpus-Beta.xlsm",
+        "corpus-Gamma.xlsm",
+      ]);
+      // A package whose content type contradicts its name is one Excel opens
+      // with a corruption warning, so the extension and the media type have to
+      // travel together on the outputs and on the reported artifacts alike.
+      expect(
+        outcome.outputs.every(
+          (output) => output.mediaType === MACRO_MEDIA_TYPE,
+        ),
+      ).toBe(true);
+      expect(
+        outcome.result.artifacts.every(
+          (artifact) => artifact.mediaType === MACRO_MEDIA_TYPE,
+        ),
+      ).toBe(true);
+
+      const alpha = outcome.outputs[0]!.bytes;
+      expect(await readPackagePart(alpha, CORPUS_PARTS.contentTypes)).toContain(
+        "macroEnabled.main+xml",
+      );
+      expect(await hasPackagePart(alpha, CORPUS_PARTS.vbaProject)).toBe(true);
+      const vba = await import("jszip").then(async (module) => {
+        const zip = await module.default.loadAsync(alpha);
+        return zip.file(CORPUS_PARTS.vbaProject)!.async("uint8array");
+      });
+      expect([...vba]).toEqual([...CORPUS_VBA_BYTES]);
+    },
+  );
+
+  it.each([
+    {
+      code: "XLSX_SPLIT_UNSUPPORTED_FILE",
+      column: CORPUS_SPLIT_COLUMN,
+      headerRow: undefined,
+      label: "a workbook name it cannot open",
+      name: "corpus.csv",
+    },
+    {
+      code: "XLSX_SPLIT_COLUMN_NOT_FOUND",
+      column: "Segment",
+      headerRow: undefined,
+      label: "a column no worksheet carries",
+      name: "corpus.xlsx",
+    },
+    {
+      code: "XLSX_INVALID_HEADER_ROW",
+      column: CORPUS_SPLIT_COLUMN,
+      headerRow: 0,
+      label: "a header row below 1",
+      name: "corpus.xlsx",
+    },
+  ])(
+    "invariant: the byte surface refuses $label with the stable code and no outputs",
+    async (scenario) => {
+      const bytes = await buildCorpusWorkbook({ shape: "range" });
+      const request = {
+        column: scenario.column,
+        headerRow: scenario.headerRow,
+        input: { bytes, name: scenario.name },
+      };
+
+      let produced: SplitWorkbookBytesOutcome | undefined;
+      await expect(
+        splitWorkbookBytes(request).then((outcome) => {
+          produced = outcome;
+        }),
+      ).rejects.toMatchObject({ code: scenario.code });
+      // A byte split has no destination to leave a partial artifact in: the
+      // outcome it resolves with is its only channel for an output, so what it
+      // resolved with is the whole of "nothing was produced".
+      expect(produced).toBeUndefined();
+      // A preview of the same options refuses identically, so a caller cannot
+      // be told a split is possible and then be refused when it runs.
+      await expect(planSplitWorkbookBytes(request)).rejects.toMatchObject({
+        code: scenario.code,
+      });
+    },
+  );
+
+  it.each(SHAPES)(
+    "invariant: a values-only %s byte split reports what the file split reports",
+    async (shape) => {
+      const directory = await createCorpusDirectory();
+      // uncachedFormula puts a never-calculated formula on Summary!B4, and the
+      // summary sheet's cross-sheet aggregates cover rows every group loses, so
+      // both values-mode warnings fire and can be compared rather than assumed.
+      const fixture = { shape, uncachedFormula: true } as const;
+      const input = await writeCorpusWorkbook(
+        directory,
+        "corpus.xlsx",
+        fixture,
+      );
+      const bytes = await buildCorpusWorkbook(fixture);
+
+      const file = await splitWorkbookByColumn({
+        column: CORPUS_SPLIT_COLUMN,
+        input,
+        outputDirectory: path.join(directory, "out"),
+        values: true,
+      });
+      const outcome = await splitWorkbookBytes({
+        column: CORPUS_SPLIT_COLUMN,
+        input: { bytes, name: "corpus.xlsx" },
+        values: true,
+      });
+
+      expect(outcome.result.metrics).toEqual(file.metrics);
+      expect(outcome.result.warnings).toEqual(file.warnings);
+      expect(outcome.result.metrics.valuesOnly).toBe(1);
+      expect(outcome.result.metrics.formulaCellsConverted).toBeGreaterThan(0);
+      expect(outcome.result.warnings.join("\n")).toMatch(/Summary!B4/u);
+      expect(outcome.result.outputs?.map(outputDetailWithoutName)).toEqual(
+        file.outputs?.map(outputDetailWithoutName),
+      );
+
+      const alpha = outcome.outputs[0]!.bytes;
+      expect(await hasPackagePart(alpha, CORPUS_PARTS.calcChain)).toBe(false);
+      const dataXml = await readPackagePart(alpha, CORPUS_PARTS.dataSheet);
+      expect(worksheetCellFormula(dataXml, "E4")).toBeUndefined();
+      expect(worksheetCellValue(dataXml, "E4")).toBe("20");
+      expect(
+        Buffer.compare(
+          Buffer.from(await readWorkbookBytes(file.artifacts[0]!.path)),
+          Buffer.from(alpha),
+        ),
+      ).toBe(0);
+    },
+  );
 });

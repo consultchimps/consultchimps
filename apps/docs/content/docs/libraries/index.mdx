@@ -222,12 +222,16 @@ for (const output of outputs) {
 ```
 
 The workbook and presentation operations follow the same shape.
-`splitWorkbookBytes` accepts the worksheet, Excel Table, named range, header
-row, blank-value, and workbook-preserving options of the path-based split;
-`mergeWorkbooksBytes` combines every worksheet of every input, keeping tabs and
-formatting and adding the same `Sheet Index`; and `populatePresentationBytes`
-fills a template presentation from either records you already hold or the bytes
-of a workbook.
+`splitWorkbookBytes` mirrors the path-based split, defaults included: with no
+worksheet, Excel Table, or named range named, it filters every worksheet that
+carries the column and each output keeps the rest of the workbook intact. Naming
+one of those sources, or passing `preserveWorkbook: false`, selects the
+single-source modes, which are also the only modes where `includeBlank` and
+`includeHiddenSheets` apply. `strict` compares values without trimming, case
+folding, or numeric coercion. `mergeWorkbooksBytes` combines every worksheet of
+every input, keeping tabs and formatting and adding the same `Sheet Index`; and
+`populatePresentationBytes` fills a template presentation from either records
+you already hold or the bytes of a workbook.
 
 ```ts
 import {
@@ -240,7 +244,6 @@ import { populatePresentationBytes } from "@consultchimps/pptx/bytes";
 const { outputs } = await splitWorkbookBytes({
   input: { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) },
   column: "Region",
-  table: "ClientData",
 });
 
 const populated = await populatePresentationBytes({
