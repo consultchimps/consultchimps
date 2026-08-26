@@ -39,7 +39,14 @@ import type {
   PresentationInspectionOutcome,
 } from "@consultchimps/pptx/bytes";
 import { FileText } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 const PRESENTATION_MEDIA_TYPE =
   "application/vnd.openxmlformats-officedocument.presentationml.presentation";
@@ -108,6 +115,29 @@ function suppliedNumber(state: NumberFieldState): number | undefined {
 
 function fieldMessage(state: NumberFieldState): string | undefined {
   return state.kind === "invalid" ? state.message : undefined;
+}
+
+/**
+ * A counter that tells a finished file read whether it is still the current
+ * selection.
+ *
+ * Reading an upload is asynchronous, so picking a second file before the
+ * first has finished leaves two reads in flight — and a large cloud-backed
+ * deck can easily finish after a small local one picked later. Without this,
+ * whichever read resolved last would win and the page could end up holding a
+ * document the visitor had already replaced. Each picker bumps its own
+ * counter when a selection starts and applies a read only if the counter has
+ * not moved since.
+ */
+function useSelectionToken(): {
+  readonly begin: () => number;
+  readonly isCurrent: (token: number) => boolean;
+} {
+  const latest = useRef(0);
+  return {
+    begin: () => (latest.current += 1),
+    isCurrent: (token) => token === latest.current,
+  };
 }
 
 /**
@@ -286,6 +316,8 @@ export function PptxPopulateTool() {
   const [recordsRejected, setRecordsRejected] = useState<string | null>(null);
   const [planned, setPlanned] = useState<PlannedPopulate | null>(null);
 
+  const templateSelection = useSelectionToken();
+  const recordsSelection = useSelectionToken();
   const runState = useOperationRun();
   const isRunning = runState.status === "running";
 
@@ -400,7 +432,11 @@ export function PptxPopulateTool() {
             label="Template presentation"
             multiple={false}
             onFiles={(files) => {
+              const token = templateSelection.begin();
               void readUploads(files, isPresentationFile).then((read) => {
+                if (!templateSelection.isCurrent(token)) {
+                  return;
+                }
                 const [first] = read;
                 setTemplate(first ?? null);
                 setTemplateRejected(
@@ -447,7 +483,11 @@ export function PptxPopulateTool() {
             label="Records workbook"
             multiple={false}
             onFiles={(files) => {
+              const token = recordsSelection.begin();
               void readUploads(files, isWorkbookFile).then((read) => {
+                if (!recordsSelection.isCurrent(token)) {
+                  return;
+                }
                 const [first] = read;
                 setWorkbook(first ?? null);
                 setRecordsRejected(
@@ -657,6 +697,7 @@ export function PptxInspectTool() {
   const [templateSlide, setTemplateSlide] = useState("");
   const [templateRejected, setTemplateRejected] = useState<string | null>(null);
   const [inspected, setInspected] = useState<InspectedTemplate | null>(null);
+  const templateSelection = useSelectionToken();
 
   const templateSlideField = positiveIntegerField(
     templateSlide,
@@ -730,7 +771,11 @@ export function PptxInspectTool() {
             label="Template presentation"
             multiple={false}
             onFiles={(files) => {
+              const token = templateSelection.begin();
               void readUploads(files, isPresentationFile).then((read) => {
+                if (!templateSelection.isCurrent(token)) {
+                  return;
+                }
                 const [first] = read;
                 setTemplate(first ?? null);
                 setTemplateRejected(
