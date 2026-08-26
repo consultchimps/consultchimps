@@ -24,7 +24,7 @@ import {
   pathExists,
   refuseInputOverwrite,
 } from "@consultchimps/files";
-import { type Table, unionTables } from "@consultchimps/tabular";
+import type { Table } from "@consultchimps/tabular";
 import type * as XLSX from "xlsx";
 
 import { XLSX_ERRORS } from "./errors.js";
@@ -40,6 +40,8 @@ import {
   buildSplitGroupBytes,
   buildTableWorkbookBytes,
   CONSOLIDATE_OPERATION,
+  CONSOLIDATED_SHEET_NAME,
+  consolidateTables,
   createMergeState,
   finishMergedWorkbook,
   isMacroWorkbookName,
@@ -263,7 +265,7 @@ export async function writeTable(
 ): Promise<string> {
   const bytes = buildTableWorkbookBytes(
     table,
-    options.sheetName ?? "Consolidated",
+    options.sheetName ?? CONSOLIDATED_SHEET_NAME,
   );
   const absoluteOutput = await ensureParentDirectory(outputPath);
   await ensureOutputAvailable(absoluteOutput, {
@@ -359,17 +361,7 @@ export async function consolidateWorkbooks(
     });
   }
 
-  if (tables.length === 0) {
-    throw new ConsultChimpsError(
-      XLSX_ERRORS.XLSX_NO_TABLES,
-      "No visible, non-empty worksheets were found in the input workbooks.",
-    );
-  }
-
-  const table = unionTables(tables, {
-    addSourceColumns: options.addSourceColumns,
-    normalizeHeaders: options.normalizeHeaders,
-  });
+  const table = consolidateTables(tables, options);
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
   const output = await writeTable(absoluteOutput, table, {
     overwrite: options.overwrite,

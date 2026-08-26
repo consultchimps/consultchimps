@@ -10,6 +10,7 @@ import {
   type Table,
   type TableRow,
   uniqueHeaders,
+  unionTables,
 } from "@consultchimps/tabular";
 import * as XLSX from "xlsx";
 
@@ -29,6 +30,8 @@ export const WORKBOOK_MEDIA_TYPE =
 export const MACRO_WORKBOOK_MEDIA_TYPE =
   "application/vnd.ms-excel.sheet.macroEnabled.12";
 export const CONSOLIDATE_OPERATION = "sheets.consolidate";
+/** The worksheet a consolidation writes into unless the caller names another. */
+export const CONSOLIDATED_SHEET_NAME = "Consolidated";
 export const MERGE_OPERATION = "sheets.merge";
 export const SPLIT_OPERATION = "sheets.split-by-column";
 export const WORKBOOK_EXTENSION = ".xlsx";
@@ -65,6 +68,60 @@ export interface ReadWorkbookOptions {
   headerRow?: number | undefined;
   includeHiddenSheets?: boolean | undefined;
   sheets?: string[] | undefined;
+}
+
+/**
+ * Hand the event loop back for one full turn.
+ *
+ * Cancellation reaches a Web Worker as a posted message, and a message is a
+ * macrotask: an operation that runs to completion without ever yielding one -
+ * however many `await`s it contains, because awaiting an already-resolved
+ * value only drains microtasks - has already posted its output before the
+ * worker dequeues the `cancel`. So an operation whose expensive steps are
+ * synchronous must yield a macrotask between them, and check its signal after
+ * each yield, or its Cancel button does nothing.
+ *
+ * Operations built on JSZip get this for free, since loading and generating a
+ * package yield on their own; the ones that build a workbook synchronously do
+ * not.
+ */
+export function yieldToEventLoop(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
+export interface ConsolidateTablesOptions {
+  addSourceColumns?: boolean | undefined;
+  /**
+   * Match columns whose headers differ only in case, spacing, or punctuation
+   * (for example "Failed Checks" and "Failed_Checks") instead of requiring
+   * the exact same header in every worksheet.
+   */
+  normalizeHeaders?: boolean | undefined;
+}
+
+/**
+ * The consolidation core both surfaces call: stack every worksheet table read
+ * from the inputs into one union table. Keeping the refusal and the union in
+ * one place is what makes the file API and the byte API produce the same
+ * columns, the same row order, and the same bytes for the same workbooks.
+ */
+export function consolidateTables(
+  tables: Table[],
+  options: ConsolidateTablesOptions = {},
+): Table {
+  if (tables.length === 0) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_NO_TABLES,
+      "No visible, non-empty worksheets were found in the input workbooks.",
+    );
+  }
+
+  return unionTables(tables, {
+    addSourceColumns: options.addSourceColumns,
+    normalizeHeaders: options.normalizeHeaders,
+  });
 }
 
 export interface ReadWorkbookExcelTablesOptions {

@@ -229,12 +229,16 @@ one of those sources, or passing `preserveWorkbook: false`, selects the
 single-source modes, which are also the only modes where `includeBlank` and
 `includeHiddenSheets` apply. `strict` compares values without trimming, case
 folding, or numeric coercion. `mergeWorkbooksBytes` combines every worksheet of
-every input, keeping tabs and formatting and adding the same `Sheet Index`; and
+every input, keeping tabs and formatting and adding the same `Sheet Index`;
+`consolidateWorkbooksBytes` stacks the rows of every useful worksheet into one
+table, with the same `normalizeHeaders`, `addSourceColumns`,
+worksheet-selection, and header-row options as the path-based consolidation; and
 `populatePresentationBytes` fills a template presentation from either records
 you already hold or the bytes of a workbook.
 
 ```ts
 import {
+  consolidateWorkbooksBytes,
   mergeWorkbooksBytes,
   planSplitWorkbookBytes,
   splitWorkbookBytes,
@@ -246,6 +250,27 @@ const { outputs } = await splitWorkbookBytes({
   column: "Region",
 });
 
+// One combined table from several exports of the same schema, even when the
+// headers drift between them.
+const consolidated = await consolidateWorkbooksBytes({
+  inputs: [
+    { name: "north.xlsx", bytes: northBytes },
+    { name: "south.xlsx", bytes: southBytes },
+  ],
+  normalizeHeaders: true,
+  outputName: "review-log",
+  signal: controller.signal,
+  onProgress: ({ stage, completed, total }) => {
+    console.log(`${stage}: ${completed}/${total}`);
+  },
+});
+console.log(consolidated.result.metrics.outputRows);
+download(
+  consolidated.outputs[0].name,
+  consolidated.outputs[0].bytes,
+  consolidated.outputs[0].mediaType,
+);
+
 const populated = await populatePresentationBytes({
   template: { name: "template.pptx", bytes: templateBytes },
   records: [{ client: "North", amount: "10" }],
@@ -255,10 +280,11 @@ const populated = await populatePresentationBytes({
 Output names default to the input name (`report.pdf` becomes
 `report-page-001.pdf`, `clients.xlsx` becomes `clients-North.xlsx`, and
 `template.pptx` becomes `template-populated.pptx`; workbook merges default to
-`merged.xlsx` and PDF merges to `combined.pdf`) and are sanitized to stay
-portable, including on Windows. Outputs are byte-deterministic, and a cancelled
-byte operation returns nothing and leaves nothing behind. Artifact paths in the
-structured result carry these output names rather than filesystem paths.
+`merged.xlsx`, workbook consolidations to `consolidated.xlsx`, and PDF merges to
+`combined.pdf`) and are sanitized to stay portable, including on Windows.
+Outputs are byte-deterministic, and a cancelled byte operation returns nothing
+and leaves nothing behind. Artifact paths in the structured result carry these
+output names rather than filesystem paths.
 
 ## Explain results to people
 

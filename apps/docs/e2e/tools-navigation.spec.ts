@@ -3,6 +3,12 @@ import { expect, test } from "@playwright/test";
 /** Every in-browser tool: its sub-bar tab, its route, and its page heading. */
 const BROWSER_TOOLS = [
   {
+    tab: "Consolidate",
+    route: "/tools/excel-consolidate",
+    heading: "Consolidate Excel workbooks",
+    card: "Consolidate spreadsheets",
+  },
+  {
     tab: "Merge tabs",
     route: "/tools/excel-merge",
     heading: "Merge Excel workbooks",
@@ -83,6 +89,11 @@ test.describe("tool guides", () => {
       tool: "/tools/excel-merge",
       label: "Merge tabs",
     },
+    {
+      url: "/docs/tools/spreadsheet-consolidate",
+      tool: "/tools/excel-consolidate",
+      label: "Consolidate",
+    },
   ] as const;
 
   for (const guide of GUIDES) {
@@ -97,13 +108,9 @@ test.describe("tool guides", () => {
   }
 
   // Guides for operations without a browser surface must not promise an
-  // online tool at all — neither consolidation nor the populate guide's two
-  // operations (populate and template inspection) run in the browser.
+  // online tool at all — neither of the populate guide's two operations
+  // (populate and template inspection) runs in the browser.
   const GUIDES_WITHOUT_TOOL = [
-    {
-      url: "/docs/tools/spreadsheet-consolidate",
-      heading: "Consolidate spreadsheets into one table",
-    },
     {
       url: "/docs/tools/powerpoint-populate",
       heading: "Populate a PowerPoint template",

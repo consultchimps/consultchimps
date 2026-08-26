@@ -414,11 +414,7 @@ export function PdfMergeTool() {
         />
       </section>
 
-      <ResultsPanel
-        archiveName="merged-pdf.zip"
-        fallbackMediaType={PDF_MEDIA_TYPE}
-        state={runState}
-      />
+      <ResultsPanel fallbackMediaType={PDF_MEDIA_TYPE} state={runState} />
     </ToolShell>
   );
 }
