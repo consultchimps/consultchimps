@@ -1,9 +1,10 @@
 /**
  * Test fixtures and shared locators for the in-browser tool suite.
  *
- * PDFs are generated in-process with pdf-lib and workbooks are assembled with
- * jszip, so nothing binary is checked in and no temporary files are left
- * behind. Both are handed to the pages as in-memory uploads.
+ * PDFs are generated in-process with pdf-lib, and workbooks and presentations
+ * are assembled with jszip, so nothing binary is checked in and no temporary
+ * files are left behind. All three are handed to the pages as in-memory
+ * uploads.
  *
  * Pages are addressed through the `data-testid` attributes the tool shell
  * renders rather than through heading text, so wording changes do not break
@@ -17,6 +18,9 @@ import { PDFDocument } from "pdf-lib";
 
 const WORKBOOK_MEDIA_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+const PRESENTATION_MEDIA_TYPE =
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
 /** An in-memory upload in the shape Playwright's setInputFiles accepts. */
 export interface UploadFile {
@@ -158,6 +162,90 @@ export async function createWorkbookUpload(
   };
 }
 
+function slideXml(runs: ReadonlyArray<string>): string {
+  const shape = `<p:sp><p:nvSpPr><p:cNvPr id="2" name="Body"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p>${runs
+    .map(
+      (text) =>
+        `<a:r><a:rPr lang="en-US"/><a:t xml:space="preserve">${escapeXml(text)}</a:t></a:r>`,
+    )
+    .join("")}</a:p></p:txBody></p:sp>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>${shape}</p:spTree></p:cSld></p:sld>`;
+}
+
+/**
+ * Assembles a minimal but valid `.pptx` package: one text shape per slide,
+ * whose single paragraph carries one `<a:r>` run per string given for that
+ * slide. Splitting the placeholder text across runs the way PowerPoint does is
+ * the point — the populate engine has to stitch runs back together before it
+ * can see a `{{field}}`, so a checked-in deck would hide that behaviour behind
+ * an opaque binary. Generating the package here keeps every fixture a few
+ * hundred bytes, keeps the run layout visible in the test that depends on it,
+ * and leaves nothing binary in the repository.
+ *
+ * Parts are written with `createFolders: false`, which is how PowerPoint
+ * writes a package: entries for parts only, never for directories.
+ */
+export async function createPresentationUpload(
+  name: string,
+  slides: ReadonlyArray<ReadonlyArray<string>>,
+): Promise<UploadFile> {
+  const archive = new JSZip();
+  const write = (partPath: string, content: string): void => {
+    archive.file(partPath, content, { createFolders: false });
+  };
+
+  const overrides = slides
+    .map(
+      (_slide, index) =>
+        `<Override PartName="/ppt/slides/slide${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`,
+    )
+    .join("");
+  write(
+    "[Content_Types].xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>${overrides}</Types>`,
+  );
+
+  write(
+    "_rels/.rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/></Relationships>`,
+  );
+
+  const slideReferences = slides
+    .map(
+      (_slide, index) =>
+        `<p:sldId id="${256 + index}" r:id="rId${index + 1}"/>`,
+    )
+    .join("");
+  write(
+    "ppt/presentation.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst>${slideReferences}</p:sldIdLst><p:sldSz cx="12192000" cy="6858000"/></p:presentation>`,
+  );
+
+  const relationships = slides
+    .map(
+      (_slide, index) =>
+        `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide${index + 1}.xml"/>`,
+    )
+    .join("");
+  write(
+    "ppt/_rels/presentation.xml.rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relationships}</Relationships>`,
+  );
+
+  for (const [index, runs] of slides.entries()) {
+    write(`ppt/slides/slide${index + 1}.xml`, slideXml(runs));
+  }
+
+  return {
+    name,
+    mimeType: PRESENTATION_MEDIA_TYPE,
+    buffer: await archive.generateAsync({
+      compression: "DEFLATE",
+      type: "nodebuffer",
+    }),
+  };
+}
+
 /** A file the tools must refuse: right shape, wrong media type. */
 export function createTextUpload(name: string): UploadFile {
   return {
@@ -220,11 +308,12 @@ export async function expectPdfDownload(
 }
 
 /**
- * Clicks a Download button and asserts the saved bytes are a ZIP package,
- * which every `.xlsx` workbook is. A tool that "finishes" while producing
- * empty or corrupt bytes fails here.
+ * Clicks a Download button and asserts the saved bytes are a ZIP package. Both
+ * Office formats the tools produce are ZIP containers, so a `.xlsx` workbook
+ * and a `.pptx` presentation share one header check: a tool that "finishes"
+ * while producing empty or corrupt bytes fails here.
  */
-export async function expectWorkbookDownload(
+async function expectOfficePackageDownload(
   page: Page,
   trigger: () => Promise<void>,
   expectedFileName: string,
@@ -232,6 +321,12 @@ export async function expectWorkbookDownload(
   const bytes = await downloadedBytes(page, trigger, expectedFileName);
   expect(bytes.subarray(0, 2).toString("latin1")).toBe("PK");
 }
+
+/** Asserts a downloaded `.xlsx` workbook is a non-empty ZIP package. */
+export const expectWorkbookDownload = expectOfficePackageDownload;
+
+/** Asserts a downloaded `.pptx` presentation is a non-empty ZIP package. */
+export const expectPresentationDownload = expectOfficePackageDownload;
 
 /** One worksheet of a downloaded workbook, read back from its own part. */
 export interface DownloadedWorksheet {

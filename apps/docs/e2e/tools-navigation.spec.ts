@@ -32,6 +32,18 @@ const BROWSER_TOOLS = [
     heading: "Merge PDFs",
     card: "Merge PDF packs",
   },
+  {
+    tab: "PowerPoint",
+    route: "/tools/pptx-populate",
+    heading: "Populate a PowerPoint template",
+    card: "Populate PowerPoint templates",
+  },
+  {
+    tab: "Inspect template",
+    route: "/tools/pptx-inspect",
+    heading: "Inspect a PowerPoint template",
+    card: "Inspect PowerPoint templates",
+  },
 ] as const;
 
 test.describe("/tools", () => {
@@ -94,6 +106,11 @@ test.describe("tool guides", () => {
       tool: "/tools/excel-consolidate",
       label: "Consolidate",
     },
+    {
+      url: "/docs/tools/powerpoint-populate",
+      tool: "/tools/pptx-populate",
+      label: "PowerPoint",
+    },
   ] as const;
 
   for (const guide of GUIDES) {
@@ -107,25 +124,31 @@ test.describe("tool guides", () => {
     });
   }
 
-  // Guides for operations without a browser surface must not promise an
-  // online tool at all — neither of the populate guide's two operations
-  // (populate and template inspection) runs in the browser.
-  const GUIDES_WITHOUT_TOOL = [
-    {
-      url: "/docs/tools/powerpoint-populate",
-      heading: "Populate a PowerPoint template",
-    },
-  ] as const;
+  // There is deliberately no "this guide offers no online tool" table here:
+  // every operation the registry declares now has a working browser surface,
+  // so such a table would have no rows. The rule it used to assert — a guide
+  // may only offer a button for an operation whose browser surface works — is
+  // enforced for every entry by scripts/check-registry-site.ts, which reads
+  // the registry the pages render from.
 
-  for (const guide of GUIDES_WITHOUT_TOOL) {
-    test(`${guide.url} offers no online tool`, async ({ page }) => {
-      await page.goto(guide.url);
-      await expect(
-        page.getByRole("heading", { level: 1, name: guide.heading }),
-      ).toBeVisible();
-      await expect(
-        page.getByRole("link", { name: /^Try .+ online$/u }),
-      ).toHaveCount(0);
-    });
-  }
+  // Two registry entries — populate and template inspection — point their
+  // docHref at the same PowerPoint guide, the inspection one through an
+  // anchor. `findToolByDocUrl` strips the fragment and returns the first
+  // browser tool whose page matches, which is populate because it precedes
+  // inspection in TOOLS. A guide page therefore offers exactly one button, so
+  // readers are never asked to choose between two "Try … online" links; the
+  // inspection tool is reached from the /tools sub-bar and its index card
+  // instead.
+  test("/docs/tools/powerpoint-populate offers only the populate tool", async ({
+    page,
+  }) => {
+    await page.goto("/docs/tools/powerpoint-populate");
+
+    const tryOnline = page.getByRole("link", { name: /^Try .+ online$/u });
+    await expect(tryOnline).toHaveCount(1);
+    await expect(tryOnline).toHaveAttribute("href", "/tools/pptx-populate");
+    await expect(
+      page.getByRole("link", { name: "Try Inspect template online" }),
+    ).toHaveCount(0);
+  });
 });

@@ -5,9 +5,9 @@
  * synchronous work. Running it here keeps the tab responsive: the page only
  * ships inputs in, renders progress events, and receives output buffers.
  *
- * One worker serves both formats, and each engine is still pulled in with a
+ * One worker serves every format, and each engine is still pulled in with a
  * dynamic `import()` on the first task that needs it, so opening a tool page
- * downloads neither engine until someone asks for a preview or a run.
+ * downloads no engine until someone asks for a preview or a run.
  */
 import {
   isConsultChimpsError,
@@ -176,6 +176,39 @@ async function perform(
         columns: records.columns,
         worksheet: records.worksheet,
       });
+    }
+    case "pptx.inspect": {
+      const { inspectPresentationBytes } =
+        await import("@consultchimps/pptx/bytes");
+      return answerWithValue(
+        await inspectPresentationBytes(
+          { bytes: task.template.bytes, name: task.template.name },
+          { templateSlide: task.templateSlide },
+        ),
+      );
+    }
+    case "pptx.plan-populate": {
+      const { planPopulatePresentationBytes } =
+        await import("@consultchimps/pptx/bytes");
+      return answerWithValue(
+        await planPopulatePresentationBytes({
+          ...task.options,
+          template: { bytes: task.template.bytes, name: task.template.name },
+          workbook: { bytes: task.workbook.bytes, name: task.workbook.name },
+        }),
+      );
+    }
+    case "pptx.populate": {
+      const { populatePresentationBytes } =
+        await import("@consultchimps/pptx/bytes");
+      return answerWithOutputs(
+        await populatePresentationBytes({
+          ...controls,
+          ...task.options,
+          template: { bytes: task.template.bytes, name: task.template.name },
+          workbook: { bytes: task.workbook.bytes, name: task.workbook.name },
+        }),
+      );
     }
   }
 }
