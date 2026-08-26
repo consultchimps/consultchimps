@@ -9,10 +9,13 @@
  * worker. Rewriting an OOXML package is the heaviest thing either tool does,
  * so keeping it off the main thread is what makes a large workbook usable.
  *
- * The split here is the byte API's single-source split: it reads one
- * worksheet, Excel Table, or named range and writes compact workbooks. The
- * command line's default is the newer all-worksheet split, which is a
- * deliberate divergence documented in the split guide.
+ * The split runs the byte API's default all-worksheet mode, matching the
+ * command line: with no source named it filters every worksheet that carries
+ * the chosen column and carries the rest of the workbook into each output
+ * untouched. Naming a worksheet, Excel Table, or named range — or clearing
+ * whole-workbook preservation — selects the narrower single-source modes that
+ * write compact, data-only workbooks, so the controls below have to say which
+ * mode the current selection is really in.
  */
 
 import {
@@ -157,9 +160,10 @@ export function ExcelSplitTool() {
   const [headerRow, setHeaderRow] = useState("");
   const [includeBlank, setIncludeBlank] = useState(false);
   const [includeHiddenSheets, setIncludeHiddenSheets] = useState(false);
-  // The byte API preserves the whole workbook by default whenever a table is
-  // named, so the control starts on and only applies while a table is named.
+  // Whole-workbook preservation is the API default wherever it is offered, so
+  // the control starts on and only ever sends the opt-out.
   const [preserveWorkbook, setPreserveWorkbook] = useState(true);
+  const [strict, setStrict] = useState(false);
   const [values, setValues] = useState(false);
   const [plan, setPlan] =
     useState<OperationPlan<SplitWorkbookByColumnPlanMetric> | null>(null);
@@ -169,9 +173,21 @@ export function ExcelSplitTool() {
   const isRunning = runState.status === "running";
   const tableName = table.trim();
   const rangeName = range.trim();
+  const sheetName = sheet.trim();
   // An Excel Table and a named range both carry their own headers, so the API
   // refuses a header row alongside either one.
   const headerRowAllowed = !tableName && !rangeName;
+  // Whole-workbook preservation exists for the all-worksheet default and for
+  // an Excel Table split. A named range or a named worksheet is always rebuilt
+  // compactly, so the option would be a promise the API cannot keep.
+  const preserveWorkbookAllowed =
+    Boolean(tableName) || (!rangeName && !sheetName);
+  // The API's dispatch rule, mirrored so the controls can tell the truth: no
+  // source named and preservation left on means every worksheet is filtered
+  // in place, which is also the only mode that ignores the blank and hidden
+  // worksheet options.
+  const allWorksheetMode =
+    !tableName && !rangeName && !sheetName && preserveWorkbook;
 
   const options = useMemo<WorkbookSplitOptions>(() => {
     const parsedHeaderRow = Number.parseInt(headerRow, 10);
@@ -182,15 +198,20 @@ export function ExcelSplitTool() {
         headerRowAllowed && Number.isFinite(parsedHeaderRow)
           ? parsedHeaderRow
           : undefined,
-      includeBlank,
-      includeHiddenSheets,
-      preserveWorkbook: tableName ? preserveWorkbook : undefined,
+      includeBlank: allWorksheetMode ? undefined : includeBlank,
+      includeHiddenSheets: allWorksheetMode ? undefined : includeHiddenSheets,
+      // Only the opt-out travels; leaving it unset lets each mode apply its own
+      // default, and no mode is asked for a preservation it does not offer.
+      preserveWorkbook:
+        preserveWorkbookAllowed && !preserveWorkbook ? false : undefined,
       range: rangeName || undefined,
-      sheet: sheet.trim() || undefined,
+      sheet: sheetName || undefined,
+      strict,
       table: tableName || undefined,
       values,
     };
   }, [
+    allWorksheetMode,
     column,
     headerRow,
     headerRowAllowed,
@@ -198,8 +219,10 @@ export function ExcelSplitTool() {
     includeHiddenSheets,
     prefix,
     preserveWorkbook,
+    preserveWorkbookAllowed,
     rangeName,
-    sheet,
+    sheetName,
+    strict,
     tableName,
     values,
   ]);
@@ -296,7 +319,7 @@ export function ExcelSplitTool() {
 
   return (
     <ToolShell
-      description="Choose a workbook and a column, and get one workbook per distinct value in that column. Everything runs in this page using the same operation the ConsultChimps library uses."
+      description="Choose a workbook and a column, and get one workbook per distinct value in that column. By default each new workbook is a complete copy of the original — every tab, layout, and setting kept — with only the rows for one value left in place. Everything runs in this page using the same operation the ConsultChimps library uses."
       guideHref="/docs/tools/spreadsheet-split"
       guideLabel="Read the split guide"
       kicker="Online tool · Excel split"
@@ -385,7 +408,7 @@ export function ExcelSplitTool() {
           <div className="mt-4">
             <TextField
               disabled={isRunning}
-              hint="Matching ignores surrounding whitespace and letter case."
+              hint="Matching ignores surrounding whitespace and letter case, unless strict matching is turned on below."
               label="Column name"
               onChange={setColumn}
               placeholder="Region"
@@ -399,6 +422,11 @@ export function ExcelSplitTool() {
           <summary className="cursor-pointer text-sm font-semibold">
             Advanced options
           </summary>
+          <p className={`${fieldHintClass} mt-3`}>
+            Leave the worksheet, table, and range fields empty to split every
+            worksheet that contains your column and keep the rest of the
+            workbook in each new file.
+          </p>
           <div className="mt-5 flex flex-col gap-5">
             <TextField
               disabled={isRunning}
@@ -411,7 +439,7 @@ export function ExcelSplitTool() {
             />
             <TextField
               disabled={isRunning}
-              hint="Optional. Limits the search to one worksheet by name."
+              hint="Optional. Splits one worksheet by name, and the new files then hold only that worksheet's matching rows."
               label="Worksheet"
               onChange={setSheet}
               placeholder="Clients"
@@ -420,7 +448,7 @@ export function ExcelSplitTool() {
             />
             <TextField
               disabled={isRunning}
-              hint="Optional. Reads a named Excel Table, which gives the safest data boundaries."
+              hint="Optional. Splits a named Excel table, which gives the safest data boundaries. The rest of the workbook is kept unless you turn that off below."
               label="Excel table"
               onChange={setTable}
               placeholder="ClientData"
@@ -429,7 +457,7 @@ export function ExcelSplitTool() {
             />
             <TextField
               disabled={isRunning}
-              hint="Optional. Reads a workbook-level named range instead. Cannot be combined with an Excel table."
+              hint="Optional. Splits a workbook-level named range instead, and the new files then hold only that range's matching rows. Cannot be combined with an Excel table."
               label="Named range"
               onChange={setRange}
               placeholder="ClientRange"
@@ -457,28 +485,48 @@ export function ExcelSplitTool() {
               />
             </div>
             <CheckboxField
-              checked={includeBlank}
-              disabled={isRunning}
-              hint="Write a workbook for rows whose split value is blank."
+              checked={preserveWorkbookAllowed && preserveWorkbook}
+              disabled={isRunning || !preserveWorkbookAllowed}
+              hint={
+                preserveWorkbookAllowed
+                  ? "On by default. Every tab, layout, and setting is kept, and only the rows that do not belong are removed. Turn it off to get small, plain workbooks holding just the matching rows of the source being split."
+                  : "Not offered for a named worksheet or a named range: those always produce small, plain workbooks holding just the matching rows."
+              }
+              label="Keep the whole workbook"
+              onChange={setPreserveWorkbook}
+              testId="preserve-workbook-checkbox"
+            />
+            <CheckboxField
+              checked={!allWorksheetMode && includeBlank}
+              disabled={isRunning || allWorksheetMode}
+              hint={
+                allWorksheetMode
+                  ? "Only applies when you name a worksheet, table, or range, or turn off keeping the whole workbook. Otherwise rows with a blank value never get a workbook of their own."
+                  : "Write a workbook for rows whose split value is blank."
+              }
               label="Include blank values"
               onChange={setIncludeBlank}
               testId="include-blank-checkbox"
             />
             <CheckboxField
-              checked={includeHiddenSheets}
-              disabled={isRunning}
-              hint="Search hidden and very hidden worksheets as well."
+              checked={!allWorksheetMode && includeHiddenSheets}
+              disabled={isRunning || allWorksheetMode}
+              hint={
+                allWorksheetMode
+                  ? "Only applies when you name a worksheet, table, or range, or turn off keeping the whole workbook. Otherwise hidden worksheets are always split too, and stay hidden in every new file."
+                  : "Search hidden and very hidden worksheets as well."
+              }
               label="Include hidden worksheets"
               onChange={setIncludeHiddenSheets}
               testId="include-hidden-checkbox"
             />
             <CheckboxField
-              checked={Boolean(tableName) && preserveWorkbook}
-              disabled={isRunning || !tableName}
-              hint="Keep the complete source workbook and replace only the table's rows. Requires an Excel table, and is on by default when one is named."
-              label="Preserve the whole workbook"
-              onChange={setPreserveWorkbook}
-              testId="preserve-workbook-checkbox"
+              checked={strict}
+              disabled={isRunning}
+              hint="Treat differences in letter case, surrounding whitespace, and value type as different values."
+              label="Strict matching"
+              onChange={setStrict}
+              testId="strict-checkbox"
             />
             <CheckboxField
               checked={values}
@@ -516,7 +564,7 @@ export function ExcelSplitTool() {
         ) : null}
         {plan && !planError ? (
           <>
-            <dl className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <dl className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3">
               <div>
                 <dt className="font-mono text-xs uppercase tracking-[0.12em] text-fd-muted-foreground">
                   Groups
@@ -545,6 +593,24 @@ export function ExcelSplitTool() {
                   {plan.metrics.skippedRows}
                 </dd>
               </div>
+              {/* The two counts that make the split's reach visible: how many
+                  tabs get filtered, and how many ride along unchanged. */}
+              <div>
+                <dt className="font-mono text-xs uppercase tracking-[0.12em] text-fd-muted-foreground">
+                  Tabs filtered
+                </dt>
+                <dd className="text-2xl font-bold">
+                  {plan.metrics.sheetsFiltered}
+                </dd>
+              </div>
+              <div>
+                <dt className="font-mono text-xs uppercase tracking-[0.12em] text-fd-muted-foreground">
+                  Tabs kept as is
+                </dt>
+                <dd className="text-2xl font-bold">
+                  {plan.metrics.sheetsCopiedUnchanged}
+                </dd>
+              </div>
             </dl>
             {plan.warnings.length > 0 ? (
               <ul className={noticeClass} data-testid="preview-warnings">
@@ -570,6 +636,11 @@ export function ExcelSplitTool() {
 
       <section className={sectionClass} data-testid="run-section">
         <h2 className="text-xl font-bold tracking-[-0.03em]">4. Run</h2>
+        <p className="mt-3 text-sm text-fd-muted-foreground">
+          {preserveWorkbookAllowed && preserveWorkbook
+            ? "Each new workbook is a complete copy of your file, with every tab, layout, and setting kept, holding only the rows for one value."
+            : "Each new workbook is a small, plain file holding only the matching rows from the source you chose."}
+        </p>
         <RunControls
           busyLabel="Splitting…"
           disabled={!input || !options.column}

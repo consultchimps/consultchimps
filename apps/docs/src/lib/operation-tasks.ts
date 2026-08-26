@@ -23,8 +23,8 @@ import type {
 import type { MergePdfsMetric, SplitPdfMetric } from "@consultchimps/pdf/bytes";
 import type {
   MergeWorkbooksMetric,
-  SplitWorkbookByColumnMetric,
   SplitWorkbookByColumnPlanMetric,
+  SplitWorkbookBytesOutcome,
 } from "@consultchimps/xlsx/bytes";
 
 /** One in-memory input, in the shape every byte-level operation accepts. */
@@ -33,7 +33,18 @@ export interface NamedBytes {
   readonly bytes: Uint8Array;
 }
 
-/** The workbook-split selection and formatting options the page exposes. */
+/**
+ * The workbook-split selection and formatting options the page exposes.
+ *
+ * Which engine these reach is decided by the selection fields, not by a mode
+ * flag: leaving `table`, `range`, and `sheet` unset while `preserveWorkbook`
+ * is not `false` runs the all-worksheet split, where every worksheet carrying
+ * the column is filtered in place and the rest of the workbook travels with
+ * each output. Naming any one source, or passing `preserveWorkbook: false`,
+ * selects a single-source split instead — and that is the only case where
+ * `includeBlank` and `includeHiddenSheets` mean anything, because the
+ * all-worksheet engine ignores both.
+ */
 export interface WorkbookSplitOptions {
   readonly column: string;
   readonly filenamePrefix?: string | undefined;
@@ -43,6 +54,7 @@ export interface WorkbookSplitOptions {
   readonly preserveWorkbook?: boolean | undefined;
   readonly range?: string | undefined;
   readonly sheet?: string | undefined;
+  readonly strict?: boolean | undefined;
   readonly table?: string | undefined;
   readonly values?: boolean | undefined;
 }
@@ -106,7 +118,10 @@ interface OperationTaskResults {
   "pdf.split": ByteOperationOutcome<SplitPdfMetric>;
   "pdf.merge": ByteOperationOutcome<MergePdfsMetric>;
   "xlsx.plan-split": OperationPlan<SplitWorkbookByColumnPlanMetric>;
-  "xlsx.split": ByteOperationOutcome<SplitWorkbookByColumnMetric>;
+  // The split reports more than a plain byte outcome: in all-worksheet mode
+  // its result also carries per-output and per-worksheet detail, so the
+  // operation's own outcome type is kept rather than flattened.
+  "xlsx.split": SplitWorkbookBytesOutcome;
   "xlsx.merge": ByteOperationOutcome<MergeWorkbooksMetric>;
   "xlsx.columns": WorksheetColumns;
 }

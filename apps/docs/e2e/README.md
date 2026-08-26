@@ -26,8 +26,9 @@ command when `out/` is missing.
   downloading the result.
 - `excel-split.spec.ts` — detecting a workbook's column headers, splitting on
   one of them into a workbook per distinct value, downloading one of them,
-  reporting a column the workbook does not have, and refusing a file that is not
-  a workbook.
+  reading a downloaded workbook back to confirm it is a complete copy of the
+  source, reporting a column the workbook does not have, and refusing a file
+  that is not a workbook.
 - `excel-merge.spec.ts` — merging two workbooks into one, reordering and
   removing sources, and downloading the result.
 - `tools-navigation.spec.ts` — the `/tools` index, the sub-bar tabs, and the
@@ -35,7 +36,10 @@ command when `out/` is missing.
 
 Every downloaded PDF is checked for the `%PDF-` header and every downloaded
 workbook for the `PK` ZIP header, so a tool that "finishes" while producing
-empty or corrupt bytes fails the suite.
+empty or corrupt bytes fails the suite. `readWorkbookDownload` goes further and
+opens a downloaded workbook with jszip, resolving each worksheet through the
+workbook's own relationships, so a test can assert which worksheets and which
+rows reached the user.
 
 ## Selectors
 
@@ -60,7 +64,8 @@ shell renders, not through heading text. The stable identifiers are:
 The Excel split page adds `column-select`, `column-input`, and one identifier
 per advanced control (`prefix-input`, `sheet-input`, `table-input`,
 `range-input`, `header-row-input`, `include-blank-checkbox`,
-`include-hidden-checkbox`, `preserve-workbook-checkbox`, `values-checkbox`).
+`include-hidden-checkbox`, `preserve-workbook-checkbox`, `strict-checkbox`,
+`values-checkbox`).
 
 The preview and results panels also carry accessible names, so
 `getByRole("region", { name: "Results" })` works where a role-based query reads

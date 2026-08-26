@@ -129,11 +129,14 @@ creates compact data-only outputs. Named-range and selected-worksheet modes are
 data-only.
 
 <Callout title="What the online tool does">
-  The [in-browser splitter](/tools/excel-split) runs this single-source split,
-  not the all-worksheet default described above: it reads one worksheet, Excel
-  Table, or named range and writes compact workbooks, naming an Excel Table to
-  preserve the complete workbook. The command line and the browser tool
-  therefore differ by design; the same options are available in both.
+  The [in-browser splitter](/tools/excel-split) runs the same all-worksheet
+  split as the command line, so each workbook it creates is a complete copy of
+  your file with the other values' rows removed. Naming a table, a range, or a
+  worksheet narrows it to that one source there too. Only the names of the
+  finished files differ: the command line saves into the folder you choose and
+  names each file after the value alone, such as `North.xlsx`, while the browser
+  hands you downloads and keeps the source name in front, such as
+  `clients-North.xlsx`. You can change that prefix in the tool.
 </Callout>
 
 ## Preservation and known limitations

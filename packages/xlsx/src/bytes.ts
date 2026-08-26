@@ -11,9 +11,21 @@ import {
   type ByteOperationOutcome,
   type OperationControlOptions,
   type OperationPlan,
+  type OperationResult,
 } from "@consultchimps/core";
 
 import { XLSX_ERRORS } from "./errors.js";
+import {
+  analyzeAllWorksheetSplit,
+  plannedAllWorksheetSplitMetrics,
+  runAllWorksheetSplit,
+  workbookExtensionOf,
+  type AllWorksheetSplitAnalysis,
+  type AllWorksheetSplitSelection,
+  type AllWorksheetSplitSummary,
+  type SplitOutputDetail,
+  type SplitSourceIdentity,
+} from "./split/all-worksheet.js";
 import {
   appendWorkbookSheets,
   buildSplitGroupBytes,
@@ -51,18 +63,34 @@ export interface SplitWorkbookBytesOptions extends OperationControlOptions {
   column: string;
   filenamePrefix?: string | undefined;
   headerRow?: number | undefined;
+  /** Only applies to a table, range, or worksheet selection. */
   includeBlank?: boolean | undefined;
+  /** Only applies to a table, range, or worksheet selection. */
   includeHiddenSheets?: boolean | undefined;
   /**
-   * Keep the complete source workbook and replace only the selected Excel
-   * Table's rows. Defaults to true when a table is selected; not available
-   * for named ranges or plain worksheet splits.
+   * Keep the complete source workbook. In the default all-worksheet mode this
+   * is enabled unless explicitly set to false; table splits also default to
+   * true. Named-range and selected-worksheet splits remain compact when this
+   * option is false.
    */
   preserveWorkbook?: boolean | undefined;
   range?: string | undefined;
   sheet?: string | undefined;
   table?: string | undefined;
+  /** Compare split values without trimming, case folding, or numeric coercion. */
+  strict?: boolean | undefined;
   values?: boolean | undefined;
+}
+
+export interface SplitWorkbookBytesResult extends OperationResult<SplitWorkbookByColumnMetric> {
+  /** Per-output, per-worksheet filtering details for all-worksheet splits. */
+  outputs?: SplitOutputDetail[] | undefined;
+  /** Input, option, and worksheet summary for all-worksheet splits. */
+  summary?: AllWorksheetSplitSummary | undefined;
+}
+
+export interface SplitWorkbookBytesOutcome extends ByteOperationOutcome<SplitWorkbookByColumnMetric> {
+  result: SplitWorkbookBytesResult;
 }
 
 export interface MergeWorkbooksBytesOptions extends OperationControlOptions {
@@ -81,6 +109,81 @@ interface ResolvedSplitBytes extends ResolvedSplitSource {
   outputNames: string[];
 }
 
+/**
+ * Whether this split keeps the whole workbook and filters every worksheet that
+ * carries the column, rather than rebuilding one selected source.
+ *
+ * The rule is the file surface's rule, character for character: naming a
+ * table, a range, or a worksheet asks for that narrower source, and
+ * `preserveWorkbook: false` asks for a compact rebuild. Anything else gets the
+ * workbook-preserving split, so the same options mean the same thing whether a
+ * caller has a filesystem or only bytes.
+ */
+function isAllWorksheetSplit(options: SplitWorkbookBytesOptions): boolean {
+  return (
+    !options.table &&
+    !options.range &&
+    !options.sheet &&
+    options.preserveWorkbook !== false
+  );
+}
+
+/**
+ * The name every output of this split is built from.
+ *
+ * A byte split's outputs are downloads that land wherever the caller puts
+ * them, with no chosen directory to tell one job's results from another's, so
+ * they keep the source-derived prefix this surface has always used. The file
+ * surface, which writes into a directory the caller named, uses the group
+ * value alone.
+ */
+function splitFilenamePrefix(options: SplitWorkbookBytesOptions): string {
+  return safeNameFragment(
+    options.filenamePrefix ?? withoutWorkbookExtension(options.input.name),
+    "split",
+  );
+}
+
+interface ResolvedAllWorksheetSplitBytes {
+  analysis: AllWorksheetSplitAnalysis;
+  identity: SplitSourceIdentity;
+  outputNames: string[];
+  selection: AllWorksheetSplitSelection;
+}
+
+async function resolveAllWorksheetSplitBytes(
+  options: SplitWorkbookBytesOptions,
+): Promise<ResolvedAllWorksheetSplitBytes> {
+  const identity: SplitSourceIdentity = {
+    details: { source: options.input.name },
+    label: options.input.name,
+  };
+  const extension = workbookExtensionOf(options.input.name, identity);
+  const selection: AllWorksheetSplitSelection = {
+    column: options.column,
+    headerRow: options.headerRow,
+    strict: options.strict,
+    values: options.values,
+  };
+  const analysis = await analyzeAllWorksheetSplit(
+    options.input.bytes,
+    extension,
+    selection,
+    identity,
+  );
+
+  return {
+    analysis,
+    identity,
+    outputNames: splitOutputFileNames(
+      splitFilenamePrefix(options),
+      analysis.groups.map((group) => group.display),
+      extension,
+    ),
+    selection,
+  };
+}
+
 async function resolveSplitWorkbookBytes(
   options: SplitWorkbookBytesOptions,
 ): Promise<ResolvedSplitBytes> {
@@ -93,15 +196,11 @@ async function resolveSplitWorkbookBytes(
     },
     options,
   );
-  const filenamePrefix = safeNameFragment(
-    options.filenamePrefix ?? withoutWorkbookExtension(options.input.name),
-    "split",
-  );
 
   return {
     ...resolved,
     outputNames: splitOutputFileNames(
-      filenamePrefix,
+      splitFilenamePrefix(options),
       resolved.grouped.groups.map((group) => group.value),
     ),
   };
@@ -114,6 +213,31 @@ async function resolveSplitWorkbookBytes(
 export async function planSplitWorkbookBytes(
   options: SplitWorkbookBytesOptions,
 ): Promise<OperationPlan<SplitWorkbookByColumnPlanMetric>> {
+  if (isAllWorksheetSplit(options)) {
+    const resolved = await resolveAllWorksheetSplitBytes(options);
+    return {
+      operation: SPLIT_OPERATION,
+      inputs: [options.input.name],
+      outputs: resolved.outputNames.map((name) => ({
+        kind: "file",
+        mediaType: resolved.analysis.mediaType,
+        path: name,
+        exists: false,
+      })),
+      warnings:
+        resolved.analysis.skippedRows > 0
+          ? [
+              `Skipped ${resolved.analysis.skippedRows} row${resolved.analysis.skippedRows === 1 ? "" : "s"} with blank values in "${options.column}"; no blank-value workbook was created.`,
+            ]
+          : [],
+      metrics: plannedAllWorksheetSplitMetrics(
+        resolved.analysis,
+        resolved.selection,
+        resolved.outputNames.length,
+      ),
+    };
+  }
+
   const resolved = await resolveSplitWorkbookBytes(options);
   const warnings =
     resolved.grouped.skippedRows > 0
@@ -130,12 +254,23 @@ export async function planSplitWorkbookBytes(
       exists: false,
     })),
     warnings,
+    // A single-source split reports zero for the work only the all-worksheet
+    // engine does, so both modes answer to the same metric names.
     metrics: {
+      calcChainEntriesRemoved: 0,
+      formulaCellsBlankedForRemovedRows: 0,
+      formulaCellsConverted: 0,
+      formulaCellsWithoutCachedValues: 0,
       groups: resolved.grouped.groups.length,
       inputFiles: 1,
       inputRows: resolved.table.rows.length,
       outputFiles: resolved.outputNames.length,
+      pivotTablesRemoved: 0,
+      rowsDeleted: 0,
+      sheetsCopiedUnchanged: 0,
+      sheetsFiltered: 1,
       skippedRows: resolved.grouped.skippedRows,
+      valuesOnly: options.values === true ? 1 : 0,
     },
   };
 }
@@ -143,15 +278,21 @@ export async function planSplitWorkbookBytes(
 /**
  * Split one workbook's rows into one workbook per distinct column value.
  *
- * The byte surface offers only the region-selecting modes - an Excel Table, a
- * named range, or one worksheet - so it reaches the same two builders the file
- * surface uses for those selections and none of the all-worksheet machinery.
- * Phase 1 left both builders where they were; `buildSplitGroupBytes` says why.
+ * Two engines sit behind one signature, chosen by exactly the rule the file
+ * surface uses. With no table, range, or worksheet selection the split keeps
+ * the whole workbook and filters every worksheet that carries the column, on
+ * the layered engine, so every reference describing a moved row moves with it.
+ * Selecting a region instead asks for one of the older, narrower modes - a
+ * preserved Excel Table rewrite, or a compact single-worksheet rebuild - which
+ * `shared.ts` still owns; `buildSplitGroupBytes` says why they stayed there.
  */
 export async function splitWorkbookBytes(
   options: SplitWorkbookBytesOptions,
-): Promise<ByteOperationOutcome<SplitWorkbookByColumnMetric>> {
+): Promise<SplitWorkbookBytesOutcome> {
   throwIfAborted(options.signal, SPLIT_OPERATION, "memory");
+  if (isAllWorksheetSplit(options)) {
+    return splitAllWorksheetsBytes(options);
+  }
   const {
     grouped,
     outputNames,
@@ -210,6 +351,10 @@ export async function splitWorkbookBytes(
           : []),
       ],
       metrics: {
+        calcChainEntriesRemoved: 0,
+        formulaCellsBlankedForRemovedRows: 0,
+        formulaCellsConverted: 0,
+        formulaCellsWithoutCachedValues: 0,
         groups: grouped.groups.length,
         inputFiles: 1,
         inputRows: table.rows.length,
@@ -218,8 +363,65 @@ export async function splitWorkbookBytes(
           (total, group) => total + group.table.rows.length,
           0,
         ),
+        pivotTablesRemoved,
+        rowsDeleted: 0,
+        sheetsCopiedUnchanged: 0,
+        sheetsFiltered: 1,
         skippedRows: grouped.skippedRows,
+        valuesOnly: options.values === true ? 1 : 0,
       },
+    },
+    outputs,
+  };
+}
+
+/**
+ * The byte surface's all-worksheet split: hold every finished workbook in
+ * memory, because a caller with no filesystem has nowhere else to put one, and
+ * report the same details and warnings the file surface reports.
+ */
+async function splitAllWorksheetsBytes(
+  options: SplitWorkbookBytesOptions,
+): Promise<SplitWorkbookBytesOutcome> {
+  const { analysis, identity, outputNames, selection } =
+    await resolveAllWorksheetSplitBytes(options);
+  const outputs: ByteArtifact[] = [];
+
+  const run = await runAllWorksheetSplit({
+    analysis,
+    identity,
+    outputContext: "memory",
+    outputNames,
+    selection,
+    signal: options.signal,
+    write: (index, bytes, detail) => {
+      outputs.push({
+        name: detail.output,
+        bytes,
+        mediaType: analysis.mediaType,
+      });
+      options.onProgress?.({
+        operation: SPLIT_OPERATION,
+        stage: "building-workbooks",
+        completed: index + 1,
+        total: analysis.groups.length,
+        detail: detail.output,
+      });
+    },
+  });
+
+  return {
+    result: {
+      operation: SPLIT_OPERATION,
+      artifacts: outputs.map((output) => ({
+        kind: "file",
+        mediaType: analysis.mediaType,
+        path: output.name,
+      })),
+      warnings: run.warnings,
+      metrics: run.metrics,
+      outputs: run.outputs,
+      summary: run.summary,
     },
     outputs,
   };
@@ -324,3 +526,8 @@ export type {
   WorkbookNamedRange,
   WorksheetRecords,
 } from "./shared.js";
+export type {
+  AllWorksheetSplitSummary,
+  SplitOutputDetail,
+  SplitSheetDetail,
+} from "./split/all-worksheet.js";

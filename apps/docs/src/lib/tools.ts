@@ -91,7 +91,7 @@ export const TOOLS: readonly ConsultTool[] = [
     title: "Split spreadsheets",
     tabLabel: "Split Excel",
     description:
-      "Create one focused Excel workbook per distinct value while keeping source workbooks unchanged.",
+      "Create one Excel workbook per distinct value, each a complete copy of the original, while keeping source workbooks unchanged.",
     docHref: "/docs/tools/spreadsheet-split",
     surfaces: {
       cli: "works",

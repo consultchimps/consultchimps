@@ -232,3 +232,131 @@ export async function expectWorkbookDownload(
   const bytes = await downloadedBytes(page, trigger, expectedFileName);
   expect(bytes.subarray(0, 2).toString("latin1")).toBe("PK");
 }
+
+/** One worksheet of a downloaded workbook, read back from its own part. */
+export interface DownloadedWorksheet {
+  /** The worksheet's tab name. */
+  readonly name: string;
+  /** The part's raw XML, for assertions this helper does not cover. */
+  readonly xml: string;
+  /** The Excel row numbers the part still declares, in document order. */
+  readonly rowNumbers: readonly number[];
+  /** Every numeric cell value in the part, in document order. */
+  readonly numbers: readonly number[];
+}
+
+/** A downloaded workbook, addressed by worksheet tab name. */
+export interface DownloadedWorkbook {
+  /** Every worksheet tab name, in workbook order. */
+  readonly sheetNames: readonly string[];
+  /** The named worksheet; fails the test when the workbook has no such tab. */
+  sheet(name: string): DownloadedWorksheet;
+}
+
+const XML_UNESCAPES: Record<string, string> = {
+  "&amp;": "&",
+  "&apos;": "'",
+  "&gt;": ">",
+  "&lt;": "<",
+  "&quot;": '"',
+};
+
+function unescapeXml(value: string): string {
+  return value.replaceAll(
+    /&(?:amp|apos|gt|lt|quot);/gu,
+    (entity) => XML_UNESCAPES[entity]!,
+  );
+}
+
+function attribute(element: string, name: string): string | undefined {
+  return new RegExp(`\\b${name}="([^"]*)"`, "u").exec(element)?.[1];
+}
+
+function rowNumbersOf(xml: string): number[] {
+  return [...xml.matchAll(/<row\b[^>]*>/gu)].flatMap((match) => {
+    const reference = attribute(match[0], "r");
+    return reference === undefined ? [] : [Number(reference)];
+  });
+}
+
+/**
+ * Numeric cell values only. Cells carrying a `t` attribute hold text — either
+ * inline or through the shared-string table — so skipping them keeps these
+ * assertions independent of how the writer chose to store strings.
+ */
+function numbersOf(xml: string): number[] {
+  return [...xml.matchAll(/<c\b([^>]*)>(.*?)<\/c>/gsu)].flatMap((match) => {
+    const type = attribute(match[1]!, "t");
+    if (type !== undefined && type !== "n") {
+      return [];
+    }
+    const value = /<v>([^<]*)<\/v>/u.exec(match[2]!)?.[1];
+    return value === undefined || value.trim() === "" ? [] : [Number(value)];
+  });
+}
+
+async function readPart(archive: JSZip, path: string): Promise<string> {
+  const part = archive.file(path);
+  expect(part, `the workbook is missing ${path}`).not.toBeNull();
+  return part!.async("string");
+}
+
+/**
+ * Clicks a Download button and reads the saved workbook back, so a test can
+ * assert what actually reached the user rather than only that bytes arrived.
+ * Worksheets are resolved through the workbook's own relationships, so the
+ * assertions do not depend on which part file a worksheet landed in.
+ */
+export async function readWorkbookDownload(
+  page: Page,
+  trigger: () => Promise<void>,
+  expectedFileName: string,
+): Promise<DownloadedWorkbook> {
+  const bytes = await downloadedBytes(page, trigger, expectedFileName);
+  expect(bytes.subarray(0, 2).toString("latin1")).toBe("PK");
+
+  const archive = await JSZip.loadAsync(bytes);
+  const relationships = new Map<string, string>();
+  for (const match of (
+    await readPart(archive, "xl/_rels/workbook.xml.rels")
+  ).matchAll(/<Relationship\b[^>]*>/gu)) {
+    const id = attribute(match[0], "Id");
+    const target = attribute(match[0], "Target");
+    if (id !== undefined && target !== undefined) {
+      relationships.set(id, target);
+    }
+  }
+
+  const worksheets = new Map<string, DownloadedWorksheet>();
+  const sheetNames: string[] = [];
+  for (const match of (await readPart(archive, "xl/workbook.xml")).matchAll(
+    /<sheet\b[^>]*>/gu,
+  )) {
+    const name = unescapeXml(attribute(match[0], "name") ?? "");
+    const target = relationships.get(attribute(match[0], "r:id") ?? "");
+    expect(target, `no worksheet part is related to "${name}"`).toBeDefined();
+    const path = target!.startsWith("/")
+      ? target!.slice(1)
+      : `xl/${target!.replace(/^\.\//u, "")}`;
+    const xml = await readPart(archive, path);
+    sheetNames.push(name);
+    worksheets.set(name, {
+      name,
+      numbers: numbersOf(xml),
+      rowNumbers: rowNumbersOf(xml),
+      xml,
+    });
+  }
+
+  return {
+    sheet(name: string): DownloadedWorksheet {
+      const worksheet = worksheets.get(name);
+      expect(
+        worksheet,
+        `the workbook has no worksheet named "${name}"`,
+      ).toBeDefined();
+      return worksheet!;
+    },
+    sheetNames,
+  };
+}

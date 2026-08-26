@@ -48,8 +48,11 @@ import {
   setAttribute,
 } from "../model/xml.js";
 import {
+  MACRO_WORKBOOK_MAIN_CONTENT_TYPE,
   packagePartDirectory,
   relationshipsPartPath,
+  VBA_PROJECT_PART,
+  WORKBOOK_MAIN_CONTENT_TYPE,
   WorkbookPackage,
   type PackageRelationship,
 } from "../package/index.js";
@@ -88,16 +91,11 @@ const RELATIONSHIP_NAMESPACE =
 const STYLES_PART = "xl/styles.xml";
 const SHARED_STRINGS_PART = "xl/sharedStrings.xml";
 const CALC_CHAIN_PART = "xl/calcChain.xml";
-const VBA_PROJECT_PART = "xl/vbaProject.bin";
 
 const SHARED_STRINGS_CONTENT_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml";
 const WORKSHEET_CONTENT_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
-const WORKBOOK_CONTENT_TYPE =
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml";
-const MACRO_WORKBOOK_CONTENT_TYPE =
-  "application/vnd.ms-excel.sheet.macroEnabled.main+xml";
 
 const MAXIMUM_SHEET_NAME_LENGTH = 31;
 const SHEET_INDEX_NAME = "Sheet Index";
@@ -1169,14 +1167,18 @@ function resolveMacroProject(state: MergeWorkbooksState): {
     state.options.macroOutput === true;
 
   if (keep) {
-    setContentTypeOverride(output, WORKBOOK_PART, MACRO_WORKBOOK_CONTENT_TYPE);
+    setContentTypeOverride(
+      output,
+      WORKBOOK_PART,
+      MACRO_WORKBOOK_MAIN_CONTENT_TYPE,
+    );
     return { enabled: true, warning: undefined };
   }
 
   if (state.macroInputs > 0) {
     dropParts(output, (partPath) => partPath === VBA_PROJECT_PART);
   }
-  setContentTypeOverride(output, WORKBOOK_PART, WORKBOOK_CONTENT_TYPE);
+  setContentTypeOverride(output, WORKBOOK_PART, WORKBOOK_MAIN_CONTENT_TYPE);
 
   if (state.macroInputs === 0) {
     return { enabled: false, warning: undefined };

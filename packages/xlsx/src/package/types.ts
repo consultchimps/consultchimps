@@ -34,6 +34,12 @@ export interface WorkbookPackage {
   /** Read the relationships part for a given part path (or the package root). */
   relationships(forPartPath?: string): Promise<readonly RelationshipEntry[]>;
   removeRelationship(forPartPath: string | undefined, id: string): void;
+  /**
+   * The content type `[Content_Types].xml` declares for a part path, if it
+   * declares one. The main workbook part's override is what says whether a
+   * package is macro-enabled, whatever the file happens to be named.
+   */
+  contentTypeOverride(partPath: string): string | undefined;
   /** Remove a content-type override for a part path, if present. */
   removeContentTypeOverride(partPath: string): void;
   /** Deterministic serialization of the current state. */

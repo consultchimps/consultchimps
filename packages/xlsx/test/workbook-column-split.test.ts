@@ -1,4 +1,11 @@
-import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -420,13 +427,21 @@ describe("all-worksheet workbook splitting", () => {
     const contentTypes = await archive
       .file("[Content_Types].xml")!
       .async("text");
-    archive.file(
-      "[Content_Types].xml",
-      contentTypes.replace(
+    // The main workbook part is declared macro-enabled as well as the VBA
+    // project being added: a package that carries macros while still calling
+    // itself an ordinary workbook is a contradiction the split refuses, so a
+    // fixture standing in for a real .xlsm has to declare both.
+    const declared = contentTypes
+      .replace(
         "</Types>",
         '<Override PartName="/xl/vbaProject.bin" ContentType="application/vnd.ms-office.vbaProject"/></Types>',
-      ),
-    );
+      )
+      .replace(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+        "application/vnd.ms-excel.sheet.macroEnabled.main+xml",
+      );
+    expect(declared).toContain("macroEnabled.main+xml");
+    archive.file("[Content_Types].xml", declared);
     const relationships = await archive
       .file("xl/_rels/workbook.xml.rels")!
       .async("text");
@@ -453,6 +468,32 @@ describe("all-worksheet workbook splitting", () => {
     expect(
       await outputArchive.file("xl/vbaProject.bin")!.async("nodebuffer"),
     ).toEqual(Buffer.from([0, 1, 2, 3, 4]));
+  });
+
+  it("refuses a workbook whose package contradicts its name", async () => {
+    const directory = await temporaryDirectory();
+    const xlsx = path.join(directory, "source.xlsx");
+    const renamed = path.join(directory, "renamed.xlsm");
+    await createPreservationWorkbook(xlsx);
+    // Renaming an ordinary workbook is all it takes to reach this: nothing in
+    // the package changed, so every output would be advertised as
+    // macro-enabled while still declaring an ordinary workbook.
+    await writeFile(renamed, await readFile(xlsx));
+
+    await expect(
+      splitWorkbookByColumn({
+        column: "Entity Name",
+        input: renamed,
+        outputDirectory: path.join(directory, "out"),
+      }),
+    ).rejects.toMatchObject({
+      code: "XLSX_SPLIT_PACKAGE_TYPE_MISMATCH",
+      details: { declaredExtension: ".xlsx", nameExtension: ".xlsm" },
+    });
+    // The refusal comes before any destination is created.
+    await expect(stat(path.join(directory, "out"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("reports missing columns, blank columns, and unsupported input types", async () => {

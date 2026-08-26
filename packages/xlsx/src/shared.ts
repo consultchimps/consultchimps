@@ -3,7 +3,7 @@
  * operations. This module must stay free of node:fs and node:path imports so
  * the byte entry point can run in browsers.
  */
-import { ConsultChimpsError, safeNameFragment } from "@consultchimps/core";
+import { ConsultChimpsError } from "@consultchimps/core";
 import {
   type CellValue,
   groupTableByColumn,
@@ -19,6 +19,8 @@ import {
 } from "./excel-tables.js";
 import { XLSX_ERRORS } from "./errors.js";
 import { preserveWorkbookWithFilteredExcelTable } from "./preserve-table-split.js";
+import type { AllWorksheetSplitMetric } from "./split/all-worksheet.js";
+import { splitOutputFilenames } from "./split/names.js";
 import { stripPivotParts } from "./tier1/pivot.js";
 import { convertWorkbookToValues } from "./values-only.js";
 
@@ -47,13 +49,13 @@ export type ConsolidateWorkbooksMetric =
 export type ConsolidateWorkbooksPlanMetric = "inputFiles" | "outputFiles";
 export type MergeWorkbooksMetric =
   "hiddenSheets" | "inputFiles" | "outputSheets";
-export type SplitWorkbookByColumnMetric =
-  | "groups"
-  | "inputFiles"
-  | "inputRows"
-  | "outputFiles"
-  | "outputRows"
-  | "skippedRows";
+/**
+ * One metric vocabulary for every split, whichever engine ran and whichever
+ * surface asked. A single-source split reports zero for the work only the
+ * all-worksheet engine does, rather than omitting the key, so a caller can read
+ * a metric without first asking which mode produced the result.
+ */
+export type SplitWorkbookByColumnMetric = AllWorksheetSplitMetric;
 export type SplitWorkbookByColumnPlanMetric = Exclude<
   SplitWorkbookByColumnMetric,
   "outputRows"
@@ -1157,42 +1159,20 @@ export function skippedRowsWarning(
   } with blank values in "${grouped.column}".`;
 }
 
-// Filename sanitization lives in @consultchimps/core. The rules match the
-// former local copy character for character; core additionally caps the
-// fragment by UTF-8 byte length instead of code-point count, so long
-// non-ASCII group values can no longer produce over-long filenames.
-function groupValueFilenameSegment(value: CellValue): string {
-  if (value === null) {
-    return "blank";
-  }
-
-  return safeNameFragment(String(value), "value");
-}
-
 /**
  * Derive one portable output filename per group value, disambiguating values
  * that sanitize to the same name.
+ *
+ * The naming rules themselves live in `split/names.ts`, because a byte split
+ * returns these filenames and a file split joins the same names onto a
+ * directory; only the two surfaces' default prefixes differ.
  */
 export function splitOutputFileNames(
   filenamePrefix: string,
   values: CellValue[],
+  extension: string = WORKBOOK_EXTENSION,
 ): string[] {
-  const usedFilenames = new Set<string>();
-
-  return values.map((value) => {
-    const segment = groupValueFilenameSegment(value);
-    const base = `${filenamePrefix}-${segment}`;
-    let filename = `${base}${WORKBOOK_EXTENSION}`;
-    let suffix = 2;
-
-    while (usedFilenames.has(filename.toLocaleLowerCase())) {
-      filename = `${base}-${suffix}${WORKBOOK_EXTENSION}`;
-      suffix += 1;
-    }
-
-    usedFilenames.add(filename.toLocaleLowerCase());
-    return filename;
-  });
+  return splitOutputFilenames(filenamePrefix, values, extension);
 }
 
 export function withoutWorkbookExtension(name: string): string {
