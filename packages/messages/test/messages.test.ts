@@ -243,6 +243,13 @@ describe("human-readable CLI output", () => {
     // file that does not exist.
     expect(output).toContain("No files were created.");
     expect(output).not.toContain("Open the files");
+
+    // The names are not in this text — only the counts are — so the next step
+    // sends the reader to the inspection report rather than "above".
+    expect(output).toContain(
+      "Read the placeholder names from the inspection report that accompanies this result",
+    );
+    expect(output).not.toContain("placeholder field listed above");
     expect(output).toContain(
       "1. Slide 1 has 1 location with malformed placeholder braces.",
     );

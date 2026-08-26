@@ -289,8 +289,12 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
       )} in total.`,
       "Nothing was created or changed. An inspection only reads the template.",
     ],
+    // The counts are all this result carries: the placeholder names travel
+    // beside it, in the inspection report itself. Saying "listed above" would
+    // point at information this text does not contain, exactly when the reader
+    // needs the exact spellings.
     nextSteps: (vocabulary) => [
-      "Give the Excel workbook one column header for every placeholder field listed above, spelled exactly the same way.",
+      "Read the placeholder names from the inspection report that accompanies this result, and give the Excel workbook one column header for each, spelled exactly the same way.",
       "Review any warnings above before populating: each one is a reason the population would refuse this template.",
       vocabulary.powerPointExampleReference,
     ],
