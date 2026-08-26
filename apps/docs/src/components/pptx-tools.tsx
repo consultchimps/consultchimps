@@ -160,15 +160,29 @@ function useFileSelection(
       setReading(true);
       onChange();
 
-      void readUploads(files, accepts).then((read) => {
-        if (token !== latest.current) {
-          return;
-        }
-        const [first] = read;
-        setFile(first ?? null);
-        setRejected(first ? null : rejectedUploadMessage(files, expected));
-        setReading(false);
-      });
+      void readUploads(files, accepts)
+        .then((read) => {
+          if (token !== latest.current) {
+            return;
+          }
+          const [first] = read;
+          setFile(first ?? null);
+          setRejected(first ? null : rejectedUploadMessage(files, expected));
+          setReading(false);
+        })
+        .catch(() => {
+          // A cloud-backed or removable file can go unreadable mid-read.
+          // Without this the picker would sit in its reading state forever,
+          // with nothing selected and Run disabled, and say nothing about why.
+          if (token !== latest.current) {
+            return;
+          }
+          setFile(null);
+          setRejected(
+            "That file could not be read. It may have moved, gone offline, or been removed. Choose it again, or pick another file.",
+          );
+          setReading(false);
+        });
     },
     [accepts, expected],
   );
