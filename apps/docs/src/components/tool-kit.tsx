@@ -53,6 +53,13 @@ import {
 export const PREVIEW_DEBOUNCE_MS = 250;
 
 /**
+ * Entries in a combined download carry this timestamp rather than the visitor's
+ * clock, so the same outputs always bundle into the same archive bytes. It
+ * matches the fixed date the package writers stamp on the parts they write.
+ */
+const FIXED_ARCHIVE_DATE = new Date("1980-01-01T00:00:00.000Z");
+
+/**
  * Browser wording for the shared explanations. Only the sentences that would
  * otherwise describe a terminal are replaced; everything else stays generic.
  */
@@ -146,6 +153,12 @@ function saveArtifact(artifact: ByteArtifact, fallbackMediaType: string): void {
   );
 }
 
+/**
+ * Bundle several outputs into one archive, written the way the package writers
+ * write theirs: deflated so the download is no larger than it needs to be, and
+ * deterministic — a fixed timestamp instead of the visitor's clock, no folder
+ * entries, and DOS metadata so the file opens the same way everywhere.
+ */
 async function saveArchive(
   artifacts: readonly ByteArtifact[],
   archiveName: string,
@@ -153,9 +166,20 @@ async function saveArchive(
   const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   for (const artifact of artifacts) {
-    zip.file(artifact.name, artifact.bytes);
+    zip.file(artifact.name, artifact.bytes, {
+      createFolders: false,
+      date: FIXED_ARCHIVE_DATE,
+    });
   }
-  saveBlob(await zip.generateAsync({ type: "blob" }), archiveName);
+  saveBlob(
+    await zip.generateAsync({
+      compression: "DEFLATE",
+      compressionOptions: { level: 6 },
+      platform: "DOS",
+      type: "blob",
+    }),
+    archiveName,
+  );
 }
 
 type RunStatus = "complete" | "failed" | "idle" | "running";
