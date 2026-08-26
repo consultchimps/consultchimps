@@ -106,8 +106,11 @@ renders `<field>-error` — `template-slide-input-error`, `header-row-input-erro
 
 Both pages also clear the chosen file and render `template-rejected` (or
 `records-rejected`) when a picker is handed something it cannot read, rather
-than keeping the previous document. And because a changed option applies to Run
-at once, a preview or report is shown only while it still matches the page:
+than keeping the previous document. Choosing a file clears the previous
+selection immediately and shows `template-reading` / `records-reading` /
+`source-reading` until the read finishes, so Run is never enabled against a
+document that has already been replaced. And because a changed option applies to
+Run at once, a preview or report is shown only while it still matches the page:
 changing an input replaces it with `preview-pending` or `inspection-pending`
 until the recomputed answer arrives. Both transient states last at least the 250
 ms preview debounce, so they are safe to assert.

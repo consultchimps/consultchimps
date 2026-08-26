@@ -117,27 +117,76 @@ function fieldMessage(state: NumberFieldState): string | undefined {
   return state.kind === "invalid" ? state.message : undefined;
 }
 
+interface FileSelection {
+  /** The chosen file, or null while nothing usable is selected. */
+  readonly file: UploadedFile | null;
+  /** Set when the last pick was rejected; cleared by the next one. */
+  readonly rejected: string | null;
+  /** True between choosing a file and finishing its read. */
+  readonly reading: boolean;
+  readonly choose: (files: readonly File[], onChange: () => void) => void;
+}
+
 /**
- * A counter that tells a finished file read whether it is still the current
- * selection.
+ * One picker's selection, held so that at no instant does the page offer to
+ * run against a document the visitor is not looking at.
  *
- * Reading an upload is asynchronous, so picking a second file before the
- * first has finished leaves two reads in flight — and a large cloud-backed
- * deck can easily finish after a small local one picked later. Without this,
- * whichever read resolved last would win and the page could end up holding a
- * document the visitor had already replaced. Each picker bumps its own
- * counter when a selection starts and applies a read only if the counter has
- * not moved since.
+ * Reading an upload is asynchronous, and both hazards that follow from that
+ * are handled here rather than at each call site:
+ *
+ * - The moment a pick starts, the previous selection is cleared. A large or
+ *   cloud-backed replacement can take a noticeable time to read, and leaving
+ *   the old file live for that window would let Run populate the very
+ *   document that was just replaced.
+ * - A read applies only while it is still the newest. Picking twice in quick
+ *   succession leaves two reads in flight, and a big deck picked first can
+ *   finish after a small one picked second; without the token the older read
+ *   would win.
  */
-function useSelectionToken(): {
-  readonly begin: () => number;
-  readonly isCurrent: (token: number) => boolean;
-} {
+function useFileSelection(
+  accepts: (file: File) => boolean,
+  expected: string,
+): FileSelection {
+  const [file, setFile] = useState<UploadedFile | null>(null);
+  const [rejected, setRejected] = useState<string | null>(null);
+  const [reading, setReading] = useState(false);
   const latest = useRef(0);
-  return {
-    begin: () => (latest.current += 1),
-    isCurrent: (token) => token === latest.current,
-  };
+
+  const choose = useCallback(
+    (files: readonly File[], onChange: () => void) => {
+      const token = (latest.current += 1);
+      setFile(null);
+      setRejected(null);
+      setReading(true);
+      onChange();
+
+      void readUploads(files, accepts).then((read) => {
+        if (token !== latest.current) {
+          return;
+        }
+        const [first] = read;
+        setFile(first ?? null);
+        setRejected(first ? null : rejectedUploadMessage(files, expected));
+        setReading(false);
+      });
+    },
+    [accepts, expected],
+  );
+
+  return { choose, file, reading, rejected };
+}
+
+/** Shown in place of the file summary while a pick is still being read. */
+function ReadingFile({ testId }: { readonly testId: string }) {
+  return (
+    <p
+      className="mt-3 text-sm text-fd-muted-foreground"
+      data-testid={testId}
+      role="status"
+    >
+      Reading the file…
+    </p>
+  );
 }
 
 /**
@@ -306,18 +355,22 @@ function ChosenFile({
 export function PptxPopulateTool() {
   const previewHeadingId = useId();
 
-  const [template, setTemplate] = useState<UploadedFile | null>(null);
-  const [workbook, setWorkbook] = useState<UploadedFile | null>(null);
+  const templateSelection = useFileSelection(
+    isPresentationFile,
+    "a PowerPoint .pptx presentation",
+  );
+  const recordsSelection = useFileSelection(
+    isWorkbookFile,
+    "an Excel .xlsx workbook",
+  );
+  const template = templateSelection.file;
+  const workbook = recordsSelection.file;
   const [worksheet, setWorksheet] = useState("");
   const [headerRow, setHeaderRow] = useState("");
   const [templateSlide, setTemplateSlide] = useState("");
   const [outputName, setOutputName] = useState("");
-  const [templateRejected, setTemplateRejected] = useState<string | null>(null);
-  const [recordsRejected, setRecordsRejected] = useState<string | null>(null);
   const [planned, setPlanned] = useState<PlannedPopulate | null>(null);
 
-  const templateSelection = useSelectionToken();
-  const recordsSelection = useSelectionToken();
   const runState = useOperationRun();
   const isRunning = runState.status === "running";
 
@@ -440,37 +493,26 @@ export function PptxPopulateTool() {
             label="Template presentation"
             multiple={false}
             onFiles={(files) => {
-              const token = templateSelection.begin();
-              void readUploads(files, isPresentationFile).then((read) => {
-                if (!templateSelection.isCurrent(token)) {
-                  return;
-                }
-                const [first] = read;
-                setTemplate(first ?? null);
-                setTemplateRejected(
-                  first
-                    ? null
-                    : rejectedUploadMessage(
-                        files,
-                        "a PowerPoint .pptx presentation",
-                      ),
-                );
+              templateSelection.choose(files, () => {
                 setPlanned(null);
                 runState.reset();
               });
             }}
           />
         </div>
+        {templateSelection.reading ? (
+          <ReadingFile testId="template-reading" />
+        ) : null}
         {template ? (
           <ChosenFile file={template} testId="template-summary" />
         ) : null}
-        {templateRejected ? (
+        {templateSelection.rejected ? (
           <p
             className={noticeClass}
             data-testid="template-rejected"
             role="alert"
           >
-            {templateRejected}
+            {templateSelection.rejected}
           </p>
         ) : null}
       </section>
@@ -491,34 +533,26 @@ export function PptxPopulateTool() {
             label="Records workbook"
             multiple={false}
             onFiles={(files) => {
-              const token = recordsSelection.begin();
-              void readUploads(files, isWorkbookFile).then((read) => {
-                if (!recordsSelection.isCurrent(token)) {
-                  return;
-                }
-                const [first] = read;
-                setWorkbook(first ?? null);
-                setRecordsRejected(
-                  first
-                    ? null
-                    : rejectedUploadMessage(files, "an Excel .xlsx workbook"),
-                );
+              recordsSelection.choose(files, () => {
                 setPlanned(null);
                 runState.reset();
               });
             }}
           />
         </div>
+        {recordsSelection.reading ? (
+          <ReadingFile testId="records-reading" />
+        ) : null}
         {workbook ? (
           <ChosenFile file={workbook} testId="records-summary" />
         ) : null}
-        {recordsRejected ? (
+        {recordsSelection.rejected ? (
           <p
             className={noticeClass}
             data-testid="records-rejected"
             role="alert"
           >
-            {recordsRejected}
+            {recordsSelection.rejected}
           </p>
         ) : null}
 
@@ -701,11 +735,13 @@ export function PptxPopulateTool() {
 export function PptxInspectTool() {
   const reportHeadingId = useId();
 
-  const [template, setTemplate] = useState<UploadedFile | null>(null);
+  const templateSelection = useFileSelection(
+    isPresentationFile,
+    "a PowerPoint .pptx presentation",
+  );
+  const template = templateSelection.file;
   const [templateSlide, setTemplateSlide] = useState("");
-  const [templateRejected, setTemplateRejected] = useState<string | null>(null);
   const [inspected, setInspected] = useState<InspectedTemplate | null>(null);
-  const templateSelection = useSelectionToken();
 
   const templateSlideField = positiveIntegerField(
     templateSlide,
@@ -779,36 +815,25 @@ export function PptxInspectTool() {
             label="Template presentation"
             multiple={false}
             onFiles={(files) => {
-              const token = templateSelection.begin();
-              void readUploads(files, isPresentationFile).then((read) => {
-                if (!templateSelection.isCurrent(token)) {
-                  return;
-                }
-                const [first] = read;
-                setTemplate(first ?? null);
-                setTemplateRejected(
-                  first
-                    ? null
-                    : rejectedUploadMessage(
-                        files,
-                        "a PowerPoint .pptx presentation",
-                      ),
-                );
+              templateSelection.choose(files, () => {
                 setInspected(null);
               });
             }}
           />
         </div>
+        {templateSelection.reading ? (
+          <ReadingFile testId="source-reading" />
+        ) : null}
         {template ? (
           <ChosenFile file={template} testId="source-summary" />
         ) : null}
-        {templateRejected ? (
+        {templateSelection.rejected ? (
           <p
             className={noticeClass}
             data-testid="template-rejected"
             role="alert"
           >
-            {templateRejected}
+            {templateSelection.rejected}
           </p>
         ) : null}
 
