@@ -122,6 +122,10 @@ async function resolveRecords(
   }
 
   const workbook = options.workbook!;
+  // Last abort boundary before the workbook parse, which is synchronous and
+  // cannot be interrupted once entered — a cancel that arrived while the
+  // slide XML was being awaited must stop the task here.
+  throwIfAborted(options.signal, POPULATE_OPERATION, "memory");
   const worksheetRecords = await readWorksheetRecordsBytes(workbook, {
     headerRow: options.headerRow,
     worksheet: options.worksheet,
