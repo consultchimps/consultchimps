@@ -110,6 +110,27 @@ function fieldMessage(state: NumberFieldState): string | undefined {
   return state.kind === "invalid" ? state.message : undefined;
 }
 
+/**
+ * An answer together with the inputs it was computed from.
+ *
+ * Both pages recompute in the background after a debounce, and Run applies a
+ * changed option the moment it is typed. Rendering a stored answer only while
+ * its `key` still matches the page is what stops a preview from describing
+ * one presentation while the button would produce another, and stops the
+ * inspector from labelling slide 2 while still listing slide 1.
+ */
+interface PlannedPopulate {
+  readonly error: string | null;
+  readonly key: string;
+  readonly plan: OperationPlan<PopulatePowerPointTemplatePlanMetric> | null;
+}
+
+interface InspectedTemplate {
+  readonly error: string | null;
+  readonly key: string;
+  readonly outcome: PresentationInspectionOutcome | null;
+}
+
 const fieldLabelClass = "block text-sm font-semibold";
 const fieldHintClass = "mt-1 text-sm text-fd-muted-foreground";
 const metricLabelClass =
@@ -213,6 +234,25 @@ function NumberField({
   );
 }
 
+/**
+ * The message shown when a picker rejects everything it was given.
+ *
+ * `readUploads` drops files the tool cannot process and says nothing, which is
+ * right when nothing was chosen yet. It is not right when a document is
+ * already selected: silently keeping it would let someone who meant to replace
+ * a template populate the old one instead. Both pages therefore clear the
+ * selection and say why, so a run can only ever use a file that was chosen on
+ * purpose.
+ */
+function rejectedUploadMessage(
+  files: readonly File[],
+  expected: string,
+): string {
+  const [first] = files;
+  const named = first ? `"${first.name}" is not` : "Those files are not";
+  return `${named} ${expected}. Nothing is selected now, so choose ${expected} to continue.`;
+}
+
 /** The chosen file's name and size, shown under whichever picker took it. */
 function ChosenFile({
   file,
@@ -242,9 +282,9 @@ export function PptxPopulateTool() {
   const [headerRow, setHeaderRow] = useState("");
   const [templateSlide, setTemplateSlide] = useState("");
   const [outputName, setOutputName] = useState("");
-  const [plan, setPlan] =
-    useState<OperationPlan<PopulatePowerPointTemplatePlanMetric> | null>(null);
-  const [planError, setPlanError] = useState<string | null>(null);
+  const [templateRejected, setTemplateRejected] = useState<string | null>(null);
+  const [recordsRejected, setRecordsRejected] = useState<string | null>(null);
+  const [planned, setPlanned] = useState<PlannedPopulate | null>(null);
 
   const runState = useOperationRun();
   const isRunning = runState.status === "running";
@@ -273,33 +313,50 @@ export function PptxPopulateTool() {
     [headerRow, outputName, templateSlide, worksheet],
   );
 
+  // Everything a plan depends on, in one comparable value. A stored plan is
+  // shown only while its key still matches what is on the page: Run applies a
+  // changed option immediately, so a preview computed from the previous
+  // options would describe a different presentation than the button produces.
+  // Keyed on the raw field text, not on the parsed options: "" and "0" both
+  // parse to "no template slide supplied", yet one is a plan worth showing and
+  // the other is a value the page refuses, so they must not share a key.
+  const previewKey = JSON.stringify([
+    template?.id ?? null,
+    workbook?.id ?? null,
+    worksheet.trim(),
+    headerRow.trim(),
+    templateSlide.trim(),
+    outputName.trim(),
+  ]);
+  const current = planned?.key === previewKey ? planned : null;
+  const readyToPlan =
+    template !== null && workbook !== null && !hasUnusableNumber;
+
   // Re-planning re-reads both packages, so wait for a pause in typing first.
-  // Clearing a stale preview waits for the same pause, which keeps every
-  // state change in this effect asynchronous.
   useEffect(() => {
+    if (!template || !workbook || hasUnusableNumber) {
+      return;
+    }
     let active = true;
     const timer = window.setTimeout(() => {
-      if (!template || !workbook || hasUnusableNumber) {
-        setPlan(null);
-        setPlanError(null);
-        return;
-      }
       void (async () => {
         try {
-          const nextPlan = await runOperation({
+          const plan = await runOperation({
             kind: "pptx.plan-populate",
             template: { bytes: template.bytes, name: template.name },
             workbook: { bytes: workbook.bytes, name: workbook.name },
             options,
           });
           if (active) {
-            setPlan(nextPlan);
-            setPlanError(null);
+            setPlanned({ error: null, key: previewKey, plan });
           }
         } catch (error) {
           if (active) {
-            setPlan(null);
-            setPlanError(describeFailure(error));
+            setPlanned({
+              error: describeFailure(error),
+              key: previewKey,
+              plan: null,
+            });
           }
         }
       })();
@@ -309,7 +366,7 @@ export function PptxPopulateTool() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [hasUnusableNumber, options, template, workbook]);
+  }, [hasUnusableNumber, options, previewKey, template, workbook]);
 
   const start = useCallback(() => {
     if (!template || !workbook || hasUnusableNumber) {
@@ -345,18 +402,32 @@ export function PptxPopulateTool() {
             onFiles={(files) => {
               void readUploads(files, isPresentationFile).then((read) => {
                 const [first] = read;
-                if (first) {
-                  setTemplate(first);
-                  setPlan(null);
-                  setPlanError(null);
-                  runState.reset();
-                }
+                setTemplate(first ?? null);
+                setTemplateRejected(
+                  first
+                    ? null
+                    : rejectedUploadMessage(
+                        files,
+                        "a PowerPoint .pptx presentation",
+                      ),
+                );
+                setPlanned(null);
+                runState.reset();
               });
             }}
           />
         </div>
         {template ? (
           <ChosenFile file={template} testId="template-summary" />
+        ) : null}
+        {templateRejected ? (
+          <p
+            className={noticeClass}
+            data-testid="template-rejected"
+            role="alert"
+          >
+            {templateRejected}
+          </p>
         ) : null}
       </section>
 
@@ -378,18 +449,29 @@ export function PptxPopulateTool() {
             onFiles={(files) => {
               void readUploads(files, isWorkbookFile).then((read) => {
                 const [first] = read;
-                if (first) {
-                  setWorkbook(first);
-                  setPlan(null);
-                  setPlanError(null);
-                  runState.reset();
-                }
+                setWorkbook(first ?? null);
+                setRecordsRejected(
+                  first
+                    ? null
+                    : rejectedUploadMessage(files, "an Excel .xlsx workbook"),
+                );
+                setPlanned(null);
+                runState.reset();
               });
             }}
           />
         </div>
         {workbook ? (
           <ChosenFile file={workbook} testId="records-summary" />
+        ) : null}
+        {recordsRejected ? (
+          <p
+            className={noticeClass}
+            data-testid="records-rejected"
+            role="alert"
+          >
+            {recordsRejected}
+          </p>
         ) : null}
 
         <div className="mt-6 flex flex-col gap-5">
@@ -474,24 +556,32 @@ export function PptxPopulateTool() {
               ))}
           </ul>
         ) : null}
-        {planError ? (
+        {readyToPlan && current === null ? (
+          <p
+            className="mt-3 text-sm text-fd-muted-foreground"
+            data-testid="preview-pending"
+          >
+            Working out what this task will create…
+          </p>
+        ) : null}
+        {current?.error ? (
           <pre className={noticeClass} data-testid="preview-error">
-            {planError}
+            {current.error}
           </pre>
         ) : null}
-        {plan && !planError ? (
+        {current?.plan ? (
           <>
             <dl className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
               <div>
                 <dt className={metricLabelClass}>Slides</dt>
                 <dd className="text-2xl font-bold" data-testid="preview-slides">
-                  {plan.metrics.generatedSlides}
+                  {current.plan.metrics.generatedSlides}
                 </dd>
               </div>
               <div>
                 <dt className={metricLabelClass}>Rows read</dt>
                 <dd className="text-2xl font-bold" data-testid="preview-rows">
-                  {plan.metrics.inputRows}
+                  {current.plan.metrics.inputRows}
                 </dd>
               </div>
               <div>
@@ -500,7 +590,7 @@ export function PptxPopulateTool() {
                   className="text-2xl font-bold"
                   data-testid="preview-placeholders"
                 >
-                  {plan.metrics.placeholderFields}
+                  {current.plan.metrics.placeholderFields}
                 </dd>
               </div>
               <div>
@@ -509,13 +599,13 @@ export function PptxPopulateTool() {
                   className="text-2xl font-bold"
                   data-testid="preview-skipped"
                 >
-                  {plan.metrics.skippedRows}
+                  {current.plan.metrics.skippedRows}
                 </dd>
               </div>
             </dl>
-            {plan.warnings.length > 0 ? (
+            {current.plan.warnings.length > 0 ? (
               <ul className={noticeClass} data-testid="preview-warnings">
-                {plan.warnings.map((warning) => (
+                {current.plan.warnings.map((warning) => (
                   <li key={warning}>{warning}</li>
                 ))}
               </ul>
@@ -525,7 +615,7 @@ export function PptxPopulateTool() {
               className="mt-2 rounded-lg border bg-fd-background/60 px-4 py-3 font-mono text-xs leading-6"
               data-testid="planned-outputs"
             >
-              {plan.outputs.map((output) => (
+              {current.plan.outputs.map((output) => (
                 <li className="truncate" key={output.path}>
                   {output.path}
                 </li>
@@ -562,10 +652,8 @@ export function PptxInspectTool() {
 
   const [template, setTemplate] = useState<UploadedFile | null>(null);
   const [templateSlide, setTemplateSlide] = useState("");
-  const [outcome, setOutcome] = useState<PresentationInspectionOutcome | null>(
-    null,
-  );
-  const [inspectionError, setInspectionError] = useState<string | null>(null);
+  const [templateRejected, setTemplateRejected] = useState<string | null>(null);
+  const [inspected, setInspected] = useState<InspectedTemplate | null>(null);
 
   const templateSlideField = positiveIntegerField(
     templateSlide,
@@ -579,29 +667,35 @@ export function PptxInspectTool() {
   // slide, debounced so typing a slide number does not re-read the package on
   // every keystroke. A slide number that cannot be used stops the inspection
   // instead of quietly reporting on slide 1.
+  // Raw text again, for the reason the populate page keys on it: "" and "0"
+  // both parse to "no slide supplied" and must not share a key.
+  const inspectionKey = `${template?.id ?? ""}:${templateSlide.trim()}`;
+  const current = inspected?.key === inspectionKey ? inspected : null;
+  const readyToInspect = template !== null && slideNumberError === undefined;
+
   useEffect(() => {
+    if (!template || slideNumberError !== undefined) {
+      return;
+    }
     let active = true;
     const timer = window.setTimeout(() => {
-      if (!template || slideNumberError !== undefined) {
-        setOutcome(null);
-        setInspectionError(null);
-        return;
-      }
       void (async () => {
         try {
-          const report = await runOperation({
+          const outcome = await runOperation({
             kind: "pptx.inspect",
             template: { bytes: template.bytes, name: template.name },
             templateSlide: slideNumber,
           });
           if (active) {
-            setOutcome(report);
-            setInspectionError(null);
+            setInspected({ error: null, key: inspectionKey, outcome });
           }
         } catch (error) {
           if (active) {
-            setOutcome(null);
-            setInspectionError(describeFailure(error));
+            setInspected({
+              error: describeFailure(error),
+              key: inspectionKey,
+              outcome: null,
+            });
           }
         }
       })();
@@ -611,7 +705,7 @@ export function PptxInspectTool() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [slideNumber, slideNumberError, template]);
+  }, [inspectionKey, slideNumber, slideNumberError, template]);
 
   return (
     <ToolShell
@@ -635,17 +729,31 @@ export function PptxInspectTool() {
             onFiles={(files) => {
               void readUploads(files, isPresentationFile).then((read) => {
                 const [first] = read;
-                if (first) {
-                  setTemplate(first);
-                  setOutcome(null);
-                  setInspectionError(null);
-                }
+                setTemplate(first ?? null);
+                setTemplateRejected(
+                  first
+                    ? null
+                    : rejectedUploadMessage(
+                        files,
+                        "a PowerPoint .pptx presentation",
+                      ),
+                );
+                setInspected(null);
               });
             }}
           />
         </div>
         {template ? (
           <ChosenFile file={template} testId="source-summary" />
+        ) : null}
+        {templateRejected ? (
+          <p
+            className={noticeClass}
+            data-testid="template-rejected"
+            role="alert"
+          >
+            {templateRejected}
+          </p>
         ) : null}
 
         <div className="mt-6">
@@ -679,9 +787,17 @@ export function PptxInspectTool() {
             Choose a template to see the placeholders its slide expects.
           </p>
         ) : null}
-        {inspectionError ? (
+        {readyToInspect && current === null ? (
+          <p
+            className="mt-3 text-sm text-fd-muted-foreground"
+            data-testid="inspection-pending"
+          >
+            Reading the template…
+          </p>
+        ) : null}
+        {current?.error ? (
           <pre className={noticeClass} data-testid="inspection-error">
-            {inspectionError}
+            {current.error}
           </pre>
         ) : null}
         {slideNumberError ? (
@@ -689,7 +805,7 @@ export function PptxInspectTool() {
             {slideNumberError}
           </p>
         ) : null}
-        {outcome && !inspectionError ? (
+        {current?.outcome ? (
           <>
             <dl className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
               <div>
@@ -698,7 +814,7 @@ export function PptxInspectTool() {
                   className="text-2xl font-bold"
                   data-testid="inspection-slide"
                 >
-                  {outcome.inspection.slideNumber}
+                  {current.outcome.inspection.slideNumber}
                 </dd>
               </div>
               <div>
@@ -707,7 +823,7 @@ export function PptxInspectTool() {
                   className="text-2xl font-bold"
                   data-testid="inspection-fields"
                 >
-                  {outcome.result.metrics.placeholderFields}
+                  {current.outcome.result.metrics.placeholderFields}
                 </dd>
               </div>
               <div>
@@ -716,7 +832,7 @@ export function PptxInspectTool() {
                   className="text-2xl font-bold"
                   data-testid="inspection-occurrences"
                 >
-                  {outcome.result.metrics.placeholderOccurrences}
+                  {current.outcome.result.metrics.placeholderOccurrences}
                 </dd>
               </div>
               <div>
@@ -725,17 +841,17 @@ export function PptxInspectTool() {
                   className="text-2xl font-bold"
                   data-testid="inspection-malformed"
                 >
-                  {outcome.result.metrics.malformedPlaceholderLocations}
+                  {current.outcome.result.metrics.malformedPlaceholderLocations}
                 </dd>
               </div>
             </dl>
 
-            {outcome.inspection.placeholders.length > 0 ? (
+            {current.outcome.inspection.placeholders.length > 0 ? (
               <ul
                 className="mt-5 flex flex-col gap-2"
                 data-testid="placeholder-list"
               >
-                {outcome.inspection.placeholders.map((placeholder) => (
+                {current.outcome.inspection.placeholders.map((placeholder) => (
                   <li
                     className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-fd-background/60 px-3 py-2"
                     data-testid="placeholder-item"
@@ -767,9 +883,9 @@ export function PptxInspectTool() {
               condition that would make a populate refuse this slide is
               described once, in the library, and rendered here verbatim.
             */}
-            {outcome.result.warnings.length > 0 ? (
+            {current.outcome.result.warnings.length > 0 ? (
               <ul className={noticeClass} data-testid="inspection-warnings">
-                {outcome.result.warnings.map((warning) => (
+                {current.outcome.result.warnings.map((warning) => (
                   <li data-testid="inspection-warning" key={warning}>
                     {warning}
                   </li>

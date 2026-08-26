@@ -104,6 +104,14 @@ renders `<field>-error` — `template-slide-input-error`, `header-row-input-erro
 `preview-invalid-options` and disables `run-button`, and the inspect page shows
 `inspection-invalid-slide` and clears the report.
 
+Both pages also clear the chosen file and render `template-rejected` (or
+`records-rejected`) when a picker is handed something it cannot read, rather
+than keeping the previous document. And because a changed option applies to Run
+at once, a preview or report is shown only while it still matches the page:
+changing an input replaces it with `preview-pending` or `inspection-pending`
+until the recomputed answer arrives. Both transient states last at least the 250
+ms preview debounce, so they are safe to assert.
+
 The preview and results panels also carry accessible names, so
 `getByRole("region", { name: "Results" })` works where a role-based query reads
 better.

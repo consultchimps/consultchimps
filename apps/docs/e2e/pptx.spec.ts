@@ -213,9 +213,69 @@ test.describe("/tools/pptx-populate", () => {
     await page.waitForTimeout(1_000);
 
     await expect(page.getByTestId("template-summary")).toHaveCount(0);
+    await expect(page.getByTestId("template-rejected")).toContainText(
+      "notes.txt",
+    );
     await expect(page.getByTestId("run-button")).toBeDisabled();
     await expect(resultsPanel(page)).toHaveCount(0);
     expect(pageErrors).toEqual([]);
+  });
+
+  test("clears a chosen template when its replacement is rejected", async ({
+    page,
+  }) => {
+    await page.goto("/tools/pptx-populate");
+
+    const [template, records] = await Promise.all([
+      createPresentationUpload("review-template.pptx", REVIEW_TEMPLATE),
+      createWorkbookUpload("records.xlsx", RECORDS),
+    ]);
+    await templateInput(page).setInputFiles(template);
+    await recordsInput(page).setInputFiles(records);
+    await expect(
+      previewPanel(page).getByTestId("planned-outputs"),
+    ).toBeVisible();
+
+    // Someone replacing the template with the wrong file must not be left
+    // able to populate the old one.
+    await templateInput(page).setInputFiles(createTextUpload("notes.txt"));
+
+    await expect(page.getByTestId("template-rejected")).toContainText(
+      "notes.txt",
+    );
+    await expect(page.getByTestId("template-summary")).toHaveCount(0);
+    await expect(page.getByTestId("run-button")).toBeDisabled();
+    await expect(previewPanel(page).getByTestId("planned-outputs")).toHaveCount(
+      0,
+    );
+  });
+
+  test("withdraws the preview while a changed option is replanned", async ({
+    page,
+  }) => {
+    await page.goto("/tools/pptx-populate");
+
+    const [template, records] = await Promise.all([
+      createPresentationUpload("review-template.pptx", REVIEW_TEMPLATE),
+      createWorkbookUpload("records.xlsx", RECORDS),
+    ]);
+    await templateInput(page).setInputFiles(template);
+    await recordsInput(page).setInputFiles(records);
+
+    const preview = previewPanel(page);
+    await expect(preview.getByTestId("planned-outputs")).toContainText(
+      "review-template-populated.pptx",
+    );
+
+    // Run would apply the new name at once, so the old plan must not stay on
+    // screen describing a file the button would no longer produce.
+    await page.getByTestId("output-name-input").fill("quarterly-review");
+    await expect(preview.getByTestId("preview-pending")).toBeVisible();
+
+    await expect(preview.getByTestId("planned-outputs")).toContainText(
+      "quarterly-review.pptx",
+    );
+    await expect(preview.getByTestId("preview-pending")).toHaveCount(0);
   });
 });
 
@@ -332,6 +392,11 @@ test.describe("/tools/pptx-inspect", () => {
     await expect(report.getByTestId("placeholder-item")).toHaveCount(1);
 
     await page.getByTestId("template-slide-input").fill("2");
+
+    // Slide 1's placeholders must not stay on screen under a heading that now
+    // says slide 2.
+    await expect(report.getByTestId("inspection-pending")).toBeVisible();
+    await expect(report.getByTestId("placeholder-item")).toHaveCount(0);
 
     await expect(report.getByTestId("placeholder-item")).toHaveCount(2);
     await expect(
