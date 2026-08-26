@@ -57,6 +57,31 @@ test.describe("/tools", () => {
     }
   });
 
+  test("never shows an empty 'Not in the browser yet' section", async ({
+    page,
+  }) => {
+    await page.goto("/tools");
+
+    // The section is derived from the registry, so it empties itself as
+    // operations come online. Either it lists something, or it is gone: a
+    // heading over an empty list, above a paragraph promising "the rest of the
+    // kit", reads as a page that failed to load. Written as an either/or so it
+    // keeps holding when the next operation arrives without a browser surface.
+    const heading = page.getByRole("heading", {
+      name: "Not in the browser yet",
+    });
+    if ((await heading.count()) > 0) {
+      await expect(
+        page.getByTestId("guide-only-tools").getByRole("listitem"),
+      ).not.toHaveCount(0);
+    } else {
+      await expect(page.getByTestId("guide-only-tools")).toHaveCount(0);
+      await expect(
+        page.getByText("The rest of the kit currently runs"),
+      ).toHaveCount(0);
+    }
+  });
+
   test("moves between the tool pages from the sub-bar", async ({ page }) => {
     await page.goto("/tools");
     // The landing cards link to the same routes, so the tabs are addressed

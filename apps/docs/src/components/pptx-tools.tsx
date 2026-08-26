@@ -638,8 +638,11 @@ export function PptxPopulateTool() {
         />
       </section>
 
+      {/*
+        No archive name: a populate produces exactly one deck, and a zip
+        holding one file is friction rather than a convenience.
+      */}
       <ResultsPanel
-        archiveName="populated-presentation.zip"
         fallbackMediaType={PRESENTATION_MEDIA_TYPE}
         state={runState}
       />
