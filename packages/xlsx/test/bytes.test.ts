@@ -1462,6 +1462,41 @@ describe("byte-level workbook consolidation", () => {
     ).rejects.toMatchObject({ code: OPERATION_ABORTED });
   });
 
+  it("stops when the signal is aborted from another task", async () => {
+    // The cancellation that matters is the one a Web Worker delivers, and a
+    // posted message is a macrotask: a run that never yields one finishes and
+    // posts its output before the worker can even see the cancel. Aborting
+    // from a timer models that delivery, where aborting inline inside
+    // `onProgress` - which runs on the operation's own stack - does not, and
+    // so cannot tell a cancellable operation from an uninterruptible one.
+    const inputs = reviewLogInputs();
+    const events: OperationProgress[] = [];
+    const controller = new AbortController();
+
+    let cancelled: unknown;
+    try {
+      await consolidateWorkbooksBytes({
+        inputs,
+        signal: controller.signal,
+        onProgress: (progress) => {
+          events.push(progress);
+          setTimeout(() => controller.abort(), 0);
+        },
+      });
+    } catch (error) {
+      cancelled = error;
+    }
+
+    expect(isConsultChimpsError(cancelled)).toBe(true);
+    expect((cancelled as { code: string }).code).toBe(OPERATION_ABORTED);
+    // It stopped partway: only the first workbook was read, and the output was
+    // never built. A run that ignored the abort would report every input and
+    // then "writing-output".
+    expect(events.map((event) => [event.stage, event.completed])).toEqual([
+      ["reading-workbooks", 1],
+    ]);
+  });
+
   it("refuses missing inputs, unusable workbooks, and empty selections", async () => {
     await expect(
       consolidateWorkbooksBytes({ inputs: [] }),

@@ -53,6 +53,7 @@ import {
   withoutWorkbookExtension,
   workbookTables,
   workbookWorksheetRecords,
+  yieldToEventLoop,
   type ConsolidateWorkbooksMetric,
   type MergeWorkbooksMetric,
   type ReadWorkbookOptions,
@@ -494,9 +495,16 @@ export async function consolidateWorkbooksBytes(
       total: options.inputs.length,
       detail: input.name,
     });
+    // Reading a workbook, stacking the tables, and serializing the result are
+    // all synchronous, so this operation would otherwise occupy a worker from
+    // its first input to its last byte and never collect a cancellation. The
+    // yields are what let one arrive; see `yieldToEventLoop`.
+    await yieldToEventLoop();
   }
 
+  throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
   const table = consolidateTables(tables, options);
+  await yieldToEventLoop();
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
   const output: ByteArtifact = {
     name: outputName,

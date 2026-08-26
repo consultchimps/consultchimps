@@ -70,6 +70,27 @@ export interface ReadWorkbookOptions {
   sheets?: string[] | undefined;
 }
 
+/**
+ * Hand the event loop back for one full turn.
+ *
+ * Cancellation reaches a Web Worker as a posted message, and a message is a
+ * macrotask: an operation that runs to completion without ever yielding one -
+ * however many `await`s it contains, because awaiting an already-resolved
+ * value only drains microtasks - has already posted its output before the
+ * worker dequeues the `cancel`. So an operation whose expensive steps are
+ * synchronous must yield a macrotask between them, and check its signal after
+ * each yield, or its Cancel button does nothing.
+ *
+ * Operations built on JSZip get this for free, since loading and generating a
+ * package yield on their own; the ones that build a workbook synchronously do
+ * not.
+ */
+export function yieldToEventLoop(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
 export interface ConsolidateTablesOptions {
   addSourceColumns?: boolean | undefined;
   /**
