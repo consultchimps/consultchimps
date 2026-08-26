@@ -18,7 +18,11 @@ import {
   type ExcelTableDefinition,
   type WorkbookSheetEntry,
 } from "../excel-tables.js";
-import { WorkbookPackage } from "../package/index.js";
+import {
+  MACRO_WORKBOOK_MAIN_CONTENT_TYPE,
+  WORKBOOK_MAIN_PART,
+  WorkbookPackage,
+} from "../package/index.js";
 import {
   relocateReference,
   DELETED_REFERENCE,
@@ -233,6 +237,21 @@ export class WorkbookModel implements WorkbookModelContract, WorksheetHost {
    */
   get calcChainEntriesRemoved(): number {
     return this.#calcChainEntriesRemoved;
+  }
+
+  /**
+   * Whether this package declares itself macro-enabled.
+   *
+   * The main workbook part's content type is the answer, not the file's name
+   * and not the presence of `xl/vbaProject.bin`: a package whose declared type
+   * contradicts its name is one Excel opens with a corruption warning, so an
+   * operation that names an output has to ask the package what it is.
+   */
+  get macroEnabled(): boolean {
+    return (
+      this.#package.contentTypeOverride(WORKBOOK_MAIN_PART)?.trim() ===
+      MACRO_WORKBOOK_MAIN_CONTENT_TYPE
+    );
   }
 
   /**

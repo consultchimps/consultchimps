@@ -29,6 +29,17 @@ const CONTENT_TYPES_PART = "[Content_Types].xml";
 /** The relationships of the package root live in a well-known part. */
 const PACKAGE_ROOT = "";
 
+/** The main workbook part, whose content type declares the package's type. */
+export const WORKBOOK_MAIN_PART = "xl/workbook.xml";
+/** Content type of the main workbook part in an ordinary `.xlsx` package. */
+export const WORKBOOK_MAIN_CONTENT_TYPE =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml";
+/** Content type of the main workbook part in a macro-enabled `.xlsm` package. */
+export const MACRO_WORKBOOK_MAIN_CONTENT_TYPE =
+  "application/vnd.ms-excel.sheet.macroEnabled.main+xml";
+/** The opaque VBA project a macro-enabled workbook carries. */
+export const VBA_PROJECT_PART = "xl/vbaProject.bin";
+
 export type PackageRelationship = RelationshipEntry;
 
 const decoder = new TextDecoder();
@@ -303,6 +314,32 @@ export class WorkbookPackage implements WorkbookPackageContract {
     if (kept !== xml) {
       this.setPartText(partPath, kept);
     }
+  }
+
+  /**
+   * The content type `[Content_Types].xml` declares for `partPath`.
+   *
+   * Read with the real parser rather than by matching text, because the answer
+   * decides how a package is labelled and a near-miss would be silent.
+   */
+  contentTypeOverride(partPath: string): string | undefined {
+    const xml = this.readText(CONTENT_TYPES_PART);
+    if (xml === undefined) {
+      return undefined;
+    }
+    const target = `/${partPath}`.toLocaleLowerCase();
+    let contentType: string | undefined;
+    forEachOpenTag(xml, CONTENT_TYPES_PART, (tag) => {
+      if (
+        contentType !== undefined ||
+        tag.local.toLocaleLowerCase() !== "override" ||
+        attributeValue(tag, "PartName")?.toLocaleLowerCase() !== target
+      ) {
+        return;
+      }
+      contentType = attributeValue(tag, "ContentType");
+    });
+    return contentType;
   }
 
   /** Drop the `[Content_Types].xml` override that declares `partPath`. */

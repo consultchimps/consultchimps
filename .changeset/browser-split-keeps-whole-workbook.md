@@ -19,6 +19,13 @@ source workbook per value:
 
 `.xlsm` workbooks are accepted as input and produce `.xlsm` outputs.
 
+A workbook whose contents disagree with its file extension is now refused, on
+both the command line and in the browser, with a new
+`XLSX_SPLIT_PACKAGE_TYPE_MISMATCH` error naming which side to correct. An
+ordinary workbook renamed `.xlsm`, or a macro-enabled one renamed `.xlsx`, used
+to be split into files Excel could open with a corruption warning; the split now
+stops before writing anything.
+
 Strict matching is available, so case, surrounding whitespace, and value type
 can be kept distinct instead of `North`, `north`, and `North ` becoming one
 workbook.

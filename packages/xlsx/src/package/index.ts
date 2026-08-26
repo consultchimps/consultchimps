@@ -21,7 +21,11 @@ export type {
 } from "./types.js";
 export {
   forEachOpenTag,
+  MACRO_WORKBOOK_MAIN_CONTENT_TYPE,
   tagAttribute,
+  VBA_PROJECT_PART,
+  WORKBOOK_MAIN_CONTENT_TYPE,
+  WORKBOOK_MAIN_PART,
   WorkbookPackage,
   type PackageRelationship,
 } from "./workbook-package.js";

@@ -267,6 +267,48 @@ async function loadWorkbookModel(
 }
 
 /**
+ * Refuse a workbook whose package contradicts the name it arrived under.
+ *
+ * The split preserves the source package, so the outputs inherit whatever the
+ * source declares while taking their extension and media type from the input's
+ * name. When the two disagree, every output would be mislabelled: `.xlsm` bytes
+ * named `.xlsx` would carry a macro project the name denies, and `.xlsx` bytes
+ * named `.xlsm` would be advertised as macro-enabled while the package says
+ * otherwise - a contradiction Excel opens with a corruption warning.
+ *
+ * Neither reading can be repaired without deciding something the caller did not
+ * ask for: stripping macros loses work, rewriting the declared type changes what
+ * the file is. So this refuses before an output exists, and says which side to
+ * correct.
+ */
+function refuseMislabelledPackage(
+  workbook: WorkbookModel,
+  extension: WorkbookExtension,
+  identity: SplitSourceIdentity,
+): void {
+  const declaredExtension: WorkbookExtension = workbook.macroEnabled
+    ? ".xlsm"
+    : ".xlsx";
+  if (declaredExtension === extension) {
+    return;
+  }
+  throw new ConsultChimpsError(
+    XLSX_ERRORS.XLSX_SPLIT_PACKAGE_TYPE_MISMATCH,
+    workbook.macroEnabled
+      ? `The workbook "${identity.label}" is a macro-enabled workbook but is named "${extension}". Rename it with an .xlsm extension, or save it as an ordinary .xlsx workbook in Excel, and run the split again. Splitting it as it is would produce files whose contents and names disagree.`
+      : `The workbook "${identity.label}" is named "${extension}" but is an ordinary Excel workbook with no macro project. Rename it with an .xlsx extension, or save it as a macro-enabled workbook in Excel, and run the split again. Splitting it as it is would produce files whose contents and names disagree.`,
+    {
+      details: {
+        declaredExtension,
+        macroEnabled: workbook.macroEnabled,
+        nameExtension: extension,
+        ...identity.details,
+      },
+    },
+  );
+}
+
+/**
  * Read the source once: which worksheets carry the split column, which rows
  * belong to which group, and which worksheets are copied through untouched.
  */
@@ -285,6 +327,7 @@ export async function analyzeAllWorksheetSplit(
   }
 
   const workbook = await loadWorkbookModel(workbookBytes, identity);
+  refuseMislabelledPackage(workbook, extension, identity);
   const columnNotFound = (): ConsultChimpsError =>
     new ConsultChimpsError(
       XLSX_ERRORS.XLSX_SPLIT_COLUMN_NOT_FOUND,

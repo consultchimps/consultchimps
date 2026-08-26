@@ -102,6 +102,41 @@ function readSheet(
   });
 }
 
+const WORKBOOK_MAIN_CONTENT_TYPE =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml";
+const MACRO_WORKBOOK_MAIN_CONTENT_TYPE =
+  "application/vnd.ms-excel.sheet.macroEnabled.main+xml";
+
+/**
+ * A macro-enabled package: the VBA project, the `bin` default that types it,
+ * and - the part that makes the package coherent rather than merely
+ * suggestive - the main workbook part declared as macro-enabled. A package
+ * carrying `vbaProject.bin` while still declaring itself an ordinary workbook
+ * is the contradiction the split refuses, so a fixture meant to be valid has
+ * to change both.
+ */
+async function macroWorkbookBytes(
+  options: { declareMacroContentType?: boolean } = {},
+): Promise<Uint8Array> {
+  const archive = await JSZip.loadAsync(workbookBytes(clientRows()));
+  archive.file("xl/vbaProject.bin", Buffer.from([0xd0, 0xcf, 0x11, 0xe0]));
+  const contentTypes = await archive.file("[Content_Types].xml")!.async("text");
+  const withDefault = contentTypes.replace(
+    "</Types>",
+    '<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/></Types>',
+  );
+  const declared =
+    options.declareMacroContentType === false
+      ? withDefault
+      : withDefault.replace(
+          WORKBOOK_MAIN_CONTENT_TYPE,
+          MACRO_WORKBOOK_MAIN_CONTENT_TYPE,
+        );
+  expect(declared).toContain("vbaProject");
+  archive.file("[Content_Types].xml", declared);
+  return archive.generateAsync({ compression: "DEFLATE", type: "uint8array" });
+}
+
 async function structuredTableBytes(hidden = false): Promise<Uint8Array> {
   const bytes = new Uint8Array(await readFile(structuredTableFixture));
   if (!hidden) {
@@ -875,27 +910,60 @@ describe("byte-level workbook splitting", () => {
     ).rejects.toMatchObject({ code: "XLSX_SPLIT_UNSUPPORTED_FILE" });
   });
 
-  it("keeps a macro workbook macro-enabled", async () => {
-    const source = workbookBytes(clientRows());
-    const archive = await JSZip.loadAsync(source);
-    archive.file("xl/vbaProject.bin", Buffer.from([0xd0, 0xcf, 0x11, 0xe0]));
-    const contentTypes = await archive
-      .file("[Content_Types].xml")!
-      .async("text");
-    archive.file(
-      "[Content_Types].xml",
-      contentTypes.replace(
-        "</Types>",
-        '<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/></Types>',
-      ),
-    );
-    const macroBytes = await archive.generateAsync({
-      compression: "DEFLATE",
-      type: "uint8array",
+  it("refuses a workbook whose package contradicts its name", async () => {
+    // Ordinary workbook bytes offered under an .xlsm name. Trusting the name
+    // would advertise every output as macro-enabled while its package still
+    // declared an ordinary workbook, which is what Excel warns about.
+    const plainUnderMacroName = splitWorkbookBytes({
+      input: { name: "clients.xlsm", bytes: workbookBytes(clientRows()) },
+      column: "Region",
+    });
+    await expect(plainUnderMacroName).rejects.toMatchObject({
+      code: "XLSX_SPLIT_PACKAGE_TYPE_MISMATCH",
+      details: {
+        declaredExtension: ".xlsx",
+        macroEnabled: false,
+        nameExtension: ".xlsm",
+      },
     });
 
+    // The inverse: a macro-enabled package offered under an .xlsx name would
+    // otherwise put a macro project inside a file whose name denies it.
+    await expect(
+      splitWorkbookBytes({
+        input: { name: "clients.xlsx", bytes: await macroWorkbookBytes() },
+        column: "Region",
+      }),
+    ).rejects.toMatchObject({
+      code: "XLSX_SPLIT_PACKAGE_TYPE_MISMATCH",
+      details: { declaredExtension: ".xlsm", macroEnabled: true },
+    });
+
+    // A macro project alone does not make a package macro-enabled; the main
+    // workbook part's declared content type does. This one still says .xlsx.
+    await expect(
+      splitWorkbookBytes({
+        input: {
+          name: "clients.xlsm",
+          bytes: await macroWorkbookBytes({ declareMacroContentType: false }),
+        },
+        column: "Region",
+      }),
+    ).rejects.toMatchObject({ code: "XLSX_SPLIT_PACKAGE_TYPE_MISMATCH" });
+
+    // The preview refuses for the same reason, so it can never promise a split
+    // that the run would then refuse.
+    await expect(
+      planSplitWorkbookBytes({
+        input: { name: "clients.xlsm", bytes: workbookBytes(clientRows()) },
+        column: "Region",
+      }),
+    ).rejects.toMatchObject({ code: "XLSX_SPLIT_PACKAGE_TYPE_MISMATCH" });
+  });
+
+  it("keeps a macro workbook macro-enabled", async () => {
     const { outputs, result } = await splitWorkbookBytes({
-      input: { name: "clients.xlsm", bytes: macroBytes },
+      input: { name: "clients.xlsm", bytes: await macroWorkbookBytes() },
       column: "Region",
     });
 
