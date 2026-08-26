@@ -12,6 +12,7 @@ import * as XLSX from "xlsx";
 
 import {
   inspectPresentationBytes,
+  inspectPresentationOutcomeBytes,
   planPopulatePresentationBytes,
   populatePresentationBytes,
 } from "../src/bytes.js";
@@ -288,6 +289,84 @@ describe("byte-level presentation population", () => {
         })
       ).result.metrics.generatedSlides,
     ).toBe(1);
+  });
+
+  it("reports an inspection as a structured operation result", async () => {
+    const template = {
+      name: "template.pptx",
+      bytes: await templateBytes([slideXml(["{{client}}", "{{client}}"])]),
+    };
+
+    const outcome = await inspectPresentationOutcomeBytes(template);
+    expect(outcome.inspection).toEqual(
+      await inspectPresentationBytes(template),
+    );
+    expect(outcome.result).toEqual({
+      operation: "pptx.inspect-template",
+      // An inspection reads one slide and writes nothing.
+      artifacts: [],
+      warnings: [],
+      metrics: {
+        malformedPlaceholderLocations: 0,
+        placeholderFields: 1,
+        placeholderOccurrences: 2,
+        unsupportedPlacementPlaceholders: 0,
+        unsupportedSplitRunPlaceholders: 0,
+      },
+    });
+
+    // Identical inputs and options must produce an identical result, including
+    // the order of the warnings.
+    expect(await inspectPresentationOutcomeBytes(template)).toEqual(outcome);
+  });
+
+  it("warns about every condition that would make a populate refuse", async () => {
+    const malformed = await inspectPresentationOutcomeBytes({
+      name: "malformed.pptx",
+      // One unbalanced brace, which leaves the slide with no usable
+      // placeholder either, so both warnings apply.
+      bytes: await templateBytes([slideXml(["{{client}"])]),
+    });
+    expect(malformed.result.metrics).toEqual({
+      malformedPlaceholderLocations: 1,
+      placeholderFields: 0,
+      placeholderOccurrences: 0,
+      unsupportedPlacementPlaceholders: 0,
+      unsupportedSplitRunPlaceholders: 0,
+    });
+    expect(malformed.result.warnings).toEqual([
+      "Slide 1 has 1 location with malformed placeholder braces. A populate would refuse this template; use the exact {{field_name}} syntax.",
+      "Slide 1 does not contain any valid {{field_name}} placeholders. A populate would refuse this template.",
+    ]);
+
+    // A run outside any <p:sp> text shape: the placeholder is found, but a
+    // populate cannot fill it.
+    const outsideShape = await inspectPresentationOutcomeBytes({
+      name: "outside-shape.pptx",
+      bytes: await templateBytes([
+        slideXml(["{{client}}"]).replace(
+          "</p:spTree>",
+          "<a:t>{{region}}</a:t></p:spTree>",
+        ),
+      ]),
+    });
+    expect(outsideShape.result.metrics.unsupportedPlacementPlaceholders).toBe(
+      1,
+    );
+    expect(outsideShape.result.warnings).toEqual([
+      'Placeholders outside a supported text shape are not populated: "region". A populate would refuse this template.',
+    ]);
+
+    // Every warned condition is one the populate operation refuses outright.
+    await expect(
+      populatePresentationBytes({
+        template: {
+          name: "malformed.pptx",
+          bytes: await templateBytes([slideXml(["{{client}"])]),
+        },
+        records: [{ client: "A" }],
+      }),
+    ).rejects.toMatchObject({ code: "PPTX_MALFORMED_PLACEHOLDER" });
   });
 
   it("requires exactly one data source", async () => {

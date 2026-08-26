@@ -11,6 +11,7 @@ import {
   type ByteOperationOutcome,
   type OperationControlOptions,
   type OperationPlan,
+  type OperationResult,
 } from "@consultchimps/core";
 import {
   readWorksheetRecordsBytes,
@@ -28,9 +29,11 @@ import {
   PRESENTATION_MEDIA_TYPE,
   safeNameFragment,
   skippedRowsWarnings,
+  templateInspectionResult,
   validateRecordsForTemplate,
   validateTemplateInspection,
   withoutPresentationExtension,
+  type InspectPowerPointTemplateMetric,
   type PopulatePowerPointTemplateMetric,
   type PopulatePowerPointTemplatePlanMetric,
   type PopulationRecords,
@@ -130,7 +133,11 @@ async function resolveRecords(
   };
 }
 
-/** Report the placeholders a template slide uses, without populating it. */
+/**
+ * Read the placeholders a template slide uses, without populating it. This is
+ * the low-level report reader; `inspectPresentationOutcomeBytes` wraps the same
+ * report in the structured operation result callers report to users.
+ */
 export async function inspectPresentationBytes(
   template: PresentationInputBytes,
   options: InspectPresentationBytesOptions = {},
@@ -141,6 +148,32 @@ export async function inspectPresentationBytes(
     templateSlide,
   );
   return inspectPresentationSlide(presentation, templateSlide);
+}
+
+/**
+ * The outcome of a template inspection: the structured operation result every
+ * completed operation reports, plus the placeholder report it describes. The
+ * two travel side by side for the same reason `ByteOperationOutcome` keeps
+ * `outputs` beside `result` — metrics are counts, and the placeholder names
+ * are not counts.
+ */
+export interface PresentationInspectionOutcome {
+  inspection: PowerPointTemplateInspection;
+  result: OperationResult<InspectPowerPointTemplateMetric>;
+}
+
+/**
+ * Inspect a template slide and report the outcome as a structured
+ * `OperationResult`: counts as metrics, and one warning for every condition
+ * that would make a populate refuse this template. Nothing is written, so the
+ * result carries no artifacts.
+ */
+export async function inspectPresentationOutcomeBytes(
+  template: PresentationInputBytes,
+  options: InspectPresentationBytesOptions = {},
+): Promise<PresentationInspectionOutcome> {
+  const inspection = await inspectPresentationBytes(template, options);
+  return { inspection, result: templateInspectionResult(inspection) };
 }
 
 async function resolvePopulatePresentationBytes(
@@ -263,6 +296,7 @@ export async function populatePresentationBytes(
 
 export { PPTX_ERRORS } from "./shared.js";
 export type {
+  InspectPowerPointTemplateMetric,
   PopulatePowerPointTemplateMetric,
   PopulatePowerPointTemplatePlanMetric,
   PowerPointPlaceholder,

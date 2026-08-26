@@ -92,9 +92,17 @@ page rather than using the bare `file-input` helper. The PowerPoint inspect page
 has a single `source-section` (with `source-summary` and `template-slide-input`)
 and reports into `inspection-section`, which renders `placeholder-list` with one
 `placeholder-item` per placeholder — each carrying a `placeholder-name` and its
-occurrence count — or `inspection-error` when the template cannot be read. That
-page has no Run button: choosing a template inspects it after the usual preview
-debounce.
+occurrence count — plus `inspection-warnings` holding one `inspection-warning`
+per condition that would make a populate refuse the template, or
+`inspection-error` when the template cannot be read. That page has no Run
+button: choosing a template inspects it after the usual preview debounce.
+
+Both PowerPoint pages reject a slide or row number that is not a whole number
+counted from 1 rather than falling back to a default. The offending field
+renders `<field>-error` — `template-slide-input-error`, `header-row-input-error`
+— and the task is withdrawn: the populate page also lists the messages in
+`preview-invalid-options` and disables `run-button`, and the inspect page shows
+`inspection-invalid-slide` and clears the report.
 
 The preview and results panels also carry accessible names, so
 `getByRole("region", { name: "Results" })` works where a role-based query reads

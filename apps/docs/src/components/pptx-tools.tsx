@@ -36,7 +36,7 @@ import type { OperationPlan } from "@consultchimps/core";
 // Type-only: the runtime module is loaded inside the worker.
 import type {
   PopulatePowerPointTemplatePlanMetric,
-  PowerPointTemplateInspection,
+  PresentationInspectionOutcome,
 } from "@consultchimps/pptx/bytes";
 import { FileText } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
@@ -57,13 +57,57 @@ function isWorkbookFile(file: File): boolean {
 }
 
 /**
- * Parse an optional one-based number field. A blank or unreadable field means
- * "not supplied", which lets the operation apply its own documented default
- * rather than having the page invent one.
+ * A one-based number field's three states. A field is either not supplied at
+ * all — the operation then applies its own documented default — or supplied
+ * with a usable value, or supplied with something the operation cannot honour.
+ *
+ * The third state has to be distinct from the first. Reading `0`, `1.5`, or
+ * `1e2` as "not supplied" would silently populate or inspect a different row
+ * or slide than the one that was typed, and reading them with `parseInt` would
+ * silently truncate `1.5` and `1e2` to slide 1. Both are the kind of quiet
+ * substitution the toolkit refuses to make on a user's documents, so an
+ * unusable value stops the preview and the run and says so on the field.
  */
-function optionalPositiveInteger(value: string): number | undefined {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed >= 1 ? parsed : undefined;
+type NumberFieldState =
+  | { readonly kind: "empty" }
+  | { readonly kind: "invalid"; readonly message: string }
+  | { readonly kind: "value"; readonly value: number };
+
+/**
+ * Parse an optional one-based number field, accepting only whole numbers
+ * counted from 1 — the same values the `--template-slide` and `--header-row`
+ * command-line options accept.
+ */
+function positiveIntegerField(raw: string, label: string): NumberFieldState {
+  const text = raw.trim();
+  if (text === "") {
+    return { kind: "empty" };
+  }
+  // Digits only: this rejects "1.5" and "1e2", which Number.parseInt would
+  // quietly read as 1, along with signs, spaces, and hexadecimal.
+  if (!/^\d+$/u.test(text)) {
+    return {
+      kind: "invalid",
+      message: `${label} must be a whole number counted from 1, so "${text}" cannot be used.`,
+    };
+  }
+  const value = Number(text);
+  if (value < 1 || !Number.isSafeInteger(value)) {
+    return {
+      kind: "invalid",
+      message: `${label} is counted from 1, so ${text} cannot be used.`,
+    };
+  }
+  return { kind: "value", value };
+}
+
+/** The value to send, or undefined when the field was left blank. */
+function suppliedNumber(state: NumberFieldState): number | undefined {
+  return state.kind === "value" ? state.value : undefined;
+}
+
+function fieldMessage(state: NumberFieldState): string | undefined {
+  return state.kind === "invalid" ? state.message : undefined;
 }
 
 const fieldLabelClass = "block text-sm font-semibold";
@@ -113,6 +157,8 @@ function TextField({
 
 interface NumberFieldProps {
   readonly disabled: boolean;
+  /** Set when the typed value cannot be used; shown under the field. */
+  readonly error: string | undefined;
   readonly hint: string;
   readonly label: string;
   readonly onChange: (value: string) => void;
@@ -123,6 +169,7 @@ interface NumberFieldProps {
 
 function NumberField({
   disabled,
+  error,
   hint,
   label,
   onChange,
@@ -131,6 +178,7 @@ function NumberField({
   value,
 }: NumberFieldProps) {
   const fieldId = useId();
+  const errorId = useId();
   return (
     <div>
       <label className={fieldLabelClass} htmlFor={fieldId}>
@@ -138,6 +186,8 @@ function NumberField({
       </label>
       <p className={fieldHintClass}>{hint}</p>
       <input
+        aria-describedby={error ? errorId : undefined}
+        aria-invalid={error ? true : undefined}
         className={`${inputClass} mt-2`}
         data-testid={testId}
         disabled={disabled}
@@ -145,9 +195,20 @@ function NumberField({
         min={1}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
+        step={1}
         type="number"
         value={value}
       />
+      {error ? (
+        <p
+          className={noticeClass}
+          data-testid={`${testId}-error`}
+          id={errorId}
+          role="alert"
+        >
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -188,11 +249,25 @@ export function PptxPopulateTool() {
   const runState = useOperationRun();
   const isRunning = runState.status === "running";
 
+  const headerRowField = positiveIntegerField(headerRow, "Header row");
+  const templateSlideField = positiveIntegerField(
+    templateSlide,
+    "Template slide",
+  );
+  // An unusable number must stop the task rather than fall back to a default,
+  // so neither the preview nor the run reads a row or slide nobody asked for.
+  const hasUnusableNumber =
+    headerRowField.kind === "invalid" || templateSlideField.kind === "invalid";
+
+  // Parsed again from the raw text rather than reusing the states above so
+  // every dependency here is a plain string straight from useState.
   const options = useMemo<PresentationPopulateOptions>(
     () => ({
-      headerRow: optionalPositiveInteger(headerRow),
+      headerRow: suppliedNumber(positiveIntegerField(headerRow, "Header row")),
       outputName: outputName.trim() || undefined,
-      templateSlide: optionalPositiveInteger(templateSlide),
+      templateSlide: suppliedNumber(
+        positiveIntegerField(templateSlide, "Template slide"),
+      ),
       worksheet: worksheet.trim() || undefined,
     }),
     [headerRow, outputName, templateSlide, worksheet],
@@ -204,7 +279,7 @@ export function PptxPopulateTool() {
   useEffect(() => {
     let active = true;
     const timer = window.setTimeout(() => {
-      if (!template || !workbook) {
+      if (!template || !workbook || hasUnusableNumber) {
         setPlan(null);
         setPlanError(null);
         return;
@@ -234,10 +309,10 @@ export function PptxPopulateTool() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [options, template, workbook]);
+  }, [hasUnusableNumber, options, template, workbook]);
 
   const start = useCallback(() => {
-    if (!template || !workbook) {
+    if (!template || !workbook || hasUnusableNumber) {
       return;
     }
     void runState.run({
@@ -246,7 +321,7 @@ export function PptxPopulateTool() {
       workbook: { bytes: workbook.bytes, name: workbook.name },
       options,
     });
-  }, [options, runState, template, workbook]);
+  }, [hasUnusableNumber, options, runState, template, workbook]);
 
   return (
     <ToolShell
@@ -345,6 +420,7 @@ export function PptxPopulateTool() {
             />
             <NumberField
               disabled={isRunning}
+              error={fieldMessage(headerRowField)}
               hint="Optional one-based row number. Defaults to the first nonempty row in the worksheet."
               label="Header row"
               onChange={setHeaderRow}
@@ -354,6 +430,7 @@ export function PptxPopulateTool() {
             />
             <NumberField
               disabled={isRunning}
+              error={fieldMessage(templateSlideField)}
               hint="Optional one-based slide number. Defaults to the first slide in the template."
               label="Template slide"
               onChange={setTemplateSlide}
@@ -381,6 +458,21 @@ export function PptxPopulateTool() {
             Choose a template and a records workbook to see the presentation
             this task will create.
           </p>
+        ) : null}
+        {/*
+          Repeated here because the advanced options can be collapsed: a
+          disabled Run button with its explanation hidden behind a disclosure
+          would leave no way to tell what is wrong.
+        */}
+        {hasUnusableNumber ? (
+          <ul className={noticeClass} data-testid="preview-invalid-options">
+            {[headerRowField, templateSlideField]
+              .map(fieldMessage)
+              .filter((message) => message !== undefined)
+              .map((message) => (
+                <li key={message}>{message}</li>
+              ))}
+          </ul>
         ) : null}
         {planError ? (
           <pre className={noticeClass} data-testid="preview-error">
@@ -447,7 +539,7 @@ export function PptxPopulateTool() {
         <h2 className="text-xl font-bold tracking-[-0.03em]">4. Run</h2>
         <RunControls
           busyLabel="Populating…"
-          disabled={!template || !workbook}
+          disabled={!template || !workbook || hasUnusableNumber}
           onCancel={runState.cancel}
           onRun={start}
           readingLabel="Reading the template and the records…"
@@ -470,21 +562,28 @@ export function PptxInspectTool() {
 
   const [template, setTemplate] = useState<UploadedFile | null>(null);
   const [templateSlide, setTemplateSlide] = useState("");
-  const [inspection, setInspection] =
-    useState<PowerPointTemplateInspection | null>(null);
+  const [outcome, setOutcome] = useState<PresentationInspectionOutcome | null>(
+    null,
+  );
   const [inspectionError, setInspectionError] = useState<string | null>(null);
 
-  const slideNumber = optionalPositiveInteger(templateSlide);
+  const templateSlideField = positiveIntegerField(
+    templateSlide,
+    "Template slide",
+  );
+  const slideNumber = suppliedNumber(templateSlideField);
+  const slideNumberError = fieldMessage(templateSlideField);
 
   // Inspection only reads; it writes nothing and produces no file, so there is
   // no run step to confirm. The report simply follows the chosen template and
   // slide, debounced so typing a slide number does not re-read the package on
-  // every keystroke.
+  // every keystroke. A slide number that cannot be used stops the inspection
+  // instead of quietly reporting on slide 1.
   useEffect(() => {
     let active = true;
     const timer = window.setTimeout(() => {
-      if (!template) {
-        setInspection(null);
+      if (!template || slideNumberError !== undefined) {
+        setOutcome(null);
         setInspectionError(null);
         return;
       }
@@ -496,12 +595,12 @@ export function PptxInspectTool() {
             templateSlide: slideNumber,
           });
           if (active) {
-            setInspection(report);
+            setOutcome(report);
             setInspectionError(null);
           }
         } catch (error) {
           if (active) {
-            setInspection(null);
+            setOutcome(null);
             setInspectionError(describeFailure(error));
           }
         }
@@ -512,7 +611,7 @@ export function PptxInspectTool() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [slideNumber, template]);
+  }, [slideNumber, slideNumberError, template]);
 
   return (
     <ToolShell
@@ -538,7 +637,7 @@ export function PptxInspectTool() {
                 const [first] = read;
                 if (first) {
                   setTemplate(first);
-                  setInspection(null);
+                  setOutcome(null);
                   setInspectionError(null);
                 }
               });
@@ -552,6 +651,7 @@ export function PptxInspectTool() {
         <div className="mt-6">
           <NumberField
             disabled={false}
+            error={slideNumberError}
             hint="Optional one-based slide number. Defaults to the first slide in the template."
             label="Template slide"
             onChange={setTemplateSlide}
@@ -584,7 +684,12 @@ export function PptxInspectTool() {
             {inspectionError}
           </pre>
         ) : null}
-        {inspection && !inspectionError ? (
+        {slideNumberError ? (
+          <p className={noticeClass} data-testid="inspection-invalid-slide">
+            {slideNumberError}
+          </p>
+        ) : null}
+        {outcome && !inspectionError ? (
           <>
             <dl className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
               <div>
@@ -593,7 +698,7 @@ export function PptxInspectTool() {
                   className="text-2xl font-bold"
                   data-testid="inspection-slide"
                 >
-                  {inspection.slideNumber}
+                  {outcome.inspection.slideNumber}
                 </dd>
               </div>
               <div>
@@ -602,7 +707,7 @@ export function PptxInspectTool() {
                   className="text-2xl font-bold"
                   data-testid="inspection-fields"
                 >
-                  {inspection.placeholders.length}
+                  {outcome.result.metrics.placeholderFields}
                 </dd>
               </div>
               <div>
@@ -611,7 +716,7 @@ export function PptxInspectTool() {
                   className="text-2xl font-bold"
                   data-testid="inspection-occurrences"
                 >
-                  {inspection.placeholderOccurrences}
+                  {outcome.result.metrics.placeholderOccurrences}
                 </dd>
               </div>
               <div>
@@ -620,17 +725,17 @@ export function PptxInspectTool() {
                   className="text-2xl font-bold"
                   data-testid="inspection-malformed"
                 >
-                  {inspection.malformedPlaceholderCount}
+                  {outcome.result.metrics.malformedPlaceholderLocations}
                 </dd>
               </div>
             </dl>
 
-            {inspection.placeholders.length > 0 ? (
+            {outcome.inspection.placeholders.length > 0 ? (
               <ul
                 className="mt-5 flex flex-col gap-2"
                 data-testid="placeholder-list"
               >
-                {inspection.placeholders.map((placeholder) => (
+                {outcome.inspection.placeholders.map((placeholder) => (
                   <li
                     className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-fd-background/60 px-3 py-2"
                     data-testid="placeholder-item"
@@ -654,35 +759,22 @@ export function PptxInspectTool() {
                   </li>
                 ))}
               </ul>
-            ) : (
-              <p className="mt-5 text-sm text-fd-muted-foreground">
-                This slide contains no {"{{field_name}}"} placeholders. A
-                populate would refuse it.
-              </p>
-            )}
-
-            {inspection.malformedPlaceholderCount > 0 ? (
-              <p className={noticeClass} data-testid="malformed-warning">
-                {inspection.malformedPlaceholderCount} shape
-                {inspection.malformedPlaceholderCount === 1 ? "" : "s"} on this
-                slide contain unbalanced braces. Use the exact{" "}
-                {"{{field_name}}"} syntax, or a populate will refuse the
-                template.
-              </p>
             ) : null}
 
-            {inspection.unsupportedPlacementPlaceholders.length > 0 ? (
-              <p className={noticeClass} data-testid="unsupported-placement">
-                Placeholders outside a supported text shape are not populated:{" "}
-                {inspection.unsupportedPlacementPlaceholders.join(", ")}.
-              </p>
-            ) : null}
-
-            {inspection.unsupportedSplitRunPlaceholders.length > 0 ? (
-              <p className={noticeClass} data-testid="unsupported-split-run">
-                Placeholders split across text runs are not populated:{" "}
-                {inspection.unsupportedSplitRunPlaceholders.join(", ")}.
-              </p>
+            {/*
+              The warnings come from the operation's own structured result, so
+              the page never invents a sentence about a template: every
+              condition that would make a populate refuse this slide is
+              described once, in the library, and rendered here verbatim.
+            */}
+            {outcome.result.warnings.length > 0 ? (
+              <ul className={noticeClass} data-testid="inspection-warnings">
+                {outcome.result.warnings.map((warning) => (
+                  <li data-testid="inspection-warning" key={warning}>
+                    {warning}
+                  </li>
+                ))}
+              </ul>
             ) : null}
           </>
         ) : null}

@@ -24,7 +24,7 @@ import type { MergePdfsMetric, SplitPdfMetric } from "@consultchimps/pdf/bytes";
 import type {
   PopulatePowerPointTemplateMetric,
   PopulatePowerPointTemplatePlanMetric,
-  PowerPointTemplateInspection,
+  PresentationInspectionOutcome,
 } from "@consultchimps/pptx/bytes";
 import type {
   ConsolidateWorkbooksMetric,
@@ -178,7 +178,7 @@ interface OperationTaskResults {
   "xlsx.merge": ByteOperationOutcome<MergeWorkbooksMetric>;
   "xlsx.consolidate": ByteOperationOutcome<ConsolidateWorkbooksMetric>;
   "xlsx.columns": WorksheetColumns;
-  "pptx.inspect": PowerPointTemplateInspection;
+  "pptx.inspect": PresentationInspectionOutcome;
   "pptx.plan-populate": OperationPlan<PopulatePowerPointTemplatePlanMetric>;
   "pptx.populate": ByteOperationOutcome<PopulatePowerPointTemplateMetric>;
 }

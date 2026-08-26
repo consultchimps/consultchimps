@@ -178,10 +178,10 @@ async function perform(
       });
     }
     case "pptx.inspect": {
-      const { inspectPresentationBytes } =
+      const { inspectPresentationOutcomeBytes } =
         await import("@consultchimps/pptx/bytes");
       return answerWithValue(
-        await inspectPresentationBytes(
+        await inspectPresentationOutcomeBytes(
           { bytes: task.template.bytes, name: task.template.name },
           { templateSlide: task.templateSlide },
         ),

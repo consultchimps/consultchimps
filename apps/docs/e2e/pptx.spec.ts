@@ -155,6 +155,49 @@ test.describe("/tools/pptx-populate", () => {
     await expect(resultsPanel(page)).toHaveCount(0);
   });
 
+  // A number input accepts "0", "1.5", and "1e2". Reading any of them as
+  // "not supplied" would populate a different row or slide than the one that
+  // was typed, so each has to stop the task and say why.
+  for (const { typed, why } of [
+    { typed: "0", why: "is counted from 1" },
+    { typed: "1.5", why: "must be a whole number" },
+    { typed: "1e2", why: "must be a whole number" },
+  ] as const) {
+    test(`refuses the template slide "${typed}" instead of defaulting`, async ({
+      page,
+    }) => {
+      await page.goto("/tools/pptx-populate");
+
+      const [template, records] = await Promise.all([
+        createPresentationUpload("review-template.pptx", REVIEW_TEMPLATE),
+        createWorkbookUpload("records.xlsx", RECORDS),
+      ]);
+      await templateInput(page).setInputFiles(template);
+      await recordsInput(page).setInputFiles(records);
+
+      // A plan appears first, so the assertions below prove the bad value
+      // withdrew it rather than merely never producing one.
+      await expect(
+        previewPanel(page).getByTestId("planned-outputs"),
+      ).toBeVisible();
+
+      const recordsSection = page.getByTestId("records-section");
+      await openAdvancedOptions(recordsSection);
+      await recordsSection.getByTestId("template-slide-input").fill(typed);
+
+      await expect(
+        recordsSection.getByTestId("template-slide-input-error"),
+      ).toContainText(why);
+      await expect(
+        previewPanel(page).getByTestId("preview-invalid-options"),
+      ).toContainText(why);
+      await expect(
+        previewPanel(page).getByTestId("planned-outputs"),
+      ).toHaveCount(0);
+      await expect(page.getByTestId("run-button")).toBeDisabled();
+    });
+  }
+
   test("refuses a template that is not a presentation instead of failing", async ({
     page,
   }) => {
@@ -212,6 +255,63 @@ test.describe("/tools/pptx-inspect", () => {
     ]);
     await expect(placeholders.nth(0)).toContainText("2");
     await expect(placeholders.nth(1)).toContainText("1");
+  });
+
+  test("reports what would make a populate refuse the template", async ({
+    page,
+  }) => {
+    await page.goto("/tools/pptx-inspect");
+
+    // One unbalanced brace, which also leaves the slide with no usable
+    // placeholder: the operation's own result carries both warnings.
+    const template = await createPresentationUpload("malformed.pptx", [
+      ["{{title}"],
+    ]);
+    await page
+      .getByTestId("source-section")
+      .getByTestId("file-input")
+      .setInputFiles(template);
+
+    const report = page.getByTestId("inspection-section");
+    await expect(report.getByTestId("inspection-malformed")).toHaveText("1");
+    await expect(report.getByTestId("placeholder-item")).toHaveCount(0);
+
+    const warnings = report.getByTestId("inspection-warning");
+    await expect(warnings).toHaveCount(2);
+    await expect(warnings.first()).toContainText(
+      "malformed placeholder braces",
+    );
+    await expect(warnings.last()).toContainText(
+      "does not contain any valid {{field_name}} placeholders",
+    );
+  });
+
+  test("refuses a slide number that is not a whole number counted from 1", async ({
+    page,
+  }) => {
+    await page.goto("/tools/pptx-inspect");
+
+    const template = await createPresentationUpload("two-slides.pptx", [
+      ["{{title}}"],
+      ["{{region}}"],
+    ]);
+    await page
+      .getByTestId("source-section")
+      .getByTestId("file-input")
+      .setInputFiles(template);
+
+    const report = page.getByTestId("inspection-section");
+    await expect(report.getByTestId("placeholder-item")).toHaveCount(1);
+
+    await page.getByTestId("template-slide-input").fill("0");
+
+    // Slide 1 would be a plausible-looking answer to a request nobody made,
+    // so the report is withdrawn rather than quietly defaulted.
+    await expect(page.getByTestId("template-slide-input-error")).toContainText(
+      "is counted from 1",
+    );
+    await expect(report.getByTestId("inspection-invalid-slide")).toBeVisible();
+    await expect(report.getByTestId("placeholder-item")).toHaveCount(0);
   });
 
   test("inspects the chosen template slide, not always the first", async ({
