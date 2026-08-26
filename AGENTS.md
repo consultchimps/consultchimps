@@ -89,7 +89,7 @@ pnpm test:run                                   # vitest run (packages/**/*.test
 pnpm test:run packages/xlsx/test/split.test.ts  # one test file
 pnpm test:coverage                              # tests + coverage thresholds (used by check)
 pnpm test                                       # build, then vitest
-pnpm package:check                              # package metadata and publishability
+pnpm package:check                              # published dependency specifiers, package metadata, publishability
 pnpm docs:check                                 # CLI reference covers the CLI; tool registry matches docs pages and online-tool routes (used by check)
 pnpm check                                      # full verification sequence
 pnpm consultchimps <args>                       # run the built CLI (packages/cli/dist)
@@ -438,6 +438,21 @@ Do not add:
 - Dependencies that upload or inspect user documents remotely.
 - A large framework for a small utility problem.
 - Duplicate libraries that solve an existing dependency's role.
+
+Published packages must declare only registry-installable dependencies. A
+tarball URL, git remote, or local path in a publishable package's
+`dependencies`, `peerDependencies`, or `optionalDependencies` makes every
+consumer's `npm install` reach a host other than the npm registry, which fails
+in registry-only, mirrored, and air-gapped environments. When a library is not
+published to the registry, declare it as a devDependency and let the build
+bundle it into `dist`, then record the attribution the bundled license requires.
+`pnpm package:check` enforces this through
+`scripts/check-package-dependencies.ts`.
+
+Repository development still installs those devDependency tarballs from their
+original host, so a contributor working in a registry-only environment may need
+that host allowlisted to run `pnpm install` here even though consumers of the
+published packages do not.
 
 ## Changesets and releases
 
