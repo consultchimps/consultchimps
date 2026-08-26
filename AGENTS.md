@@ -637,6 +637,9 @@ Before handing work back:
       applicable.
 - [ ] Public documentation and CLI help match the implementation.
 - [ ] A correct Changeset exists for every published-package change.
+- [ ] Any tool-registry surface flipped to `works` meets
+      `docs/agents/feature-completion.md`, demonstrated in the pull request
+      description.
 - [ ] No client data, credentials, generated outputs, or local configuration
       were added.
 - [ ] `git diff --check` passes.
@@ -650,6 +653,12 @@ Before handing work back:
 
 Issues live in this repo's GitHub Issues, operated through the `gh` CLI. See
 `docs/agents/issue-tracker.md`.
+
+### Feature completion
+
+`docs/agents/feature-completion.md` defines per-surface completion checklists
+for the tool registry. It is binding for any pull request that flips a surface's
+status to `works`.
 
 ### Domain docs
 
