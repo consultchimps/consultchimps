@@ -110,7 +110,7 @@ export const TOOLS: readonly ConsultTool[] = [
     surfaces: {
       cli: "works",
       library: "works",
-      browser: { status: "none" },
+      browser: { status: "works", href: "/tools/pptx-populate" },
     },
     icon: Presentation,
   },
@@ -152,7 +152,7 @@ export const TOOLS: readonly ConsultTool[] = [
     surfaces: {
       cli: "works",
       library: "works",
-      browser: { status: "none" },
+      browser: { status: "works", href: "/tools/pptx-inspect" },
     },
     icon: FileSearch,
   },
@@ -163,11 +163,17 @@ export const BROWSER_TOOLS: readonly BrowserTool[] =
 
 /**
  * Find the tool whose working browser surface a docs page should offer.
- * Keyed off browser status, not entry order: when several operations share
- * one guide page (populate and template inspection both live on the
- * PowerPoint guide), the button belongs to the operation that actually runs
- * in the browser — or to none at all. Fragments are stripped so an anchored
- * docHref still resolves to its page.
+ * Keyed off browser status, not entry order, so a page whose operations do
+ * not run in the browser offers nothing. Fragments are stripped, so an
+ * anchored docHref still resolves to its page.
+ *
+ * When several operations share one guide page — populate and template
+ * inspection both live on the PowerPoint guide — the page gets exactly one
+ * button, belonging to the first registered operation that runs in the
+ * browser. That is deliberate: a guide header with two competing "Try …
+ * online" buttons reads as a choice the reader has to make before they have
+ * read anything. The other operations stay one click away in the online-tools
+ * sub-bar and on the /tools index, both of which list every browser tool.
  */
 export function findToolByDocUrl(url: string): BrowserTool | undefined {
   return BROWSER_TOOLS.find((tool) => tool.docHref.split("#")[0] === url);

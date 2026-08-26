@@ -277,6 +277,33 @@ const populated = await populatePresentationBytes({
 });
 ```
 
+A template inspection reads a slide and writes nothing, so
+`inspectPresentationOutcomeBytes` returns the structured result beside the
+placeholder report rather than beside output bytes. Its metrics are the slide's
+counts, and its warnings name every condition — malformed braces, unsupported
+placements, no placeholders at all — that would make a population refuse the
+template:
+
+```ts
+import { inspectPresentationOutcomeBytes } from "@consultchimps/pptx/bytes";
+
+const { inspection, result } = await inspectPresentationOutcomeBytes(
+  { name: "template.pptx", bytes: templateBytes },
+  { templateSlide: 2 },
+);
+
+console.log(result.metrics.placeholderOccurrences);
+for (const placeholder of inspection.placeholders) {
+  console.log(placeholder.name, placeholder.occurrences);
+}
+for (const warning of result.warnings) {
+  console.warn(warning);
+}
+```
+
+`inspectPresentationBytes` remains available and returns the placeholder report
+on its own, for callers that want the reading without the operation result.
+
 Output names default to the input name (`report.pdf` becomes
 `report-page-001.pdf`, `clients.xlsx` becomes `clients-North.xlsx`, and
 `template.pptx` becomes `template-populated.pptx`; workbook merges default to

@@ -8,6 +8,7 @@ import {
   throwIfAborted,
   type AbortOutputContext,
   type OperationControlOptions,
+  type OperationResult,
 } from "@consultchimps/core";
 import JSZip from "jszip";
 
@@ -15,6 +16,7 @@ export const PRESENTATION_MEDIA_TYPE =
   "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 export const PRESENTATION_EXTENSION = ".pptx";
 export const POPULATE_OPERATION = "pptx.populate";
+export const INSPECT_OPERATION = "pptx.inspect-template";
 export const DEFAULT_TEMPLATE_SLIDE = 1;
 
 const OFFICE_DOCUMENT_RELATIONSHIP =
@@ -74,6 +76,18 @@ export type PopulatePowerPointTemplatePlanMetric = Exclude<
   PopulatePowerPointTemplateMetric,
   "replacements" | "warnings"
 >;
+
+/**
+ * The counts an inspection reports. An inspection reads one slide and writes
+ * nothing, so it has no output metric; every name here is a count of what the
+ * slide contains.
+ */
+export type InspectPowerPointTemplateMetric =
+  | "malformedPlaceholderLocations"
+  | "placeholderFields"
+  | "placeholderOccurrences"
+  | "unsupportedPlacementPlaceholders"
+  | "unsupportedSplitRunPlaceholders";
 
 export interface PowerPointPlaceholder {
   name: string;
@@ -466,6 +480,82 @@ export async function inspectPresentationSlide(
     presentation.selectedSlidePath,
   );
   return publicInspection(inspectSlideXml(slideXml), slideNumber);
+}
+
+function quotedList(names: readonly string[]): string {
+  return names.map((name) => `"${name}"`).join(", ");
+}
+
+/**
+ * The conditions an inspection reports as warnings: every one of them is a
+ * reason `validateTemplateInspection` would refuse the same slide, so the
+ * warnings tell a reader what a populate will do before they attempt one.
+ * The inspection itself succeeded, which is why these are warnings rather
+ * than errors.
+ *
+ * Order is fixed rather than derived from the slide, so identical inputs
+ * always produce an identical result.
+ */
+function templateInspectionWarnings(
+  inspection: PowerPointTemplateInspection,
+): string[] {
+  const warnings: string[] = [];
+  const { slideNumber } = inspection;
+
+  if (inspection.malformedPlaceholderCount > 0) {
+    const count = inspection.malformedPlaceholderCount;
+    warnings.push(
+      `Slide ${slideNumber} has ${count} location${
+        count === 1 ? "" : "s"
+      } with malformed placeholder braces. A populate would refuse this template; use the exact {{field_name}} syntax.`,
+    );
+  }
+  if (inspection.unsupportedSplitRunPlaceholders.length > 0) {
+    warnings.push(
+      `Placeholders split across multiple PowerPoint text runs are not supported: ${quotedList(
+        inspection.unsupportedSplitRunPlaceholders,
+      )}. A populate would refuse this template.`,
+    );
+  }
+  if (inspection.unsupportedPlacementPlaceholders.length > 0) {
+    warnings.push(
+      `Placeholders outside a supported text shape are not populated: ${quotedList(
+        inspection.unsupportedPlacementPlaceholders,
+      )}. A populate would refuse this template.`,
+    );
+  }
+  if (inspection.placeholderOccurrences === 0) {
+    warnings.push(
+      `Slide ${slideNumber} does not contain any valid {{field_name}} placeholders. A populate would refuse this template.`,
+    );
+  }
+
+  return warnings;
+}
+
+/**
+ * Present an inspection as the structured operation result every completed
+ * ConsultChimps operation reports. An inspection creates nothing, so it has
+ * no artifacts; the placeholder detail travels beside this result rather than
+ * inside it, because metrics are counts and the names are not.
+ */
+export function templateInspectionResult(
+  inspection: PowerPointTemplateInspection,
+): OperationResult<InspectPowerPointTemplateMetric> {
+  return {
+    operation: INSPECT_OPERATION,
+    artifacts: [],
+    warnings: templateInspectionWarnings(inspection),
+    metrics: {
+      malformedPlaceholderLocations: inspection.malformedPlaceholderCount,
+      placeholderFields: inspection.placeholders.length,
+      placeholderOccurrences: inspection.placeholderOccurrences,
+      unsupportedPlacementPlaceholders:
+        inspection.unsupportedPlacementPlaceholders.length,
+      unsupportedSplitRunPlaceholders:
+        inspection.unsupportedSplitRunPlaceholders.length,
+    },
+  };
 }
 
 export function validateTemplateInspection(

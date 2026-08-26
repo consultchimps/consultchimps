@@ -49,31 +49,48 @@ export default function Page() {
           )}
         </div>
 
-        <h2 className="mt-16 text-2xl font-bold tracking-[-0.03em]">
-          Not in the browser yet
-        </h2>
-        <p className="mt-3 max-w-2xl leading-7 text-fd-muted-foreground">
-          The rest of the kit currently runs through the command line or the
-          TypeScript libraries. Each guide covers installation and a worked
-          example.
-        </p>
-        <ul className="mt-6 grid gap-3 sm:grid-cols-2">
-          {guideOnlyTools.map(({ slug, title, docHref, icon: Icon }) => (
-            <li key={slug}>
-              <Link
-                className="inline-flex items-center gap-2.5 rounded-lg border bg-fd-card px-4 py-3 text-sm font-medium transition-colors hover:bg-fd-accent"
-                href={docHref}
-              >
-                <Icon className="size-4 text-fd-primary" aria-hidden="true" />
-                {title}
-                <BookOpen
-                  className="ml-auto size-4 text-fd-muted-foreground"
-                  aria-hidden="true"
-                />
-              </Link>
-            </li>
-          ))}
-        </ul>
+        {/*
+          Every operation the registry declares now has a working browser
+          surface, so this section has nothing to list. It renders only when
+          something is genuinely missing from the browser: a heading over an
+          empty list, above a paragraph promising "the rest of the kit", reads
+          as a page that failed to load rather than as a complete toolkit.
+        */}
+        {guideOnlyTools.length > 0 ? (
+          <>
+            <h2 className="mt-16 text-2xl font-bold tracking-[-0.03em]">
+              Not in the browser yet
+            </h2>
+            <p className="mt-3 max-w-2xl leading-7 text-fd-muted-foreground">
+              The rest of the kit currently runs through the command line or the
+              TypeScript libraries. Each guide covers installation and a worked
+              example.
+            </p>
+            <ul
+              className="mt-6 grid gap-3 sm:grid-cols-2"
+              data-testid="guide-only-tools"
+            >
+              {guideOnlyTools.map(({ slug, title, docHref, icon: Icon }) => (
+                <li key={slug}>
+                  <Link
+                    className="inline-flex items-center gap-2.5 rounded-lg border bg-fd-card px-4 py-3 text-sm font-medium transition-colors hover:bg-fd-accent"
+                    href={docHref}
+                  >
+                    <Icon
+                      className="size-4 text-fd-primary"
+                      aria-hidden="true"
+                    />
+                    {title}
+                    <BookOpen
+                      className="ml-auto size-4 text-fd-muted-foreground"
+                      aria-hidden="true"
+                    />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
       </div>
     </main>
   );

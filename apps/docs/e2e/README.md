@@ -35,15 +35,21 @@ command when `out/` is missing.
   apart into one table, downloading the result, and checking that the "Normalize
   headers" and "Add source columns" checkboxes change the columns the finished
   workbook holds.
-- `tools-navigation.spec.ts` — the `/tools` index, the sub-bar tabs, and the
-  tool-named "Try ... online" button each guide gains from the tool registry.
+- `pptx.spec.ts` — populating a template slide from workbook records into one
+  deck, naming the output, downloading it, reporting a placeholder no column
+  feeds, refusing a template that is not a presentation, and inspecting a
+  template's placeholders with their occurrence counts on the chosen slide.
+- `tools-navigation.spec.ts` — the `/tools` index, the sub-bar tabs, the
+  tool-named "Try ... online" button each guide gains from the tool registry,
+  and the single button a guide shared by two operations offers.
 
 Every downloaded PDF is checked for the `%PDF-` header and every downloaded
-workbook for the `PK` ZIP header, so a tool that "finishes" while producing
-empty or corrupt bytes fails the suite. `readWorkbookDownload` goes further and
-opens a downloaded workbook with jszip, resolving each worksheet through the
-workbook's own relationships, so a test can assert which worksheets and which
-rows reached the user.
+workbook or presentation for the `PK` ZIP header — both `.xlsx` and `.pptx` are
+ZIP packages — so a tool that "finishes" while producing empty or corrupt bytes
+fails the suite. `readWorkbookDownload` goes further and opens a downloaded
+workbook with jszip, resolving each worksheet through the workbook's own
+relationships, so a test can assert which worksheets and which rows reached the
+user.
 
 ## Selectors
 
@@ -77,12 +83,50 @@ consolidate page adds `output-name-input`, `normalize-headers-checkbox`,
 inputs through the "Move X earlier", "Move X later", and "Remove X" buttons on
 each `source-item`.
 
+The PowerPoint populate page takes two files, so it wraps each picker in its own
+section: `template-section` (with `template-summary`) and `records-section`
+(with `records-summary` and the advanced controls `worksheet-input`,
+`header-row-input`, `template-slide-input`, `output-name-input`). Because both
+sections render a `file-input`, always scope the input to its section on that
+page rather than using the bare `file-input` helper. The PowerPoint inspect page
+has a single `source-section` (with `source-summary` and `template-slide-input`)
+and reports into `inspection-section`, which renders `placeholder-list` with one
+`placeholder-item` per placeholder — each carrying a `placeholder-name` and its
+occurrence count — plus `inspection-warnings` holding one `inspection-warning`
+per condition that would make a populate refuse the template, or
+`inspection-error` when the template cannot be read. That page has no Run
+button: choosing a template inspects it after the usual preview debounce.
+
+Both PowerPoint pages reject a slide or row number that is not a whole number
+counted from 1 rather than falling back to a default. The offending field
+renders `<field>-error` — `template-slide-input-error`, `header-row-input-error`
+— and the task is withdrawn: the populate page also lists the messages in
+`preview-invalid-options` and disables `run-button`, and the inspect page shows
+`inspection-invalid-slide` and clears the report.
+
+Both pages also clear the chosen file and render `template-rejected` (or
+`records-rejected`) when a picker is handed something it cannot read, rather
+than keeping the previous document. Choosing a file clears the previous
+selection immediately and shows `template-reading` / `records-reading` /
+`source-reading` until the read finishes, so Run is never enabled against a
+document that has already been replaced. And because a changed option applies to
+Run at once, a preview or report is shown only while it still matches the page:
+changing an input replaces it with `preview-pending` or `inspection-pending`
+until the recomputed answer arrives. Both transient states last at least the 250
+ms preview debounce, so they are safe to assert. A finished deck is withdrawn on
+the same rule: changing any option removes `results-section` entirely, because a
+worksheet change can produce a deck with the identical filename from different
+rows.
+
 The preview and results panels also carry accessible names, so
 `getByRole("region", { name: "Results" })` works where a role-based query reads
 better.
 
 ## Fixtures
 
-PDFs are generated in memory with pdf-lib and workbooks are assembled from
-minimal OOXML parts with jszip, both in `fixtures.ts`, and uploaded as buffers.
-Nothing binary is checked in and no temporary files are written.
+PDFs are generated in memory with pdf-lib, and workbooks and presentations are
+assembled from minimal OOXML parts with jszip, all in `fixtures.ts`, and
+uploaded as buffers. `createPresentationUpload` takes one array of run strings
+per slide, so a fixture spells out how a paragraph is split across text runs —
+the detail the populate engine has to stitch back together before it can see a
+`{{field}}`. Nothing binary is checked in and no temporary files are written.

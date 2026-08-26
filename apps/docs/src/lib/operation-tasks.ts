@@ -22,6 +22,11 @@ import type {
 // Type-only imports: the runtime modules are loaded inside the worker.
 import type { MergePdfsMetric, SplitPdfMetric } from "@consultchimps/pdf/bytes";
 import type {
+  PopulatePowerPointTemplateMetric,
+  PopulatePowerPointTemplatePlanMetric,
+  PresentationInspectionOutcome,
+} from "@consultchimps/pptx/bytes";
+import type {
   ConsolidateWorkbooksMetric,
   MergeWorkbooksMetric,
   SplitWorkbookByColumnPlanMetric,
@@ -32,6 +37,18 @@ import type {
 export interface NamedBytes {
   readonly name: string;
   readonly bytes: Uint8Array;
+}
+
+/**
+ * The template and records selection a population reads. The two tasks that
+ * populate — the preview and the run — take exactly the same options, so the
+ * page builds one object and sends it to both.
+ */
+export interface PresentationPopulateOptions {
+  readonly headerRow?: number | undefined;
+  readonly outputName?: string | undefined;
+  readonly templateSlide?: number | undefined;
+  readonly worksheet?: string | undefined;
 }
 
 /**
@@ -107,6 +124,23 @@ export type OperationTask =
       readonly input: NamedBytes;
       readonly headerRow?: number | undefined;
       readonly worksheet?: string | undefined;
+    }
+  | {
+      readonly kind: "pptx.inspect";
+      readonly template: NamedBytes;
+      readonly templateSlide?: number | undefined;
+    }
+  | {
+      readonly kind: "pptx.plan-populate";
+      readonly template: NamedBytes;
+      readonly workbook: NamedBytes;
+      readonly options: PresentationPopulateOptions;
+    }
+  | {
+      readonly kind: "pptx.populate";
+      readonly template: NamedBytes;
+      readonly workbook: NamedBytes;
+      readonly options: PresentationPopulateOptions;
     };
 
 /**
@@ -119,6 +153,7 @@ export type ByteOperationTask = Extract<
     kind:
       | "pdf.merge"
       | "pdf.split"
+      | "pptx.populate"
       | "xlsx.consolidate"
       | "xlsx.merge"
       | "xlsx.split";
@@ -143,6 +178,9 @@ interface OperationTaskResults {
   "xlsx.merge": ByteOperationOutcome<MergeWorkbooksMetric>;
   "xlsx.consolidate": ByteOperationOutcome<ConsolidateWorkbooksMetric>;
   "xlsx.columns": WorksheetColumns;
+  "pptx.inspect": PresentationInspectionOutcome;
+  "pptx.plan-populate": OperationPlan<PopulatePowerPointTemplatePlanMetric>;
+  "pptx.populate": ByteOperationOutcome<PopulatePowerPointTemplateMetric>;
 }
 
 /** What a given task resolves to once the worker has run it. */

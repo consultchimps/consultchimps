@@ -63,6 +63,9 @@ importers:
       '@consultchimps/pdf':
         specifier: workspace:*
         version: link:../../packages/pdf
+      '@consultchimps/pptx':
+        specifier: workspace:*
+        version: link:../../packages/pptx
       '@consultchimps/xlsx':
         specifier: workspace:*
         version: link:../../packages/xlsx

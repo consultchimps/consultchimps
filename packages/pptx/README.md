@@ -41,6 +41,24 @@ const { result, outputs } = await populatePresentationBytes({
 path-based inspection and plan. Output names are sanitized portable filenames,
 never paths, and identical inputs produce byte-identical presentations.
 
+`inspectPresentationOutcomeBytes()` reports the same inspection as the
+structured `OperationResult` every completed operation returns — counts as
+metrics, no artifacts, and one warning for each condition that would make a
+population refuse the template:
+
+```ts
+import { inspectPresentationOutcomeBytes } from "@consultchimps/pptx/bytes";
+
+const { inspection, result } = await inspectPresentationOutcomeBytes({
+  name: "profile-template.pptx",
+  bytes: templateBytes,
+});
+console.log(result.metrics.placeholderFields, inspection.placeholders);
+for (const warning of result.warnings) {
+  console.warn(warning);
+}
+```
+
 ## Implementation boundary
 
 The package edits the Open XML parts inside a `.pptx` archive with the

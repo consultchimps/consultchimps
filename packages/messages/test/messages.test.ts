@@ -207,6 +207,57 @@ describe("human-readable CLI output", () => {
     expect(output).not.toContain("Error reference:");
   });
 
+  it("explains a template inspection without pointing at output files", () => {
+    const output = formatHumanResult(
+      result(
+        "pptx.inspect-template",
+        {
+          malformedPlaceholderLocations: 1,
+          placeholderFields: 2,
+          placeholderOccurrences: 3,
+          unsupportedPlacementPlaceholders: 0,
+          unsupportedSplitRunPlaceholders: 0,
+        },
+        [],
+        ["Slide 1 has 1 location with malformed placeholder braces."],
+      ),
+      cli,
+    );
+
+    expect(output).toContain(
+      "Your PowerPoint template inspection is complete.",
+    );
+    expect(output).toContain(
+      "ConsultChimps found 2 distinct placeholder fields on the inspected template slide, used 3 times in total.",
+    );
+    expect(output).toContain("Nothing was created or changed.");
+
+    // Every metric reads as plain language, never as its internal name.
+    expect(output).toContain("Locations with malformed placeholder braces: 1");
+    expect(output).toContain("Distinct placeholder fields: 2");
+    expect(output).toContain("Placeholders split across text runs: 0");
+    expect(output).not.toContain("malformedPlaceholderLocations:");
+    expect(output).not.toContain("unsupportedSplitRunPlaceholders:");
+
+    // An inspection creates nothing, so the reader is never told to open a
+    // file that does not exist.
+    expect(output).toContain("No files were created.");
+    expect(output).not.toContain("Open the files");
+
+    // The names are not in this text — only the counts are — so the next step
+    // sends the reader to the inspection report rather than "above".
+    expect(output).toContain(
+      "Read the placeholder names from the inspection report that accompanies this result",
+    );
+    expect(output).not.toContain("placeholder field listed above");
+    expect(output).toContain(
+      "1. Slide 1 has 1 location with malformed placeholder braces.",
+    );
+    expect(output).toContain(
+      "Run consultchimps pptx populate --help for a complete example.",
+    );
+  });
+
   it("labels artifact types and falls back for unknown operations", () => {
     const output = formatHumanResult(
       {

@@ -11,6 +11,7 @@ import {
   type ByteOperationOutcome,
   type OperationControlOptions,
   type OperationPlan,
+  type OperationResult,
 } from "@consultchimps/core";
 import {
   readWorksheetRecordsBytes,
@@ -20,6 +21,7 @@ import {
 import {
   createOutputPresentation,
   DEFAULT_TEMPLATE_SLIDE,
+  INSPECT_OPERATION,
   inspectPresentationSlide,
   loadPresentationPackage,
   POPULATE_OPERATION,
@@ -28,9 +30,11 @@ import {
   PRESENTATION_MEDIA_TYPE,
   safeNameFragment,
   skippedRowsWarnings,
+  templateInspectionResult,
   validateRecordsForTemplate,
   validateTemplateInspection,
   withoutPresentationExtension,
+  type InspectPowerPointTemplateMetric,
   type PopulatePowerPointTemplateMetric,
   type PopulatePowerPointTemplatePlanMetric,
   type PopulationRecords,
@@ -46,7 +50,7 @@ export interface PresentationInputBytes {
 /** One record per generated slide, keyed by placeholder name. */
 export type PresentationRecord = Readonly<Record<string, string>>;
 
-export interface InspectPresentationBytesOptions {
+export interface InspectPresentationBytesOptions extends OperationControlOptions {
   templateSlide?: number | undefined;
 }
 
@@ -118,6 +122,10 @@ async function resolveRecords(
   }
 
   const workbook = options.workbook!;
+  // Last abort boundary before the workbook parse, which is synchronous and
+  // cannot be interrupted once entered — a cancel that arrived while the
+  // slide XML was being awaited must stop the task here.
+  throwIfAborted(options.signal, POPULATE_OPERATION, "memory");
   const worksheetRecords = await readWorksheetRecordsBytes(workbook, {
     headerRow: options.headerRow,
     worksheet: options.worksheet,
@@ -130,27 +138,93 @@ async function resolveRecords(
   };
 }
 
-/** Report the placeholders a template slide uses, without populating it. */
+/**
+ * Read the placeholders a template slide uses, without populating it. This is
+ * the low-level report reader; `inspectPresentationOutcomeBytes` wraps the same
+ * report in the structured operation result callers report to users.
+ */
 export async function inspectPresentationBytes(
   template: PresentationInputBytes,
   options: InspectPresentationBytesOptions = {},
 ): Promise<PowerPointTemplateInspection> {
   const templateSlide = options.templateSlide ?? DEFAULT_TEMPLATE_SLIDE;
+  // Two package reads make up the whole cost: opening the archive, then
+  // decompressing the selected slide. Both boundaries carry an abort check —
+  // a page inspecting a different slide has no use for this answer and should
+  // not queue behind it — and a progress event, so a caller can show which of
+  // the two a large deck is currently in. The stages and their counts depend
+  // only on the operation, never on the template, so they are identical for
+  // identical inputs.
+  throwIfAborted(options.signal, INSPECT_OPERATION, "memory");
   const presentation = await loadPresentationPackage(
     template.bytes,
     templateSlide,
   );
-  return inspectPresentationSlide(presentation, templateSlide);
+
+  throwIfAborted(options.signal, INSPECT_OPERATION, "memory");
+  options.onProgress?.({
+    operation: INSPECT_OPERATION,
+    stage: "reading-slide",
+    completed: 1,
+    total: 2,
+  });
+  const inspection = await inspectPresentationSlide(
+    presentation,
+    templateSlide,
+  );
+
+  throwIfAborted(options.signal, INSPECT_OPERATION, "memory");
+  options.onProgress?.({
+    operation: INSPECT_OPERATION,
+    stage: "inspecting-placeholders",
+    completed: 2,
+    total: 2,
+  });
+  return inspection;
 }
 
+/**
+ * The outcome of a template inspection: the structured operation result every
+ * completed operation reports, plus the placeholder report it describes. The
+ * two travel side by side for the same reason `ByteOperationOutcome` keeps
+ * `outputs` beside `result` — metrics are counts, and the placeholder names
+ * are not counts.
+ */
+export interface PresentationInspectionOutcome {
+  inspection: PowerPointTemplateInspection;
+  result: OperationResult<InspectPowerPointTemplateMetric>;
+}
+
+/**
+ * Inspect a template slide and report the outcome as a structured
+ * `OperationResult`: counts as metrics, and one warning for every condition
+ * that would make a populate refuse this template. Nothing is written, so the
+ * result carries no artifacts.
+ */
+export async function inspectPresentationOutcomeBytes(
+  template: PresentationInputBytes,
+  options: InspectPresentationBytesOptions = {},
+): Promise<PresentationInspectionOutcome> {
+  const inspection = await inspectPresentationBytes(template, options);
+  return { inspection, result: templateInspectionResult(inspection) };
+}
+
+/**
+ * Resolving reads two whole packages, which is the slow half of both planning
+ * and populating. The abort checks sit between those reads so a caller that
+ * has moved on — a page replanning after a keystroke, say — stops paying for
+ * work whose answer it will discard, instead of only ignoring it at the end.
+ */
 async function resolvePopulatePresentationBytes(
   options: PopulatePresentationBytesOptions,
 ): Promise<ResolvedPopulateBytes> {
   const templateSlide = options.templateSlide ?? DEFAULT_TEMPLATE_SLIDE;
+  throwIfAborted(options.signal, POPULATE_OPERATION, "memory");
   const presentation = await loadPresentationPackage(
     options.template.bytes,
     templateSlide,
   );
+  throwIfAborted(options.signal, POPULATE_OPERATION, "memory");
   const inspection = await inspectPresentationSlide(
     presentation,
     templateSlide,
@@ -158,6 +232,7 @@ async function resolvePopulatePresentationBytes(
   validateTemplateInspection(inspection);
 
   const records = await resolveRecords(options);
+  throwIfAborted(options.signal, POPULATE_OPERATION, "memory");
   validateRecordsForTemplate(records, inspection, {
     template: options.template.name,
     templateSlide,
@@ -263,6 +338,7 @@ export async function populatePresentationBytes(
 
 export { PPTX_ERRORS } from "./shared.js";
 export type {
+  InspectPowerPointTemplateMetric,
   PopulatePowerPointTemplateMetric,
   PopulatePowerPointTemplatePlanMetric,
   PowerPointPlaceholder,
