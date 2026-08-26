@@ -573,6 +573,28 @@ describe("byte-level presentation population", () => {
     ).rejects.toMatchObject({ code: OPERATION_ABORTED });
   });
 
+  it("cancels an inspection whose answer is already superseded", async () => {
+    const template = {
+      name: "template.pptx",
+      bytes: await templateBytes([slideXml(["{{client}}"])]),
+    };
+
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await expect(
+      inspectPresentationBytes(template, { signal: cancelled.signal }),
+    ).rejects.toMatchObject({ code: OPERATION_ABORTED });
+    await expect(
+      inspectPresentationOutcomeBytes(template, { signal: cancelled.signal }),
+    ).rejects.toMatchObject({ code: OPERATION_ABORTED });
+
+    // A signal that never aborts leaves the report exactly as it was.
+    const live = new AbortController();
+    await expect(
+      inspectPresentationBytes(template, { signal: live.signal }),
+    ).resolves.toMatchObject({ placeholders: [{ name: "client" }] });
+  });
+
   it("cancels a plan instead of parsing packages nobody is waiting for", async () => {
     const template = {
       name: "template.pptx",

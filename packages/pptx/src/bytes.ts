@@ -21,6 +21,7 @@ import {
 import {
   createOutputPresentation,
   DEFAULT_TEMPLATE_SLIDE,
+  INSPECT_OPERATION,
   inspectPresentationSlide,
   loadPresentationPackage,
   POPULATE_OPERATION,
@@ -49,7 +50,7 @@ export interface PresentationInputBytes {
 /** One record per generated slide, keyed by placeholder name. */
 export type PresentationRecord = Readonly<Record<string, string>>;
 
-export interface InspectPresentationBytesOptions {
+export interface InspectPresentationBytesOptions extends OperationControlOptions {
   templateSlide?: number | undefined;
 }
 
@@ -143,10 +144,15 @@ export async function inspectPresentationBytes(
   options: InspectPresentationBytesOptions = {},
 ): Promise<PowerPointTemplateInspection> {
   const templateSlide = options.templateSlide ?? DEFAULT_TEMPLATE_SLIDE;
+  // Opening the package and decompressing its parts is the whole cost here,
+  // so the checks bracket that read: a page inspecting a different slide has
+  // no use for this one's answer and should not queue behind it.
+  throwIfAborted(options.signal, INSPECT_OPERATION, "memory");
   const presentation = await loadPresentationPackage(
     template.bytes,
     templateSlide,
   );
+  throwIfAborted(options.signal, INSPECT_OPERATION, "memory");
   return inspectPresentationSlide(presentation, templateSlide);
 }
 

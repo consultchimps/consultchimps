@@ -14,6 +14,7 @@ result. The existing `inspectPresentationBytes()` is unchanged and still returns
 the placeholder report on its own.
 
 `planPopulatePresentationBytes()` now honours the `signal` its options already
-accepted. Planning reads the template package and the records workbook in full,
-so a caller that has moved on — a page replanning after a keystroke — can stop
-that work rather than only discard its answer.
+accepted, and `inspectPresentationBytes()` accepts one. Both read whole packages
+before they can answer, so a caller that has moved on — a page replanning after
+a keystroke, or inspecting a different slide — can stop that work rather than
+only discard its answer.

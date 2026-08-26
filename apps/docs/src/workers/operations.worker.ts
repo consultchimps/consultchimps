@@ -183,7 +183,7 @@ async function perform(
       return answerWithValue(
         await inspectPresentationOutcomeBytes(
           { bytes: task.template.bytes, name: task.template.name },
-          { templateSlide: task.templateSlide },
+          { ...controls, templateSlide: task.templateSlide },
         ),
       );
     }

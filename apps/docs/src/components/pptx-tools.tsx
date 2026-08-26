@@ -780,14 +780,20 @@ export function PptxInspectTool() {
       return;
     }
     let active = true;
+    // Inspecting reopens the package and decompresses the slide, so a
+    // superseded attempt is cancelled rather than merely ignored.
+    const controller = new AbortController();
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
-          const outcome = await runOperation({
-            kind: "pptx.inspect",
-            template: { bytes: template.bytes, name: template.name },
-            templateSlide: slideNumber,
-          });
+          const outcome = await runOperation(
+            {
+              kind: "pptx.inspect",
+              template: { bytes: template.bytes, name: template.name },
+              templateSlide: slideNumber,
+            },
+            { signal: controller.signal },
+          );
           if (active) {
             setInspected({ error: null, key: inspectionKey, outcome });
           }
@@ -806,6 +812,7 @@ export function PptxInspectTool() {
     return () => {
       active = false;
       window.clearTimeout(timer);
+      controller.abort();
     };
   }, [inspectionKey, slideNumber, slideNumberError, template]);
 
