@@ -1,4 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -11,11 +13,15 @@ import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 
 import {
+  consolidateWorkbooksBytes,
   mergeWorkbooksBytes,
   planSplitWorkbookBytes,
   readWorksheetRecordsBytes,
   splitWorkbookBytes,
 } from "../src/bytes.js";
+// The path surface, imported so one test can prove the two surfaces agree
+// byte for byte rather than merely agreeing in shape.
+import { consolidateWorkbooks } from "../src/index.js";
 
 type CellInput = boolean | null | number | string;
 
@@ -135,6 +141,16 @@ async function macroWorkbookBytes(
   expect(declared).toContain("vbaProject");
   archive.file("[Content_Types].xml", declared);
   return archive.generateAsync({ compression: "DEFLATE", type: "uint8array" });
+}
+
+/** One worksheet as a header-first grid, which is how a consolidation reads. */
+function readSheetGrid(bytes: Uint8Array, sheetName: string): unknown[][] {
+  const workbook = XLSX.read(bytes, { type: "array" });
+  return XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]!, {
+    defval: null,
+    header: 1,
+    raw: true,
+  });
 }
 
 async function structuredTableBytes(hidden = false): Promise<Uint8Array> {
@@ -1157,6 +1173,312 @@ describe("byte-level workbook merging", () => {
         inputs: [{ name: "corrupt.xlsx", bytes: corruptWorkbookBytes() }],
       }),
     ).rejects.toMatchObject({ code: "XLSX_READ_FAILED" });
+  });
+});
+
+/**
+ * Two review logs exported by different systems: the same schema, but the
+ * columns arrive in a different order and the second workbook carries one the
+ * first does not. Consolidation is the operation that reconciles them.
+ */
+function reviewLogInputs(): Array<{ name: string; bytes: Uint8Array }> {
+  return [
+    {
+      name: "north.xlsx",
+      bytes: workbookBytes([
+        [
+          "Review Log",
+          [
+            ["Case_ID", "Failed Checks"],
+            ["R-1", 5],
+          ],
+        ],
+      ]),
+    },
+    {
+      name: "south.xlsx",
+      bytes: workbookBytes([
+        [
+          "vF",
+          [
+            ["Failed Checks", "Region", "Case_ID"],
+            [7, "South", "R-2"],
+          ],
+        ],
+      ]),
+    },
+  ];
+}
+
+/** The header-drift corpus the path surface's consolidate tests also use. */
+function driftedInputs(): Array<{ name: string; bytes: Uint8Array }> {
+  return [
+    {
+      name: "north.xlsx",
+      bytes: workbookBytes(
+        [
+          [
+            "Review Log",
+            [
+              [
+                "Case_ID",
+                "Failed Checks",
+                "Total Checks",
+                "Reviewer: Lead Contact",
+              ],
+              ["R-1", 5, 100, "Reviewer A"],
+            ],
+          ],
+          [
+            "Summary",
+            [
+              ["Category", "Count"],
+              ["Complete", 3],
+            ],
+          ],
+        ],
+        { visibility: { Summary: 1 } },
+      ),
+    },
+    {
+      name: "south.xlsx",
+      bytes: workbookBytes([
+        [
+          "vF",
+          [
+            [
+              "S.No.",
+              "Case_ID",
+              "Failed_Checks",
+              "Total_Checks",
+              "Reviewer_Lead_Contact",
+            ],
+            [1, "R-2", 7, 200, "Reviewer B"],
+          ],
+        ],
+      ]),
+    },
+    {
+      name: "east.xlsx",
+      bytes: workbookBytes([
+        [
+          "Sheet1",
+          [
+            [
+              "Case_ID",
+              "Failed Checks ",
+              "Total  Checks",
+              "Reviewer:Lead Contact",
+            ],
+            ["R-3", 9, 300, "Reviewer C"],
+          ],
+        ],
+        ["Lookup", [["Case_ID"], ["R-4"]]],
+      ]),
+    },
+  ];
+}
+
+describe("byte-level workbook consolidation", () => {
+  it("stacks worksheet rows into one table and records provenance", async () => {
+    const events: OperationProgress[] = [];
+    const { result, outputs } = await consolidateWorkbooksBytes({
+      inputs: reviewLogInputs(),
+      onProgress: (progress) => events.push(progress),
+    });
+
+    expect(result.operation).toBe("sheets.consolidate");
+    expect(result.metrics).toEqual({
+      inputFiles: 2,
+      inputTables: 2,
+      outputColumns: 6,
+      outputRows: 2,
+    });
+    expect(result.warnings).toEqual([]);
+    expect(result.artifacts).toEqual([
+      {
+        kind: "file",
+        mediaType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        path: "consolidated.xlsx",
+      },
+    ]);
+    expect(events.map((event) => [event.stage, event.completed])).toEqual([
+      ["reading-workbooks", 1],
+      ["reading-workbooks", 2],
+      ["writing-output", 1],
+    ]);
+
+    expect(outputs).toHaveLength(1);
+    expect(outputs[0]?.name).toBe("consolidated.xlsx");
+    // The first spelling seen names each column, later workbooks fill in the
+    // ones they carry, and every row keeps the workbook, worksheet, and row it
+    // came from.
+    expect(readSheetGrid(outputs[0]!.bytes, "Consolidated")).toEqual([
+      [
+        "Case_ID",
+        "Failed Checks",
+        "Region",
+        "_source_file",
+        "_source_sheet",
+        "_source_row",
+      ],
+      ["R-1", 5, null, "north.xlsx", "Review Log", 2],
+      ["R-2", 7, "South", "south.xlsx", "vF", 2],
+    ]);
+  });
+
+  it("produces the same bytes as the path surface", async () => {
+    // Both surfaces read the same worksheet tables, hand them to the same
+    // consolidation core, and serialize with the same deterministic writer, so
+    // a browser and the command line must agree exactly - not merely in shape.
+    const inputs = reviewLogInputs();
+    const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
+
+    try {
+      for (const input of inputs) {
+        await writeFile(path.join(directory, input.name), input.bytes);
+      }
+      const output = path.join(directory, "consolidated.xlsx");
+      await consolidateWorkbooks({
+        inputs: inputs.map((input) => path.join(directory, input.name)),
+        output,
+      });
+
+      const { outputs } = await consolidateWorkbooksBytes({ inputs });
+      expect(
+        Buffer.compare(await readFile(output), Buffer.from(outputs[0]!.bytes)),
+      ).toBe(0);
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("matches drifted headers only when asked, and can reach hidden sheets", async () => {
+    const inputs = driftedInputs();
+
+    const normalized = await consolidateWorkbooksBytes({
+      inputs,
+      normalizeHeaders: true,
+    });
+    expect(normalized.result.metrics).toEqual({
+      inputFiles: 3,
+      inputTables: 4,
+      outputColumns: 8,
+      outputRows: 4,
+    });
+    expect(readSheetGrid(normalized.outputs[0]!.bytes, "Consolidated")).toEqual(
+      [
+        [
+          "Case_ID",
+          "Failed Checks",
+          "Total Checks",
+          "Reviewer: Lead Contact",
+          "S.No.",
+          "_source_file",
+          "_source_sheet",
+          "_source_row",
+        ],
+        ["R-1", 5, 100, "Reviewer A", null, "north.xlsx", "Review Log", 2],
+        ["R-2", 7, 200, "Reviewer B", 1, "south.xlsx", "vF", 2],
+        ["R-3", 9, 300, "Reviewer C", null, "east.xlsx", "Sheet1", 2],
+        ["R-4", null, null, null, null, "east.xlsx", "Lookup", 2],
+      ],
+    );
+
+    // Without the option the variants stay separate - the behaviour that turns
+    // one shared schema into a doubled-up column list.
+    const exact = await consolidateWorkbooksBytes({ inputs });
+    expect(exact.result.metrics.outputColumns).toBe(13);
+
+    // The hidden summary sheet is skipped by default and read on request.
+    const withHidden = await consolidateWorkbooksBytes({
+      inputs,
+      includeHiddenSheets: true,
+      normalizeHeaders: true,
+    });
+    expect(withHidden.result.metrics).toMatchObject({
+      inputTables: 5,
+      outputRows: 5,
+    });
+  });
+
+  it("names the output and its worksheet and can drop the source columns", async () => {
+    const inputs = reviewLogInputs();
+
+    const named = await consolidateWorkbooksBytes({
+      inputs,
+      addSourceColumns: false,
+      outputName: "review pack.xlsx",
+      outputSheetName: "Combined",
+    });
+    expect(named.outputs[0]?.name).toBe("review pack.xlsx");
+    expect(readSheetGrid(named.outputs[0]!.bytes, "Combined")).toEqual([
+      ["Case_ID", "Failed Checks", "Region"],
+      ["R-1", 5, null],
+      ["R-2", 7, "South"],
+    ]);
+
+    // A name Windows reserves is sanitized the same way every other byte-level
+    // operation sanitizes it.
+    const reserved = await consolidateWorkbooksBytes({
+      inputs,
+      outputName: "aux.xlsx",
+    });
+    expect(reserved.outputs[0]?.name).toBe("_aux.xlsx");
+  });
+
+  it("produces byte-identical output and cancels without producing bytes", async () => {
+    const inputs = reviewLogInputs();
+
+    const first = await consolidateWorkbooksBytes({ inputs });
+    await new Promise((resolve) => setTimeout(resolve, CLOCK_TICK));
+    const second = await consolidateWorkbooksBytes({ inputs });
+    expect(
+      Buffer.compare(
+        Buffer.from(first.outputs[0]!.bytes),
+        Buffer.from(second.outputs[0]!.bytes),
+      ),
+    ).toBe(0);
+
+    const controller = new AbortController();
+    let cancelled: unknown;
+    try {
+      await consolidateWorkbooksBytes({
+        inputs,
+        signal: controller.signal,
+        onProgress: () => controller.abort(),
+      });
+    } catch (error) {
+      cancelled = error;
+    }
+    expect(isConsultChimpsError(cancelled)).toBe(true);
+    expect((cancelled as { code: string }).code).toBe(OPERATION_ABORTED);
+
+    const aborted = new AbortController();
+    aborted.abort();
+    await expect(
+      consolidateWorkbooksBytes({ inputs, signal: aborted.signal }),
+    ).rejects.toMatchObject({ code: OPERATION_ABORTED });
+  });
+
+  it("refuses missing inputs, unusable workbooks, and empty selections", async () => {
+    await expect(
+      consolidateWorkbooksBytes({ inputs: [] }),
+    ).rejects.toMatchObject({ code: "XLSX_NO_INPUTS" });
+
+    await expect(
+      consolidateWorkbooksBytes({
+        inputs: [{ name: "corrupt.xlsx", bytes: corruptWorkbookBytes() }],
+      }),
+    ).rejects.toMatchObject({ code: "XLSX_READ_FAILED" });
+
+    await expect(
+      consolidateWorkbooksBytes({
+        inputs: reviewLogInputs(),
+        sheets: ["Missing"],
+      }),
+    ).rejects.toMatchObject({ code: "XLSX_NO_TABLES" });
   });
 });
 

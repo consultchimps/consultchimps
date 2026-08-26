@@ -39,6 +39,7 @@ import type {
   WorksheetColumns,
 } from "@/lib/operation-tasks";
 import { runOperation } from "@/lib/operation-worker";
+import { BROWSER_TOOLS } from "@/lib/tools";
 import type { OperationPlan } from "@consultchimps/core";
 // Type-only: the runtime module is loaded inside the worker.
 import type { SplitWorkbookByColumnPlanMetric } from "@consultchimps/xlsx/bytes";
@@ -60,6 +61,17 @@ function withoutWorkbookExtension(name: string): string {
   return name.replace(/\.xlsx$/iu, "");
 }
 
+/**
+ * The route of another online tool, taken from the registry so a cross-link
+ * can never point at a browser surface that does not exist. An operation whose
+ * browser surface is off has no route, and the pointer to it is left out.
+ */
+function browserToolHref(slug: string): string | undefined {
+  return BROWSER_TOOLS.find((tool) => tool.slug === slug)?.surfaces.browser
+    .href;
+}
+
+const inlineLinkClass = "font-semibold text-fd-primary hover:underline";
 const checkboxLabelClass =
   "flex items-start gap-2.5 text-sm font-medium leading-6";
 const checkboxClass =
@@ -141,6 +153,120 @@ function CheckboxField({
         </span>
       </span>
     </label>
+  );
+}
+
+interface OrderedUploads {
+  readonly add: (added: readonly UploadedFile[]) => void;
+  readonly files: readonly UploadedFile[];
+  readonly move: (index: number, offset: number) => void;
+  readonly remove: (id: string) => void;
+}
+
+/**
+ * The hand-arranged list of workbooks both multi-input tools collect. Order is
+ * part of the request in each of them — it decides tab order for the merge and
+ * row order for the consolidate — so entries stay where they were put and are
+ * only ever moved deliberately.
+ */
+function useOrderedUploads(): OrderedUploads {
+  const [files, setFiles] = useState<readonly UploadedFile[]>([]);
+
+  const add = useCallback((added: readonly UploadedFile[]) => {
+    setFiles((previous) => [...previous, ...added]);
+  }, []);
+
+  const move = useCallback((index: number, offset: number) => {
+    setFiles((previous) => {
+      const target = index + offset;
+      if (target < 0 || target >= previous.length) {
+        return previous;
+      }
+      const next = [...previous];
+      const moved = next[index];
+      const displaced = next[target];
+      if (!moved || !displaced) {
+        return previous;
+      }
+      next[index] = displaced;
+      next[target] = moved;
+      return next;
+    });
+  }, []);
+
+  const remove = useCallback((id: string) => {
+    setFiles((previous) => previous.filter((entry) => entry.id !== id));
+  }, []);
+
+  return { add, files, move, remove };
+}
+
+interface SourceWorkbookListProps {
+  readonly disabled: boolean;
+  readonly uploads: OrderedUploads;
+}
+
+/** The numbered source list, with the controls that reorder and prune it. */
+function SourceWorkbookList({ disabled, uploads }: SourceWorkbookListProps) {
+  const { files, move, remove } = uploads;
+
+  if (files.length === 0) {
+    return (
+      <p className="mt-4 text-sm text-fd-muted-foreground">
+        No workbooks added yet.
+      </p>
+    );
+  }
+
+  return (
+    <ol className="mt-4 flex flex-col gap-2" data-testid="source-list">
+      {files.map((file, index) => (
+        <li
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-fd-background/60 px-3 py-2"
+          data-testid="source-item"
+          key={file.id}
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 font-mono text-xs text-fd-muted-foreground">
+              {String(index + 1).padStart(2, "0")}
+            </span>
+            <span className="truncate font-mono text-sm">{file.name}</span>
+            <span className="shrink-0 text-xs text-fd-muted-foreground">
+              {formatBytes(file.bytes.byteLength)}
+            </span>
+          </span>
+          <span className="flex shrink-0 items-center gap-2">
+            <button
+              aria-label={`Move ${file.name} earlier`}
+              className={compactButtonClass}
+              disabled={index === 0 || disabled}
+              onClick={() => move(index, -1)}
+              type="button"
+            >
+              <ArrowUp className="size-3.5" aria-hidden="true" />
+            </button>
+            <button
+              aria-label={`Move ${file.name} later`}
+              className={compactButtonClass}
+              disabled={index === files.length - 1 || disabled}
+              onClick={() => move(index, 1)}
+              type="button"
+            >
+              <ArrowDown className="size-3.5" aria-hidden="true" />
+            </button>
+            <button
+              aria-label={`Remove ${file.name}`}
+              className={compactButtonClass}
+              disabled={disabled}
+              onClick={() => remove(file.id)}
+              type="button"
+            >
+              <Trash2 className="size-3.5" aria-hidden="true" />
+            </button>
+          </span>
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -662,41 +788,25 @@ export function ExcelSplitTool() {
 }
 
 export function ExcelMergeTool() {
-  const [inputs, setInputs] = useState<readonly UploadedFile[]>([]);
+  const uploads = useOrderedUploads();
+  const { add, files } = uploads;
   const [outputName, setOutputName] = useState("");
   const [values, setValues] = useState(false);
   const runState = useOperationRun();
   const isRunning = runState.status === "running";
-
-  const move = useCallback((index: number, offset: number) => {
-    setInputs((previous) => {
-      const target = index + offset;
-      if (target < 0 || target >= previous.length) {
-        return previous;
-      }
-      const next = [...previous];
-      const moved = next[index];
-      const displaced = next[target];
-      if (!moved || !displaced) {
-        return previous;
-      }
-      next[index] = displaced;
-      next[target] = moved;
-      return next;
-    });
-  }, []);
+  const consolidateHref = browserToolHref("spreadsheet-consolidate");
 
   const start = useCallback(() => {
-    if (inputs.length === 0) {
+    if (files.length === 0) {
       return;
     }
     void runState.run({
       kind: "xlsx.merge",
-      inputs: inputs.map((file) => ({ bytes: file.bytes, name: file.name })),
+      inputs: files.map((file) => ({ bytes: file.bytes, name: file.name })),
       outputName: outputName.trim() || undefined,
       values,
     });
-  }, [inputs, outputName, runState, values]);
+  }, [files, outputName, runState, values]);
 
   return (
     <ToolShell
@@ -706,16 +816,21 @@ export function ExcelMergeTool() {
       kicker="Online tool · Excel merge"
       title="Merge Excel workbooks"
     >
-      <p className="text-sm text-fd-muted-foreground">
-        Looking for one combined table instead of separate tabs? That is the
-        `sheets consolidate` command, which runs from the command line —{" "}
-        <Link
-          className="font-semibold text-fd-primary hover:underline"
-          href="/docs/tools/workbook-merge#which-one-do-i-want"
-        >
-          which one do I want?
-        </Link>
-      </p>
+      {consolidateHref ? (
+        <p className="text-sm text-fd-muted-foreground">
+          Looking for one combined table instead of separate tabs?{" "}
+          <Link className={inlineLinkClass} href={consolidateHref}>
+            Consolidate the workbooks
+          </Link>{" "}
+          to stack every worksheet&rsquo;s rows into a single sheet —{" "}
+          <Link
+            className={inlineLinkClass}
+            href="/docs/tools/workbook-merge#which-one-do-i-want"
+          >
+            which one do I want?
+          </Link>
+        </p>
+      ) : null}
       <section className={sectionClass} data-testid="source-section">
         <h2 className="text-xl font-bold tracking-[-0.03em]">
           1. Add workbooks
@@ -727,10 +842,10 @@ export function ExcelMergeTool() {
             disabled={isRunning}
             label="Source workbooks"
             multiple
-            onFiles={(files) => {
-              void readUploads(files, isWorkbookFile).then((read) => {
+            onFiles={(chosen) => {
+              void readUploads(chosen, isWorkbookFile).then((read) => {
                 if (read.length > 0) {
-                  setInputs((previous) => [...previous, ...read]);
+                  add(read);
                   runState.reset();
                 }
               });
@@ -738,66 +853,7 @@ export function ExcelMergeTool() {
           />
         </div>
 
-        {inputs.length === 0 ? (
-          <p className="mt-4 text-sm text-fd-muted-foreground">
-            No workbooks added yet.
-          </p>
-        ) : (
-          <ol className="mt-4 flex flex-col gap-2" data-testid="source-list">
-            {inputs.map((file, index) => (
-              <li
-                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-fd-background/60 px-3 py-2"
-                data-testid="source-item"
-                key={file.id}
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="shrink-0 font-mono text-xs text-fd-muted-foreground">
-                    {String(index + 1).padStart(2, "0")}
-                  </span>
-                  <span className="truncate font-mono text-sm">
-                    {file.name}
-                  </span>
-                  <span className="shrink-0 text-xs text-fd-muted-foreground">
-                    {formatBytes(file.bytes.byteLength)}
-                  </span>
-                </span>
-                <span className="flex shrink-0 items-center gap-2">
-                  <button
-                    aria-label={`Move ${file.name} earlier`}
-                    className={compactButtonClass}
-                    disabled={index === 0 || isRunning}
-                    onClick={() => move(index, -1)}
-                    type="button"
-                  >
-                    <ArrowUp className="size-3.5" aria-hidden="true" />
-                  </button>
-                  <button
-                    aria-label={`Move ${file.name} later`}
-                    className={compactButtonClass}
-                    disabled={index === inputs.length - 1 || isRunning}
-                    onClick={() => move(index, 1)}
-                    type="button"
-                  >
-                    <ArrowDown className="size-3.5" aria-hidden="true" />
-                  </button>
-                  <button
-                    aria-label={`Remove ${file.name}`}
-                    className={compactButtonClass}
-                    disabled={isRunning}
-                    onClick={() =>
-                      setInputs((previous) =>
-                        previous.filter((entry) => entry.id !== file.id),
-                      )
-                    }
-                    type="button"
-                  >
-                    <Trash2 className="size-3.5" aria-hidden="true" />
-                  </button>
-                </span>
-              </li>
-            ))}
-          </ol>
-        )}
+        <SourceWorkbookList disabled={isRunning} uploads={uploads} />
 
         <div className="mt-6 flex flex-col gap-5">
           <TextField
@@ -823,15 +879,15 @@ export function ExcelMergeTool() {
       <section className={sectionClass} data-testid="run-section">
         <h2 className="text-xl font-bold tracking-[-0.03em]">2. Run</h2>
         <p className="mt-3 text-sm text-fd-muted-foreground">
-          {inputs.length === 0
+          {files.length === 0
             ? "Add at least one workbook to merge."
-            : `Every worksheet from ${inputs.length} ${
-                inputs.length === 1 ? "workbook" : "workbooks"
+            : `Every worksheet from ${files.length} ${
+                files.length === 1 ? "workbook" : "workbooks"
               } will become its own tab, in the order listed above, alongside a Sheet Index tab.`}
         </p>
         <RunControls
           busyLabel="Merging…"
-          disabled={inputs.length === 0}
+          disabled={files.length === 0}
           onCancel={runState.cancel}
           onRun={start}
           readingLabel="Reading the workbooks…"
@@ -840,11 +896,150 @@ export function ExcelMergeTool() {
         />
       </section>
 
-      <ResultsPanel
-        archiveName="merged-workbook.zip"
-        fallbackMediaType={WORKBOOK_MEDIA_TYPE}
-        state={runState}
-      />
+      <ResultsPanel fallbackMediaType={WORKBOOK_MEDIA_TYPE} state={runState} />
+    </ToolShell>
+  );
+}
+
+export function ExcelConsolidateTool() {
+  const uploads = useOrderedUploads();
+  const { add, files } = uploads;
+  const [outputName, setOutputName] = useState("");
+  const [normalizeHeaders, setNormalizeHeaders] = useState(false);
+  // The core adds the source columns unless told otherwise, so the control
+  // starts on and the page never has to restate that default elsewhere.
+  const [addSourceColumns, setAddSourceColumns] = useState(true);
+  const [includeHiddenSheets, setIncludeHiddenSheets] = useState(false);
+  const runState = useOperationRun();
+  const isRunning = runState.status === "running";
+  const mergeHref = browserToolHref("workbook-merge");
+
+  const start = useCallback(() => {
+    if (files.length === 0) {
+      return;
+    }
+    void runState.run({
+      kind: "xlsx.consolidate",
+      inputs: files.map((file) => ({ bytes: file.bytes, name: file.name })),
+      addSourceColumns,
+      includeHiddenSheets,
+      normalizeHeaders,
+      outputName: outputName.trim() || undefined,
+    });
+  }, [
+    addSourceColumns,
+    files,
+    includeHiddenSheets,
+    normalizeHeaders,
+    outputName,
+    runState,
+  ]);
+
+  return (
+    <ToolShell
+      description="Add the workbooks you want to stack, arrange them in the order the rows should follow, and get one table holding every row from every useful worksheet. Nothing is uploaded — the whole task runs in this browser tab."
+      guideHref="/docs/tools/spreadsheet-consolidate"
+      guideLabel="Read the consolidate guide"
+      kicker="Online tool · Excel consolidate"
+      title="Consolidate Excel workbooks"
+    >
+      {mergeHref ? (
+        <p className="text-sm text-fd-muted-foreground">
+          Want each worksheet kept as its own tab instead of one stacked table?{" "}
+          <Link className={inlineLinkClass} href={mergeHref}>
+            Merge the workbooks
+          </Link>{" "}
+          —{" "}
+          <Link
+            className={inlineLinkClass}
+            href="/docs/tools/workbook-merge#which-one-do-i-want"
+          >
+            which one do I want?
+          </Link>
+        </p>
+      ) : null}
+      <section className={sectionClass} data-testid="source-section">
+        <h2 className="text-xl font-bold tracking-[-0.03em]">
+          1. Add workbooks
+        </h2>
+        <div className="mt-4">
+          <FilePicker
+            accept={WORKBOOK_ACCEPT}
+            description="Drag one or more .xlsx workbooks here, or pick them with the button below. Rows are stacked in the order shown."
+            disabled={isRunning}
+            label="Source workbooks"
+            multiple
+            onFiles={(chosen) => {
+              void readUploads(chosen, isWorkbookFile).then((read) => {
+                if (read.length > 0) {
+                  add(read);
+                  runState.reset();
+                }
+              });
+            }}
+          />
+        </div>
+
+        <SourceWorkbookList disabled={isRunning} uploads={uploads} />
+
+        <div className="mt-6 flex flex-col gap-5">
+          <TextField
+            disabled={isRunning}
+            hint="Optional. Defaults to `consolidated.xlsx`. The `.xlsx` extension is added for you."
+            label="Output filename"
+            onChange={setOutputName}
+            placeholder="all-rows"
+            testId="output-name-input"
+            value={outputName}
+          />
+          <CheckboxField
+            checked={normalizeHeaders}
+            disabled={isRunning}
+            hint="Treat columns whose headers differ only in case, spacing, or punctuation — “Failed Checks” and “Failed_Checks”, say — as one column. The first spelling seen names the output column."
+            label="Normalize headers"
+            onChange={setNormalizeHeaders}
+            testId="normalize-headers-checkbox"
+          />
+          <CheckboxField
+            checked={addSourceColumns}
+            disabled={isRunning}
+            hint="Record where each row came from in added `_source_file`, `_source_sheet`, and `_source_row` columns."
+            label="Add source columns"
+            onChange={setAddSourceColumns}
+            testId="source-columns-checkbox"
+          />
+          <CheckboxField
+            checked={includeHiddenSheets}
+            disabled={isRunning}
+            hint="Read hidden and very hidden worksheets as well."
+            label="Include hidden worksheets"
+            onChange={setIncludeHiddenSheets}
+            testId="include-hidden-checkbox"
+          />
+        </div>
+      </section>
+
+      <section className={sectionClass} data-testid="run-section">
+        <h2 className="text-xl font-bold tracking-[-0.03em]">2. Run</h2>
+        <p className="mt-3 text-sm text-fd-muted-foreground">
+          {files.length === 0
+            ? "Add at least one workbook to consolidate."
+            : `Rows from every useful worksheet in ${files.length} ${
+                files.length === 1 ? "workbook" : "workbooks"
+              } will be stacked into one table, in the order listed above.`}
+        </p>
+        <RunControls
+          busyLabel="Consolidating…"
+          disabled={files.length === 0}
+          onCancel={runState.cancel}
+          onRun={start}
+          readingLabel="Reading the workbooks…"
+          runLabel="Run consolidate"
+          state={runState}
+        />
+      </section>
+
+      <ResultsPanel fallbackMediaType={WORKBOOK_MEDIA_TYPE} state={runState} />
     </ToolShell>
   );
 }

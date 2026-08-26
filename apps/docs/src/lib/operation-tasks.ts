@@ -22,6 +22,7 @@ import type {
 // Type-only imports: the runtime modules are loaded inside the worker.
 import type { MergePdfsMetric, SplitPdfMetric } from "@consultchimps/pdf/bytes";
 import type {
+  ConsolidateWorkbooksMetric,
   MergeWorkbooksMetric,
   SplitWorkbookByColumnPlanMetric,
   SplitWorkbookBytesOutcome,
@@ -92,6 +93,16 @@ export type OperationTask =
       readonly values?: boolean | undefined;
     }
   | {
+      // Rows are stacked in the order the inputs are listed, so the array
+      // carries the visitor's arrangement, not an incidental read order.
+      readonly kind: "xlsx.consolidate";
+      readonly inputs: readonly NamedBytes[];
+      readonly addSourceColumns?: boolean | undefined;
+      readonly includeHiddenSheets?: boolean | undefined;
+      readonly normalizeHeaders?: boolean | undefined;
+      readonly outputName?: string | undefined;
+    }
+  | {
       readonly kind: "xlsx.columns";
       readonly input: NamedBytes;
       readonly headerRow?: number | undefined;
@@ -104,7 +115,14 @@ export type OperationTask =
  */
 export type ByteOperationTask = Extract<
   OperationTask,
-  { kind: "pdf.merge" | "pdf.split" | "xlsx.merge" | "xlsx.split" }
+  {
+    kind:
+      | "pdf.merge"
+      | "pdf.split"
+      | "xlsx.consolidate"
+      | "xlsx.merge"
+      | "xlsx.split";
+  }
 >;
 
 /** The column headers a workbook's chosen worksheet offers to a split. */
@@ -123,6 +141,7 @@ interface OperationTaskResults {
   // operation's own outcome type is kept rather than flattened.
   "xlsx.split": SplitWorkbookBytesOutcome;
   "xlsx.merge": ByteOperationOutcome<MergeWorkbooksMetric>;
+  "xlsx.consolidate": ByteOperationOutcome<ConsolidateWorkbooksMetric>;
   "xlsx.columns": WorksheetColumns;
 }
 

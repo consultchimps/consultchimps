@@ -14,6 +14,8 @@ import {
   type OperationResult,
 } from "@consultchimps/core";
 
+import type { Table } from "@consultchimps/tabular";
+
 import { XLSX_ERRORS } from "./errors.js";
 import {
   analyzeAllWorksheetSplit,
@@ -29,6 +31,10 @@ import {
 import {
   appendWorkbookSheets,
   buildSplitGroupBytes,
+  buildTableWorkbookBytes,
+  CONSOLIDATE_OPERATION,
+  CONSOLIDATED_SHEET_NAME,
+  consolidateTables,
   createMergeState,
   finishMergedWorkbook,
   isMacroWorkbookName,
@@ -45,8 +51,11 @@ import {
   WORKBOOK_EXTENSION,
   WORKBOOK_MEDIA_TYPE,
   withoutWorkbookExtension,
+  workbookTables,
   workbookWorksheetRecords,
+  type ConsolidateWorkbooksMetric,
   type MergeWorkbooksMetric,
+  type ReadWorkbookOptions,
   type ResolvedSplitSource,
   type SplitWorkbookByColumnMetric,
   type SplitWorkbookByColumnPlanMetric,
@@ -91,6 +100,20 @@ export interface SplitWorkbookBytesResult extends OperationResult<SplitWorkbookB
 
 export interface SplitWorkbookBytesOutcome extends ByteOperationOutcome<SplitWorkbookByColumnMetric> {
   result: SplitWorkbookBytesResult;
+}
+
+export interface ConsolidateWorkbooksBytesOptions
+  extends ReadWorkbookOptions, OperationControlOptions {
+  inputs: WorkbookInputBytes[];
+  addSourceColumns?: boolean | undefined;
+  /**
+   * Match columns whose headers differ only in case, spacing, or punctuation
+   * (for example "Failed Checks" and "Failed_Checks") instead of requiring
+   * the exact same header in every worksheet.
+   */
+  normalizeHeaders?: boolean | undefined;
+  outputName?: string | undefined;
+  outputSheetName?: string | undefined;
 }
 
 export interface MergeWorkbooksBytesOptions extends OperationControlOptions {
@@ -428,6 +451,92 @@ async function splitAllWorksheetsBytes(
 }
 
 /**
+ * Stack the rows of every useful worksheet in every input workbook into one
+ * table and write it as a single workbook.
+ *
+ * This is the byte-level twin of `consolidateWorkbooks`: it reads the same
+ * worksheet tables, hands them to the same consolidation core, and serializes
+ * with the same deterministic writer, so a browser and the command line
+ * produce byte-identical workbooks from the same inputs and options.
+ */
+export async function consolidateWorkbooksBytes(
+  options: ConsolidateWorkbooksBytesOptions,
+): Promise<ByteOperationOutcome<ConsolidateWorkbooksMetric>> {
+  throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
+  if (options.inputs.length === 0) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_NO_INPUTS,
+      "At least one workbook is required.",
+    );
+  }
+
+  const outputName = `${safeNameFragment(
+    withoutWorkbookExtension(options.outputName ?? "consolidated"),
+    "consolidated",
+  )}${WORKBOOK_EXTENSION}`;
+
+  const tables: Table[] = [];
+  for (const [index, input] of options.inputs.entries()) {
+    throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
+    tables.push(
+      ...workbookTables(
+        parseWorkbookBytes(input.bytes, input.name, {
+          details: { source: input.name },
+        }),
+        input.name,
+        options,
+      ),
+    );
+    options.onProgress?.({
+      operation: CONSOLIDATE_OPERATION,
+      stage: "reading-workbooks",
+      completed: index + 1,
+      total: options.inputs.length,
+      detail: input.name,
+    });
+  }
+
+  const table = consolidateTables(tables, options);
+  throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
+  const output: ByteArtifact = {
+    name: outputName,
+    bytes: buildTableWorkbookBytes(
+      table,
+      options.outputSheetName ?? CONSOLIDATED_SHEET_NAME,
+    ),
+    mediaType: WORKBOOK_MEDIA_TYPE,
+  };
+  options.onProgress?.({
+    operation: CONSOLIDATE_OPERATION,
+    stage: "writing-output",
+    completed: 1,
+    total: 1,
+    detail: outputName,
+  });
+
+  return {
+    result: {
+      operation: CONSOLIDATE_OPERATION,
+      artifacts: [
+        {
+          kind: "file",
+          mediaType: WORKBOOK_MEDIA_TYPE,
+          path: outputName,
+        },
+      ],
+      warnings: [],
+      metrics: {
+        inputFiles: options.inputs.length,
+        inputTables: tables.length,
+        outputColumns: table.columns.length,
+        outputRows: table.rows.length,
+      },
+    },
+    outputs: [output],
+  };
+}
+
+/**
  * Combine every worksheet of every input workbook into one workbook, keeping
  * each worksheet's cells and formatting and recording where it came from.
  */
@@ -519,7 +628,9 @@ export async function readWorksheetRecordsBytes(
 
 export { XLSX_ERRORS, type XlsxErrorCode } from "./errors.js";
 export type {
+  ConsolidateWorkbooksMetric,
   MergeWorkbooksMetric,
+  ReadWorkbookOptions,
   SplitWorkbookByColumnMetric,
   SplitWorkbookByColumnPlanMetric,
   WorkbookExcelTable,

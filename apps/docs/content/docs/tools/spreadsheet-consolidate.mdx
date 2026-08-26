@@ -22,9 +22,23 @@ tab, while `sheets consolidate` stacks all rows into a single table.
 | What carries over | Formatting, formulas as stored, conditional formatting, layout — nothing is combined into one table | Cell values only — columns matched by header name, optional provenance columns; formatting and formulas are not carried over |
 
 Rule of thumb: tabs kept means merge; rows stacked into one sheet means
-consolidate. Merging has [its own guide](/docs/tools/workbook-merge) and also
-runs [in your browser](/tools/excel-merge); consolidation is command line and
-library only.
+consolidate. Merging has [its own guide](/docs/tools/workbook-merge), and both
+operations also run in your browser: [merge](/tools/excel-merge) and
+[consolidate](/tools/excel-consolidate).
+
+<Callout title="What the online tool does">
+  The [in-browser consolidator](/tools/excel-consolidate) runs the default
+  all-worksheet consolidation described below: it stacks every visible,
+  non-empty worksheet of each `.xlsx` you add into one table and writes a single
+  workbook — `consolidated.xlsx` by default, on a worksheet named
+  `Consolidated`. Workbooks are combined in the order they appear on the page,
+  and that list can be reordered. The page offers four controls: the output
+  filename, "Normalize headers", "Add source columns" (on by default), and
+  "Include hidden worksheets" (off by default). Choosing worksheets by name and
+  setting a header row remain command-line options. The work happens in a Web
+  Worker inside the page, so your workbooks never leave your machine; progress
+  is reported while a run is in flight, and a long run can be cancelled.
+</Callout>
 
 ## Basic usage
 

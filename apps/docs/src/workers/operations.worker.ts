@@ -148,6 +148,23 @@ async function perform(
         }),
       );
     }
+    case "xlsx.consolidate": {
+      const { consolidateWorkbooksBytes } =
+        await import("@consultchimps/xlsx/bytes");
+      return answerWithOutputs(
+        await consolidateWorkbooksBytes({
+          ...controls,
+          inputs: task.inputs.map((input) => ({
+            bytes: input.bytes,
+            name: input.name,
+          })),
+          addSourceColumns: task.addSourceColumns,
+          includeHiddenSheets: task.includeHiddenSheets,
+          normalizeHeaders: task.normalizeHeaders,
+          outputName: task.outputName,
+        }),
+      );
+    }
     case "xlsx.columns": {
       const { readWorksheetRecordsBytes } =
         await import("@consultchimps/xlsx/bytes");

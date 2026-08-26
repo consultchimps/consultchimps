@@ -68,7 +68,7 @@ export const TOOLS: readonly ConsultTool[] = [
     surfaces: {
       cli: "works",
       library: "works",
-      browser: { status: "none" },
+      browser: { status: "works", href: "/tools/excel-consolidate" },
     },
     icon: TableProperties,
   },

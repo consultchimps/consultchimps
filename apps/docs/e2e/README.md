@@ -31,6 +31,10 @@ command when `out/` is missing.
   that is not a workbook.
 - `excel-merge.spec.ts` — merging two workbooks into one, reordering and
   removing sources, and downloading the result.
+- `excel-consolidate.spec.ts` — stacking two workbooks whose headers drifted
+  apart into one table, downloading the result, and checking that the "Normalize
+  headers" and "Add source columns" checkboxes change the columns the finished
+  workbook holds.
 - `tools-navigation.spec.ts` — the `/tools` index, the sub-bar tabs, and the
   tool-named "Try ... online" button each guide gains from the tool registry.
 
@@ -46,26 +50,32 @@ rows reached the user.
 Address the tool pages through the `data-testid` attributes the shared tool
 shell renders, not through heading text. The stable identifiers are:
 
-| Identifier                            | Element                                 |
-| ------------------------------------- | --------------------------------------- |
-| `file-picker` / `file-input`          | the drop zone and its file input        |
-| `source-summary`                      | the chosen single input's name and size |
-| `source-list` / `source-item`         | the ordered list of merge inputs        |
-| `preview-section` / `preview-error`   | the plan preview and its failure text   |
-| `planned-outputs`                     | the planned output names                |
-| `run-button` / `cancel-button`        | the run controls                        |
-| `progress-report`                     | the progress bar and its labels         |
-| `results-section`                     | the Results region                      |
-| `artifact-list` / `artifact-item`     | the produced outputs                    |
-| `artifact-name` / `artifact-download` | one output's name and Download button   |
-| `archive-download`                    | "Download all (.zip)"                   |
-| `result-message` / `failure-message`  | the outcome text, by outcome            |
+| Identifier                            | Element                                  |
+| ------------------------------------- | ---------------------------------------- |
+| `file-picker` / `file-input`          | the drop zone and its file input         |
+| `source-summary`                      | the chosen single input's name and size  |
+| `source-list` / `source-item`         | the ordered list of merge inputs         |
+| `preview-section` / `preview-error`   | the plan preview and its failure text    |
+| `planned-outputs`                     | the planned output names                 |
+| `run-button` / `cancel-button`        | the run controls                         |
+| `progress-report`                     | the progress bar and its labels          |
+| `results-section`                     | the Results region                       |
+| `artifact-list` / `artifact-item`     | the produced outputs                     |
+| `artifact-name` / `artifact-download` | one output's name and Download button    |
+| `archive-download`                    | "Download all (.zip)", multi-output only |
+| `result-message` / `failure-message`  | the outcome text, by outcome             |
 
 The Excel split page adds `column-select`, `column-input`, and one identifier
 per advanced control (`prefix-input`, `sheet-input`, `table-input`,
 `range-input`, `header-row-input`, `include-blank-checkbox`,
 `include-hidden-checkbox`, `preserve-workbook-checkbox`, `strict-checkbox`,
 `values-checkbox`).
+
+The Excel merge page adds `output-name-input` and `values-checkbox`; the Excel
+consolidate page adds `output-name-input`, `normalize-headers-checkbox`,
+`source-columns-checkbox`, and `include-hidden-checkbox`. Both arrange their
+inputs through the "Move X earlier", "Move X later", and "Remove X" buttons on
+each `source-item`.
 
 The preview and results panels also carry accessible names, so
 `getByRole("region", { name: "Results" })` works where a role-based query reads

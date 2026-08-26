@@ -511,7 +511,12 @@ export function RunControls({
 }
 
 interface ResultsPanelProps {
-  readonly archiveName: string;
+  /**
+   * The name of the combined download. Omitting it, like producing a single
+   * output, leaves the bundle button out: a zip holding one file is friction
+   * rather than a convenience.
+   */
+  readonly archiveName?: string | undefined;
   readonly fallbackMediaType: string;
   readonly state: RunState;
 }
@@ -530,6 +535,7 @@ export function ResultsPanel({
   }
 
   const failed = state.status === "failed";
+  const bundleName = state.outputs.length > 1 ? archiveName : undefined;
 
   return (
     <section
@@ -578,26 +584,28 @@ export function ResultsPanel({
               </li>
             ))}
           </ul>
-          <div className="mt-4">
-            <button
-              className={secondaryButtonClass}
-              data-testid="archive-download"
-              disabled={isArchiving}
-              onClick={() => {
-                setArchiveError(null);
-                setIsArchiving(true);
-                void saveArchive(state.outputs, archiveName)
-                  .catch((error: unknown) => {
-                    setArchiveError(describeFailure(error));
-                  })
-                  .finally(() => setIsArchiving(false));
-              }}
-              type="button"
-            >
-              <FileArchive className="size-4" aria-hidden="true" />
-              {isArchiving ? "Building archive…" : "Download all (.zip)"}
-            </button>
-          </div>
+          {bundleName === undefined ? null : (
+            <div className="mt-4">
+              <button
+                className={secondaryButtonClass}
+                data-testid="archive-download"
+                disabled={isArchiving}
+                onClick={() => {
+                  setArchiveError(null);
+                  setIsArchiving(true);
+                  void saveArchive(state.outputs, bundleName)
+                    .catch((error: unknown) => {
+                      setArchiveError(describeFailure(error));
+                    })
+                    .finally(() => setIsArchiving(false));
+                }}
+                type="button"
+              >
+                <FileArchive className="size-4" aria-hidden="true" />
+                {isArchiving ? "Building archive…" : "Download all (.zip)"}
+              </button>
+            </div>
+          )}
         </>
       ) : null}
 
