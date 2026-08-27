@@ -13,6 +13,7 @@ import {
   CONTRACT,
   OPERATIONS,
   TRACKED_STRUCTURES,
+  UNDECIDED_DESCRIBE_STRUCTURES,
   UNDECIDED_MERGE_STRUCTURES,
   UNDECIDED_SPLIT_STRUCTURES,
   type Operation,
@@ -46,12 +47,15 @@ const EXPECTED_MISSING_FOR_SPLIT: readonly Structure[] = [
  */
 const EXPECTED_MISSING_FOR_MERGE: readonly Structure[] = ["external-links"];
 
+/**
+ * The describe cells still owed a decision. Read-only behavior is uniform, so
+ * the only absence is the structure the corpus generator cannot build; it is
+ * explained in UNDECIDED_DESCRIBE_STRUCTURES.
+ */
+const EXPECTED_MISSING_FOR_DESCRIBE: readonly Structure[] = ["external-links"];
+
 /** Operations with no column yet; each is wholly undeclared. */
-const UNDECLARED_OPERATIONS: readonly Operation[] = [
-  "consolidate",
-  "values",
-  "describe",
-];
+const UNDECLARED_OPERATIONS: readonly Operation[] = ["consolidate", "values"];
 
 describe("contract: table shape", () => {
   it("declares a column for every operation", () => {
@@ -124,6 +128,37 @@ describe("contract: completeness", () => {
     expect(declared["merged-cells"]).toBe("preserve");
     expect(declared["excel-tables"]).toBe("fix");
     expect(declared["pivot-tables"]).toBe("strip-warn");
+  });
+
+  it("owes describe exactly the structures recorded as undecided", () => {
+    expect([...undeclaredStructures("describe")].sort()).toEqual(
+      [...EXPECTED_MISSING_FOR_DESCRIBE].sort(),
+    );
+  });
+
+  it("explains every missing describe cell", () => {
+    expect(Object.keys(UNDECIDED_DESCRIBE_STRUCTURES).sort()).toEqual(
+      [...EXPECTED_MISSING_FOR_DESCRIBE].sort(),
+    );
+    for (const reason of Object.values(UNDECIDED_DESCRIBE_STRUCTURES)) {
+      expect(reason.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("declares describe as preserve for every structure it can exercise", () => {
+    const declared = CONTRACT.describe;
+    expect(Object.keys(declared)).toHaveLength(
+      TRACKED_STRUCTURES.length - EXPECTED_MISSING_FOR_DESCRIBE.length,
+    );
+    // An inspection writes nothing, so no other behavior is representable
+    // here: a `fix`, `strip-warn` or `refuse` cell would describe an output
+    // this operation does not produce.
+    for (const structure of TRACKED_STRUCTURES) {
+      if (EXPECTED_MISSING_FOR_DESCRIBE.includes(structure)) {
+        continue;
+      }
+      expect(declared[structure], `describe.${structure}`).toBe("preserve");
+    }
   });
 
   it("reports the declared cells for split", () => {

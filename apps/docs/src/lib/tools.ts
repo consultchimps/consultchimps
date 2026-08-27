@@ -4,6 +4,7 @@ import {
   GitMerge,
   Presentation,
   ScanLine,
+  ScanSearch,
   SplitSquareVertical,
   TableProperties,
   type LucideIcon,
@@ -155,6 +156,22 @@ export const TOOLS: readonly ConsultTool[] = [
       browser: { status: "works", href: "/tools/pptx-inspect" },
     },
     icon: FileSearch,
+  },
+  {
+    slug: "workbook-inspect",
+    title: "Inspect workbooks",
+    tabLabel: "Inspect workbook",
+    description:
+      "Report a workbook's worksheets, hidden tabs, header rows, Excel Tables, named ranges, and sample column values before you operate on it.",
+    // The library guide is this operation's documentation until the CLI and
+    // browser surfaces land and it earns a tool page of its own.
+    docHref: "/docs/libraries#inspect-a-workbook-before-operating-on-it",
+    surfaces: {
+      cli: "planned",
+      library: "works",
+      browser: { status: "planned" },
+    },
+    icon: ScanSearch,
   },
 ] as const;
 

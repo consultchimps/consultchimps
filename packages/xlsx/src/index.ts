@@ -29,6 +29,20 @@ import type * as XLSX from "xlsx";
 
 import { XLSX_ERRORS } from "./errors.js";
 import {
+  describeWorkbookModel,
+  loadWorkbookModelForDescribe,
+  MAX_COLUMN_SAMPLE_VALUES,
+  type DescribeWorkbookMetric,
+  type DescribeWorkbookOptions,
+  type WorkbookColumnDescription,
+  type WorkbookDescription,
+  type WorkbookDescriptionOutcome,
+  type WorkbookExcelTableDescription,
+  type WorkbookNamedRangeDescription,
+  type WorkbookSheetDescription,
+  type WorksheetVisibility,
+} from "./operations/describe.js";
+import {
   type FullWorkbookSplitMetric,
   type FullWorkbookSplitSummary,
   type SplitOutputDetail,
@@ -44,6 +58,7 @@ import {
   consolidateTables,
   createMergeState,
   finishMergedWorkbook,
+  INSPECT_OPERATION,
   isMacroWorkbookName,
   MACRO_WORKBOOK_MEDIA_TYPE,
   MERGE_OPERATION,
@@ -87,6 +102,18 @@ export type {
   WorkbookExcelTable,
   WorkbookNamedRange,
   WorksheetRecords,
+};
+export { MAX_COLUMN_SAMPLE_VALUES };
+export type {
+  DescribeWorkbookMetric,
+  DescribeWorkbookOptions,
+  WorkbookColumnDescription,
+  WorkbookDescription,
+  WorkbookDescriptionOutcome,
+  WorkbookExcelTableDescription,
+  WorkbookNamedRangeDescription,
+  WorkbookSheetDescription,
+  WorksheetVisibility,
 };
 
 export type SplitWorkbookByColumnMetric = FullWorkbookSplitMetric;
@@ -256,6 +283,35 @@ export async function readWorkbookNamedRanges(
     cellText: true,
   });
   return workbookNamedRanges(workbook, path.basename(absolutePath), options);
+}
+
+/**
+ * Describe a workbook's structure without producing anything: worksheets with
+ * their visibility, dimensions and header preview, Excel Tables, named ranges,
+ * and a bounded sample of each column's values.
+ *
+ * The inspection reads the file and writes nothing, so the outcome carries the
+ * description beside a structured result with no artifacts. `describeWorkbookBytes`
+ * is its byte-level twin and produces a structurally identical description for
+ * the same workbook.
+ */
+export async function describeWorkbook(
+  filePath: string,
+  options: DescribeWorkbookOptions = {},
+): Promise<WorkbookDescriptionOutcome> {
+  // Before any filesystem work, as the byte twin already does. An operation
+  // handed an aborted signal must report the cancellation rather than the
+  // first problem it happens to meet on the way - reading a missing file would
+  // otherwise answer XLSX_READ_FAILED to a caller who had already stopped
+  // caring, and a large valid workbook would be loaded in full for nothing.
+  throwIfAborted(options.signal, INSPECT_OPERATION);
+  const absolutePath = path.resolve(filePath);
+  const workbook = await loadWorkbookModelForDescribe(
+    await readWorkbookBytes(absolutePath),
+    absolutePath,
+    { filePath: absolutePath },
+  );
+  return describeWorkbookModel(workbook, path.basename(absolutePath), options);
 }
 
 export async function writeTable(

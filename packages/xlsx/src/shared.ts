@@ -32,6 +32,13 @@ export const MACRO_WORKBOOK_MEDIA_TYPE =
 export const CONSOLIDATE_OPERATION = "sheets.consolidate";
 /** The worksheet a consolidation writes into unless the caller names another. */
 export const CONSOLIDATED_SHEET_NAME = "Consolidated";
+/**
+ * Workbook inspection: the glossary's single verb for describing an input's
+ * structure without producing files, matching `pptx.inspect-template`. The
+ * operation itself lives in `src/operations/describe.ts`; only its name is
+ * here, beside the other operation constants.
+ */
+export const INSPECT_OPERATION = "sheets.inspect";
 export const MERGE_OPERATION = "sheets.merge";
 export const SPLIT_OPERATION = "sheets.split-by-column";
 export const WORKBOOK_EXTENSION = ".xlsx";

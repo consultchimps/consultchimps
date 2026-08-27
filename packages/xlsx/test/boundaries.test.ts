@@ -38,6 +38,8 @@ interface SourceFile {
   /** Path relative to src/, always with forward slashes. */
   readonly relativePath: string;
   readonly imports: readonly string[];
+  /** The named bindings of every import clause, concatenated. */
+  readonly importedNames: string;
 }
 
 /**
@@ -63,6 +65,20 @@ function moduleSpecifiers(source: string): readonly string[] {
   return specifiers;
 }
 
+/**
+ * The `{ ... }` clause of every static import, concatenated. Enough to ask
+ * which named bindings a module pulled in, without a parser.
+ */
+function importedBindings(source: string): string {
+  const clauses: string[] = [];
+  for (const match of source.matchAll(
+    /\bimport\s+(?:type\s+)?\{([^}]*)\}\s*from/gu,
+  )) {
+    clauses.push(match[1] ?? "");
+  }
+  return clauses.join(",");
+}
+
 async function readSourceFiles(): Promise<readonly SourceFile[]> {
   const entries = await readdir(SOURCE_DIRECTORY, {
     recursive: true,
@@ -78,9 +94,11 @@ async function readSourceFiles(): Promise<readonly SourceFile[]> {
       .relative(SOURCE_DIRECTORY, absolute)
       .split(path.sep)
       .join("/");
+    const source = await readFile(absolute, "utf8");
     files.push({
       relativePath,
-      imports: moduleSpecifiers(await readFile(absolute, "utf8")),
+      imports: moduleSpecifiers(source),
+      importedNames: importedBindings(source),
     });
   }
   return files;
@@ -134,6 +152,30 @@ describe("boundaries: operations and regions never touch ZIP", () => {
       expect(offenders).toEqual([]);
     },
   );
+});
+
+/**
+ * The XML helpers that REWRITE a part. Editing markup is L0/L1 work: an
+ * operation that reached for one of these would be the "operations edited raw
+ * XML with regexes" problem this architecture exists to end.
+ *
+ * Read-only helpers are deliberately absent. An operation may decode text it
+ * compares against - the inspection decodes a defined name's reference before
+ * matching a worksheet name - without rewriting anything.
+ */
+const XML_MUTATION_HELPERS = ["editElements", "setAttribute", "addAttribute"];
+
+describe("boundaries: operations never rewrite XML", () => {
+  it("no file under src/operations/ imports an XML mutation helper", () => {
+    const offenders = sourceFiles
+      .filter((file) => inDirectory(file, "operations"))
+      .flatMap((file) =>
+        XML_MUTATION_HELPERS.filter((helper) =>
+          new RegExp(`\\b${helper}\\b`, "u").test(file.importedNames),
+        ).map((helper) => `${file.relativePath}: ${helper}`),
+      );
+    expect(offenders).toEqual([]);
+  });
 });
 
 describe("boundaries: the model and the regions never touch the filesystem", () => {

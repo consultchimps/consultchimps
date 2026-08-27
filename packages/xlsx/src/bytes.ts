@@ -18,6 +18,20 @@ import type { Table } from "@consultchimps/tabular";
 
 import { XLSX_ERRORS } from "./errors.js";
 import {
+  describeWorkbookModel,
+  loadWorkbookModelForDescribe,
+  MAX_COLUMN_SAMPLE_VALUES,
+  type DescribeWorkbookMetric,
+  type DescribeWorkbookOptions,
+  type WorkbookColumnDescription,
+  type WorkbookDescription,
+  type WorkbookDescriptionOutcome,
+  type WorkbookExcelTableDescription,
+  type WorkbookNamedRangeDescription,
+  type WorkbookSheetDescription,
+  type WorksheetVisibility,
+} from "./operations/describe.js";
+import {
   analyzeAllWorksheetSplit,
   plannedAllWorksheetSplitMetrics,
   runAllWorksheetSplit,
@@ -37,10 +51,12 @@ import {
   consolidateTables,
   createMergeState,
   finishMergedWorkbook,
+  INSPECT_OPERATION,
   isMacroWorkbookName,
   MACRO_WORKBOOK_EXTENSION,
   MACRO_WORKBOOK_MEDIA_TYPE,
   MERGE_OPERATION,
+  parseExcelTableDefinitions,
   parseWorkbookBytes,
   preservedSplitTemplateBytes,
   resolveSplitSource,
@@ -51,15 +67,21 @@ import {
   WORKBOOK_EXTENSION,
   WORKBOOK_MEDIA_TYPE,
   withoutWorkbookExtension,
+  workbookExcelTables,
+  workbookNamedRanges,
   workbookTables,
   workbookWorksheetRecords,
   yieldToEventLoop,
   type ConsolidateWorkbooksMetric,
   type MergeWorkbooksMetric,
+  type ReadWorkbookExcelTablesOptions,
+  type ReadWorkbookNamedRangesOptions,
   type ReadWorkbookOptions,
   type ResolvedSplitSource,
   type SplitWorkbookByColumnMetric,
   type SplitWorkbookByColumnPlanMetric,
+  type WorkbookExcelTable,
+  type WorkbookNamedRange,
   type WorksheetRecords,
 } from "./shared.js";
 
@@ -634,10 +656,84 @@ export async function readWorksheetRecordsBytes(
   );
 }
 
+/**
+ * Read the Excel Tables a workbook defines, with their data, from bytes.
+ *
+ * The byte twin of `readWorkbookExcelTables`: same definitions, same
+ * selection options, same `WorkbookExcelTable` shape — this surface simply had
+ * no way to reach them before, which is what left its `WorkbookExcelTable`
+ * re-export pointing at a type nothing here produced.
+ */
+export async function readWorkbookExcelTablesBytes(
+  input: WorkbookInputBytes,
+  options: ReadWorkbookExcelTablesOptions = {},
+): Promise<WorkbookExcelTable[]> {
+  const details = { source: input.name };
+  const workbook = parseWorkbookBytes(input.bytes, input.name, { details });
+  const definitions = await parseExcelTableDefinitions(
+    input.bytes,
+    input.name,
+    details,
+  );
+  return workbookExcelTables(workbook, definitions, input.name, options);
+}
+
+/**
+ * Read the named ranges a workbook defines, with their data, from bytes. The
+ * byte twin of `readWorkbookNamedRanges`.
+ */
+export async function readWorkbookNamedRangesBytes(
+  input: WorkbookInputBytes,
+  options: ReadWorkbookNamedRangesOptions = {},
+): Promise<WorkbookNamedRange[]> {
+  return workbookNamedRanges(
+    parseWorkbookBytes(input.bytes, input.name, {
+      cellText: true,
+      details: { source: input.name },
+    }),
+    input.name,
+    options,
+  );
+}
+
+/**
+ * Describe a workbook's structure from bytes, without producing anything:
+ * worksheets with their visibility, dimensions and header preview, Excel
+ * Tables, named ranges, and a bounded sample of each column's values.
+ *
+ * The byte twin of `describeWorkbook`. Both hand the same parsed workbook to
+ * the same engine, so one workbook yields a structurally identical description
+ * whether the caller has a filesystem or only bytes.
+ */
+export async function describeWorkbookBytes(
+  input: WorkbookInputBytes,
+  options: DescribeWorkbookOptions = {},
+): Promise<WorkbookDescriptionOutcome> {
+  throwIfAborted(options.signal, INSPECT_OPERATION, "memory");
+  const workbook = await loadWorkbookModelForDescribe(input.bytes, input.name, {
+    source: input.name,
+  });
+  return describeWorkbookModel(workbook, input.name, options, "memory");
+}
+
 export { XLSX_ERRORS, type XlsxErrorCode } from "./errors.js";
+export { MAX_COLUMN_SAMPLE_VALUES };
+export type {
+  DescribeWorkbookMetric,
+  DescribeWorkbookOptions,
+  WorkbookColumnDescription,
+  WorkbookDescription,
+  WorkbookDescriptionOutcome,
+  WorkbookExcelTableDescription,
+  WorkbookNamedRangeDescription,
+  WorkbookSheetDescription,
+  WorksheetVisibility,
+};
 export type {
   ConsolidateWorkbooksMetric,
   MergeWorkbooksMetric,
+  ReadWorkbookExcelTablesOptions,
+  ReadWorkbookNamedRangesOptions,
   ReadWorkbookOptions,
   SplitWorkbookByColumnMetric,
   SplitWorkbookByColumnPlanMetric,

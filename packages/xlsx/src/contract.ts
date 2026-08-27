@@ -208,8 +208,75 @@ export const CONTRACT: Record<
   // `values` is a policy on other operations today, not a standalone L3
   // operation; it earns its own column when it becomes one.
   values: {},
-  // `describe` does not exist yet.
-  describe: {},
+  /**
+   * The inspection reads and writes nothing, so every tracked structure is
+   * `preserve` - and uniquely, that is provable rather than argued: the column
+   * is held up by asserting the input package is byte-identical after a
+   * describe, so no cell here can be true while another is false.
+   *
+   * This is the one column where a uniform answer is the honest one. A read-only
+   * operation cannot `fix` (it rewrites nothing), cannot `strip-warn` (it emits
+   * no output to strip from), and does not `refuse` on any structure: the
+   * refusals it does have - a workbook with no worksheets, an unknown worksheet
+   * name, an out-of-range sample count, an invalid header row - are about
+   * options and workbook shape, not about a tracked structure.
+   *
+   * Every cell is held up by `describe.corpus.test.ts`.
+   */
+  describe: {
+    // invariant: describing a %s workbook leaves every input byte untouched
+    "merged-cells": "preserve",
+    // invariant: describing a %s workbook leaves every input byte untouched
+    "conditional-formatting": "preserve",
+    // invariant: describing a %s workbook leaves every input byte untouched
+    "data-validation": "preserve",
+    // invariant: describing a %s workbook leaves every input byte untouched
+    hyperlinks: "preserve",
+    // invariant: describing a %s workbook leaves every input byte untouched
+    comments: "preserve",
+    // invariant: describing a %s workbook leaves every input byte untouched
+    // (the comment's legacy VML drawing is carried by the same guarantee)
+    "drawings-charts": "preserve",
+    // pins: the description reports defined names without altering them
+    // (the workbook-scoped CorpusRange is reported; the sheet-scoped LocalNote
+    // is reported too, and neither part is rewritten)
+    "defined-names": "preserve",
+    // pins: the description reports an Excel Table's declared headers
+    // (read from the table part, so a table with no data rows still appears)
+    "excel-tables": "preserve",
+    // pins: a totals row is described as worksheet content and never removed
+    // (the two bindings disagree about deleting it, but describe deletes
+    // nothing, so this is the one operation where the cell is unambiguous)
+    "excel-table-totals-row": "preserve",
+    // invariant: describing a %s workbook leaves every input byte untouched
+    // (a pivot cache is a private copy of rows; an inspection neither reads it
+    // into the description nor disturbs it)
+    "pivot-tables": "preserve",
+    // invariant: describing a %s workbook leaves every input byte untouched
+    "calc-chain": "preserve",
+    // invariant: describing a %s workbook leaves every input byte untouched
+    "shared-strings": "preserve",
+    // invariant: describing a %s workbook leaves every input byte untouched
+    "styles-number-formats": "preserve",
+    // invariant: describing a macro workbook leaves every input byte untouched
+    "vba-project": "preserve",
+    // invariant: describing a %s workbook leaves every input byte untouched
+    "formulas-cached": "preserve",
+    // pins: a formula cell is sampled by its cached value, not recalculated
+    // (an uncached formula therefore contributes no sample rather than a
+    // guess - the inspection never invents a value the workbook does not hold)
+    "formulas-uncached": "preserve",
+    // invariant: describing a %s workbook leaves every input byte untouched
+    "formulas-shared": "preserve",
+    // invariant: describing a %s workbook leaves every input byte untouched
+    "formulas-array": "preserve",
+    // invariant: describing a %s workbook leaves every input byte untouched
+    "formulas-a1": "preserve",
+    // invariant: describing a table workbook leaves every input byte untouched
+    "formulas-structured-ref": "preserve",
+
+    // ABSENT, deliberately - see UNDECIDED_DESCRIBE_STRUCTURES below.
+  },
 };
 
 /**
@@ -239,4 +306,18 @@ export const UNDECIDED_SPLIT_STRUCTURES: Readonly<Record<string, string>> = {
 export const UNDECIDED_MERGE_STRUCTURES: Readonly<Record<string, string>> = {
   "external-links":
     "No corpus fixture yet; the generator has no external-link part, and a cell the corpus cannot exercise is not a contract.",
+};
+
+/**
+ * Why describe's one cell is absent.
+ *
+ * The behavior is not in doubt here - a read-only operation cannot disturb an
+ * external link any more than it disturbs anything else. The cell stays absent
+ * on the corpus rule rather than the decision rule: "a cell the corpus cannot
+ * exercise is not a contract", and the generator still has no external-link
+ * part to exercise it with. It lands with the fixture, alongside merge's.
+ */
+export const UNDECIDED_DESCRIBE_STRUCTURES: Readonly<Record<string, string>> = {
+  "external-links":
+    "No corpus fixture yet; the generator has no external-link part. The answer is certainly `preserve` - describing writes nothing - but an undeclarable cell is left absent rather than asserted from reasoning alone.",
 };
