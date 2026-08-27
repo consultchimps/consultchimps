@@ -38,12 +38,21 @@ Documentation:
 
 Requirements:
 
-- Node.js 24
+- Node.js 22 or later (development happens on Node 24)
 
 Run the CLI without keeping a global installation:
 
 ```bash
 npx consultchimps@latest --help
+```
+
+No npm access? Every release also ships a standalone bundle — download
+`consultchimps.mjs` from the
+[latest release](https://github.com/consultchimps/consultchimps/releases/latest)
+and run it directly:
+
+```bash
+node consultchimps.mjs --help
 ```
 
 Or install it globally:

@@ -17,6 +17,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --clean",
+    "bundle": "tsup --config tsup.bundle.config.ts",
     "prepack": "pnpm build",
     "typecheck": "tsc --noEmit"
   },
@@ -36,7 +37,7 @@
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "engines": {
-    "node": "24.x"
+    "node": ">=22.0.0"
   },
   "publishConfig": {
     "access": "public",
