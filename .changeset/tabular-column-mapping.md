@@ -36,9 +36,10 @@ it:
 `suggestColumnMapping` drafts a mapping from the inputs' header lists by
 grouping columns whose normalized keys already match, proposing the first
 spelling seen as the canonical name and returning the evidence behind each
-group. It uses no similarity scoring and no sample values, so it has no false
-positives; synonyms that share no spelling stay a manual mapping entry, and
-nothing is applied without review.
+group. It uses no similarity scoring and no sample values — only deterministic
+normalization equivalence, which can still group headers that differ only in
+punctuation, so every draft is meant for review; synonyms that share no spelling
+stay a manual mapping entry, and nothing is applied without review.
 
 Column matching is now independent of the machine's locale. `columnKey` and
 `normalizedColumnKey` case-fold with `toLowerCase` instead of the locale-aware

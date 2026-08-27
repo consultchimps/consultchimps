@@ -176,12 +176,15 @@ const suggestion = suggestColumnMapping([
 // where every one of them was seen.
 ```
 
-The suggestion uses no similarity scoring and no sample values, so it has no
-false positives — and equally, it never guesses. Synonyms that share no
-spelling, such as `Timestamp` and `Run Time`, stay for you to add by hand. A
-drafted entry carries no aliases on purpose: every spelling in a group shares
-one normalized key, which the canonical name already matches. Review the draft
-and apply it yourself; nothing is applied for you.
+The suggestion uses no similarity scoring and no sample values: it groups only
+deterministic normalization equivalence, and it never guesses. That is not the
+same as never being wrong — headers that differ only in punctuation, such as
+`A+B` and `A-B`, normalize to the same key and will group even when they mean
+different things, which is why every draft is reviewed before use. Synonyms that
+share no spelling, such as `Timestamp` and `Run Time`, stay for you to add by
+hand. A drafted entry carries no aliases on purpose: every spelling in a group
+shares one normalized key, which the canonical name already matches. Review the
+draft and apply it yourself; nothing is applied for you.
 
 ## Read workbooks without writing anything
 

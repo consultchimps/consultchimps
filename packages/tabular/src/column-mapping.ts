@@ -861,9 +861,11 @@ export function applyColumnMappingToTables(
  * first spelling seen becomes the proposed canonical name.
  *
  * Deliberately no similarity matching and no value-based signals: a group
- * here is an exact normalization equivalence, so it has no false positives.
- * Synonyms that share no spelling stay a manual mapping entry. The draft is
- * for review; nothing applies it automatically.
+ * here is an exact normalization equivalence. That still conflates headers
+ * that differ only in punctuation ("A+B" and "A-B" share the key a_b), so
+ * the draft is evidence for a human review, never a guarantee. Synonyms
+ * that share no spelling stay a manual mapping entry; nothing applies the
+ * draft automatically.
  */
 export function suggestColumnMapping(
   sources: ColumnHeaderSource[],
