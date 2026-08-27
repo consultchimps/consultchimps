@@ -59,10 +59,10 @@ published packages. Read package.json and the lockfile before changing them.
 -->
 
 - Develop on Node.js 24.x. Published packages declare `engines.node`
-  `">=22.0.0"`; CI validates that contract with build-and-test legs on Node
-  22.16 (the floor), the latest 22, and 26. Plan: drop Node 22 support around
-  its April 2027 end of life. Do not use APIs newer than Node 22 in package
-  runtime code.
+  `">=22.0.0"`; the workspace itself requires `">=22.13.0"` because the pinned
+  pnpm does. CI validates the published contract with build-and-test legs on
+  Node 22.16, the latest 22, and 26. Plan: drop Node 22 support around its April
+  2027 end of life. Do not use APIs newer than Node 22 in package runtime code.
 - Use pnpm 11.x through the repository's pinned `packageManager` declaration.
 - TypeScript runs split-toolchain: each package's own `typescript` 7
   devDependency powers `tsc --noEmit` typechecks (native compiler), while the
