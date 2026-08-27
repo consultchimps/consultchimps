@@ -23,27 +23,36 @@ Documentation:
 
 ## Packages
 
-| Package                   | Responsibility                                   |
-| ------------------------- | ------------------------------------------------ |
-| `@consultchimps/core`     | Shared errors, artifacts, and operation results  |
-| `@consultchimps/files`    | Input discovery and safe output-path handling    |
-| `@consultchimps/tabular`  | Runtime-neutral table model and union operations |
-| `@consultchimps/xlsx`     | Excel workbook input and output                  |
-| `@consultchimps/pptx`     | PowerPoint template inspection and population    |
-| `@consultchimps/pdf`      | PDF split and merge operations                   |
-| `@consultchimps/messages` | Plain-language rendering of results and errors   |
-| `consultchimps`           | Command-line interface                           |
+| Package                   | Responsibility                                         |
+| ------------------------- | ------------------------------------------------------ |
+| `@consultchimps/core`     | Shared errors, artifacts, and operation results        |
+| `@consultchimps/files`    | Input discovery and safe output-path handling          |
+| `@consultchimps/tabular`  | Runtime-neutral table model, union, and column mapping |
+| `@consultchimps/xlsx`     | Excel workbook input and output                        |
+| `@consultchimps/pptx`     | PowerPoint template inspection and population          |
+| `@consultchimps/pdf`      | PDF split and merge operations                         |
+| `@consultchimps/messages` | Plain-language rendering of results and errors         |
+| `consultchimps`           | Command-line interface                                 |
 
 ## Install
 
 Requirements:
 
-- Node.js 24
+- Node.js 22 or later (development happens on Node 24)
 
 Run the CLI without keeping a global installation:
 
 ```bash
 npx consultchimps@latest --help
+```
+
+No npm access? Every release also ships a standalone bundle — download
+`consultchimps.mjs` from the
+[latest release](https://github.com/consultchimps/consultchimps/releases/latest)
+and run it directly:
+
+```bash
+node consultchimps.mjs --help
 ```
 
 Or install it globally:

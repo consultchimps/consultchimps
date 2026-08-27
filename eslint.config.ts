@@ -7,9 +7,13 @@ export default tseslint.config(
       "**/.next/**",
       "**/.source/**",
       "**/dist/**",
+      "**/dist-bundle/**",
       "**/coverage/**",
       "**/node_modules/**",
       "apps/docs/**",
+      // Local agent configuration and scratch space, never committed.
+      ".claude/**",
+      "tmp/**",
     ],
   },
   eslint.configs.recommended,
