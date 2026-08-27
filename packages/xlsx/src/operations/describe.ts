@@ -29,11 +29,13 @@ import { XLSX_ERRORS } from "../errors.js";
 import { WorkbookModel } from "../model/index.js";
 import type {
   CellRange,
+  CellRef,
   DefinedNameEntry,
   SheetInfo,
   WorkbookTableInfo,
   WorksheetModel,
 } from "../model/types.js";
+import { decodeXmlText } from "../model/xml.js";
 import { resolveRegions } from "../region/resolve.js";
 import type { DataRegion } from "../region/types.js";
 import { formatCellRef, parseSheetRange } from "../region/values.js";
@@ -201,6 +203,30 @@ function resolveSampleLimit(requested: number | undefined): number {
   return requested;
 }
 
+/**
+ * Refuse an invalid `headerRow` before anything reads the workbook.
+ *
+ * The region resolver validates this too, but it only ever sees the option for
+ * a worksheet that has content to resolve. Leaving the check to it made the
+ * same option valid or invalid depending on what the workbook happened to
+ * contain - an empty worksheet, or a selection that filtered every sheet out
+ * as hidden, would accept `0` or `1.5` in silence. Option validation belongs
+ * to the operation, before the work starts; the code and wording match the
+ * resolver's so a caller sees one refusal however the sheet is shaped.
+ */
+function validateHeaderRow(headerRow: number | undefined): void {
+  if (
+    headerRow !== undefined &&
+    (!Number.isInteger(headerRow) || headerRow < 1)
+  ) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_INVALID_HEADER_ROW,
+      "The header row must be a positive whole number counted from 1.",
+      { details: { headerRow } },
+    );
+  }
+}
+
 /** The model's visibility vocabulary in this operation's public spelling. */
 function publicVisibility(
   visibility: SheetInfo["visibility"],
@@ -209,16 +235,32 @@ function publicVisibility(
 }
 
 /**
- * A model cell value as the description reports it. The model types a cell the
- * way a grouping key needs it; a description only has to be JSON-shaped and
- * faithful, so a date becomes its ISO text and a blank becomes null.
+ * A cell's value exactly as the workbook stores it.
+ *
+ * `cellValue` is the grouping-oriented view: it reads the cell's style and
+ * infers a `Date` from a date number format, which is the right answer for a
+ * split key and the wrong one here. ADR 0002 promises samples are stored
+ * values with no inferred types, and a date-formatted cell stores a *number* -
+ * the serial - not a date. Reporting an ISO string would show a mapping review
+ * a type and a value the cell does not contain.
+ *
+ * So a `Date` from the model is re-read from the cell's stored text: a numeric
+ * serial comes back as that number, and a genuine ISO date cell (`t="d"`,
+ * whose stored text is the ISO string) comes back as that text. Both are what
+ * the workbook holds, and both are deterministic.
  */
-function describableValue(value: unknown): CellValue {
+function storedValue(worksheet: WorksheetModel, ref: CellRef): CellValue {
+  const value = worksheet.cellValue(ref);
   if (value === undefined || value === null) {
     return null;
   }
   if (value instanceof Date) {
-    return value.toISOString();
+    const text = worksheet.cellText(ref);
+    if (text === undefined || text.trim() === "") {
+      return null;
+    }
+    const numeric = Number(text.trim());
+    return Number.isFinite(numeric) ? numeric : text;
   }
   if (
     typeof value === "string" ||
@@ -259,11 +301,28 @@ function formatRange(range: CellRange): string {
  * range alone cannot tell "one blank cell" from "no cells". An inspection has
  * to answer "there is no header row here" for a genuinely empty sheet rather
  * than invent a `column_1`, so emptiness is decided by looking. The scan
- * short-circuits on the first value, which costs one cell read on the empty
- * sheet this exists for.
+ * short-circuits on the first value, which costs one cell read on the ordinary
+ * populated sheet.
+ *
+ * The pathological case is the reason this yields: a blank formatted template
+ * can declare a dimension spanning tens of thousands of empty rows, and every
+ * one of them has to be visited before the answer is "empty". That is the same
+ * unbroken synchronous scan the body loop had, so it gets the same treatment.
  */
-function hasAnyValue(worksheet: WorksheetModel, used: CellRange): boolean {
+async function hasAnyValue(
+  worksheet: WorksheetModel,
+  used: CellRange,
+  options: DescribeWorkbookOptions,
+  outputContext: AbortOutputContext,
+): Promise<boolean> {
+  let rowsSinceYield = 0;
   for (let row = used.start.row; row <= used.end.row; row += 1) {
+    rowsSinceYield += 1;
+    if (rowsSinceYield >= ROWS_PER_YIELD) {
+      rowsSinceYield = 0;
+      await yieldToEventLoop();
+      throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
+    }
     for (
       let column = used.start.column;
       column <= used.end.column;
@@ -307,7 +366,7 @@ async function describeWorksheet(
 ): Promise<WorkbookSheetDescription> {
   const visibility = publicVisibility(sheet.visibility);
   const used = worksheet.usedRange;
-  if (!used || !hasAnyValue(worksheet, used)) {
+  if (!used || !(await hasAnyValue(worksheet, used, options, outputContext))) {
     return { ...EMPTY_SHEET, columns: [], name: sheet.name, visibility };
   }
 
@@ -359,7 +418,7 @@ async function describeWorksheet(
     }
 
     const values = columnIndexes.map((column) =>
-      describableValue(region.worksheet.cellValue({ column, row })),
+      storedValue(region.worksheet, { column, row }),
     );
     if (values.every(isEmptyValue)) {
       continue;
@@ -430,12 +489,17 @@ function describeNamedRanges(
     if (definedName.name.startsWith(BUILTIN_DEFINED_NAME_PREFIX)) {
       continue;
     }
-    const parsed = parseSheetRange(definedName.reference);
+    // The model hands back the reference as the workbook part stores it, which
+    // is escaped XML text: a worksheet called `Review & Log` arrives as
+    // `'Review &amp; Log'!$A$1`. Sheet names elsewhere in the description are
+    // decoded, so without this the membership test below would silently drop
+    // the range and undercount the `namedRanges` metric.
+    const parsed = parseSheetRange(decodeXmlText(definedName.reference));
     if (!parsed || !describedSheets.has(parsed.sheet)) {
       continue;
     }
     ranges.push({
-      name: definedName.name,
+      name: decodeXmlText(definedName.name),
       ref: formatRange(parsed.range),
       sheet: parsed.sheet,
     });
@@ -601,7 +665,10 @@ export async function describeWorkbookModel(
   outputContext: AbortOutputContext = "files",
 ): Promise<WorkbookDescriptionOutcome> {
   throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
+  // Options are validated before any worksheet is read, so a bad option is
+  // refused the same way whatever the workbook contains.
   const sampleLimit = resolveSampleLimit(options.sampleValues);
+  validateHeaderRow(options.headerRow);
   const { hiddenExcluded, selected } = selectSheets(workbook, options);
 
   const sheets: WorkbookSheetDescription[] = [];

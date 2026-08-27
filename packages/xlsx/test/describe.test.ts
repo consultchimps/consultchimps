@@ -410,6 +410,58 @@ describe("describeWorkbook", () => {
     // collected mid-operation rather than after all the work was already done.
     expect(described.length).toBeLessThan(3);
   });
+
+  it("collects a cancellation while scanning a blank sheet with a huge declared range", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "template.xlsx");
+
+    // A small populated sheet, then a formatted template whose dimension spans
+    // 200,000 rows without a single cell. Deciding "this one is empty" visits
+    // every coordinate, which is the emptiness scan's pathological case and
+    // takes roughly two seconds here.
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.aoa_to_sheet([["Case_ID"], ["R-1"]]),
+      "Review Log",
+    );
+    const template: XLSX.WorkSheet = {};
+    template["!ref"] = "A1:D200000";
+    XLSX.utils.book_append_sheet(workbook, template, "Template");
+    await writeFile(
+      input,
+      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+    );
+
+    // The abort is queued once the first worksheet is described, on a delay
+    // long enough to clear the between-worksheet yield but far shorter than
+    // the emptiness scan. It can therefore only be collected from inside that
+    // scan - which is the point: without a yield there, the scan runs to the
+    // end and "Template" is reported before the cancellation is ever seen.
+    const controller = new AbortController();
+    const described: string[] = [];
+    let thrown: unknown;
+    try {
+      await describeWorkbook(input, {
+        signal: controller.signal,
+        onProgress: (progress) => {
+          if (progress.stage === "describing-worksheets") {
+            described.push(progress.detail ?? "");
+            if (described.length === 1) {
+              setTimeout(() => controller.abort(), 200);
+            }
+          }
+        },
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(isConsultChimpsError(thrown)).toBe(true);
+    expect((thrown as { code: string }).code).toBe(OPERATION_ABORTED);
+    // Stopped inside the blank sheet's scan, so it was never reported.
+    expect(described).toEqual(["Review Log"]);
+  }, 30000);
 });
 
 describe("describeWorkbook hidden worksheets", () => {
@@ -469,6 +521,42 @@ describe("describeWorkbook hidden worksheets", () => {
   });
 });
 
+describe("describeWorkbook stored values", () => {
+  it("samples a date-formatted cell as the number the workbook stores", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "north.xlsx");
+
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      ["Case_ID", "Started"],
+      ["R-1", null],
+      ["R-2", null],
+    ]);
+    // A numeric cell carrying a date number format. Excel stores the serial;
+    // the date is a presentation choice made by the style.
+    worksheet.B2 = { t: "n", v: 45000, z: "yyyy-mm-dd" };
+    worksheet.B3 = { t: "n", v: 45001, z: "yyyy-mm-dd" };
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Review Log");
+    await writeFile(
+      input,
+      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+    );
+
+    const { description } = await describeWorkbook(input);
+    const started = description.sheets[0]?.columns.find(
+      (column) => column.header === "Started",
+    );
+
+    // The stored value is the serial, so that is what the sample reports. An
+    // ISO string here would be an inferred type the ADR excludes, and would
+    // show a mapping review a value the cell does not contain.
+    expect(started?.sampleValues).toEqual([45000, 45001]);
+    for (const value of started?.sampleValues ?? []) {
+      expect(typeof value).toBe("number");
+    }
+  });
+});
+
 describe("describeWorkbook expected failures", () => {
   it("refuses a workbook that declares no worksheets", async () => {
     const directory = await createTemporaryDirectory();
@@ -516,6 +604,29 @@ describe("describeWorkbook expected failures", () => {
     ).rejects.toMatchObject({ code: "XLSX_WORKSHEET_NOT_FOUND" });
   });
 
+  it("refuses an invalid header row whatever the workbook contains", async () => {
+    const directory = await createTemporaryDirectory();
+    const populated = path.join(directory, "north.xlsx");
+    const blank = path.join(directory, "blank.xlsx");
+    await writeWorkbook(populated, [REVIEW_LOG]);
+    await writeWorkbook(blank, [{ name: "Blank", rows: [[]] }]);
+    const hiddenOnly = path.join(directory, "hidden.xlsx");
+    await writeWorkbook(hiddenOnly, [
+      { hidden: 1, name: "Summary", rows: [["Category"], ["Complete"]] },
+    ]);
+
+    // The option is refused identically whether a worksheet has content, has
+    // none, or was filtered out as hidden - the workbook never decides whether
+    // an option is valid.
+    for (const workbook of [populated, blank, hiddenOnly]) {
+      for (const headerRow of [0, -1, 1.5]) {
+        await expect(
+          describeWorkbook(workbook, { headerRow }),
+        ).rejects.toMatchObject({ code: "XLSX_INVALID_HEADER_ROW" });
+      }
+    }
+  });
+
   it("reports an unreadable workbook with the shared read error", async () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "missing.xlsx");
@@ -551,6 +662,30 @@ describe("describeWorkbook expected failures", () => {
     expect(result.warnings).toEqual([
       'No header row was found in "Blank". An operation that matches columns by header would find nothing to match in it.',
     ]);
+  });
+});
+
+describe("describeWorkbook named ranges", () => {
+  it("matches a sheet whose name the workbook part has to escape", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "north.xlsx");
+    // "&" is stored as &amp; in the defined name's reference, while the sheet
+    // name reaches the description decoded. Comparing the two raw dropped the
+    // range silently and undercounted the metric.
+    const sheetName = "Review & Log";
+    await writeWorkbook(
+      input,
+      [{ name: sheetName, rows: REVIEW_LOG.rows }],
+      [{ Name: "CaseRange", Ref: `'${sheetName}'!$A$1:$C$4` }],
+    );
+
+    const { description, result } = await describeWorkbook(input);
+
+    expect(description.sheets.map((sheet) => sheet.name)).toEqual([sheetName]);
+    expect(description.namedRanges).toEqual([
+      { name: "CaseRange", ref: "A1:C4", sheet: sheetName },
+    ]);
+    expect(result.metrics.namedRanges).toBe(1);
   });
 });
 

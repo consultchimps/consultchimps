@@ -219,8 +219,11 @@ before it is bundled. It carried a temporary allowlist of the legacy top-level
 modules that still imported JSZip; Phase 1 emptied it, so `src/package/` is now
 the only owner of ZIP concerns. The allowlist is asserted to match the offending
 files _exactly_, so a new module cannot join it unnoticed. The "operations never
-regex-edit XML" half of guardrail 2 is not yet asserted; `src/operations/` does
-not exist, and the rule lands with it.
+regex-edit XML" half of guardrail 2 landed with `src/operations/`, which the
+inspection operation created: no module under it may import the XML _mutation_
+helpers (`editElements`, `setAttribute`, `addAttribute`), because rewriting a
+part is L0/L1 work. Reading helpers stay available — an operation may decode
+text it compares against, which is why `decodeXmlText` is not on that list.
 
 **Declare a contract cell.** `src/contract.ts` holds the L4 table as data, with
 each cell citing the corpus test that holds it up. `split` cells state the
