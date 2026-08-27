@@ -1,5 +1,25 @@
 # consultchimps
 
+## 0.9.2
+
+### Patch Changes
+
+- 32973f7: Declare support for Node.js 22 and later (`engines.node: ">=22.0.0"`
+  instead of `24.x`), so the toolkit installs and runs in environments that ship
+  the previous LTS line. CI now validates the runtime on Node 22.16, the latest
+  22, and 26 alongside the full Node 24 verification. The CLI additionally ships
+  a standalone `consultchimps.mjs` bundle on each GitHub release: one file that
+  runs with `node consultchimps.mjs` and needs no npm access at all.
+- Updated dependencies [cef85f7]
+- Updated dependencies [32973f7]
+- Updated dependencies [cef85f7]
+  - @consultchimps/xlsx@0.13.0
+  - @consultchimps/core@0.5.1
+  - @consultchimps/files@0.3.3
+  - @consultchimps/messages@0.4.0
+  - @consultchimps/pdf@0.4.2
+  - @consultchimps/pptx@0.6.1
+
 ## 0.9.1
 
 ### Patch Changes
