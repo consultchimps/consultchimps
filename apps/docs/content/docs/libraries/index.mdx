@@ -90,6 +90,52 @@ one `worksheet` and a `headerRow`; the Excel Table and named-range readers
 filter by `sheets` plus `tables` or `names`. The `writeTable` counterpart writes
 one in-memory `Table` to a new formatted workbook.
 
+## Inspect a workbook before operating on it
+
+`describeWorkbook` reports what is in a file — worksheets with their visibility
+and dimensions, the header row each operation would actually use, Excel Tables,
+named ranges, and a bounded sample of every column's values — without creating
+anything. Use it to confirm a workbook's shape, or to build a picker for the
+sheets and columns another operation will act on.
+
+```ts
+import { describeWorkbook } from "@consultchimps/xlsx";
+
+const { description, result } = await describeWorkbook("review-log.xlsx", {
+  includeHiddenSheets: true,
+});
+
+for (const sheet of description.sheets) {
+  console.log(`${sheet.name} (${sheet.visibility})`);
+  console.log(`  header row: ${sheet.headerRow ?? "none found"}`);
+  for (const column of sheet.columns) {
+    console.log(`  ${column.header}: ${column.sampleValues.join(", ")}`);
+  }
+}
+
+for (const table of description.excelTables) {
+  console.log(`Excel Table ${table.name} on ${table.sheet} (${table.range})`);
+}
+
+console.log(result.metrics.worksheets, result.warnings);
+```
+
+The inspection creates nothing, so the outcome pairs the description with an
+`OperationResult` that has no artifacts: its metrics are the counts, and its
+warnings name what a later operation would stumble on — hidden worksheets left
+out of the description, or a worksheet with no header row to match columns by.
+
+Sample values are deliberately bounded: at most `MAX_COLUMN_SAMPLE_VALUES` (5)
+distinct non-empty stored values per column, in the order the rows carry them.
+Pass `sampleValues` to ask for fewer. Nothing is type-inferred — the values are
+reported exactly as the workbook stores them, so `1` and `"1"` stay distinct.
+`headerRow`, `includeHiddenSheets`, and `sheets` mean what they mean to every
+other reader here; naming a worksheet the workbook does not have is refused with
+`XLSX_WORKSHEET_NOT_FOUND` rather than answered with an empty description.
+
+`describeWorkbookBytes` is the byte-level twin and produces a structurally
+identical description for the same workbook.
+
 ## Write values without losing Excel formatting
 
 The Excel consolidation, merge, and split operations accept `values: true`. For
@@ -303,6 +349,30 @@ for (const warning of result.warnings) {
 
 `inspectPresentationBytes` remains available and returns the placeholder report
 on its own, for callers that want the reading without the operation result.
+
+A workbook inspection works the same way. `describeWorkbookBytes` returns the
+description beside the structured result, and the bytes surface also carries
+`readWorkbookExcelTablesBytes` and `readWorkbookNamedRangesBytes`, the byte
+twins of the path-based Excel Table and named-range readers:
+
+```ts
+import {
+  describeWorkbookBytes,
+  readWorkbookExcelTablesBytes,
+} from "@consultchimps/xlsx/bytes";
+
+const input = {
+  name: file.name,
+  bytes: new Uint8Array(await file.arrayBuffer()),
+};
+
+const { description } = await describeWorkbookBytes(input, {
+  sampleValues: 3,
+});
+renderSheetPicker(description.sheets);
+
+const excelTables = await readWorkbookExcelTablesBytes(input);
+```
 
 Output names default to the input name (`report.pdf` becomes
 `report-page-001.pdf`, `clients.xlsx` becomes `clients-North.xlsx`, and

@@ -299,13 +299,44 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
       vocabulary.powerPointExampleReference,
     ],
   },
+  // A workbook inspection reads the file and creates nothing, so its wording
+  // never points at output files. The counts are all this result carries: the
+  // sheet names, headers, and sample values travel beside it in the
+  // description, so the next steps send the reader there rather than "above".
+  "sheets.inspect": {
+    title: "Your Excel workbook inspection is complete.",
+    summary: (result) => [
+      `ConsultChimps described ${quantity(
+        metric(result, "worksheets"),
+        "worksheet",
+      )}, holding ${quantity(
+        metric(result, "headerColumns"),
+        "column",
+      )} and ${quantity(metric(result, "dataRows"), "data row")} in total.`,
+      `It also found ${quantity(
+        metric(result, "excelTables"),
+        "Excel Table",
+      )} and ${quantity(metric(result, "namedRanges"), "named range")}.`,
+      "Nothing was created or changed. An inspection only reads the workbook.",
+    ],
+    nextSteps: (vocabulary) => [
+      "Read the worksheet names, column headers, and sample values from the description that accompanies this result, and confirm they are the ones you expected before consolidating, merging, or splitting the workbook.",
+      "Check the header row of every worksheet: a report title sitting above the real headers becomes the header row unless you name the correct one.",
+      vocabulary.spreadsheetOptionsReference,
+    ],
+  },
 };
 
 const metricLabels: Readonly<Record<string, string>> = {
+  dataRows: "Data rows described",
+  excelTables: "Excel Tables found",
   generatedSlides: "PowerPoint slides generated",
   groups: "Distinct groups found",
+  headerColumns: "Columns described across worksheets",
   hiddenSheets: "Hidden source worksheets copied",
+  hiddenWorksheets: "Hidden worksheets described",
   inputFiles: "Input files read",
+  namedRanges: "Named ranges found",
   inputRows: "Source data rows read",
   inputTables: "Visible worksheets combined",
   malformedPlaceholderLocations: "Locations with malformed placeholder braces",
@@ -328,6 +359,7 @@ const metricLabels: Readonly<Record<string, string>> = {
   formulaCellsWithoutCachedValues: "Formula cells missing cached values",
   valuesOnly: "Values-only mode (1 enabled, 0 disabled)",
   warnings: "Warnings reported",
+  worksheets: "Worksheets described",
 };
 
 function artifactType(artifact: Artifact): string {

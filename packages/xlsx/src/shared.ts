@@ -32,6 +32,11 @@ export const MACRO_WORKBOOK_MEDIA_TYPE =
 export const CONSOLIDATE_OPERATION = "sheets.consolidate";
 /** The worksheet a consolidation writes into unless the caller names another. */
 export const CONSOLIDATED_SHEET_NAME = "Consolidated";
+/**
+ * Workbook inspection: the glossary's single verb for describing an input's
+ * structure without producing files, matching `pptx.inspect-template`.
+ */
+export const INSPECT_OPERATION = "sheets.inspect";
 export const MERGE_OPERATION = "sheets.merge";
 export const SPLIT_OPERATION = "sheets.split-by-column";
 export const WORKBOOK_EXTENSION = ".xlsx";
@@ -218,7 +223,12 @@ export async function parseExcelTableDefinitions(
   }
 }
 
-function cellToPrimitive(cell: XLSX.CellObject | undefined): CellValue {
+/**
+ * A cell's stored value, as the readers and the workbook inspection both see
+ * it. Exported so `describe.ts` samples exactly the values a consolidate or a
+ * split would read, rather than a second interpretation of the same cell.
+ */
+export function cellToPrimitive(cell: XLSX.CellObject | undefined): CellValue {
   if (!cell || cell.v === null || cell.v === undefined) {
     return null;
   }
@@ -258,7 +268,7 @@ function cellToDisplayText(cell: XLSX.CellObject | undefined): string {
   return String(cell.v);
 }
 
-function getCell(
+export function getCell(
   worksheet: XLSX.WorkSheet,
   rowIndex: number,
   columnIndex: number,
@@ -267,7 +277,12 @@ function getCell(
     XLSX.CellObject | undefined;
 }
 
-function findHeaderRow(
+/**
+ * The effective header row: the caller's one-based `headerRow` when given,
+ * otherwise the first row carrying any value. The inspection reports the same
+ * row the operations would use, which is the point of inspecting.
+ */
+export function findHeaderRow(
   worksheet: XLSX.WorkSheet,
   range: XLSX.Range,
   configuredRow?: number,
@@ -298,11 +313,37 @@ function findHeaderRow(
   return undefined;
 }
 
-function isVisibleSheet(workbook: XLSX.WorkBook, sheetName: string): boolean {
+/**
+ * How Excel presents a worksheet. "very-hidden" is the state only the VBA
+ * editor can reverse, which is why an inspection distinguishes it from an
+ * ordinary hidden sheet a reader can unhide from the tab bar.
+ */
+export type WorksheetVisibility = "visible" | "hidden" | "very-hidden";
+
+/**
+ * A worksheet's visibility as the workbook records it. A workbook that carries
+ * no sheet metadata at all declares nothing hidden, so its sheets are visible —
+ * "as the data allows".
+ */
+export function sheetVisibility(
+  workbook: XLSX.WorkBook,
+  sheetName: string,
+): WorksheetVisibility {
   const metadata = workbook.Workbook?.Sheets?.find(
     (sheet) => sheet.name === sheetName,
   );
-  return (metadata?.Hidden ?? 0) === 0;
+  switch (metadata?.Hidden ?? 0) {
+    case 2:
+      return "very-hidden";
+    case 1:
+      return "hidden";
+    default:
+      return "visible";
+  }
+}
+
+function isVisibleSheet(workbook: XLSX.WorkBook, sheetName: string): boolean {
+  return sheetVisibility(workbook, sheetName) === "visible";
 }
 
 function worksheetToTable(
@@ -466,11 +507,12 @@ function excelTableToTable(
   };
 }
 
-const BUILTIN_DEFINED_NAME_PREFIX = "_xlnm.";
+/** Excel's own reserved defined names (print areas and the like), never user ranges. */
+export const BUILTIN_DEFINED_NAME_PREFIX = "_xlnm.";
 const NAMED_RANGE_REF_PATTERN =
   /^(?:'(?<quotedSheet>(?:[^']|'')+)'|(?<sheet>[^'!,:]+))!(?<range>\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?)$/u;
 
-function parseNamedRangeRef(
+export function parseNamedRangeRef(
   ref: string,
 ): { range: string; sheet: string } | undefined {
   const match = NAMED_RANGE_REF_PATTERN.exec(ref.trim());
@@ -551,7 +593,9 @@ function namedRangeToTable(
   };
 }
 
-function lowercaseSet(values: string[] | undefined): Set<string> | undefined {
+export function lowercaseSet(
+  values: string[] | undefined,
+): Set<string> | undefined {
   return values
     ? new Set(values.map((value) => value.toLocaleLowerCase()))
     : undefined;

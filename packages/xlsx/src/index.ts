@@ -27,6 +27,18 @@ import {
 import type { Table } from "@consultchimps/tabular";
 import type * as XLSX from "xlsx";
 
+import {
+  describeParsedWorkbook,
+  MAX_COLUMN_SAMPLE_VALUES,
+  type DescribeWorkbookMetric,
+  type DescribeWorkbookOptions,
+  type WorkbookColumnDescription,
+  type WorkbookDescription,
+  type WorkbookDescriptionOutcome,
+  type WorkbookExcelTableDescription,
+  type WorkbookNamedRangeDescription,
+  type WorkbookSheetDescription,
+} from "./describe.js";
 import { XLSX_ERRORS } from "./errors.js";
 import {
   type FullWorkbookSplitMetric,
@@ -88,6 +100,18 @@ export type {
   WorkbookNamedRange,
   WorksheetRecords,
 };
+export { MAX_COLUMN_SAMPLE_VALUES };
+export type {
+  DescribeWorkbookMetric,
+  DescribeWorkbookOptions,
+  WorkbookColumnDescription,
+  WorkbookDescription,
+  WorkbookDescriptionOutcome,
+  WorkbookExcelTableDescription,
+  WorkbookNamedRangeDescription,
+  WorkbookSheetDescription,
+};
+export type { WorksheetVisibility } from "./shared.js";
 
 export type SplitWorkbookByColumnMetric = FullWorkbookSplitMetric;
 export type SplitWorkbookByColumnPlanMetric = Exclude<
@@ -256,6 +280,33 @@ export async function readWorkbookNamedRanges(
     cellText: true,
   });
   return workbookNamedRanges(workbook, path.basename(absolutePath), options);
+}
+
+/**
+ * Describe a workbook's structure without producing anything: worksheets with
+ * their visibility, dimensions and header preview, Excel Tables, named ranges,
+ * and a bounded sample of each column's values.
+ *
+ * The inspection reads the file and writes nothing, so the outcome carries the
+ * description beside a structured result with no artifacts. `describeWorkbookBytes`
+ * is its byte-level twin and produces a structurally identical description for
+ * the same workbook.
+ */
+export async function describeWorkbook(
+  filePath: string,
+  options: DescribeWorkbookOptions = {},
+): Promise<WorkbookDescriptionOutcome> {
+  const absolutePath = path.resolve(filePath);
+  const { bytes, workbook } = await readWorkbookFile(absolutePath);
+  const definitions = await parseExcelTableDefinitions(bytes, absolutePath, {
+    filePath: absolutePath,
+  });
+  return describeParsedWorkbook(
+    workbook,
+    definitions,
+    path.basename(absolutePath),
+    options,
+  );
 }
 
 export async function writeTable(

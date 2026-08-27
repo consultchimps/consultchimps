@@ -258,6 +258,57 @@ describe("human-readable CLI output", () => {
     );
   });
 
+  it("explains a workbook inspection without pointing at output files", () => {
+    const output = formatHumanResult(
+      result(
+        "sheets.inspect",
+        {
+          dataRows: 12,
+          excelTables: 1,
+          headerColumns: 5,
+          hiddenWorksheets: 1,
+          namedRanges: 0,
+          worksheets: 2,
+        },
+        [],
+        [
+          "1 worksheet is hidden and was not described. Include hidden worksheets to describe it.",
+        ],
+      ),
+      cli,
+    );
+
+    expect(output).toContain("Your Excel workbook inspection is complete.");
+    expect(output).toContain(
+      "ConsultChimps described 2 worksheets, holding 5 columns and 12 data rows in total.",
+    );
+    expect(output).toContain("It also found 1 Excel Table and 0 named ranges.");
+    expect(output).toContain("Nothing was created or changed.");
+
+    // Every metric reads as plain language, never as its internal name.
+    expect(output).toContain("Worksheets described: 2");
+    expect(output).toContain("Columns described across worksheets: 5");
+    expect(output).toContain("Data rows described: 12");
+    expect(output).toContain("Excel Tables found: 1");
+    expect(output).toContain("Named ranges found: 0");
+    expect(output).toContain("Hidden worksheets described: 1");
+    expect(output).not.toContain("headerColumns:");
+    expect(output).not.toContain("hiddenWorksheets:");
+
+    // An inspection creates nothing, so the reader is never told to open a
+    // file that does not exist.
+    expect(output).toContain("No files were created.");
+    expect(output).not.toContain("Open the files");
+    expect(output).not.toContain("Open the new");
+
+    // The names are not in this text — only the counts are — so the next step
+    // sends the reader to the description rather than "above".
+    expect(output).toContain(
+      "Read the worksheet names, column headers, and sample values from the description that accompanies this result",
+    );
+    expect(output).toContain("1. 1 worksheet is hidden and was not described.");
+  });
+
   it("labels artifact types and falls back for unknown operations", () => {
     const output = formatHumanResult(
       {
