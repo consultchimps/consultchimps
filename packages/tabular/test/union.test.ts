@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  columnKey,
   groupTableByColumn,
   normalizedColumnKey,
   unionTables,
@@ -96,6 +97,20 @@ describe("normalizedColumnKey", () => {
       normalizedColumnKey("Failed Checks"),
     );
     expect(normalizedColumnKey("###")).toBe("###");
+  });
+
+  it("folds case the same way whatever locale the host runs in", () => {
+    // The locale-aware fold reads the host's default locale, where a Turkish
+    // or Azeri locale folds "ID" to "ıd". Consolidation would then match
+    // headers on one machine and not on another, so both keys use the
+    // locale-independent fold and always produce "id".
+    expect(columnKey("ID")).toBe("id");
+    expect(normalizedColumnKey("Case ID")).toBe("case_id");
+    expect(normalizedColumnKey("CASE_ID")).toBe("case_id");
+    expect(columnKey("ID")).not.toBe("ID".toLocaleLowerCase("tr"));
+    expect(normalizedColumnKey("İstanbul")).toBe(
+      "İstanbul".toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "_"),
+    );
   });
 
   it("stays linear on long runs of separators", () => {

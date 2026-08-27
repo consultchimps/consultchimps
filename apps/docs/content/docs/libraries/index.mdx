@@ -14,7 +14,7 @@ that can be reused in a server, desktop app, workflow runner, or another CLI.
 | ------------------------- | ------------------------------------------------------------- |
 | `@consultchimps/core`     | Shared result contracts and structured errors                 |
 | `@consultchimps/files`    | File discovery and safe output handling                       |
-| `@consultchimps/tabular`  | Runtime-neutral table union and grouping operations           |
+| `@consultchimps/tabular`  | Runtime-neutral table union, grouping, and column mapping     |
 | `@consultchimps/xlsx`     | Excel reading, writing, merging, consolidation, and splitting |
 | `@consultchimps/pptx`     | PowerPoint template inspection and population                 |
 | `@consultchimps/pdf`      | PDF splitting and merging                                     |
@@ -57,6 +57,134 @@ const combined = unionTables(tables);
 The output columns are `Client`, `Amount`, `Status`, and the three provenance
 columns. Case-insensitive headers are aligned without changing the original
 spelling of the first header encountered.
+
+## Map columns onto one schema
+
+When the same field arrives under different headers — `Case ID` from one system,
+`Reference` from another — a **column mapping** folds them into one **canonical
+column** before the tables are unioned. A mapping is a versioned JSON document:
+canonical columns with their **aliases**, optional **coercions**, and constant
+columns. Reading the file is your job; the library takes the parsed object, so
+it stays free of any filesystem dependency.
+
+```ts
+import {
+  applyColumnMappingToTables,
+  unionTables,
+  validateColumnMapping,
+  type Table,
+} from "@consultchimps/tabular";
+
+const mapping = validateColumnMapping({
+  version: 1,
+  columns: [
+    { name: "Case_ID", aliases: ["Reference", "Case Number"] },
+    {
+      name: "Opened_On",
+      aliases: ["Run Time"],
+      coercion: { type: "date", format: "DD/MM/YYYY" },
+    },
+    {
+      name: "Amount",
+      aliases: ["Total"],
+      coercion: {
+        type: "number",
+        decimalSeparator: ",",
+        thousandsSeparator: ".",
+      },
+    },
+  ],
+  constants: { Dataset: "quarterly" },
+});
+
+const tables: Table[] = [
+  {
+    columns: ["Case ID", "Run Time", "Total", "Region"],
+    rows: [
+      {
+        "Case ID": 1,
+        "Run Time": "09/03/2024",
+        Total: "1.234,50",
+        Region: "north",
+      },
+    ],
+    source: { file: "north.xlsx", sheet: "Cases", firstDataRow: 2 },
+  },
+  {
+    columns: ["reference", "Region"],
+    rows: [{ reference: 2, Region: "south" }],
+    source: { file: "south.xlsx", sheet: "Cases", firstDataRow: 2 },
+  },
+];
+
+const mapped = applyColumnMappingToTables(tables, mapping);
+const combined = unionTables(mapped.tables);
+
+if (mapped.unmappedColumns.length > 0) {
+  console.warn(`Columns kept as-is: ${mapped.unmappedColumns.join(", ")}`);
+}
+```
+
+The first row becomes `Case_ID: 1`, `Opened_On: "2024-03-09"`, `Amount: 1234.5`,
+`Region: "north"`, `Dataset: "quarterly"`, plus the provenance columns. `Region`
+is an **unmapped column**: it passes through under its own name and is reported
+in `unmappedColumns` so you can warn about it — loud, but lossless.
+
+Points worth knowing before you write a mapping:
+
+- **Aliases match by normalized column key.** One alias entry catches every
+  case, spacing, and punctuation variant of that spelling, so `Reference`,
+  `reference`, and `Reference:` all match the same entry, and a canonical column
+  always matches its own name. Canonical names are written to the output
+  verbatim.
+- **Coercions are strict.** A date is parsed from the format you declare
+  (`YYYY`, `MM` or `M`, `DD` or `D`; every other character is a literal
+  separator) into an ISO 8601 date string. A number is parsed with the
+  separators you declare, defaulting to `,` for thousands and `.` for decimals.
+  Blank cells stay blank, but a value that is not what its coercion declares
+  stops the run with `TABLE_MAPPING_COERCION_FAILED` naming the row and column,
+  rather than being written through unconverted.
+- **Ambiguity is refused, never guessed.** Two columns of one table folding into
+  a single canonical column raise `TABLE_MAPPING_COLUMN_COLLISION` naming the
+  file, sheet, both columns, and the canonical column, because merging them
+  would drop values. `validateColumnMapping` refuses a document that is
+  ambiguous on its own terms — an unknown version, two canonical columns that
+  normalize alike, an alias claimed twice — with `TABLE_MAPPING_INVALID` and a
+  machine-readable `problem` in the error details.
+- **Constant columns come last**, after the mapped and unmapped columns.
+
+Apply a mapping per source table, before `unionTables`, as above: that is what
+lets a collision name the sheet it came from. `applyColumnMapping` does the same
+for a single table.
+
+## Draft a mapping from the headers you have
+
+`suggestColumnMapping` reads header lists and groups the columns whose
+normalized keys already match — the spelling variants of one field — proposing
+the first spelling seen as the canonical name:
+
+```ts
+import { suggestColumnMapping } from "@consultchimps/tabular";
+
+const suggestion = suggestColumnMapping([
+  { columns: ["Case ID", "Failed Checks"], file: "north.xlsx", sheet: "Cases" },
+  { columns: ["Case_ID", "failed_checks"], file: "south.xlsx", sheet: "Cases" },
+]);
+
+// suggestion.mapping is a draft version 1 document to review and edit.
+// suggestion.groups carries the evidence: the spellings each entry folds and
+// where every one of them was seen.
+```
+
+The suggestion uses no similarity scoring and no sample values: it groups only
+deterministic normalization equivalence, and it never guesses. That is not the
+same as never being wrong — headers that differ only in punctuation, such as
+`A+B` and `A-B`, normalize to the same key and will group even when they mean
+different things, which is why every draft is reviewed before use. Synonyms that
+share no spelling, such as `Timestamp` and `Run Time`, stay for you to add by
+hand. A drafted entry carries no aliases on purpose: every spelling in a group
+shares one normalized key, which the canonical name already matches. Review the
+draft and apply it yourself; nothing is applied for you.
 
 ## Read workbooks without writing anything
 
