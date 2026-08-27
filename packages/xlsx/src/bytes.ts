@@ -16,8 +16,10 @@ import {
 
 import type { Table } from "@consultchimps/tabular";
 
+import { XLSX_ERRORS } from "./errors.js";
 import {
-  describeParsedWorkbook,
+  describeWorkbookModel,
+  loadWorkbookModelForDescribe,
   MAX_COLUMN_SAMPLE_VALUES,
   type DescribeWorkbookMetric,
   type DescribeWorkbookOptions,
@@ -27,8 +29,8 @@ import {
   type WorkbookExcelTableDescription,
   type WorkbookNamedRangeDescription,
   type WorkbookSheetDescription,
-} from "./describe.js";
-import { XLSX_ERRORS } from "./errors.js";
+  type WorksheetVisibility,
+} from "./operations/describe.js";
 import {
   analyzeAllWorksheetSplit,
   plannedAllWorksheetSplitMetrics,
@@ -708,20 +710,10 @@ export async function describeWorkbookBytes(
   options: DescribeWorkbookOptions = {},
 ): Promise<WorkbookDescriptionOutcome> {
   throwIfAborted(options.signal, INSPECT_OPERATION, "memory");
-  const details = { source: input.name };
-  const workbook = parseWorkbookBytes(input.bytes, input.name, { details });
-  const definitions = await parseExcelTableDefinitions(
-    input.bytes,
-    input.name,
-    details,
-  );
-  return describeParsedWorkbook(
-    workbook,
-    definitions,
-    input.name,
-    options,
-    "memory",
-  );
+  const workbook = await loadWorkbookModelForDescribe(input.bytes, input.name, {
+    source: input.name,
+  });
+  return describeWorkbookModel(workbook, input.name, options, "memory");
 }
 
 export { XLSX_ERRORS, type XlsxErrorCode } from "./errors.js";
@@ -735,6 +727,7 @@ export type {
   WorkbookExcelTableDescription,
   WorkbookNamedRangeDescription,
   WorkbookSheetDescription,
+  WorksheetVisibility,
 };
 export type {
   ConsolidateWorkbooksMetric,
@@ -746,7 +739,6 @@ export type {
   SplitWorkbookByColumnPlanMetric,
   WorkbookExcelTable,
   WorkbookNamedRange,
-  WorksheetVisibility,
   WorksheetRecords,
 } from "./shared.js";
 export type {

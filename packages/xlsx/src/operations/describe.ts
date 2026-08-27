@@ -1,0 +1,664 @@
+/**
+ * L3 operation — workbook inspection. ADR 0002 makes this a first-class
+ * operation on every surface, with `pptx.inspect-template` as the
+ * create-nothing precedent.
+ *
+ * The description answers "what is in this file, and what would an operation
+ * see in it". That second half is why this is composed from the L1 model and
+ * the L2 region resolver rather than read off SheetJS objects: the header row
+ * an inspection reports is the row `resolveRegions` would resolve, the columns
+ * are the region's boundary columns, and the visibility is the model's own
+ * `SheetInfo`. A second implementation of header detection here would let the
+ * promise drift the moment a model-layer fix lands — which is exactly the
+ * drift ARCHITECTURE.md's layering exists to prevent.
+ *
+ * Samples are bounded because a description is what a picker renders, never a
+ * copy of the data; unbounded values and inferred types are excluded by the
+ * ADR deliberately.
+ */
+import {
+  ConsultChimpsError,
+  throwIfAborted,
+  type AbortOutputContext,
+  type OperationControlOptions,
+  type OperationResult,
+} from "@consultchimps/core";
+import { type CellValue, uniqueHeaders } from "@consultchimps/tabular";
+
+import { XLSX_ERRORS } from "../errors.js";
+import { WorkbookModel } from "../model/index.js";
+import type {
+  CellRange,
+  DefinedNameEntry,
+  SheetInfo,
+  WorkbookTableInfo,
+  WorksheetModel,
+} from "../model/types.js";
+import { resolveRegions } from "../region/resolve.js";
+import type { DataRegion } from "../region/types.js";
+import { formatCellRef, parseSheetRange } from "../region/values.js";
+import {
+  INSPECT_OPERATION,
+  yieldToEventLoop,
+  type ReadWorkbookOptions,
+} from "../shared.js";
+
+/**
+ * The hard ceiling on per-column sample values. ADR 0002 requires samples to
+ * be bounded: a description is a summary a picker renders, never a copy of the
+ * data. A caller may ask for fewer, never for more.
+ */
+export const MAX_COLUMN_SAMPLE_VALUES = 5;
+
+/**
+ * Rows scanned between yields. A worksheet scan is synchronous work, so
+ * without a macrotask boundary a cancellation posted to a worker cannot be
+ * dequeued until the whole sheet is done - the same reason `consolidate`
+ * yields between inputs. See `yieldToEventLoop`.
+ */
+const ROWS_PER_YIELD = 1024;
+
+/** Excel's own reserved defined names (print areas and the like). */
+const BUILTIN_DEFINED_NAME_PREFIX = "_xlnm.";
+
+export type DescribeWorkbookMetric =
+  | "dataRows"
+  | "excelTables"
+  | "headerColumns"
+  | "hiddenWorksheets"
+  | "namedRanges"
+  | "worksheets";
+
+/**
+ * How Excel presents a worksheet. "very-hidden" is the state only the VBA
+ * editor can reverse, which is why an inspection distinguishes it from an
+ * ordinary hidden sheet a reader can unhide from the tab bar.
+ */
+export type WorksheetVisibility = "visible" | "hidden" | "very-hidden";
+
+export interface DescribeWorkbookOptions
+  extends ReadWorkbookOptions, OperationControlOptions {
+  /**
+   * Distinct sample values to collect per column, from 0 to
+   * `MAX_COLUMN_SAMPLE_VALUES`. Defaults to the maximum.
+   */
+  sampleValues?: number | undefined;
+}
+
+/** One column of a worksheet's effective header row. */
+export interface WorkbookColumnDescription {
+  /** The header as the union readers would spell it, blanks filled in. */
+  header: string;
+  /** Zero-based position within the header row. */
+  index: number;
+  /**
+   * The first few distinct non-empty stored values below the header, in the
+   * order the rows carry them. Bounded by the sample limit; never the whole
+   * column, and never a type this package inferred.
+   */
+  sampleValues: CellValue[];
+}
+
+export interface WorkbookSheetDescription {
+  name: string;
+  visibility: WorksheetVisibility;
+  /** Rows in the worksheet's used range, header row included; 0 when empty. */
+  rowCount: number;
+  /** Columns in the worksheet's used range; 0 when empty. */
+  columnCount: number;
+  /**
+   * The one-based effective header row - the row `resolveRegions` resolves for
+   * this worksheet - or undefined when the worksheet holds no values for one
+   * to be found in.
+   */
+  headerRow: number | undefined;
+  /** The header preview: one entry per column of the effective header row. */
+  columns: WorkbookColumnDescription[];
+  /** Non-empty rows below the header row. */
+  dataRowCount: number;
+}
+
+export interface WorkbookExcelTableDescription {
+  name: string;
+  range: string;
+  sheet: string;
+  /** The column names the table part declares, in table order. */
+  headers: string[];
+}
+
+export interface WorkbookNamedRangeDescription {
+  name: string;
+  /** The range this name points at, as the workbook stores it. */
+  ref: string;
+  sheet: string;
+}
+
+export interface WorkbookDescription {
+  /** The workbook this description was read from: a filename or input name. */
+  source: string;
+  sheets: WorkbookSheetDescription[];
+  excelTables: WorkbookExcelTableDescription[];
+  namedRanges: WorkbookNamedRangeDescription[];
+}
+
+/**
+ * The outcome of a workbook inspection: the structured operation result every
+ * completed operation reports, plus the description it summarizes. The two
+ * travel side by side for the same reason `ByteOperationOutcome` keeps
+ * `outputs` beside `result` — metrics are counts, and sheet names, headers and
+ * sample values are not.
+ */
+export interface WorkbookDescriptionOutcome {
+  description: WorkbookDescription;
+  result: OperationResult<DescribeWorkbookMetric>;
+}
+
+/**
+ * Load the document model, reporting an unreadable package as the stable read
+ * error every other workbook reader raises.
+ */
+export async function loadWorkbookModelForDescribe(
+  bytes: Uint8Array,
+  source: string,
+  details: Record<string, unknown>,
+): Promise<WorkbookModel> {
+  try {
+    return await WorkbookModel.load(bytes);
+  } catch (error) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_READ_FAILED,
+      `Could not read workbook: ${source}`,
+      { cause: error, details },
+    );
+  }
+}
+
+/**
+ * Validate the sample bound. Silently clamping a caller's 50 to 5 would make
+ * the same call mean different things on either side of the cap, so an
+ * out-of-range request is a stable refusal instead.
+ */
+function resolveSampleLimit(requested: number | undefined): number {
+  if (requested === undefined) {
+    return MAX_COLUMN_SAMPLE_VALUES;
+  }
+  if (
+    !Number.isInteger(requested) ||
+    requested < 0 ||
+    requested > MAX_COLUMN_SAMPLE_VALUES
+  ) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_INVALID_SAMPLE_LIMIT,
+      `The sample value count must be a whole number from 0 to ${MAX_COLUMN_SAMPLE_VALUES}.`,
+      {
+        details: {
+          maximum: MAX_COLUMN_SAMPLE_VALUES,
+          sampleValues: requested,
+        },
+      },
+    );
+  }
+  return requested;
+}
+
+/** The model's visibility vocabulary in this operation's public spelling. */
+function publicVisibility(
+  visibility: SheetInfo["visibility"],
+): WorksheetVisibility {
+  return visibility === "veryHidden" ? "very-hidden" : visibility;
+}
+
+/**
+ * A model cell value as the description reports it. The model types a cell the
+ * way a grouping key needs it; a description only has to be JSON-shaped and
+ * faithful, so a date becomes its ISO text and a blank becomes null.
+ */
+function describableValue(value: unknown): CellValue {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  return String(value);
+}
+
+/**
+ * A sample value's identity for the distinctness test. The type is part of the
+ * key so the number 1 and the text "1" — which Excel very much distinguishes,
+ * and which a mapping review needs to see separately — do not collapse into
+ * one sample.
+ */
+function sampleKey(value: CellValue): string {
+  return `${typeof value}:${String(value)}`;
+}
+
+function isEmptyValue(value: CellValue): boolean {
+  return value === null || value === "";
+}
+
+/** An A1 range, written the way the workbook itself writes it. */
+function formatRange(range: CellRange): string {
+  const start = formatCellRef(range.start);
+  const end = formatCellRef(range.end);
+  return start === end ? start : `${start}:${end}`;
+}
+
+/**
+ * Whether the worksheet carries any value at all inside its used range.
+ *
+ * A worksheet's used range comes from the stored `<dimension>` hint, which
+ * Excel and every writer set to `A1` for a sheet that holds nothing — so the
+ * range alone cannot tell "one blank cell" from "no cells". An inspection has
+ * to answer "there is no header row here" for a genuinely empty sheet rather
+ * than invent a `column_1`, so emptiness is decided by looking. The scan
+ * short-circuits on the first value, which costs one cell read on the empty
+ * sheet this exists for.
+ */
+function hasAnyValue(worksheet: WorksheetModel, used: CellRange): boolean {
+  for (let row = used.start.row; row <= used.end.row; row += 1) {
+    for (
+      let column = used.start.column;
+      column <= used.end.column;
+      column += 1
+    ) {
+      const text = worksheet.cellText({ column, row });
+      if (text !== undefined && text !== "") {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+const EMPTY_SHEET = {
+  columnCount: 0,
+  columns: [] as WorkbookColumnDescription[],
+  dataRowCount: 0,
+  headerRow: undefined,
+  rowCount: 0,
+} as const;
+
+/**
+ * Describe one worksheet from its resolved region: the dimensions of its used
+ * range, the header row an operation would key on, and a bounded sample of
+ * each column's values.
+ *
+ * The scan walks body rows in order and stops sampling as soon as every column
+ * has filled its quota, but keeps counting non-empty rows to the end. Because
+ * the order is row order and the bound is fixed, the same worksheet always
+ * yields the same samples; the periodic yield changes when the scan runs, never
+ * what it produces.
+ */
+async function describeWorksheet(
+  workbook: WorkbookModel,
+  sheet: SheetInfo,
+  worksheet: WorksheetModel,
+  options: DescribeWorkbookOptions,
+  sampleLimit: number,
+  outputContext: AbortOutputContext,
+): Promise<WorkbookSheetDescription> {
+  const visibility = publicVisibility(sheet.visibility);
+  const used = worksheet.usedRange;
+  if (!used || !hasAnyValue(worksheet, used)) {
+    return { ...EMPTY_SHEET, columns: [], name: sheet.name, visibility };
+  }
+
+  const rowCount = used.end.row - used.start.row + 1;
+  const columnCount = used.end.column - used.start.column + 1;
+
+  // The region resolver owns header detection and the headerRow override, so
+  // the row reported here is the row an operation on this sheet would use.
+  const regions = await resolveRegions(workbook, {
+    headerRow: options.headerRow,
+    sheet: sheet.name,
+  });
+  const region: DataRegion | undefined = regions[0];
+  if (!region || region.headerRow > used.end.row) {
+    // A declared header row below the last used row leaves nothing to preview.
+    return {
+      ...EMPTY_SHEET,
+      columnCount,
+      columns: [],
+      name: sheet.name,
+      rowCount,
+      visibility,
+    };
+  }
+
+  // Blank and repeated header cells are filled in and de-duplicated here
+  // rather than in the region layer, which deliberately keeps boundary columns
+  // raw: naming is a `tabular` concern, and this is where the description
+  // promises the names an operation would actually produce.
+  const headers = uniqueHeaders(
+    region.columns.map((column) => column.name || null),
+  );
+  const columnIndexes = region.columns.map((column) => column.index);
+
+  const samples = headers.map(() => [] as CellValue[]);
+  const seen = headers.map(() => new Set<string>());
+  let dataRowCount = 0;
+  let satisfiedColumns = sampleLimit === 0 ? headers.length : 0;
+  let rowsSinceYield = 0;
+
+  for (let row = region.body.start.row; row <= region.body.end.row; row += 1) {
+    rowsSinceYield += 1;
+    if (rowsSinceYield >= ROWS_PER_YIELD) {
+      rowsSinceYield = 0;
+      // A long scan must hand back a macrotask, or a cancellation posted while
+      // it runs cannot be dequeued until the sheet is finished.
+      await yieldToEventLoop();
+      throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
+    }
+
+    const values = columnIndexes.map((column) =>
+      describableValue(region.worksheet.cellValue({ column, row })),
+    );
+    if (values.every(isEmptyValue)) {
+      continue;
+    }
+    dataRowCount += 1;
+
+    if (satisfiedColumns >= headers.length) {
+      continue;
+    }
+
+    values.forEach((value, index) => {
+      const columnSamples = samples[index]!;
+      if (isEmptyValue(value) || columnSamples.length >= sampleLimit) {
+        return;
+      }
+      const key = sampleKey(value);
+      const columnSeen = seen[index]!;
+      if (columnSeen.has(key)) {
+        return;
+      }
+      columnSeen.add(key);
+      columnSamples.push(value);
+      if (columnSamples.length === sampleLimit) {
+        satisfiedColumns += 1;
+      }
+    });
+  }
+
+  return {
+    columnCount,
+    columns: headers.map((header, index) => ({
+      header,
+      index,
+      sampleValues: samples[index]!,
+    })),
+    dataRowCount,
+    headerRow: region.headerRow,
+    name: sheet.name,
+    rowCount,
+    visibility,
+  };
+}
+
+function describeExcelTables(
+  tables: readonly WorkbookTableInfo[],
+  describedSheets: ReadonlySet<string>,
+): WorkbookExcelTableDescription[] {
+  return tables
+    .filter((table) => describedSheets.has(table.sheetName))
+    .map((table) => ({
+      name: table.name,
+      range: formatRange(table.range),
+      sheet: table.sheetName,
+      // The declared column names, not the cells: a table with no data rows
+      // still has headers, and a picker needs to offer them. The model reads
+      // these from the table part, so an empty table is described in full.
+      headers: [...table.columnNames],
+    }));
+}
+
+function describeNamedRanges(
+  definedNames: readonly DefinedNameEntry[],
+  describedSheets: ReadonlySet<string>,
+): WorkbookNamedRangeDescription[] {
+  const ranges: WorkbookNamedRangeDescription[] = [];
+
+  for (const definedName of definedNames) {
+    if (definedName.name.startsWith(BUILTIN_DEFINED_NAME_PREFIX)) {
+      continue;
+    }
+    const parsed = parseSheetRange(definedName.reference);
+    if (!parsed || !describedSheets.has(parsed.sheet)) {
+      continue;
+    }
+    ranges.push({
+      name: definedName.name,
+      ref: formatRange(parsed.range),
+      sheet: parsed.sheet,
+    });
+  }
+
+  return ranges;
+}
+
+/**
+ * The worksheets this description covers, in workbook order.
+ *
+ * `includeHiddenSheets` and `sheets` mean exactly what they mean to every
+ * other reader in this package — an option that reads the same everywhere is
+ * worth more than an inspection-specific default. Naming a worksheet the
+ * workbook does not have is a refusal rather than an empty answer, because a
+ * picker asking about a sheet that is not there has a mistake to report.
+ */
+function selectSheets(
+  workbook: WorkbookModel,
+  options: DescribeWorkbookOptions,
+): { hiddenExcluded: number; selected: SheetInfo[] } {
+  if (workbook.sheets.length === 0) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_NO_SHEETS,
+      "The workbook does not contain any worksheets.",
+      { details: { availableWorksheets: [] } },
+    );
+  }
+
+  const requested = options.sheets;
+  if (requested) {
+    const available = new Set(
+      workbook.sheets.map((sheet) => sheet.name.toLocaleLowerCase()),
+    );
+    const missing = requested.filter(
+      (name) => !available.has(name.toLocaleLowerCase()),
+    );
+    if (missing.length > 0) {
+      throw new ConsultChimpsError(
+        XLSX_ERRORS.XLSX_WORKSHEET_NOT_FOUND,
+        `Worksheet "${missing[0]}" was not found in the workbook.`,
+        {
+          details: {
+            availableWorksheets: workbook.sheets.map((sheet) => sheet.name),
+            missingWorksheets: missing,
+          },
+        },
+      );
+    }
+  }
+  const selectedNames = requested
+    ? new Set(requested.map((name) => name.toLocaleLowerCase()))
+    : undefined;
+
+  const selected: SheetInfo[] = [];
+  let hiddenExcluded = 0;
+
+  for (const sheet of workbook.sheets) {
+    if (selectedNames && !selectedNames.has(sheet.name.toLocaleLowerCase())) {
+      continue;
+    }
+    if (
+      options.includeHiddenSheets !== true &&
+      sheet.visibility !== "visible"
+    ) {
+      hiddenExcluded += 1;
+      continue;
+    }
+    selected.push(sheet);
+  }
+
+  return { hiddenExcluded, selected };
+}
+
+/**
+ * The conditions an inspection reports as warnings. Order is fixed rather than
+ * derived from the workbook, so identical inputs produce an identical result.
+ */
+function descriptionWarnings(
+  description: WorkbookDescription,
+  hiddenExcluded: number,
+): string[] {
+  const warnings: string[] = [];
+
+  if (hiddenExcluded > 0) {
+    warnings.push(
+      `${hiddenExcluded} worksheet${
+        hiddenExcluded === 1 ? " is" : "s are"
+      } hidden and ${
+        hiddenExcluded === 1 ? "was" : "were"
+      } not described. Include hidden worksheets to describe ${
+        hiddenExcluded === 1 ? "it" : "them"
+      }.`,
+    );
+  }
+
+  const withoutHeaderRow = description.sheets
+    .filter((sheet) => sheet.headerRow === undefined)
+    .map((sheet) => sheet.name);
+  if (withoutHeaderRow.length > 0) {
+    warnings.push(
+      `No header row was found in ${withoutHeaderRow
+        .map((name) => `"${name}"`)
+        .join(
+          ", ",
+        )}. An operation that matches columns by header would find nothing to match in ${
+        withoutHeaderRow.length === 1 ? "it" : "them"
+      }.`,
+    );
+  }
+
+  if (description.sheets.length === 0) {
+    warnings.push(
+      "No worksheets matched the selection, so the description is empty.",
+    );
+  }
+
+  return warnings;
+}
+
+/** Present a description as the structured result every operation reports. */
+export function workbookDescriptionResult(
+  description: WorkbookDescription,
+  hiddenExcluded: number,
+): OperationResult<DescribeWorkbookMetric> {
+  return {
+    operation: INSPECT_OPERATION,
+    // An inspection creates nothing, so it has no artifacts. The structure
+    // itself travels beside this result: metrics are counts, and names are not.
+    artifacts: [],
+    warnings: descriptionWarnings(description, hiddenExcluded),
+    metrics: {
+      dataRows: description.sheets.reduce(
+        (total, sheet) => total + sheet.dataRowCount,
+        0,
+      ),
+      excelTables: description.excelTables.length,
+      headerColumns: description.sheets.reduce(
+        (total, sheet) => total + sheet.columns.length,
+        0,
+      ),
+      hiddenWorksheets: description.sheets.filter(
+        (sheet) => sheet.visibility !== "visible",
+      ).length,
+      namedRanges: description.namedRanges.length,
+      worksheets: description.sheets.length,
+    },
+  };
+}
+
+/**
+ * Describe a loaded workbook. Both surfaces call this with the same model, so
+ * the file and byte descriptions of one workbook are structurally identical.
+ *
+ * Every worksheet boundary carries an abort check and a yield, and long scans
+ * yield inside themselves, so a cancellation posted while the operation runs
+ * is actually collected rather than observed after the answer is already built.
+ */
+export async function describeWorkbookModel(
+  workbook: WorkbookModel,
+  source: string,
+  options: DescribeWorkbookOptions = {},
+  outputContext: AbortOutputContext = "files",
+): Promise<WorkbookDescriptionOutcome> {
+  throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
+  const sampleLimit = resolveSampleLimit(options.sampleValues);
+  const { hiddenExcluded, selected } = selectSheets(workbook, options);
+
+  const sheets: WorkbookSheetDescription[] = [];
+  for (const [index, sheet] of selected.entries()) {
+    if (index > 0) {
+      await yieldToEventLoop();
+    }
+    throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
+    const worksheet = workbook.worksheet(sheet.name);
+    sheets.push(
+      worksheet
+        ? await describeWorksheet(
+            workbook,
+            sheet,
+            worksheet,
+            options,
+            sampleLimit,
+            outputContext,
+          )
+        : {
+            ...EMPTY_SHEET,
+            columns: [],
+            name: sheet.name,
+            visibility: publicVisibility(sheet.visibility),
+          },
+    );
+    options.onProgress?.({
+      operation: INSPECT_OPERATION,
+      stage: "describing-worksheets",
+      completed: index + 1,
+      total: selected.length,
+      detail: sheet.name,
+    });
+  }
+
+  throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
+  const describedSheets = new Set(selected.map((sheet) => sheet.name));
+  const description: WorkbookDescription = {
+    source,
+    sheets,
+    excelTables: describeExcelTables(await workbook.tables(), describedSheets),
+    namedRanges: describeNamedRanges(
+      await workbook.definedNames(),
+      describedSheets,
+    ),
+  };
+
+  throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
+  options.onProgress?.({
+    operation: INSPECT_OPERATION,
+    stage: "describing-structures",
+    completed: 1,
+    total: 1,
+  });
+
+  return {
+    description,
+    result: workbookDescriptionResult(description, hiddenExcluded),
+  };
+}

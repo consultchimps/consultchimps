@@ -27,8 +27,10 @@ import {
 import type { Table } from "@consultchimps/tabular";
 import type * as XLSX from "xlsx";
 
+import { XLSX_ERRORS } from "./errors.js";
 import {
-  describeParsedWorkbook,
+  describeWorkbookModel,
+  loadWorkbookModelForDescribe,
   MAX_COLUMN_SAMPLE_VALUES,
   type DescribeWorkbookMetric,
   type DescribeWorkbookOptions,
@@ -38,8 +40,8 @@ import {
   type WorkbookExcelTableDescription,
   type WorkbookNamedRangeDescription,
   type WorkbookSheetDescription,
-} from "./describe.js";
-import { XLSX_ERRORS } from "./errors.js";
+  type WorksheetVisibility,
+} from "./operations/describe.js";
 import {
   type FullWorkbookSplitMetric,
   type FullWorkbookSplitSummary,
@@ -110,8 +112,8 @@ export type {
   WorkbookExcelTableDescription,
   WorkbookNamedRangeDescription,
   WorkbookSheetDescription,
+  WorksheetVisibility,
 };
-export type { WorksheetVisibility } from "./shared.js";
 
 export type SplitWorkbookByColumnMetric = FullWorkbookSplitMetric;
 export type SplitWorkbookByColumnPlanMetric = Exclude<
@@ -297,16 +299,12 @@ export async function describeWorkbook(
   options: DescribeWorkbookOptions = {},
 ): Promise<WorkbookDescriptionOutcome> {
   const absolutePath = path.resolve(filePath);
-  const { bytes, workbook } = await readWorkbookFile(absolutePath);
-  const definitions = await parseExcelTableDefinitions(bytes, absolutePath, {
-    filePath: absolutePath,
-  });
-  return describeParsedWorkbook(
-    workbook,
-    definitions,
-    path.basename(absolutePath),
-    options,
+  const workbook = await loadWorkbookModelForDescribe(
+    await readWorkbookBytes(absolutePath),
+    absolutePath,
+    { filePath: absolutePath },
   );
+  return describeWorkbookModel(workbook, path.basename(absolutePath), options);
 }
 
 export async function writeTable(

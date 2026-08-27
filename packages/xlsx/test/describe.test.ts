@@ -354,6 +354,62 @@ describe("describeWorkbook", () => {
     expect(isConsultChimpsError(thrown)).toBe(true);
     expect((thrown as { code: string }).code).toBe(OPERATION_ABORTED);
   });
+
+  it("collects a cancellation posted while the scan is running", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "north.xlsx");
+    // Several worksheets, each long enough to cross the in-scan yield, so the
+    // abort below has to be collected mid-operation rather than before it.
+    await writeWorkbook(
+      input,
+      Array.from({ length: 4 }, (_, sheet) => ({
+        name: `Region ${sheet + 1}`,
+        rows: [
+          ["Case_ID", "Region", "Failed Checks"],
+          ...Array.from({ length: 1500 }, (_, row) => [
+            `R-${row + 1}`,
+            row % 2 === 0 ? "north" : "south",
+            row % 11,
+          ]),
+        ],
+      })),
+    );
+
+    // The abort is posted as a macrotask from inside the first progress event,
+    // so it is queued only once the workbook is loaded and a worksheet has
+    // actually been described. An inline `controller.abort()` before the call
+    // would only prove the entry check works.
+    //
+    // What makes this a regression test is the count below rather than the
+    // throw: a scan that never yields cannot dequeue the abort until every
+    // worksheet is finished, so it would still throw - after reporting all four
+    // worksheets. Collecting the cancellation early is the behaviour at stake.
+    const controller = new AbortController();
+    const described: string[] = [];
+    let thrown: unknown;
+    try {
+      await describeWorkbook(input, {
+        signal: controller.signal,
+        onProgress: (progress) => {
+          if (progress.stage === "describing-worksheets") {
+            described.push(progress.detail ?? "");
+            if (described.length === 1) {
+              setTimeout(() => controller.abort(), 0);
+            }
+          }
+        },
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(isConsultChimpsError(thrown)).toBe(true);
+    expect((thrown as { code: string }).code).toBe(OPERATION_ABORTED);
+    expect(described.length).toBeGreaterThan(0);
+    // Stopped well before the fourth worksheet, so the cancellation was
+    // collected mid-operation rather than after all the work was already done.
+    expect(described.length).toBeLessThan(3);
+  });
 });
 
 describe("describeWorkbook hidden worksheets", () => {
