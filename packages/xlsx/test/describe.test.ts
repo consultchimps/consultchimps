@@ -78,6 +78,40 @@ async function writeWorkbook(
   return bytes;
 }
 
+/**
+ * A small worksheet followed by a densely populated one: every cell of every
+ * row is present, which is the shape that made per-coordinate cell lookup
+ * quadratic. The first sheet exists so a test can act once it is described.
+ */
+function denseWorkbookBytes(rows: number): Uint8Array {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.aoa_to_sheet([["Case_ID"], ["R-0"]]),
+    "Review Log",
+  );
+  const dense: Array<Array<number | string>> = [
+    ["Case_ID", "Region", "Failed Checks", "Total Checks", "Owner"],
+  ];
+  for (let row = 0; row < rows; row += 1) {
+    dense.push([
+      `R-${row + 1}`,
+      row % 2 === 0 ? "north" : "south",
+      row % 7,
+      100,
+      `Reviewer ${row % 5}`,
+    ]);
+  }
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.aoa_to_sheet(dense),
+    "Dense",
+  );
+  return new Uint8Array(
+    XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }) as Buffer,
+  );
+}
+
 const REVIEW_LOG: SheetSpec = {
   name: "Review Log",
   rows: [
@@ -411,33 +445,16 @@ describe("describeWorkbook", () => {
     expect(described.length).toBeLessThan(3);
   });
 
-  it("collects a cancellation while scanning a blank sheet with a huge declared range", async () => {
+  it("collects a cancellation while scanning a densely populated sheet", async () => {
     const directory = await createTemporaryDirectory();
-    const input = path.join(directory, "template.xlsx");
-
-    // A small populated sheet, then a formatted template whose dimension spans
-    // 200,000 rows without a single cell. Deciding "this one is empty" visits
-    // every coordinate, which is the emptiness scan's pathological case and
-    // takes roughly two seconds here.
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.aoa_to_sheet([["Case_ID"], ["R-1"]]),
-      "Review Log",
-    );
-    const template: XLSX.WorkSheet = {};
-    template["!ref"] = "A1:D200000";
-    XLSX.utils.book_append_sheet(workbook, template, "Template");
-    await writeFile(
-      input,
-      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
-    );
+    const input = path.join(directory, "dense.xlsx");
+    await writeFile(input, denseWorkbookBytes(12000));
 
     // The abort is queued once the first worksheet is described, on a delay
-    // long enough to clear the between-worksheet yield but far shorter than
-    // the emptiness scan. It can therefore only be collected from inside that
-    // scan - which is the point: without a yield there, the scan runs to the
-    // end and "Template" is reported before the cancellation is ever seen.
+    // long enough to clear the between-worksheet yield but well short of the
+    // dense sheet's scan. It can therefore only be collected from inside that
+    // scan: without a yield there, the scan runs to the end and "Dense" is
+    // reported before the cancellation is ever seen.
     const controller = new AbortController();
     const described: string[] = [];
     let thrown: unknown;
@@ -448,7 +465,7 @@ describe("describeWorkbook", () => {
           if (progress.stage === "describing-worksheets") {
             described.push(progress.detail ?? "");
             if (described.length === 1) {
-              setTimeout(() => controller.abort(), 200);
+              setTimeout(() => controller.abort(), 100);
             }
           }
         },
@@ -459,9 +476,30 @@ describe("describeWorkbook", () => {
 
     expect(isConsultChimpsError(thrown)).toBe(true);
     expect((thrown as { code: string }).code).toBe(OPERATION_ABORTED);
-    // Stopped inside the blank sheet's scan, so it was never reported.
+    // Stopped inside the dense sheet's scan, so it was never reported.
     expect(described).toEqual(["Review Log"]);
-  }, 30000);
+  }, 60000);
+
+  it("describes a densely populated sheet in time proportional to its contents", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "dense.xlsx");
+    await writeFile(input, denseWorkbookBytes(12000));
+
+    const started = Date.now();
+    const { description, result } = await describeWorkbook(input);
+    const elapsed = Date.now() - started;
+
+    // The dense sheet's 12,000 rows plus the small sheet's single row.
+    expect(result.metrics.dataRows).toBe(12001);
+    expect(description.sheets[1]?.dataRowCount).toBe(12000);
+
+    // A guard against the cost returning to quadratic, not a benchmark. Cell
+    // lookup used to rebuild and rescan the row list per coordinate, so this
+    // sheet took minutes; it now runs in a couple of seconds, and the budget
+    // is loose enough to absorb a slow CI machine while still failing long
+    // before a quadratic scan could finish.
+    expect(elapsed).toBeLessThan(30000);
+  }, 90000);
 });
 
 describe("describeWorkbook hidden worksheets", () => {
@@ -554,6 +592,93 @@ describe("describeWorkbook stored values", () => {
     for (const value of started?.sampleValues ?? []) {
       expect(typeof value).toBe("number");
     }
+  });
+});
+
+describe("describeWorkbook row occupancy", () => {
+  /**
+   * A worksheet whose data rows carry formulas with no cached `<v>` value —
+   * what a workbook saved by a tool that does not calculate looks like.
+   */
+  async function writeUncachedFormulaWorkbook(filePath: string): Promise<void> {
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      ["Case_ID", "Doubled"],
+      [null, null],
+      [null, null],
+    ]);
+    // Formula cells with no cached result: the cell exists, the row is not
+    // blank, but there is no stored value to report.
+    worksheet.A2 = { t: "n", f: "1+0" };
+    worksheet.B2 = { t: "n", f: "A2*2" };
+    worksheet.A3 = { t: "n", f: "2+0" };
+    worksheet.B3 = { t: "n", f: "A3*2" };
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Review Log");
+    await writeFile(
+      filePath,
+      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+    );
+  }
+
+  it("counts a row of uncached formulas as a data row", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "north.xlsx");
+    await writeUncachedFormulaWorkbook(input);
+
+    const { description, result } = await describeWorkbook(input);
+    const sheet = description.sheets[0];
+
+    // The rows are not blank: the worksheet holds those cells. Reporting zero
+    // data rows would tell a reader the sheet is emptier than it is.
+    expect(sheet?.dataRowCount).toBe(2);
+    expect(result.metrics.dataRows).toBe(2);
+    expect(sheet?.headerRow).toBe(1);
+
+    // Occupancy and samples answer different questions: an uncached formula
+    // occupies its row but contributes no sample, because there is no stored
+    // value and the inspection never computes one.
+    for (const column of sheet?.columns ?? []) {
+      expect(column.sampleValues).toEqual([]);
+    }
+  });
+
+  it("describes a sheet of only uncached formulas as populated", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "formulas.xlsx");
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.aoa_to_sheet([[null], [null]]);
+    worksheet.A1 = { t: "n", f: "1+1" };
+    worksheet.A2 = { t: "n", f: "2+2" };
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Formulas");
+    await writeFile(
+      input,
+      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+    );
+
+    const { description, result } = await describeWorkbook(input);
+
+    // The sheet is not empty, so it gets a header row rather than the
+    // "nothing here" description reserved for a genuinely blank worksheet.
+    expect(description.sheets[0]?.headerRow).toBe(1);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("still treats a formatting-only cell as no content", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "styled.xlsx");
+    const workbook = XLSX.utils.book_new();
+    const worksheet: XLSX.WorkSheet = { "!ref": "A1:A2" };
+    // A cell carrying a style and nothing else is formatting, not content.
+    worksheet.A1 = { t: "z", s: 1 } as XLSX.CellObject;
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Styled");
+    await writeFile(
+      input,
+      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+    );
+
+    const { description } = await describeWorkbook(input);
+    expect(description.sheets[0]?.headerRow).toBeUndefined();
+    expect(description.sheets[0]?.dataRowCount).toBe(0);
   });
 });
 

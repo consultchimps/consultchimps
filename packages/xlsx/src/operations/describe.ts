@@ -28,9 +28,11 @@ import { type CellValue, uniqueHeaders } from "@consultchimps/tabular";
 import { XLSX_ERRORS } from "../errors.js";
 import { WorkbookModel } from "../model/index.js";
 import type {
+  CellModel,
   CellRange,
   CellRef,
   DefinedNameEntry,
+  RowModel,
   SheetInfo,
   WorkbookTableInfo,
   WorksheetModel,
@@ -300,41 +302,35 @@ function formatRange(range: CellRange): string {
  * Excel and every writer set to `A1` for a sheet that holds nothing — so the
  * range alone cannot tell "one blank cell" from "no cells". An inspection has
  * to answer "there is no header row here" for a genuinely empty sheet rather
- * than invent a `column_1`, so emptiness is decided by looking. The scan
- * short-circuits on the first value, which costs one cell read on the ordinary
- * populated sheet.
+ * than invent a `column_1`, so emptiness is decided by looking.
  *
- * The pathological case is the reason this yields: a blank formatted template
- * can declare a dimension spanning tens of thousands of empty rows, and every
- * one of them has to be visited before the answer is "empty". That is the same
- * unbroken synchronous scan the body loop had, so it gets the same treatment.
+ * It looks at the cells the sheet actually stores rather than at every
+ * coordinate the dimension claims. A blank formatted template can declare an
+ * extent spanning hundreds of thousands of rows while storing nothing at all;
+ * walking the declared grid made answering "empty" proportional to the claim
+ * instead of to the contents.
  */
-async function hasAnyValue(
-  worksheet: WorksheetModel,
-  used: CellRange,
-  options: DescribeWorkbookOptions,
-  outputContext: AbortOutputContext,
-): Promise<boolean> {
-  let rowsSinceYield = 0;
-  for (let row = used.start.row; row <= used.end.row; row += 1) {
-    rowsSinceYield += 1;
-    if (rowsSinceYield >= ROWS_PER_YIELD) {
-      rowsSinceYield = 0;
-      await yieldToEventLoop();
-      throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
-    }
-    for (
-      let column = used.start.column;
-      column <= used.end.column;
-      column += 1
-    ) {
-      const text = worksheet.cellText({ column, row });
-      if (text !== undefined && text !== "") {
-        return true;
-      }
-    }
-  }
-  return false;
+function hasAnyContent(rows: readonly RowModel[]): boolean {
+  return rows.some((row) => row.cells.some(isOccupiedCell));
+}
+
+/**
+ * Whether a cell counts as content.
+ *
+ * A stored value obviously counts. So does a formula with no cached value: the
+ * cell is not blank, the worksheet holds it, and reporting the row as absent
+ * would tell a reader the sheet is emptier than it is. Sampling stays separate
+ * and stays stored-values-only - an uncached formula contributes no sample,
+ * because there is no stored value to report and the inspection never computes
+ * one - so occupancy and samples answer their own questions.
+ *
+ * A cell carrying only a style is formatting, not content, and does not count.
+ */
+function isOccupiedCell(cell: CellModel): boolean {
+  return (
+    (cell.value !== undefined && cell.value !== "") ||
+    cell.formula !== undefined
+  );
 }
 
 const EMPTY_SHEET = {
@@ -350,11 +346,15 @@ const EMPTY_SHEET = {
  * range, the header row an operation would key on, and a bounded sample of
  * each column's values.
  *
- * The scan walks body rows in order and stops sampling as soon as every column
- * has filled its quota, but keeps counting non-empty rows to the end. Because
- * the order is row order and the bound is fixed, the same worksheet always
- * yields the same samples; the periodic yield changes when the scan runs, never
- * what it produces.
+ * The scan walks the rows the sheet stores, in order, and stops sampling as
+ * soon as every column has filled its quota, but keeps counting occupied rows
+ * to the end. Because the order is row order and the bound is fixed, the same
+ * worksheet always yields the same samples; the periodic yield changes when the
+ * scan runs, never what it produces.
+ *
+ * Rows are read from the model's row store once and looked up by number, so
+ * the cost is proportional to what the sheet contains rather than to the extent
+ * it declares - and never to the square of it.
  */
 async function describeWorksheet(
   workbook: WorkbookModel,
@@ -366,7 +366,10 @@ async function describeWorksheet(
 ): Promise<WorkbookSheetDescription> {
   const visibility = publicVisibility(sheet.visibility);
   const used = worksheet.usedRange;
-  if (!used || !(await hasAnyValue(worksheet, used, options, outputContext))) {
+  // One pass over the stored rows answers both "is this sheet empty" and every
+  // per-row occupancy question below.
+  const storedRows = worksheet.rows();
+  if (!used || !hasAnyContent(storedRows)) {
     return { ...EMPTY_SHEET, columns: [], name: sheet.name, visibility };
   }
 
@@ -400,6 +403,7 @@ async function describeWorksheet(
     region.columns.map((column) => column.name || null),
   );
   const columnIndexes = region.columns.map((column) => column.index);
+  const regionColumns = new Set(columnIndexes);
 
   const samples = headers.map(() => [] as CellValue[]);
   const seen = headers.map(() => new Set<string>());
@@ -407,7 +411,14 @@ async function describeWorksheet(
   let satisfiedColumns = sampleLimit === 0 ? headers.length : 0;
   let rowsSinceYield = 0;
 
-  for (let row = region.body.start.row; row <= region.body.end.row; row += 1) {
+  // Only the rows the sheet stores, in document order, clipped to the body.
+  // A declared extent far larger than the contents costs nothing here.
+  const bodyRows = storedRows.filter(
+    (row) =>
+      row.number >= region.body.start.row && row.number <= region.body.end.row,
+  );
+
+  for (const row of bodyRows) {
     rowsSinceYield += 1;
     if (rowsSinceYield >= ROWS_PER_YIELD) {
       rowsSinceYield = 0;
@@ -417,10 +428,14 @@ async function describeWorksheet(
       throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
     }
 
-    const values = columnIndexes.map((column) =>
-      storedValue(region.worksheet, { column, row }),
-    );
-    if (values.every(isEmptyValue)) {
+    // Occupancy comes from the cells the row holds - a formula with no cached
+    // value still occupies its row - while the samples below stay
+    // stored-values-only.
+    if (
+      !row.cells.some(
+        (cell) => regionColumns.has(cell.ref.column) && isOccupiedCell(cell),
+      )
+    ) {
       continue;
     }
     dataRowCount += 1;
@@ -428,6 +443,10 @@ async function describeWorksheet(
     if (satisfiedColumns >= headers.length) {
       continue;
     }
+
+    const values = columnIndexes.map((column) =>
+      storedValue(region.worksheet, { column, row: row.number }),
+    );
 
     values.forEach((value, index) => {
       const columnSamples = samples[index]!;

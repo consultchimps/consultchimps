@@ -296,6 +296,7 @@ export class WorksheetRow {
   readonly selfClosing: boolean;
   readonly closeTag: string;
   readonly segments: CellSegment[];
+  #cellIndex: Map<number, WorksheetCell> | undefined;
 
   constructor(text: string) {
     const element = findElement(text, "row");
@@ -327,8 +328,19 @@ export class WorksheetRow {
       .filter((cell) => cell !== undefined);
   }
 
+  /**
+   * Column-keyed cells, built once. A row's cell membership is fixed at
+   * construction - `segments` is never reassigned, and a row relocation moves
+   * the row rather than adding or removing cells - so this never needs
+   * invalidating.
+   */
+  get #cellsByColumn(): Map<number, WorksheetCell> {
+    this.#cellIndex ??= new Map(this.cells.map((cell) => [cell.column, cell]));
+    return this.#cellIndex;
+  }
+
   cellAt(column: number): WorksheetCell | undefined {
-    return this.cells.find((cell) => cell.column === column);
+    return this.#cellsByColumn.get(column);
   }
 
   /** The parsed, read-only view this row presents to the layer above. */
@@ -419,6 +431,7 @@ export class WorksheetModel implements WorksheetModelContract {
   /** Everything from the `</sheetData>` closing tag onward. */
   #suffix: string;
   #segments: RowSegment[];
+  #rowIndex: Map<RowNumber, WorksheetRow> | undefined;
   #changed = false;
 
   private constructor(
@@ -556,8 +569,25 @@ export class WorksheetModel implements WorksheetModelContract {
     }
   }
 
+  /**
+   * Row-number-keyed rows, built once per structural state.
+   *
+   * `#rows` rebuilds an array from `#segments` on every access, so finding a
+   * row by number used to cost a full pass over the sheet - which made reading
+   * an R-row sheet cell by cell quadratic in R. Row numbers change when rows
+   * relocate, so `applyRowRelocation` clears this.
+   */
+  get #rowsByNumber(): Map<RowNumber, WorksheetRow> {
+    this.#rowIndex ??= new Map(this.#rows.map((row) => [row.number, row]));
+    return this.#rowIndex;
+  }
+
+  #rowAt(number: RowNumber): WorksheetRow | undefined {
+    return this.#rowsByNumber.get(number);
+  }
+
   #cellAt(ref: CellRef): WorksheetCell | undefined {
-    return this.#rows.find((row) => row.number === ref.row)?.cellAt(ref.column);
+    return this.#rowAt(ref.row)?.cellAt(ref.column);
   }
 
   /** The `<dimension>` the part declares, or the extent of its cells. */
@@ -650,6 +680,8 @@ export class WorksheetModel implements WorksheetModelContract {
     options: RelocateRowsOptions | undefined = undefined,
   ): DeleteRowsReport {
     this.#changed = true;
+    // Row numbers are about to move; the number-keyed index cannot survive it.
+    this.#rowIndex = undefined;
     this.#host.markWorksheetChanged(this.info.name);
     const counters = emptyCounters();
 
@@ -680,6 +712,7 @@ export class WorksheetModel implements WorksheetModelContract {
       row.moveTo(destination);
     }
     this.#segments = surviving;
+    this.#rowIndex = undefined;
 
     // 3-8. Merged ranges, conditional formatting, data validation, hyperlinks,
     //      the sheet autoFilter and the declared dimension all live outside

@@ -218,6 +218,12 @@ describe("corpus: describe reports the structures it covers", () => {
         expect(value).not.toBeNull();
       }
     }
+
+    // Occupancy is the other question, and it has the other answer: the cell
+    // exists, so its row counts. Samples stay stored-values-only; a row is not
+    // blank merely because nothing cached a result into it.
+    expect(summary!.dataRowCount).toBeGreaterThan(0);
+    expect(summary!.headerRow).toBeDefined();
   });
 
   it.each(SHAPES)(
