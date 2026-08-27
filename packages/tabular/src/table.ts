@@ -54,8 +54,15 @@ const DEFAULT_SOURCE_COLUMNS = {
   row: "_source_row",
 } as const;
 
+/**
+ * Case-folded matching key. The fold is `toLowerCase`, never
+ * `toLocaleLowerCase`: the locale-aware fold reads the host's default locale,
+ * so the same headers would match on one machine and not on another - under a
+ * Turkish locale "ID" folds to "ıd" rather than "id" - and identical inputs
+ * must produce identical columns everywhere.
+ */
 export function columnKey(column: string): string {
-  return column.trim().toLocaleLowerCase();
+  return column.trim().toLowerCase();
 }
 
 /**
@@ -63,13 +70,14 @@ export function columnKey(column: string): string {
  * "Failed Checks", "Failed_Checks", and "Reviewer: Lead Contact" versus
  * "Reviewer_Lead_Contact" resolve to the same column. Letters and digits in
  * any script are kept; every other run of characters becomes one underscore.
+ * The case fold is locale-independent for the reason `columnKey` explains.
  */
 export function normalizedColumnKey(column: string): string {
   // The first replace collapses every separator run - underscores included -
   // to one "_", so the edge trims below never face repeated underscores and
   // stay linear on any input.
   const normalized = column
-    .toLocaleLowerCase()
+    .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, "_")
     .replace(/^_/, "")
     .replace(/_$/, "");

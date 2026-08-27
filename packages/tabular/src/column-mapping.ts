@@ -132,6 +132,7 @@ interface DateFormatPlan {
 interface CompiledCoercion {
   coercion: ColumnCoercion;
   date?: DateFormatPlan;
+  number?: RegExp;
 }
 
 interface CompiledColumn {
@@ -278,6 +279,26 @@ function planDateFormat(format: string): DateFormatPlan | undefined {
   return { fields, pattern: new RegExp(`^${pattern}$`, "u") };
 }
 
+/**
+ * The shape a number written with these separators is allowed to take, used
+ * to check a value before any separator is removed. Thousands separators may
+ * only group the integer part into runs of three, so a malformed grouping
+ * such as "1,23.4" is refused instead of quietly reading as 1.234 once the
+ * separators are stripped. The fractional part never carries a grouping
+ * separator.
+ */
+function planNumberFormat(thousands: string, decimal: string): RegExp {
+  const groupSeparator = escapeRegExp(thousands);
+  const decimalSeparator = escapeRegExp(decimal);
+  const integer =
+    thousands === "" ? "\\d+" : `\\d{1,3}(?:${groupSeparator}\\d{3})+|\\d+`;
+  const fraction = `${decimalSeparator}\\d+`;
+  return new RegExp(
+    `^[+-]?(?:(?:${integer})(?:${fraction})?|${fraction})$`,
+    "u",
+  );
+}
+
 function compileCoercion(
   value: unknown,
   describe: string,
@@ -334,6 +355,7 @@ function compileCoercion(
     }
     return {
       coercion: { type: "number", decimalSeparator, thousandsSeparator },
+      number: planNumberFormat(thousandsSeparator, decimalSeparator),
     };
   }
 
@@ -582,6 +604,7 @@ function coerceDate(value: CellValue, plan: DateFormatPlan): CoercionOutcome {
 function coerceNumber(
   value: CellValue,
   coercion: NumberColumnCoercion,
+  pattern: RegExp,
 ): CoercionOutcome {
   if (typeof value === "number") {
     return Number.isFinite(value)
@@ -597,6 +620,12 @@ function coerceNumber(
     return { ok: true, value: null };
   }
 
+  // The written form is checked first, so a separator can only be removed
+  // once it has been shown to sit where the declared format allows.
+  if (!pattern.test(text)) {
+    return { ok: false, value };
+  }
+
   const decimalSeparator =
     coercion.decimalSeparator ?? DEFAULT_DECIMAL_SEPARATOR;
   const thousandsSeparator =
@@ -607,15 +636,9 @@ function coerceNumber(
     candidate = candidate.split(thousandsSeparator).join("");
   }
   if (decimalSeparator !== ".") {
-    if (candidate.includes(".")) {
-      return { ok: false, value };
-    }
     candidate = candidate.split(decimalSeparator).join(".");
   }
 
-  if (!/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/u.test(candidate)) {
-    return { ok: false, value };
-  }
   const parsed = Number(candidate);
   return Number.isFinite(parsed)
     ? { ok: true, value: parsed }
@@ -629,13 +652,15 @@ function applyCoercion(
   if (value === null) {
     return { ok: true, value: null };
   }
+  // The plans are built during validation, so they always exist here.
   if (compiled.coercion.type === "date") {
-    // planDateFormat ran during validation, so the plan always exists here.
     return compiled.date
       ? coerceDate(value, compiled.date)
       : { ok: false, value };
   }
-  return coerceNumber(value, compiled.coercion);
+  return compiled.number
+    ? coerceNumber(value, compiled.coercion, compiled.number)
+    : { ok: false, value };
 }
 
 function describeCoercion(coercion: ColumnCoercion): string {
@@ -647,6 +672,25 @@ function describeCoercion(coercion: ColumnCoercion): string {
   return thousands === ""
     ? `a number with "${decimal}" as the decimal separator`
     : `a number with "${thousands}" for thousands and "${decimal}" for decimals`;
+}
+
+/**
+ * A row that treats every column name as ordinary data. Assigning to a plain
+ * object's "__proto__" would run the inherited setter instead of storing the
+ * value, so a column with that name would be listed in `columns` and missing
+ * from every row - a silent hole in the promised lossless passthrough.
+ */
+function createRow(): TableRow {
+  return Object.create(null) as TableRow;
+}
+
+/**
+ * Read one cell, ignoring anything a row inherits. Without the own-property
+ * check, reading the column "__proto__" from a plain object row would hand
+ * back `Object.prototype` instead of a missing value.
+ */
+function readCell(row: TableRow, column: string): CellValue {
+  return Object.hasOwn(row, column) ? (row[column] ?? null) : null;
 }
 
 interface MappedColumn {
@@ -719,9 +763,9 @@ function applyCompiledMapping(
   }
 
   const rows: TableRow[] = table.rows.map((inputRow, index) => {
-    const outputRow: TableRow = {};
+    const outputRow = createRow();
     for (const { coercion, input, output } of mapped) {
-      const value = inputRow[input] ?? null;
+      const value = readCell(inputRow, input);
       if (!coercion) {
         outputRow[output] = value;
         continue;

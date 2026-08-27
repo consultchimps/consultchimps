@@ -389,6 +389,55 @@ describe("applyColumnMapping", () => {
     });
   });
 
+  it("treats reserved property names as ordinary columns", () => {
+    // Written through JSON so the fixture holds real own properties: an
+    // object literal with a "__proto__" key would set the prototype instead.
+    const row = JSON.parse(
+      '{"__proto__": 5, "constructor": "north", "Case ID": 1}',
+    ) as Record<string, never>;
+
+    const result = applyColumnMapping(
+      {
+        columns: ["__proto__", "constructor", "Case ID"],
+        rows: [row],
+      },
+      {
+        version: 1,
+        columns: [{ name: "Identifier", aliases: ["Case ID"] }],
+        constants: { toString: "quarterly" },
+      },
+    );
+
+    expect(result.table.columns).toEqual([
+      "__proto__",
+      "constructor",
+      "Identifier",
+      "toString",
+    ]);
+    const mapped = result.table.rows[0];
+    expect(Object.keys(mapped ?? {})).toEqual([
+      "__proto__",
+      "constructor",
+      "Identifier",
+      "toString",
+    ]);
+    expect(mapped?.["__proto__"]).toBe(5);
+    expect(mapped?.["constructor"]).toBe("north");
+    expect(mapped?.["toString"]).toBe("quarterly");
+    // The row carries data, not an altered prototype chain.
+    expect(Object.getPrototypeOf(mapped)).toBeNull();
+    expect(Object.getPrototypeOf({})).toBe(Object.prototype);
+  });
+
+  it("reads reserved property names as missing when a row omits them", () => {
+    const result = applyColumnMapping(
+      { columns: ["__proto__"], rows: [{}] },
+      { version: 1, columns: [{ name: "Marker", aliases: ["__proto__"] }] },
+    );
+
+    expect(result.table.rows[0]?.["Marker"]).toBeNull();
+  });
+
   it("preserves the table's provenance", () => {
     const result = applyColumnMapping(caseLog, {
       version: 1,
@@ -540,6 +589,63 @@ describe("column mapping coercions", () => {
     );
 
     expect(result.table.rows).toEqual([{ Total_Amount: 1234.5 }]);
+  });
+
+  it("refuses a number whose separators sit where the format does not allow", () => {
+    const grouped: ColumnMapping = {
+      version: 1,
+      columns: [
+        {
+          name: "Total_Amount",
+          aliases: ["Total"],
+          coercion: {
+            type: "number",
+            decimalSeparator: ",",
+            thousandsSeparator: ".",
+          },
+        },
+      ],
+    };
+    const parse = (written: string): unknown =>
+      applyColumnMapping(
+        { columns: ["Total"], rows: [{ Total: written }] },
+        grouped,
+      ).table.rows[0]?.["Total_Amount"];
+
+    // Thousands separators may only group the integer part in threes. Before
+    // the grouping was checked, "1,23.4" lost its separators and read as
+    // 1.234 - a corrupted amount rather than a refusal.
+    for (const malformed of ["1,23.4", "1.23,4", "1.2345,6", "12.34", "1..2"]) {
+      expect(
+        refusalOf(() => parse(malformed)).code,
+        `expected "${malformed}" to be refused`,
+      ).toBe("TABLE_MAPPING_COERCION_FAILED");
+    }
+
+    expect(parse("1.234.567,89")).toBe(1234567.89);
+    expect(parse("123,45")).toBe(123.45);
+    expect(parse("1234567,89")).toBe(1234567.89);
+    expect(parse(",5")).toBe(0.5);
+  });
+
+  it("refuses a thousands separator inside the fractional part", () => {
+    const error = refusalOf(() =>
+      applyColumnMapping(
+        { columns: ["Total"], rows: [{ Total: "1.5,000" }] },
+        {
+          version: 1,
+          columns: [
+            {
+              name: "Total_Amount",
+              aliases: ["Total"],
+              coercion: { type: "number" },
+            },
+          ],
+        },
+      ),
+    );
+
+    expect(error.code).toBe("TABLE_MAPPING_COERCION_FAILED");
   });
 
   it("refuses a value that is not a number in the declared form", () => {
