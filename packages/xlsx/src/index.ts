@@ -58,6 +58,7 @@ import {
   consolidateTables,
   createMergeState,
   finishMergedWorkbook,
+  INSPECT_OPERATION,
   isMacroWorkbookName,
   MACRO_WORKBOOK_MEDIA_TYPE,
   MERGE_OPERATION,
@@ -298,6 +299,12 @@ export async function describeWorkbook(
   filePath: string,
   options: DescribeWorkbookOptions = {},
 ): Promise<WorkbookDescriptionOutcome> {
+  // Before any filesystem work, as the byte twin already does. An operation
+  // handed an aborted signal must report the cancellation rather than the
+  // first problem it happens to meet on the way - reading a missing file would
+  // otherwise answer XLSX_READ_FAILED to a caller who had already stopped
+  // caring, and a large valid workbook would be loaded in full for nothing.
+  throwIfAborted(options.signal, INSPECT_OPERATION);
   const absolutePath = path.resolve(filePath);
   const workbook = await loadWorkbookModelForDescribe(
     await readWorkbookBytes(absolutePath),

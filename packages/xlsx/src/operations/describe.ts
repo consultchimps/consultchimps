@@ -309,9 +309,30 @@ function formatRange(range: CellRange): string {
  * extent spanning hundreds of thousands of rows while storing nothing at all;
  * walking the declared grid made answering "empty" proportional to the claim
  * instead of to the contents.
+ *
+ * A template can still *store* a great many rows - one styled cell per row is
+ * enough - and finding the first occupied cell among them is a long scan when
+ * the answer is "none". So it yields on the same cadence as every other scan
+ * here rather than running to the end uninterrupted.
  */
-function hasAnyContent(rows: readonly RowModel[]): boolean {
-  return rows.some((row) => row.cells.some(isOccupiedCell));
+async function hasAnyContent(
+  rows: readonly RowModel[],
+  options: DescribeWorkbookOptions,
+  outputContext: AbortOutputContext,
+): Promise<boolean> {
+  let rowsSinceYield = 0;
+  for (const row of rows) {
+    if (row.cells.some(isOccupiedCell)) {
+      return true;
+    }
+    rowsSinceYield += 1;
+    if (rowsSinceYield >= ROWS_PER_YIELD) {
+      rowsSinceYield = 0;
+      await yieldToEventLoop();
+      throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
+    }
+  }
+  return false;
 }
 
 /**
@@ -366,10 +387,23 @@ async function describeWorksheet(
 ): Promise<WorkbookSheetDescription> {
   const visibility = publicVisibility(sheet.visibility);
   const used = worksheet.usedRange;
+  if (!used) {
+    return { ...EMPTY_SHEET, columns: [], name: sheet.name, visibility };
+  }
+
+  // Materializing the row store is one synchronous burst - the model parses
+  // and allocates every row and cell in a single call - so the signal is
+  // checked on a fresh macrotask immediately before it, where a cancellation
+  // queued while the previous worksheet was scanned can still be collected
+  // without paying for this sheet at all.
+  await yieldToEventLoop();
+  throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
   // One pass over the stored rows answers both "is this sheet empty" and every
   // per-row occupancy question below.
   const storedRows = worksheet.rows();
-  if (!used || !hasAnyContent(storedRows)) {
+  throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
+
+  if (!(await hasAnyContent(storedRows, options, outputContext))) {
     return { ...EMPTY_SHEET, columns: [], name: sheet.name, visibility };
   }
 

@@ -445,6 +445,87 @@ describe("describeWorkbook", () => {
     expect(described.length).toBeLessThan(3);
   });
 
+  it("refuses an already-aborted signal before touching the filesystem", async () => {
+    const directory = await createTemporaryDirectory();
+    const missing = path.join(directory, "does-not-exist.xlsx");
+    const controller = new AbortController();
+    controller.abort();
+
+    // The file does not exist, so reading it would fail with XLSX_READ_FAILED.
+    // A caller who already cancelled must be told they cancelled: the abort is
+    // checked before any filesystem work, exactly as the byte twin does.
+    await expect(
+      describeWorkbook(missing, { signal: controller.signal }),
+    ).rejects.toMatchObject({ code: OPERATION_ABORTED });
+
+    // And the same for a workbook that does exist, so the check is not merely
+    // shadowing a read error.
+    const present = path.join(directory, "north.xlsx");
+    await writeWorkbook(present, [REVIEW_LOG]);
+    await expect(
+      describeWorkbook(present, { signal: controller.signal }),
+    ).rejects.toMatchObject({ code: OPERATION_ABORTED });
+  });
+
+  it("describes a formatting-only template as empty and stays cancellable", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "template.xlsx");
+
+    // A styled template: 30,000 stored `<row>` elements carrying no cells at
+    // all. Nothing here is content, so the sheet must describe as empty — and
+    // materializing those rows is the synchronous burst the scan yields around.
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.aoa_to_sheet([["Case_ID"], ["R-1"]]),
+      "Review Log",
+    );
+    const template: XLSX.WorkSheet = { "!ref": "A1:B30000" };
+    for (let row = 1; row <= 30000; row += 1) {
+      template[`A${row}`] = { t: "z", s: 1 } as XLSX.CellObject;
+      template[`B${row}`] = { t: "z", s: 1 } as XLSX.CellObject;
+    }
+    XLSX.utils.book_append_sheet(workbook, template, "Template");
+    await writeFile(
+      input,
+      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+    );
+
+    const { description, result } = await describeWorkbook(input);
+    const templateSheet = description.sheets.find(
+      (sheet) => sheet.name === "Template",
+    );
+    expect(templateSheet?.headerRow).toBeUndefined();
+    expect(templateSheet?.dataRowCount).toBe(0);
+    expect(result.warnings).toEqual([
+      'No header row was found in "Template". An operation that matches columns by header would find nothing to match in it.',
+    ]);
+
+    // A cancellation queued while the first worksheet is reported is collected
+    // before the template is described, rather than after its rows are built.
+    const controller = new AbortController();
+    const described: string[] = [];
+    let thrown: unknown;
+    try {
+      await describeWorkbook(input, {
+        signal: controller.signal,
+        onProgress: (progress) => {
+          if (progress.stage === "describing-worksheets") {
+            described.push(progress.detail ?? "");
+            if (described.length === 1) {
+              setTimeout(() => controller.abort(), 0);
+            }
+          }
+        },
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(isConsultChimpsError(thrown)).toBe(true);
+    expect((thrown as { code: string }).code).toBe(OPERATION_ABORTED);
+    expect(described).toEqual(["Review Log"]);
+  }, 60000);
+
   it("collects a cancellation while scanning a densely populated sheet", async () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "dense.xlsx");
