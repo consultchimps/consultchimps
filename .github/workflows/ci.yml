@@ -10,8 +10,14 @@ permissions:
   contents: read
 
 jobs:
+  # The Node 24 legs run the full verification sequence (the development
+  # toolchain targets Node 24). The extra Node lines validate the published
+  # runtime contract (engines.node >=22.0.0) by building and running the
+  # test suites only: 22.16 is the declared floor, latest 22 tracks that
+  # line, and 26 catches breakage on the next line early. Drop the 22 legs
+  # around Node 22's April 2027 end of life.
   verify:
-    name: Check (${{ matrix.os }})
+    name: Check (${{ matrix.os }}, Node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
 
@@ -19,6 +25,18 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [24]
+        checks: [full]
+        include:
+          - os: ubuntu-latest
+            node: "22.16"
+            checks: runtime
+          - os: ubuntu-latest
+            node: "22"
+            checks: runtime
+          - os: ubuntu-latest
+            node: "26"
+            checks: runtime
 
     steps:
       - name: Check out repository
@@ -30,14 +48,21 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: ${{ matrix.node }}
           cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Check formatting, lint, build, types, and tests
+        if: matrix.checks == 'full'
         run: pnpm check
+
+      - name: Build and run the test suites on this Node line
+        if: matrix.checks == 'runtime'
+        run: |
+          pnpm --filter "./packages/*" build
+          pnpm test:run
 
   # Browser smoke tests for the in-browser tool pages. They run against the
   # static export exactly as GitHub Pages serves it, so they need a real

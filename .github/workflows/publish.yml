@@ -55,3 +55,23 @@ jobs:
 
       - name: Push release tags
         run: git push origin --tags
+
+      # Agents and locked-down environments can fetch one file instead of
+      # resolving packages: the standalone bundle compiles every runtime
+      # dependency into a single consultchimps.mjs that runs on Node 22+.
+      # Idempotent on republished pushes: release create is best-effort and
+      # the upload clobbers the existing asset.
+      - name: Attach the standalone CLI bundle to its release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(node -p "require('./packages/cli/package.json').version")"
+          tag="consultchimps@${version}"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            pnpm bundle:cli
+            node packages/cli/dist-bundle/consultchimps.mjs --version
+            gh release create "${tag}" --verify-tag --title "${tag}" \
+              --notes "Standalone CLI: download consultchimps.mjs and run \`node consultchimps.mjs --help\` on Node.js 22 or later — no npm access required. Changelog: https://github.com/consultchimps/consultchimps/blob/main/packages/cli/CHANGELOG.md" \
+              || true
+            gh release upload "${tag}" packages/cli/dist-bundle/consultchimps.mjs --clobber
+          fi

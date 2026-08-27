@@ -166,16 +166,25 @@ if (jsonRequested) {
   program.configureOutput({ writeErr: () => {} });
 }
 
-const packageMetadata = JSON.parse(
-  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-) as PackageMetadata;
+// The standalone single-file bundle ships with no package.json beside it, so
+// its build defines the version at compile time (tsup.bundle.config.ts); the
+// packaged layout keeps reading the manifest that npm installs alongside.
+declare const CONSULTCHIMPS_BUNDLED_VERSION: string;
+const cliVersion =
+  typeof CONSULTCHIMPS_BUNDLED_VERSION === "string"
+    ? CONSULTCHIMPS_BUNDLED_VERSION
+    : (
+        JSON.parse(
+          readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+        ) as PackageMetadata
+      ).version;
 
 program
   .name("consultchimps")
   .description(
     "Clear, local-first tools that explain how they process your spreadsheets, presentations, and PDFs.",
   )
-  .version(packageMetadata.version)
+  .version(cliVersion)
   .option(
     "--json",
     "print one line of machine-readable JSON for automation instead of the detailed explanation",
