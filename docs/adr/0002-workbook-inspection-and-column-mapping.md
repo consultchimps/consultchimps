@@ -32,7 +32,9 @@ feeding the mapping review UI.
   aliases, optional per-column coercions (dates from a declared format,
   numbers), and constant columns. YAML and per-source override sections are
   deferred, not rejected — additive later. JSON was chosen to add zero
-  dependencies.
+  dependencies. Validation rejects a mapping whose aliases collide on normalized
+  keys — within one canonical column or across two — before any data is read,
+  since matching is normalized and such a document is ambiguous by construction.
 - **Unmapped columns pass through with a warning** listing them — loud but
   lossless. **Two same-sheet columns mapping to one canonical is a refusal**
   with a stable error naming the sheet, columns, and canonical: merging same-row
@@ -43,9 +45,11 @@ feeding the mapping review UI.
   normalized keys already match), drafted by `--suggest-map` and by the
   consolidate tool page, and **never applied silently**. String similarity and
   sample-value overlap were considered and rejected for v1: the mission requires
-  deterministic, explainable behavior, and equivalence grouping has zero false
-  positives. Synonym headers ("Timestamp" vs "Run Time") remain a manual mapping
-  entry.
+  deterministic, explainable behavior, and equivalence grouping proposes no
+  matches beyond spelling variants of one name. Normalization can still conflate
+  punctuation-distinct headers ("A+B" and "A-B" both normalize to `a_b`) — one
+  more reason every suggestion is reviewed, never applied silently. Synonym
+  headers ("Timestamp" vs "Run Time") remain a manual mapping entry.
 
 ## Consequences
 

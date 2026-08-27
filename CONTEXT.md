@@ -7,7 +7,8 @@ issues use these terms with exactly these meanings.
   "merge".
 - **Merge (workbooks)**: copy worksheets into one workbook as separate tabs.
   Never stacks rows.
-- **Split**: produce one workbook per distinct value of a column.
+- **Split (spreadsheets)**: produce one workbook per distinct value of a column.
+- **Split (PDF)**: produce one file per page of a document.
 - **Inspect**: describe an input's structure without producing files. The
   toolkit's single verb for this — used by PowerPoint template inspection and
   workbook inspection alike ("describe" appears only in library function names
