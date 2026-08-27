@@ -1,0 +1,39 @@
+# ConsultChimps
+
+> Deterministic, local-first document operations for consultants: consolidate,
+> merge, and split Excel workbooks; inspect and populate PowerPoint templates;
+> split and merge PDFs. All processing happens locally — files never leave the
+> machine. Requires Node.js 22 or later.
+
+## Run with zero setup
+
+Download one file from the latest GitHub release and run it with Node — no npm
+access or package resolution required:
+
+    node consultchimps.mjs --help
+    node consultchimps.mjs sheets consolidate "*.xlsx" --output combined.xlsx --normalize-headers
+
+Bundle asset: https://github.com/consultchimps/consultchimps/releases/latest
+(`consultchimps.mjs`).
+
+With npm access, `npx consultchimps --help` or `npm install -g consultchimps`
+work the same.
+
+## Notes for agents
+
+- Every command accepts `--json` and then prints a machine-readable
+  `{ok, result | error}` envelope on stdout; progress and diagnostics go to
+  stderr and never mix into the JSON.
+- Source files are never modified, and existing outputs are never overwritten
+  unless `--force` is passed.
+- Command groups: `sheets` (merge, consolidate, split), `pptx`
+  (inspect-template, populate), `pdf` (split, merge). Run
+  `node consultchimps.mjs <group> --help` for options with realistic examples.
+- Expected failures exit nonzero with a stable error code in the JSON envelope.
+
+## Docs
+
+- Getting started: https://consultchimps.github.io/consultchimps/docs/getting-started
+- CLI reference: https://consultchimps.github.io/consultchimps/docs/reference/cli
+- Library guides: https://consultchimps.github.io/consultchimps/docs/libraries
+- Online tools (browser, local processing): https://consultchimps.github.io/consultchimps/tools
