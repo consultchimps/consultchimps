@@ -42,14 +42,15 @@ interface AllowlistEntry {
   readonly file: string;
   readonly ruleId: string;
   /**
-   * The exact text the rule matches at the allowed occurrence, compared case
-   * insensitively. It is part of the key so an exemption cannot widen into a
-   * blanket pardon: a different claim in the same file under the same rule -
-   * "complete workbook" where "complete copy" was excused - still fails. The
-   * phrase rather than a line number carries the identity because line numbers
-   * churn with every edit above them, which would turn a stale exemption into
-   * a silent one.
+   * One-based line the excused claim starts on. Together with the phrase it
+   * identifies one occurrence, so an exemption can never widen into a blanket
+   * pardon: a second "complete copy" further down the same file is still
+   * reported, and so is a different phrase under the same rule. A line number
+   * moves, but moving it can only make the claim reappear as a failure and the
+   * entry report itself stale - never make an unexamined claim pass quietly.
    */
+  readonly line: number;
+  /** The exact text the rule matches there, compared case insensitively. */
   readonly phrase: string;
   readonly reason: string;
 }
@@ -65,13 +66,13 @@ const isPackageReadme = (label: string): boolean =>
 const CLAIM_RULES: readonly ClaimRule[] = [
   {
     id: "browser-covers-every-operation",
-    pattern: /every operation .{0,80}?browser/i,
+    pattern: /every operation .{0,80}?browser/gi,
     advice:
       'the tool registry can declare an operation whose browser surface is "planned"; say "most operations" and point at the per-operation status instead',
   },
   {
     id: "byte-for-byte",
-    pattern: /byte-for-byte/i,
+    pattern: /byte-for-byte/gi,
     advice:
       "the browser and the command line share the operation code but not the naming or every interface default; claim deterministic file contents for identical inputs and options instead",
   },
@@ -79,7 +80,7 @@ const CLAIM_RULES: readonly ClaimRule[] = [
     // "complete workbook" is the same promise worn as a noun: the split's
     // preserve-workbook mode keeps the whole workbook, but not completely.
     id: "complete-copy",
-    pattern: /complete (?:copy|workbooks?)/i,
+    pattern: /complete (?:copy|workbooks?)/gi,
     advice:
       'the preserve-workbook split strips pivot tables and their caches by contract (packages/xlsx/src/contract.ts) and leaves external links unrewritten; describe what is preserved, what is removed, and what needs review, and say "the whole workbook" when you mean the mode rather than the guarantee',
   },
@@ -87,13 +88,13 @@ const CLAIM_RULES: readonly ClaimRule[] = [
     id: "every-tab-or-setting",
     // The trailing \b keeps "every table" out; the claim being linted is the
     // promise that all of a workbook's tabs or settings survive an edit.
-    pattern: /every (?:tab|setting)s?\b/i,
+    pattern: /every (?:tab|setting)s?\b/gi,
     advice:
       'name the structures actually kept ("sheets, formatting, and supported workbook structure") rather than promising all of them',
   },
   {
     id: "useful-worksheet",
-    pattern: /useful worksheet/i,
+    pattern: /useful worksheet/gi,
     advice:
       '"useful" hides the real rule: a worksheet is read when it is visible (or includeHiddenSheets is set), passes the sheets filter, and holds at least one non-blank row under a resolvable header',
   },
@@ -101,20 +102,20 @@ const CLAIM_RULES: readonly ClaimRule[] = [
     id: "stale-node-version",
     // Comparators are allowed so this phrase rule agrees with the engines
     // check below, which reads "Node.js >=24" as a version claim too.
-    pattern: /Node(?:\.js)?\s*(?:>=|>|\^|~|=)?\s*v?24/i,
+    pattern: /Node(?:\.js)?\s*(?:>=|>|\^|~|=)?\s*v?24/gi,
     advice:
       'published packages declare engines.node ">=22.0.0"; a package README must state the supported floor, not the version the maintainers develop on',
     appliesTo: isPackageReadme,
   },
   {
     id: "counted-packages",
-    pattern: /all (?:six|seven|eight) (?:tarballs|packages)/i,
+    pattern: /all (?:six|seven|eight) (?:tarballs|packages)/gi,
     advice:
       'a spelled-out count goes stale the moment a package is added; use count-free wording such as "a tarball for every published package"',
   },
   {
     id: "always-reflects",
-    pattern: /always reflects/i,
+    pattern: /always reflects/gi,
     advice:
       "the docs site and the publish workflow run independently and can diverge; say what generates the page and when",
   },
@@ -275,16 +276,62 @@ function collectScannedFiles(): string[] {
   return files.filter((file) => !/CHANGELOG\.md$/i.test(file)).sort();
 }
 
+/**
+ * A file flattened to one line, with the source line every character came
+ * from. Whitespace is collapsed because a claim that wraps across a line break
+ * is still a claim, and the parallel line index is what lets a wrapped match
+ * still be reported - and allowlisted - at the line it starts on.
+ */
+interface FlattenedText {
+  readonly lineOfCharacter: readonly number[];
+  readonly text: string;
+}
+
+function flattenWhitespace(source: string): FlattenedText {
+  const characters: string[] = [];
+  const lineOfCharacter: number[] = [];
+  let line = 1;
+  let inWhitespaceRun = false;
+
+  for (const character of source) {
+    if (
+      character === " " ||
+      character === "\t" ||
+      character === "\n" ||
+      character === "\r"
+    ) {
+      if (!inWhitespaceRun) {
+        characters.push(" ");
+        lineOfCharacter.push(line);
+        inWhitespaceRun = true;
+      }
+      if (character === "\n") {
+        line += 1;
+      }
+      continue;
+    }
+    inWhitespaceRun = false;
+    characters.push(character);
+    lineOfCharacter.push(line);
+  }
+
+  return { lineOfCharacter, text: characters.join("") };
+}
+
 const problems: string[] = [];
 const usedAllowlistEntries = new Set<string>();
-// An exemption is keyed on the file, the rule, and the text the rule matched,
-// so it pardons one claim rather than the whole file: a different phrase under
-// the same rule, in the same file, is still reported.
-const allowlistKey = (file: string, ruleId: string, phrase: string): string =>
-  `${file}::${ruleId}::${phrase.toLocaleLowerCase()}`;
+// An exemption names one occurrence: this rule, matching this text, starting
+// on this line of this file. A second occurrence of the same wording elsewhere
+// in the file is a separate claim and is still reported.
+const allowlistKey = (
+  file: string,
+  ruleId: string,
+  line: number,
+  phrase: string,
+): string => `${file}::${ruleId}::${line}::${phrase.toLocaleLowerCase()}`;
 const allowedKeys = new Set(
   ALLOWLIST.map((entry) =>
-    allowlistKey(entry.file, entry.ruleId, entry.phrase),
+    allowlistKey(entry.file, entry.ruleId, entry.line, entry.phrase),
   ),
 );
 
@@ -292,70 +339,33 @@ const scannedFiles = collectScannedFiles();
 
 for (const absolutePath of scannedFiles) {
   const label = toRepoLabel(absolutePath);
-  const lines = readScannableText(absolutePath).split("\n");
+  const { lineOfCharacter, text } = flattenWhitespace(
+    readScannableText(absolutePath),
+  );
 
   for (const rule of CLAIM_RULES) {
     if (rule.appliesTo && !rule.appliesTo(label)) {
       continue;
     }
-    lines.forEach((line, index) => {
-      const match = rule.pattern.exec(line);
-      if (match === null) {
-        return;
-      }
-      const key = allowlistKey(label, rule.id, match[0]);
+    for (const match of text.matchAll(rule.pattern)) {
+      const line = lineOfCharacter[match.index] ?? 1;
+      const key = allowlistKey(label, rule.id, line, match[0]);
       if (allowedKeys.has(key)) {
         usedAllowlistEntries.add(key);
-        return;
+        continue;
       }
       problems.push(
-        `${label}:${index + 1} claims "${match[0]}" (rule ${rule.id})\n    ${rule.advice}`,
+        `${label}:${line} claims "${match[0]}" (rule ${rule.id})\n    ${rule.advice}`,
       );
-    });
-  }
-}
-
-// A phrase that spans a line break is still a claim, so each scanned file is
-// also checked with its own whitespace collapsed. Line numbers are not
-// available there, so these are reported per file.
-for (const absolutePath of scannedFiles) {
-  const label = toRepoLabel(absolutePath);
-  const collapsed = readScannableText(absolutePath).replace(/\s+/g, " ");
-
-  for (const rule of CLAIM_RULES) {
-    if (rule.appliesTo && !rule.appliesTo(label)) {
-      continue;
     }
-    const match = rule.pattern.exec(collapsed);
-    if (match === null) {
-      continue;
-    }
-    // Marked here too, so an allowed phrase that only ever appears wrapped
-    // across two lines still counts its allowlist entry as used.
-    const key = allowlistKey(label, rule.id, match[0]);
-    if (allowedKeys.has(key)) {
-      usedAllowlistEntries.add(key);
-      continue;
-    }
-    const alreadyReportedOnOneLine = problems.some(
-      (problem) =>
-        problem.startsWith(`${label}:`) &&
-        problem.includes(`(rule ${rule.id})`),
-    );
-    if (alreadyReportedOnOneLine) {
-      continue;
-    }
-    problems.push(
-      `${label} claims "${match[0]}" across a line break (rule ${rule.id})\n    ${rule.advice}`,
-    );
   }
 }
 
 for (const entry of ALLOWLIST) {
-  const key = allowlistKey(entry.file, entry.ruleId, entry.phrase);
+  const key = allowlistKey(entry.file, entry.ruleId, entry.line, entry.phrase);
   if (!usedAllowlistEntries.has(key)) {
     problems.push(
-      `the claims allowlist entry for "${entry.phrase}" in ${entry.file} (rule ${entry.ruleId}) matches nothing any more; delete it\n    recorded reason: ${entry.reason}`,
+      `the claims allowlist entry for "${entry.phrase}" at ${entry.file}:${entry.line} (rule ${entry.ruleId}) matches nothing any more; move it to the line the claim is on now, or delete it\n    recorded reason: ${entry.reason}`,
     );
   }
 }
@@ -372,8 +382,23 @@ interface PackageManifest {
 // comparator syntax an engines field uses ("Node.js >=22"). Both forms are
 // matched, so neither can slip past the check by not looking like a mention.
 const nodeMentionPattern =
-  /\bNode(?:\.js)?\s*(?<comparator>>=|>|\^|~|=)?\s*v?(?<major>\d+)(?:\.\d+)*/gi;
-const floorSuffixPattern = /^\s*(?:\+|or later|or newer|or above|and later)\b/i;
+  /\bNode(?:\.js)?\s*(?<comparator>>=|>|\^|~|=)?\s*v?(?<version>\d+(?:\.\d+){0,2})/gi;
+// "22+" is the one floor spelling that ends in a non-word character, so the
+// word boundary belongs to the spelled-out alternatives only; requiring it
+// after the plus rejected the conventional form outright.
+const floorSuffixPattern =
+  /^\s*(?:\+|(?:or (?:later|newer|above)|and later)\b)/i;
+
+/** Pad a partial version to major.minor.patch so two spellings can be compared. */
+function normalizeVersion(version: string): string {
+  const [major = "0", minor = "0", patch = "0"] = version.split(".");
+  return `${Number(major)}.${Number(minor)}.${Number(patch)}`;
+}
+
+/** The shortest spelling of a floor: 22.0.0 reads as 22, 22.13.0 as 22.13. */
+function shortenVersion(version: string): string {
+  return normalizeVersion(version).replace(/(?:\.0)+$/, "");
+}
 // The only comparator that states the same range an engines floor states.
 // `>` excludes the declared minimum itself, and `^` and `~` cap the range at
 // the next major, so each of them claims a support window the manifest does
@@ -406,7 +431,7 @@ if (existsSync(packagesDirectory)) {
       readFileSync(manifestPath, "utf8"),
     ) as PackageManifest;
     const declared = manifest.engines?.node;
-    const declaredMajor = /(\d+)/.exec(declared ?? "")?.[1];
+    const declaredVersion = /(\d+(?:\.\d+){0,2})/.exec(declared ?? "")?.[1];
     const readmeLabel = toRepoLabel(readmePath);
     const manifestLabel = toRepoLabel(manifestPath);
     const readmeText = readTextFile(readmePath);
@@ -415,22 +440,27 @@ if (existsSync(packagesDirectory)) {
     if (mentions.length === 0) {
       continue;
     }
-    if (declared === undefined || declaredMajor === undefined) {
+    if (declared === undefined || declaredVersion === undefined) {
       problems.push(
         `${readmeLabel} states a Node.js requirement, but ${manifestLabel} declares no engines.node to check it against`,
       );
       continue;
     }
+    const floorLabel = shortenVersion(declaredVersion);
 
     for (const mention of mentions) {
       const line = readmeText.slice(0, mention.index).split("\n").length;
-      if (mention.groups?.major !== declaredMajor) {
+      const version = mention.groups?.version ?? "";
+      // The whole version is compared, not just the major: a README promising
+      // "22.13 or later" turns away the 22.0 to 22.12 readers that
+      // engines.node ">=22.0.0" supports.
+      if (normalizeVersion(version) !== normalizeVersion(declaredVersion)) {
         problems.push(
-          `${readmeLabel}:${line} says "${mention[0]}", but ${manifestLabel} declares engines.node "${declared}"\n    state the supported floor, or change engines.node if the support window really moved`,
+          `${readmeLabel}:${line} says "${mention[0]}", but ${manifestLabel} declares engines.node "${declared}"\n    state the version that field actually supports, or change engines.node if the support window really moved`,
         );
         continue;
       }
-      const comparator = mention.groups.comparator;
+      const comparator = mention.groups?.comparator;
       if (comparator === INCLUSIVE_FLOOR_COMPARATOR) {
         continue;
       }
@@ -438,14 +468,14 @@ if (existsSync(packagesDirectory)) {
         comparator === undefined ? undefined : comparatorFaults.get(comparator);
       if (fault !== undefined) {
         problems.push(
-          `${readmeLabel}:${line} says "${mention[0]}", but ${manifestLabel} declares engines.node "${declared}", and "${comparator}" ${fault}\n    write "Node.js ${declaredMajor} or later", or ">=${declaredMajor}", so the README states the same support window as the manifest`,
+          `${readmeLabel}:${line} says "${mention[0]}", but ${manifestLabel} declares engines.node "${declared}", and "${comparator}" ${fault}\n    write "Node.js ${floorLabel} or later", or ">=${floorLabel}", so the README states the same support window as the manifest`,
         );
         continue;
       }
       const remainder = readmeText.slice(mention.index + mention[0].length);
       if (!floorSuffixPattern.test(remainder)) {
         problems.push(
-          `${readmeLabel}:${line} says "${mention[0]}" without saying it is a floor, but ${manifestLabel} declares engines.node "${declared}"\n    write "Node.js ${declaredMajor} or later" so a reader on a newer Node is not turned away`,
+          `${readmeLabel}:${line} says "${mention[0]}" without saying it is a floor, but ${manifestLabel} declares engines.node "${declared}"\n    write "Node.js ${floorLabel} or later", or "Node.js ${floorLabel}+", so a reader on a newer Node is not turned away`,
         );
       }
     }

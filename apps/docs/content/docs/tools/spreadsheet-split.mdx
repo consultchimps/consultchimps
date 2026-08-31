@@ -148,12 +148,12 @@ data-only.
 ## Preservation and known limitations
 
 The all-worksheet mode retains the OOXML package and changes only affected
-worksheet row XML, table ranges, formula metadata in values-only mode, and
-calculation-chain references. This preserves sheet order and visibility, cell
-styles, number formats, row heights, column widths, merged cells, freeze panes,
-filters, conditional formatting, data validation, print settings, hyperlinks,
-comments, images, charts, names, workbook properties, and VBA project parts in
-`.xlsm` files.
+worksheet row XML, table ranges, formula metadata in values-only mode,
+calculation-chain references, and the pivot parts described below. This
+preserves sheet order and visibility, cell styles, number formats, row heights,
+column widths, merged cells, freeze panes, filters, conditional formatting, data
+validation, print settings, hyperlinks, comments, images, charts, names,
+workbook properties, and VBA project parts in `.xlsm` files.
 
 Pivot tables are the one structure the split deliberately removes. A pivot cache
 is a private copy of every source row, and it travels inside the workbook
