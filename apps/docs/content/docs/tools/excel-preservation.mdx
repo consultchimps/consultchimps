@@ -113,8 +113,12 @@ when a tracked structure or operation has no plain-language label and note, and
 when the block above no longer matches the contract. Regenerate it with:
 
 ```bash
+pnpm --filter @consultchimps/xlsx build
 node scripts/check-preservation-matrix.ts --write
 ```
+
+The build comes first because the matrix is generated from the contract the
+package exports; `pnpm docs:check` runs it for you before checking the page.
 
 The same table is available to your own code, so a tool can report what an
 operation will do before it runs it:
