@@ -1,9 +1,9 @@
 # @consultchimps/xlsx architecture
 
 <!--
-This document is the binding design for the xlsx package. Contributors —
-human or agent, regardless of capability — implement against it. When code
-and this document disagree, either the code is wrong or this document must
+This document is the binding design for the xlsx package. Every contributor
+implements against it, whether human or agent and whatever their capability.
+When code and this document disagree, either the code is wrong or this document must
 be changed in the same pull request, deliberately.
 -->
 
@@ -25,17 +25,17 @@ landed as a local patch rather than a system invariant.
 
 This architecture traps the Table/range difference in exactly one place, gives
 every edge case a designated landing zone, and is deliberately shaped so that a
-limited contributor — or a low-capability coding agent — cannot extend it
+limited contributor, or a low-capability coding agent, cannot extend it
 incorrectly without CI saying so.
 
 ## The layers
 
 ```
-L5  Surfaces        file / bytes / CLI / browser — thin adapters, no logic
-L4  Contract        (structure × operation) → behavior — a checked data table
+L5  Surfaces        file / bytes / CLI / browser: thin adapters, no logic
+L4  Contract        (structure × operation) → behavior: a checked data table
 L3  Operations      split / merge / consolidate / values / describe
 L2  DataRegion      ONE interface; TableBinding and RangeBinding implement it
-L1  Document model  rows, cells, refs, merges, names — edits keep invariants
+L1  Document model  rows, cells, refs, merges, names: edits keep invariants
 L0  Package model   deterministic OOXML load/save (parts, rels, types)
 ```
 
@@ -43,7 +43,7 @@ Nothing above a layer reaches below the layer beneath it. Operations never touch
 raw XML or JSZip; bindings never touch the filesystem; the package model never
 interprets worksheet semantics.
 
-### L0 — Package model (`src/package/`)
+### L0: Package model (`src/package/`)
 
 `WorkbookPackage`: parts, relationships, content types, deterministic
 serialization (fixed DOS dates, `createFolders: false`, stable part ordering),
@@ -51,15 +51,15 @@ platform-pure `Uint8Array` I/O. This is the single owner of ZIP and part-path
 concerns; the previous parallel implementations in `values-only.ts`,
 `workbook-column-split.ts`, and `preserve-table-split.ts` converge here.
 
-### L1 — Document model (`src/model/`)
+### L1: Document model (`src/model/`)
 
 Structured, lazily-parsed views over parts:
 
-- `WorksheetModel` — rows and cells as objects, references as values, and the
+- `WorksheetModel`: rows and cells as objects, references as values, and the
   dependent structures as first-class collections: merged ranges, conditional
   formatting, data validation, hyperlinks, comment and drawing anchors,
   autoFilter.
-- `WorkbookModel` — sheets with visibility, defined names, the tables registry,
+- `WorkbookModel`: sheets with visibility, defined names, the tables registry,
   styles, shared strings, calcChain, pivot parts (enumerable).
 
 **Defining property: edits maintain invariants natively.** Deleting rows through
@@ -73,7 +73,7 @@ Serialization writes back only parts the model actually changed; untouched parts
 pass through byte-identical (the preservation guarantee the split engine
 pioneered, now universal).
 
-### L2 — DataRegion (`src/region/`)
+### L2: DataRegion (`src/region/`)
 
 The only place where "Excel Table" and "worksheet range" differ.
 
@@ -90,9 +90,9 @@ interface DataRegion {
 
 Exactly two implementations:
 
-- `TableBinding` — owns totals rows, structured-reference rules, table-part
+- `TableBinding`: owns totals rows, structured-reference rules, table-part
   `ref`/autoFilter maintenance.
-- `RangeBinding` — owns detected/named/A1 boundaries and A1-formula safety rules
+- `RangeBinding`: owns detected/named/A1 boundaries and A1-formula safety rules
   (including the delete-without-renumbering guard inherited from the split
   engine).
 
@@ -113,24 +113,24 @@ resolveRegions(workbook: WorkbookModel, selector: RegionSelector,
 Header detection (NFKC/trim/case-insensitive match, `headerRow` overrides,
 table-range association) lives here and nowhere else.
 
-### L3 — Operations (`src/operations/`)
+### L3: Operations (`src/operations/`)
 
 Each operation is a short composition over regions and the model. Options are
 expressed as shared, typed **policy objects** so they cannot drift apart between
 operations:
 
-- `MatchingPolicy` — strict vs. normalized value comparison.
-- `BlankPolicy` — include/skip blank key values.
-- `ValuesPolicy` — formulas kept, or values-only conversion.
-- `VisibilityPolicy` — hidden / very-hidden sheet handling.
-- `NamingPolicy` — output naming, prefixes, sanitization (core's
-  `safeNameFragment`), collision suffixing.
+- `MatchingPolicy`: strict vs. normalized value comparison
+- `BlankPolicy`: include/skip blank key values
+- `ValuesPolicy`: formulas kept, or values-only conversion
+- `VisibilityPolicy`: hidden / very-hidden sheet handling
+- `NamingPolicy`: output naming, prefixes, sanitization (core's
+  `safeNameFragment`), collision suffixing
 
 Operations receive and return the established core contracts (`OperationPlan`,
 `OperationResult`, `ByteOperationOutcome`, abort via `throwIfAborted`, progress
-via `onProgress`) — unchanged.
+via `onProgress`), unchanged.
 
-### L4 — The contract table (`src/contract.ts` + conformance corpus)
+### L4: The contract table (`src/contract.ts` + conformance corpus)
 
 For every workbook structure and every operation, the declared behavior:
 
@@ -144,7 +144,7 @@ For every workbook structure and every operation, the declared behavior:
 The table is data, checked by tests: the conformance corpus exercises every
 declared cell, and a completeness test fails when a structure × operation
 combination exists in fixtures but has no declared behavior. Adding a feature
-therefore _forces_ a decision for every structure — the build demands it, not a
+therefore _forces_ a decision for every structure: the build demands it, not a
 reviewer.
 
 The table is also public: `src/index.ts` re-exports `CONTRACT`,
@@ -183,7 +183,7 @@ duplicate takes a numeric suffix and the rename is warned about.
 
 The two differ in how far the repair reaches, and the difference is a known gap
 rather than a design: `NameRewrites` carries sheet and table renames only, so
-every formula that named a renamed table — structured references included — is
+every formula that named a renamed table, structured references included, is
 rewritten to follow it, while a formula that named a renamed **defined name** is
 not. `carryDefinedNames` renames the declaration and records it in
 `renamedDefinedNames`; the transplanted formula keeps the original text and
@@ -196,7 +196,7 @@ to check formulas that used a name a merge had to rename.
 Sheet-scoped defined names never collide and simply follow their sheet's new
 index.
 
-### L5 — Surfaces (`src/index.ts`, `src/bytes.ts`, CLI, browser)
+### L5: Surfaces (`src/index.ts`, `src/bytes.ts`, CLI, browser)
 
 Thin adapters only. The filesystem surface adds the staged
 temp-directory/rename/rollback commit strategy (inherited from the split engine)
@@ -205,7 +205,7 @@ migration; existing exports keep their signatures and error codes.
 
 ## The four guardrails
 
-1. **Symmetry harness.** Corpus fixtures are authored in _pairs_ — the same data
+1. **Symmetry harness.** Corpus fixtures are authored in _pairs_: the same data
    as an Excel Table and as a plain range. Operation tests run against both
    bindings automatically. A capability implemented for only one shape is a
    failing test, not a review comment.
@@ -218,7 +218,7 @@ migration; existing exports keep their signatures and error codes.
 4. **The cookbook** (below). Recipes over architecture: limited models follow
    recipes well.
 
-## Cookbook — how to contribute
+## Cookbook: how to contribute
 
 **Fix a discovered edge case.** 1) Add a fixture workbook (or extend the
 generator) reproducing it, in both Table and range form when applicable. 2) Add
@@ -237,7 +237,7 @@ collection, wire it into the invariant pass, add paired fixtures, declare its
 cell for every operation.
 
 **Move a module into a layer.** `test/boundaries.test.ts` enforces guardrail 2
-over `src/**/*.ts` — source text, not `dist/`, so a misplaced import fails
+over `src/**/*.ts`, source text rather than `dist/`, so a misplaced import fails
 before it is bundled. It carried a temporary allowlist of the legacy top-level
 modules that still imported JSZip; Phase 1 emptied it, so `src/package/` is now
 the only owner of ZIP concerns. The allowlist is asserted to match the offending
@@ -245,8 +245,8 @@ files _exactly_, so a new module cannot join it unnoticed. The "operations never
 regex-edit XML" half of guardrail 2 landed with `src/operations/`, which the
 inspection operation created: no module under it may import the XML _mutation_
 helpers (`editElements`, `setAttribute`, `addAttribute`), because rewriting a
-part is L0/L1 work. Reading helpers stay available — an operation may decode
-text it compares against, which is why `decodeXmlText` is not on that list.
+part is L0/L1 work. Reading helpers stay available: an operation may decode text
+it compares against, which is why `decodeXmlText` is not on that list.
 
 **Declare a contract cell.** `src/contract.ts` holds the L4 table as data, with
 each cell citing the corpus test that holds it up. `split` cells state the
@@ -263,17 +263,17 @@ strips and warns about it.
 
 **Never**: edit raw worksheet XML from an operation; add an option to one
 operation that duplicates a policy; change an existing error-code value;
-introduce a second implementation of anything L0–L2 owns.
+introduce a second implementation of anything L0/L1/L2 owns.
 
 ## Migration plan (strangler, not rewrite)
 
-- **Phase 0** — conformance corpus pinning _current_ behavior of both lineages
+- **Phase 0**: conformance corpus pinning _current_ behavior of both lineages
   (every existing fix becomes a named invariant test), plus expected-failure
   tests documenting the known gaps: pivot-cache contents crossing split outputs,
   stale cached aggregates in values-mode splits, calcChain left stale after row
   deletion, and dependent-range references after row compaction. Zero behavior
   change.
-- **Phase 1** — L0/L1/L2 built; the all-worksheet split re-expressed on them
+- **Phase 1**: L0/L1/L2 built; the all-worksheet split re-expressed on them
   behind the existing public API; symmetry harness and boundary tests active;
   Phase 0's dependent-reference expected failures flipped to passing. The
   compact rebuild modes (`preserveWorkbook: false`, named-range and worksheet
@@ -282,7 +282,7 @@ introduce a second implementation of anything L0–L2 owns.
   than editing one, and the third's contract is a refusal
   (`XLSX_SPLIT_PRESERVE_FORMULA`) rather than a repair. Both decisions are
   recorded in `src/preserve-table-split.ts` and pinned by the corpus.
-- **Phase 1b** — merge rebuilt as a part-level transplant on the model (styles
+- **Phase 1b**: merge rebuilt as a part-level transplant on the model (styles
   remapped, shared strings deduped, defined-name and table-name collisions
   handled). Pinned merge expectations updated deliberately. **Landed**, in
   `src/merge/`: the first input seeds the output package and later inputs'
@@ -290,9 +290,10 @@ introduce a second implementation of anything L0–L2 owns.
   rewritten are part paths, relationship ids, the two per-workbook index spaces
   (shared strings, styles/dxfs) and the names a collision forced to change. Its
   contract column is populated; see "The merge's removals" below.
-- **Phase 2** — the remaining contract cells decided: defined names, drawings
-  and charts, external links, and the totals-row asymmetry between bindings.
-- **Later** — group mapping (many values → one output), multi-column split keys,
+- **Phase 2**: the remaining contract cells decided, covering defined names,
+  drawings and charts, external links, and the totals-row asymmetry between
+  bindings.
+- **Later**: group mapping (many values → one output), multi-column split keys,
   table-aware consolidate, region-aware browser workbench chaining.
 
 Changesets accompany any phase that alters published behavior; breaking changes

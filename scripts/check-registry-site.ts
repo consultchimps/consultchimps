@@ -194,7 +194,7 @@ for (const tool of TOOLS) {
 
 // Check 3: every working browser surface points at an online-tool route that
 // exists, no two entries claim the same route, and every online-tool route
-// page belongs to a registry entry — an unregistered route cannot appear on
+// page belongs to a registry entry. An unregistered route cannot appear on
 // the site's cards or tabs, which means it has drifted outside the registry.
 const browserTools = TOOLS.filter(isBrowserTool);
 const entriesByRouteHref = new Map<string, string[]>();
@@ -277,7 +277,7 @@ for (const sourceFile of sourceFiles) {
 }
 
 // Check 4b: docs content cannot import the registry, so hardcoded
-// online-tool links are allowed there — but each one must be the declared
+// online-tool links are allowed there, but each one must be the declared
 // browser route of a registry entry whose browser surface works.
 const contentFiles = listFilesWithExtensions(docsContentRoot, [".mdx", ".md"]);
 for (const contentFile of contentFiles) {

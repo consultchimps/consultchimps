@@ -135,7 +135,7 @@ data-only.
   The [in-browser splitter](/tools/excel-split) runs the same all-worksheet
   split as the command line, so each workbook it creates keeps the source
   workbook's sheets, formatting, and supported workbook structure with the other
-  values' rows removed — and removes the same pivot tables, described under
+  values' rows removed, and removes the same pivot tables, described under
   [Preservation and known limitations](#preservation-and-known-limitations).
   Naming a table, a range, or a worksheet narrows it to that one source there
   too. Only the names of the finished files differ: the command line saves into
@@ -143,12 +143,12 @@ data-only.
   `North.xlsx`, while the browser hands you downloads and keeps the source name
   in front, such as `clients-North.xlsx`. You can change that prefix in the
   tool. The browser accepts `.xlsm` workbooks as well, and both surfaces follow
-  one rule: a split that preserves the workbook — the default, and a named Excel
-  Table — copies the source package, so `clients.xlsm` gives you
+  one rule. A split that preserves the workbook (the default, and a named Excel
+  Table) copies the source package, so `clients.xlsm` gives you
   `clients-North.xlsm` with the macro project carried into each one, and a
   package whose declared type contradicts its name is refused before any file is
-  written. A split that rebuilds instead — a named worksheet, a named range, or
-  preservation turned off — writes fresh workbooks from the rows it kept, which
+  written. A split that rebuilds instead (a named worksheet, a named range, or
+  preservation turned off) writes fresh workbooks from the rows it kept, which
   are always `.xlsx` and carry no macro project.
 </Callout>
 

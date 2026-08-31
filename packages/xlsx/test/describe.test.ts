@@ -34,7 +34,7 @@ async function createTemporaryDirectory(): Promise<string> {
 }
 
 interface SheetSpec {
-  /** 0 visible, 1 hidden, 2 very hidden — the states Excel itself records. */
+  /** 0 visible, 1 hidden, 2 very hidden: the states Excel itself records. */
   hidden?: 0 | 1 | 2;
   name: string;
   rows: Array<Array<boolean | null | number | string>>;
@@ -472,7 +472,7 @@ describe("describeWorkbook", () => {
     const input = path.join(directory, "template.xlsx");
 
     // A styled template: 30,000 stored `<row>` elements carrying no cells at
-    // all. Nothing here is content, so the sheet must describe as empty — and
+    // all. Nothing here is content, so the sheet must describe as empty, and
     // materializing those rows is the synchronous burst the scan yields around.
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(
@@ -678,7 +678,7 @@ describe("describeWorkbook stored values", () => {
 
 describe("describeWorkbook row occupancy", () => {
   /**
-   * A worksheet whose data rows carry formulas with no cached `<v>` value —
+   * A worksheet whose data rows carry formulas with no cached `<v>` value:
    * what a workbook saved by a tool that does not calculate looks like.
    */
   async function writeUncachedFormulaWorkbook(filePath: string): Promise<void> {

@@ -6,7 +6,7 @@ registry (`apps/docs/src/lib/tools.ts`, per
 
 **Binding rule:** a pull request that flips any surface's status to `works` must
 include the applicable checklists below in its description, with evidence per
-item — the test file, docs page, or command that demonstrates it. A flip without
+item: the test file, docs page, or command that demonstrates it. A flip without
 the demonstrated checklist is not mergeable.
 
 ## Every surface
@@ -38,8 +38,8 @@ the demonstrated checklist is not mergeable.
 
 ## Browser surface (`browser: { status: "works", href }`)
 
-- [ ] Runs fully client-side on a bytes-level API — no filesystem access, files
-      never leave the machine; heavy work runs in a Web Worker.
+- [ ] Runs fully client-side on a bytes-level API: no filesystem access, files
+      never leave the machine, and heavy work runs in a Web Worker.
 - [ ] The tool page exists at the registry `href`; cards, sub-bar tab, and the
       guide's "Try … online" button light up from the registry entry alone
       (verified by `scripts/check-registry-site.ts`).

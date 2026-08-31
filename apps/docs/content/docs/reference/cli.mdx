@@ -62,8 +62,8 @@ envelope, and the command still exits with a nonzero status:
 errors, which have no stable code to depend on. The same object is repeated on
 stderr so failures remain visible there, but stdout alone is always valid JSON.
 
-Usage errors — an unknown option, an unknown command, or a missing required
-option — are reported the same way under `--json`, with the code `CLI_USAGE`:
+Usage errors (an unknown option, an unknown command, or a missing required
+option) are reported the same way under `--json`, with the code `CLI_USAGE`:
 
 ```json
 {
@@ -102,8 +102,8 @@ to replace these explanations with the compact structured result needed by an
 automation.
 
 Long-running operations additionally report progress on standard error while
-they work — the current stage with counts, such as
-`Reading workbooks 3/14: report.xlsx` — updated in place on an interactive
+they work: the current stage with counts, such as
+`Reading workbooks 3/14: report.xlsx`, updated in place on an interactive
 terminal and printed as plain lines elsewhere. Progress never appears under
 `--json`, so piped output stays clean.
 

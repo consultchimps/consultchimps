@@ -1,5 +1,5 @@
 /**
- * L2 region layer — the worksheet-range binding.
+ * L2 region layer: the worksheet-range binding.
  *
  * `RangeBinding` owns everything that is true only of plain ranges: the
  * boundaries come from detection, a declared header row, a defined name, or an
@@ -40,7 +40,7 @@ import { formatCellRef, readRowKeys } from "./values.js";
 
 /**
  * An A1-style reference: optional `$`, one to three letters, optional `$`,
- * digits — not preceded by an identifier character (so `Table1[#Data]` and
+ * digits, not preceded by an identifier character (so `Table1[#Data]` and
  * `_xlfn.IFS` are not references) and not followed by one or by `(` (so
  * `LOG10(x)` is a function call, not a reference). Ported verbatim.
  */

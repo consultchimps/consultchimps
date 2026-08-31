@@ -7,7 +7,7 @@ const { version } = JSON.parse(
 
 // Builds the standalone single-file CLI attached to GitHub releases. Every
 // runtime dependency is compiled in so `node consultchimps.mjs` performs no
-// package resolution at all — only `node:` builtins remain external — for
+// package resolution at all (only `node:` builtins remain external), for
 // environments that have Node.js (22+) but no npm access.
 export default defineConfig({
   entry: { consultchimps: "src/index.ts" },

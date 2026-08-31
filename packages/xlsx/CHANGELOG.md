@@ -8,8 +8,8 @@
   `OPERATIONS`, the `UNDECIDED_*` records, and their types now ship from the
   package root. The table states, per workbook structure and operation, whether
   the package preserves it, rewrites it so it stays valid, removes it with a
-  warning, or refuses — the same table the corpus tests enforce — so a caller
-  can tell people what an operation will do before running it, and the
+  warning, or refuses, using the same table the corpus tests enforce, so a
+  caller can tell people what an operation will do before running it, and the
   documentation site can generate its preservation matrix instead of restating
   it in prose.
 
@@ -17,13 +17,13 @@
 
 - e716dc7: Name a preserved split's outputs after the workbook they actually
   are. Splitting a macro-enabled workbook while naming an Excel Table kept the
-  whole source package — macro project included — but named every output `.xlsx`
+  whole source package, macro project included, but named every output `.xlsx`
   and reported the ordinary workbook media type, so the file's contents and its
   name disagreed and Excel opened it with a corruption warning. Those outputs
   are now named `.xlsm` and carry the macro-enabled media type, exactly as the
   all-worksheet split has always done, and a package whose declared type
   contradicts the name it arrived under is refused with
-  `XLSX_SPLIT_PACKAGE_TYPE_MISMATCH` before anything is written — on the preview
+  `XLSX_SPLIT_PACKAGE_TYPE_MISMATCH` before anything is written, on the preview
   as well as the run.
 
   A split that rebuilds instead of preserving (`preserveWorkbook: false`, a
@@ -42,7 +42,7 @@
 
 - cef85f7: Add workbook inspection: `describeWorkbook` and
   `describeWorkbookBytes` report a workbook's structure without creating
-  anything — worksheets with their visibility and dimensions, the header row an
+  anything: worksheets with their visibility and dimensions, the header row an
   operation would actually use, Excel Tables, named ranges, and up to five
   distinct sample values per column. The outcome pairs that description with a
   structured `sheets.inspect` result carrying counts as metrics, no artifacts,
@@ -115,15 +115,15 @@
   reports. It accepts the same `normalizeHeaders`, `addSourceColumns`,
   worksheet-selection, and header-row options, reports progress, and can be
   cancelled, and it produces byte-identical output to the path-based operation
-  for the same workbooks and options — so a browser and the command line agree
+  for the same workbooks and options, so a browser and the command line agree
   exactly.
 
 ### Patch Changes
 
 - aabc58b: Installing this package no longer requires network access to the
   SheetJS CDN. SheetJS was declared as a runtime dependency pointing at a
-  tarball URL, so every `npm install` of `@consultchimps/xlsx` — and of the
-  `consultchimps` CLI that depends on it — had to reach `cdn.sheetjs.com`.
+  tarball URL, so every `npm install` of `@consultchimps/xlsx`, and of the
+  `consultchimps` CLI that depends on it, had to reach `cdn.sheetjs.com`.
   Installs failed outright behind registry-only allowlists, corporate proxies,
   private mirrors, and locked-down CI runners.
 
@@ -169,7 +169,7 @@
 
 - d1f8524: Write consolidated and rebuilt split workbooks with a shared-strings
   table instead of per-cell strings, matching how Excel stores text. Outputs
-  with repetitive text now serialize noticeably smaller — roughly 13-20% on
+  with repetitive text now serialize noticeably smaller: roughly 13-20% on
   synthetic benchmarks, with the biggest gains when repeated values are spread
   far apart in large workbooks.
 - Updated dependencies [98c77a7]

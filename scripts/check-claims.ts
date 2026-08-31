@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 // Claims check: a lint over the copy a user actually reads, guarding the one
-// failure mode documentation reviews keep finding here — a sentence that
+// failure mode documentation reviews keep finding here: a sentence that
 // promises more than the implementation delivers. Each banned phrase below was
 // a real false claim in this repository ("every operation also runs in your
 // browser" while the registry declared a planned browser surface; "byte-for-
@@ -21,8 +21,8 @@ import ts from "typescript";
 // excluded, and comments inside the scanned TypeScript are stripped before
 // matching: they describe internals to people reading the code, where
 // "byte-for-byte" is a precise and testable statement about a ZIP part rather
-// than a promise to a user. What survives stripping in a .ts or .tsx file —
-// string literals and JSX text — is what the site actually renders.
+// than a promise to a user. What survives stripping in a .ts or .tsx file
+// (string literals and JSX text) is what the site actually renders.
 //
 // This is a heuristic scan, not a parser or a semver engine, and it is meant to
 // stay one. It does not attempt to understand JSX or JavaScript beyond asking
@@ -138,7 +138,7 @@ const ALLOWLIST: readonly AllowlistEntry[] = [];
 
 // Files whose copy a user reads: the repository's front door, the guides, the
 // rendered site, and the machine-readable summary the site publishes. Package
-// CHANGELOGs and docs/adr are deliberately absent — a changelog entry records
+// CHANGELOGs and docs/adr are deliberately absent: a changelog entry records
 // what a past release claimed, and an architecture record argues about
 // internals; neither is copy anyone is asked to act on.
 const SINGLE_FILES = [

@@ -1,5 +1,5 @@
 /**
- * L3 operation — workbook inspection. ADR 0002 makes this a first-class
+ * L3 operation: workbook inspection. ADR 0002 makes this a first-class
  * operation on every surface, with `pptx.inspect-template` as the
  * create-nothing precedent.
  *
@@ -9,7 +9,7 @@
  * an inspection reports is the row `resolveRegions` would resolve, the columns
  * are the region's boundary columns, and the visibility is the model's own
  * `SheetInfo`. A second implementation of header detection here would let the
- * promise drift the moment a model-layer fix lands — which is exactly the
+ * promise drift the moment a model-layer fix lands, which is exactly the
  * drift ARCHITECTURE.md's layering exists to prevent.
  *
  * Samples are bounded because a description is what a picker renders, never a
@@ -149,7 +149,7 @@ export interface WorkbookDescription {
  * The outcome of a workbook inspection: the structured operation result every
  * completed operation reports, plus the description it summarizes. The two
  * travel side by side for the same reason `ByteOperationOutcome` keeps
- * `outputs` beside `result` — metrics are counts, and sheet names, headers and
+ * `outputs` beside `result`: metrics are counts, and sheet names, headers and
  * sample values are not.
  */
 export interface WorkbookDescriptionOutcome {
@@ -276,8 +276,8 @@ function storedValue(worksheet: WorksheetModel, ref: CellRef): CellValue {
 
 /**
  * A sample value's identity for the distinctness test. The type is part of the
- * key so the number 1 and the text "1" — which Excel very much distinguishes,
- * and which a mapping review needs to see separately — do not collapse into
+ * key so the number 1 and the text "1", which Excel very much distinguishes
+ * and which a mapping review needs to see separately, do not collapse into
  * one sample.
  */
 function sampleKey(value: CellValue): string {
@@ -299,7 +299,7 @@ function formatRange(range: CellRange): string {
  * Whether the worksheet carries any value at all inside its used range.
  *
  * A worksheet's used range comes from the stored `<dimension>` hint, which
- * Excel and every writer set to `A1` for a sheet that holds nothing — so the
+ * Excel and every writer set to `A1` for a sheet that holds nothing, so the
  * range alone cannot tell "one blank cell" from "no cells". An inspection has
  * to answer "there is no header row here" for a genuinely empty sheet rather
  * than invent a `column_1`, so emptiness is decided by looking.
@@ -565,7 +565,7 @@ function describeNamedRanges(
  * The worksheets this description covers, in workbook order.
  *
  * `includeHiddenSheets` and `sheets` mean exactly what they mean to every
- * other reader in this package — an option that reads the same everywhere is
+ * other reader in this package: an option that reads the same everywhere is
  * worth more than an inspection-specific default. Naming a worksheet the
  * workbook does not have is a refusal rather than an empty answer, because a
  * picker asking about a sheet that is not there has a mistake to report.

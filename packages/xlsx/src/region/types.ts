@@ -1,5 +1,5 @@
 /**
- * L2 seam — data regions. See packages/xlsx/ARCHITECTURE.md.
+ * L2 seam: data regions. See packages/xlsx/ARCHITECTURE.md.
  *
  * This file freezes the interface between parallel implementation streams.
  * Deviations require justification at integration time; do not edit casually.

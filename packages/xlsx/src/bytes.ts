@@ -683,7 +683,7 @@ export async function readWorksheetRecordsBytes(
  * Read the Excel Tables a workbook defines, with their data, from bytes.
  *
  * The byte twin of `readWorkbookExcelTables`: same definitions, same
- * selection options, same `WorkbookExcelTable` shape — this surface simply had
+ * selection options, same `WorkbookExcelTable` shape. This surface simply had
  * no way to reach them before, which is what left its `WorkbookExcelTable`
  * re-export pointing at a type nothing here produced.
  */

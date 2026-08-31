@@ -15,7 +15,7 @@ const KINDS: ReadonlyArray<readonly [string, AcceptedFileKind]> = [
 
 /**
  * A file the way a picker hands one over: a name, and whatever media type the
- * browser decided to report — including nothing at all.
+ * browser decided to report, including nothing at all.
  */
 function pickedFile(name: string, type = ""): File {
   return new File([new Uint8Array([0x50, 0x4b])], name, { type });

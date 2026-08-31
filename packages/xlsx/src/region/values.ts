@@ -1,5 +1,5 @@
 /**
- * L2 region layer — value and reference normalization.
+ * L2 region layer: value and reference normalization.
  *
  * The split-key normalization here is a faithful port of `normalizeSplitValue`
  * and `normalizeHeader` from `src/workbook-column-split.ts`. The old engine

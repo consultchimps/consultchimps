@@ -6,7 +6,7 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Online tools",
   description:
-    "Run ConsultChimps document tools directly in your browser. Files never leave your machine — everything happens in this tab.",
+    "Run ConsultChimps document tools directly in your browser. Files never leave your machine: everything happens in this tab.",
 };
 
 const guideOnlyTools = TOOLS.filter((tool) => !isBrowserTool(tool));

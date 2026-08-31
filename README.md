@@ -55,7 +55,7 @@ Run the CLI without keeping a global installation:
 npx consultchimps@latest --help
 ```
 
-No npm access? Every release also ships a standalone bundle — download
+No npm access? Every release also ships a standalone bundle. Download
 `consultchimps.mjs` from the
 [latest release](https://github.com/consultchimps/consultchimps/releases/latest)
 and run it directly:

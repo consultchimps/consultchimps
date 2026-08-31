@@ -47,7 +47,7 @@ export interface ConsultTool {
   readonly icon: LucideIcon;
 }
 
-/** A tool whose browser surface works — the only kind that renders browser UI. */
+/** A tool whose browser surface works: the only kind that renders browser UI. */
 export interface BrowserTool extends ConsultTool {
   readonly surfaces: ToolSurfaces & {
     readonly browser: Extract<BrowserSurface, { status: "works" }>;
@@ -184,8 +184,8 @@ export const BROWSER_TOOLS: readonly BrowserTool[] =
  * not run in the browser offers nothing. Fragments are stripped, so an
  * anchored docHref still resolves to its page.
  *
- * When several operations share one guide page — populate and template
- * inspection both live on the PowerPoint guide — the page gets exactly one
+ * When several operations share one guide page (populate and template
+ * inspection both live on the PowerPoint guide), the page gets exactly one
  * button, belonging to the first registered operation that runs in the
  * browser. That is deliberate: a guide header with two competing "Try …
  * online" buttons reads as a choice the reader has to make before they have

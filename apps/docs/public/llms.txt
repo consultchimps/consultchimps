@@ -2,13 +2,13 @@
 
 > Deterministic, local-first document operations for consultants: consolidate,
 > merge, and split Excel workbooks; inspect and populate PowerPoint templates;
-> split and merge PDFs. All processing happens locally — files never leave the
+> split and merge PDFs. All processing happens locally: files never leave the
 > machine. Requires Node.js 22 or later.
 
 ## Run with zero setup
 
-Download one file from the latest GitHub release and run it with Node — no npm
-access or package resolution required:
+Download one file from the latest GitHub release and run it with Node. No npm
+access or package resolution is required:
 
     node consultchimps.mjs --help
     node consultchimps.mjs sheets consolidate "*.xlsx" --output combined.xlsx --normalize-headers

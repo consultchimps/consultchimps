@@ -1,5 +1,5 @@
 /**
- * L1 seam — the document model. See packages/xlsx/ARCHITECTURE.md.
+ * L1 seam: the document model. See packages/xlsx/ARCHITECTURE.md.
  *
  * This file freezes the interface between parallel implementation streams.
  * Deviations require justification at integration time; do not edit casually.
@@ -7,14 +7,14 @@
  * Phase 1 integration added three members the split operation and the region
  * bindings genuinely need and could not express through `deleteRows` alone:
  *
- *  - `WorksheetModel.cellValue` — typed cell values (a date-formatted number
+ *  - `WorksheetModel.cellValue`: typed cell values (a date-formatted number
  *    comes back as a `Date`), so grouping keys and therefore output filenames
  *    match the SheetJS `cellDates` reads the previous engine made.
- *  - `WorksheetModel.lastRow` and `applyRowRelocation` — an Excel Table
+ *  - `WorksheetModel.lastRow` and `applyRowRelocation`: an Excel Table
  *    compacts its data rows while its totals row follows and the block below
  *    the table stays put. That is a row *move*, not a gap closure, so
  *    `deleteRows` cannot express it.
- *  - `RelocateRowsOptions.resizeTables` — the one case where a table binding
+ *  - `RelocateRowsOptions.resizeTables`: the one case where a table binding
  *    deliberately leaves its table part claiming the original range.
  */
 

@@ -631,9 +631,9 @@ describe("byte-level presentation population", () => {
     };
     const records = [{ amount: "1", client: "A" }];
 
-    // Planning reads both packages in full, so a caller that has moved on —
-    // a page replanning after a keystroke — must be able to stop that work
-    // rather than only discard its answer.
+    // Planning reads both packages in full, so a caller that has moved on,
+    // such as a page replanning after a keystroke, must be able to stop that
+    // work rather than only discard its answer.
     const cancelled = new AbortController();
     cancelled.abort();
     await expect(

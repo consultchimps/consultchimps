@@ -33,7 +33,7 @@ export const metadata: Metadata = {
   // metadata base at the origin prevents Next.js from adding that path twice.
   metadataBase: new URL(siteUrl.origin),
   title: {
-    default: "ConsultChimps — Operations tools that keep their promises",
+    default: "ConsultChimps: Operations tools that keep their promises",
     template: "%s · ConsultChimps",
   },
   description:

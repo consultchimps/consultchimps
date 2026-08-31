@@ -60,8 +60,8 @@ spelling of the first header encountered.
 
 ## Map columns onto one schema
 
-When the same field arrives under different headers — `Case ID` from one system,
-`Reference` from another — a **column mapping** folds them into one **canonical
+When the same field arrives under different headers (`Case ID` from one system,
+`Reference` from another), a **column mapping** folds them into one **canonical
 column** before the tables are unioned. A mapping is a versioned JSON document:
 canonical columns with their **aliases**, optional **coercions**, and constant
 columns. Reading the file is your job; the library takes the parsed object, so
@@ -128,7 +128,7 @@ if (mapped.unmappedColumns.length > 0) {
 The first row becomes `Case_ID: 1`, `Opened_On: "2024-03-09"`, `Amount: 1234.5`,
 `Region: "north"`, `Dataset: "quarterly"`, plus the provenance columns. `Region`
 is an **unmapped column**: it passes through under its own name and is reported
-in `unmappedColumns` so you can warn about it — loud, but lossless.
+in `unmappedColumns` so you can warn about it: loud, but lossless.
 
 Points worth knowing before you write a mapping:
 
@@ -148,8 +148,8 @@ Points worth knowing before you write a mapping:
   a single canonical column raise `TABLE_MAPPING_COLUMN_COLLISION` naming the
   file, sheet, both columns, and the canonical column, because merging them
   would drop values. `validateColumnMapping` refuses a document that is
-  ambiguous on its own terms — an unknown version, two canonical columns that
-  normalize alike, an alias claimed twice — with `TABLE_MAPPING_INVALID` and a
+  ambiguous on its own terms (an unknown version, two canonical columns that
+  normalize alike, an alias claimed twice) with `TABLE_MAPPING_INVALID` and a
   machine-readable `problem` in the error details.
 - **Constant columns come last**, after the mapped and unmapped columns.
 
@@ -160,7 +160,7 @@ for a single table.
 ## Draft a mapping from the headers you have
 
 `suggestColumnMapping` reads header lists and groups the columns whose
-normalized keys already match — the spelling variants of one field — proposing
+normalized keys already match (the spelling variants of one field), proposing
 the first spelling seen as the canonical name:
 
 ```ts
@@ -178,7 +178,7 @@ const suggestion = suggestColumnMapping([
 
 The suggestion uses no similarity scoring and no sample values: it groups only
 deterministic normalization equivalence, and it never guesses. That is not the
-same as never being wrong — headers that differ only in punctuation, such as
+same as never being wrong. Headers that differ only in punctuation, such as
 `A+B` and `A-B`, normalize to the same key and will group even when they mean
 different things, which is why every draft is reviewed before use. Synonyms that
 share no spelling, such as `Timestamp` and `Run Time`, stay for you to add by
@@ -212,7 +212,7 @@ const excelTables = await readWorkbookExcelTables("clients.xlsx");
 const namedRanges = await readWorkbookNamedRanges("clients.xlsx");
 ```
 
-`readWorkbookTables` accepts the consolidator's selection options — `sheets`, a
+`readWorkbookTables` accepts the consolidator's selection options: `sheets`, a
 one-based `headerRow`, and `includeHiddenSheets`. `readWorksheetRecords` selects
 one `worksheet` and a `headerRow`; the Excel Table and named-range readers
 filter by `sheets` plus `tables` or `names`. The `writeTable` counterpart writes
@@ -220,11 +220,11 @@ one in-memory `Table` to a new formatted workbook.
 
 ## Inspect a workbook before operating on it
 
-`describeWorkbook` reports what is in a file — worksheets with their visibility
-and dimensions, the header row each operation would actually use, Excel Tables,
-named ranges, and a bounded sample of every column's values — without creating
-anything. Use it to confirm a workbook's shape, or to build a picker for the
-sheets and columns another operation will act on.
+`describeWorkbook` reports what is in a file without creating anything:
+worksheets with their visibility and dimensions, the header row each operation
+would actually use, Excel Tables, named ranges, and a bounded sample of every
+column's values. Use it to confirm a workbook's shape, or to build a picker for
+the sheets and columns another operation will act on.
 
 ```ts
 import { describeWorkbook } from "@consultchimps/xlsx";
@@ -250,12 +250,12 @@ console.log(result.metrics.worksheets, result.warnings);
 
 The inspection creates nothing, so the outcome pairs the description with an
 `OperationResult` that has no artifacts: its metrics are the counts, and its
-warnings name what a later operation would stumble on — hidden worksheets left
+warnings name what a later operation would stumble on: hidden worksheets left
 out of the description, or a worksheet with no header row to match columns by.
 
 Sample values are deliberately bounded: at most `MAX_COLUMN_SAMPLE_VALUES` (5)
 distinct non-empty stored values per column, in the order the rows carry them.
-Pass `sampleValues` to ask for fewer. Nothing is type-inferred — the values are
+Pass `sampleValues` to ask for fewer. Nothing is type-inferred: the values are
 reported exactly as the workbook stores them, so `1` and `"1"` stay distinct.
 `headerRow`, `includeHiddenSheets`, and `sheets` mean what they mean to every
 other reader here; naming a worksheet the workbook does not have is refused with
@@ -267,10 +267,10 @@ identical description for the same workbook.
 ## Read what an Excel operation promises
 
 `@consultchimps/xlsx` exports its conformance contract: for every workbook
-structure it tracks and every operation it offers, what that operation does —
-`preserve`, `fix` (rewritten so it stays valid), `strip-warn` (removed, with a
-warning in the result), or `refuse`. The package's corpus tests exercise the
-table cell by cell, so it states behavior rather than intent.
+structure it tracks and every operation it offers, what that operation does. The
+value is `preserve`, `fix` (rewritten so it stays valid), `strip-warn` (removed,
+with a warning in the result), or `refuse`. The package's corpus tests exercise
+the table cell by cell, so it states behavior rather than intent.
 
 ```ts
 import { CONTRACT, TRACKED_STRUCTURES } from "@consultchimps/xlsx";
@@ -286,7 +286,7 @@ a copy of your workbook. The other selectors do not follow it, so do not quote
 these cells at a caller who chose one:
 
 - `preserveWorkbook: false`, `range`, and `sheet` rebuild a single worksheet
-  from the grouped values and carry none of these structures — no other
+  from the grouped values and carry none of these structures: no other
   worksheets, no charts, no macros.
 - `table` runs the preserved-table rewrite, which compacts the table's rows.
   Because compaction moves rows, an ordinary A1 formula inside that table stops
@@ -448,8 +448,8 @@ single-source modes, which are also the only modes where `includeBlank` and
 folding, or numeric coercion. `mergeWorkbooksBytes` combines every worksheet of
 every input, keeping tabs and formatting and adding the same `Sheet Index`;
 `consolidateWorkbooksBytes` stacks the rows of every visible worksheet that
-holds data into one table — hidden and very hidden worksheets are skipped unless
-`includeHiddenSheets` is set — with the same `normalizeHeaders`,
+holds data into one table (hidden and very hidden worksheets are skipped unless
+`includeHiddenSheets` is set) with the same `normalizeHeaders`,
 `addSourceColumns`, worksheet-selection, and header-row options as the
 path-based consolidation; and `populatePresentationBytes` fills a template
 presentation from either records you already hold or the bytes of a workbook.
@@ -498,8 +498,8 @@ const populated = await populatePresentationBytes({
 A template inspection reads a slide and writes nothing, so
 `inspectPresentationOutcomeBytes` returns the structured result beside the
 placeholder report rather than beside output bytes. Its metrics are the slide's
-counts, and its warnings name every condition — malformed braces, unsupported
-placements, no placeholders at all — that would make a population refuse the
+counts, and its warnings name every condition (malformed braces, unsupported
+placements, no placeholders at all) that would make a population refuse the
 template:
 
 ```ts

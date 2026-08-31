@@ -1,6 +1,6 @@
 # In-browser tool smoke tests
 
-Playwright drives the statically exported site — not the dev server — so these
+Playwright drives the statically exported site, not the dev server, so these
 tests exercise the same bundles GitHub Pages serves, including the operation Web
 Worker, the engines it imports on demand, and the blob download path.
 
@@ -20,32 +20,32 @@ command when `out/` is missing.
 
 ## What is covered
 
-- `pdf-split.spec.ts` — splitting a two-page PDF into zero-padded page files,
+- `pdf-split.spec.ts`: splitting a two-page PDF into zero-padded page files,
   downloading one of them, and refusing a file that is not a PDF.
-- `pdf-merge.spec.ts` — merging two single-page PDFs into `combined.pdf` and
+- `pdf-merge.spec.ts`: merging two single-page PDFs into `combined.pdf` and
   downloading the result.
-- `excel-split.spec.ts` — detecting a workbook's column headers, splitting on
-  one of them into a workbook per distinct value, downloading one of them,
-  reading a downloaded workbook back to confirm it keeps every source worksheet
-  and removes only the other values' rows, reporting a column the workbook does
-  not have, and refusing a file that is not a workbook.
-- `excel-merge.spec.ts` — merging two workbooks into one, reordering and
-  removing sources, and downloading the result.
-- `excel-consolidate.spec.ts` — stacking two workbooks whose headers drifted
+- `excel-split.spec.ts`: detecting a workbook's column headers, splitting on one
+  of them into a workbook per distinct value, downloading one of them, reading a
+  downloaded workbook back to confirm it keeps every source worksheet and
+  removes only the other values' rows, reporting a column the workbook does not
+  have, and refusing a file that is not a workbook.
+- `excel-merge.spec.ts`: merging two workbooks into one, reordering and removing
+  sources, and downloading the result.
+- `excel-consolidate.spec.ts`: stacking two workbooks whose headers drifted
   apart into one table, downloading the result, and checking that the "Normalize
   headers" and "Add source columns" checkboxes change the columns the finished
   workbook holds.
-- `pptx.spec.ts` — populating a template slide from workbook records into one
+- `pptx.spec.ts`: populating a template slide from workbook records into one
   deck, naming the output, downloading it, reporting a placeholder no column
   feeds, refusing a template that is not a presentation, and inspecting a
   template's placeholders with their occurrence counts on the chosen slide.
-- `tools-navigation.spec.ts` — the `/tools` index, the sub-bar tabs, the
+- `tools-navigation.spec.ts`: the `/tools` index, the sub-bar tabs, the
   tool-named "Try ... online" button each guide gains from the tool registry,
   and the single button a guide shared by two operations offers.
 
 Every downloaded PDF is checked for the `%PDF-` header and every downloaded
-workbook or presentation for the `PK` ZIP header — both `.xlsx` and `.pptx` are
-ZIP packages — so a tool that "finishes" while producing empty or corrupt bytes
+workbook or presentation for the `PK` ZIP header (both `.xlsx` and `.pptx` are
+ZIP packages), so a tool that "finishes" while producing empty or corrupt bytes
 fails the suite. `readWorkbookDownload` goes further and opens a downloaded
 workbook with jszip, resolving each worksheet through the workbook's own
 relationships, so a test can assert which worksheets and which rows reached the
@@ -91,16 +91,16 @@ sections render a `file-input`, always scope the input to its section on that
 page rather than using the bare `file-input` helper. The PowerPoint inspect page
 has a single `source-section` (with `source-summary` and `template-slide-input`)
 and reports into `inspection-section`, which renders `placeholder-list` with one
-`placeholder-item` per placeholder — each carrying a `placeholder-name` and its
-occurrence count — plus `inspection-warnings` holding one `inspection-warning`
+`placeholder-item` per placeholder, each carrying a `placeholder-name` and its
+occurrence count, plus `inspection-warnings` holding one `inspection-warning`
 per condition that would make a populate refuse the template, or
 `inspection-error` when the template cannot be read. That page has no Run
 button: choosing a template inspects it after the usual preview debounce.
 
 Both PowerPoint pages reject a slide or row number that is not a whole number
 counted from 1 rather than falling back to a default. The offending field
-renders `<field>-error` — `template-slide-input-error`, `header-row-input-error`
-— and the task is withdrawn: the populate page also lists the messages in
+renders `<field>-error` (`template-slide-input-error`, `header-row-input-error`)
+and the task is withdrawn: the populate page also lists the messages in
 `preview-invalid-options` and disables `run-button`, and the inspect page shows
 `inspection-invalid-slide` and clears the report.
 
@@ -127,6 +127,6 @@ better.
 PDFs are generated in memory with pdf-lib, and workbooks and presentations are
 assembled from minimal OOXML parts with jszip, all in `fixtures.ts`, and
 uploaded as buffers. `createPresentationUpload` takes one array of run strings
-per slide, so a fixture spells out how a paragraph is split across text runs —
+per slide, so a fixture spells out how a paragraph is split across text runs,
 the detail the populate engine has to stitch back together before it can see a
 `{{field}}`. Nothing binary is checked in and no temporary files are written.
