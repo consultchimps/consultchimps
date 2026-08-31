@@ -41,6 +41,16 @@ interface AllowlistEntry {
   /** Repository-relative path, forward slashes. */
   readonly file: string;
   readonly ruleId: string;
+  /**
+   * The exact text the rule matches at the allowed occurrence, compared case
+   * insensitively. It is part of the key so an exemption cannot widen into a
+   * blanket pardon: a different claim in the same file under the same rule -
+   * "complete workbook" where "complete copy" was excused - still fails. The
+   * phrase rather than a line number carries the identity because line numbers
+   * churn with every edit above them, which would turn a stale exemption into
+   * a silent one.
+   */
+  readonly phrase: string;
   readonly reason: string;
 }
 
@@ -89,8 +99,8 @@ const CLAIM_RULES: readonly ClaimRule[] = [
   },
   {
     id: "stale-node-version",
-    // Comparators are allowed for so the phrase rule agrees with the
-    // engines check below, which reads "Node.js >=24" as a version claim too.
+    // Comparators are allowed so this phrase rule agrees with the engines
+    // check below, which reads "Node.js >=24" as a version claim too.
     pattern: /Node(?:\.js)?\s*(?:>=|>|\^|~|=)?\s*v?24/i,
     advice:
       'published packages declare engines.node ">=22.0.0"; a package README must state the supported floor, not the version the maintainers develop on',
@@ -267,10 +277,15 @@ function collectScannedFiles(): string[] {
 
 const problems: string[] = [];
 const usedAllowlistEntries = new Set<string>();
-const allowlistKey = (file: string, ruleId: string): string =>
-  `${file}::${ruleId}`;
+// An exemption is keyed on the file, the rule, and the text the rule matched,
+// so it pardons one claim rather than the whole file: a different phrase under
+// the same rule, in the same file, is still reported.
+const allowlistKey = (file: string, ruleId: string, phrase: string): string =>
+  `${file}::${ruleId}::${phrase.toLocaleLowerCase()}`;
 const allowedKeys = new Set(
-  ALLOWLIST.map((entry) => allowlistKey(entry.file, entry.ruleId)),
+  ALLOWLIST.map((entry) =>
+    allowlistKey(entry.file, entry.ruleId, entry.phrase),
+  ),
 );
 
 const scannedFiles = collectScannedFiles();
@@ -283,12 +298,12 @@ for (const absolutePath of scannedFiles) {
     if (rule.appliesTo && !rule.appliesTo(label)) {
       continue;
     }
-    const key = allowlistKey(label, rule.id);
     lines.forEach((line, index) => {
       const match = rule.pattern.exec(line);
       if (match === null) {
         return;
       }
+      const key = allowlistKey(label, rule.id, match[0]);
       if (allowedKeys.has(key)) {
         usedAllowlistEntries.add(key);
         return;
@@ -311,13 +326,13 @@ for (const absolutePath of scannedFiles) {
     if (rule.appliesTo && !rule.appliesTo(label)) {
       continue;
     }
-    const key = allowlistKey(label, rule.id);
     const match = rule.pattern.exec(collapsed);
     if (match === null) {
       continue;
     }
     // Marked here too, so an allowed phrase that only ever appears wrapped
     // across two lines still counts its allowlist entry as used.
+    const key = allowlistKey(label, rule.id, match[0]);
     if (allowedKeys.has(key)) {
       usedAllowlistEntries.add(key);
       continue;
@@ -337,9 +352,10 @@ for (const absolutePath of scannedFiles) {
 }
 
 for (const entry of ALLOWLIST) {
-  if (!usedAllowlistEntries.has(allowlistKey(entry.file, entry.ruleId))) {
+  const key = allowlistKey(entry.file, entry.ruleId, entry.phrase);
+  if (!usedAllowlistEntries.has(key)) {
     problems.push(
-      `the claims allowlist entry for ${entry.file} (rule ${entry.ruleId}) matches nothing any more; delete it\n    recorded reason: ${entry.reason}`,
+      `the claims allowlist entry for "${entry.phrase}" in ${entry.file} (rule ${entry.ruleId}) matches nothing any more; delete it\n    recorded reason: ${entry.reason}`,
     );
   }
 }
@@ -358,11 +374,17 @@ interface PackageManifest {
 const nodeMentionPattern =
   /\bNode(?:\.js)?\s*(?<comparator>>=|>|\^|~|=)?\s*v?(?<major>\d+)(?:\.\d+)*/gi;
 const floorSuffixPattern = /^\s*(?:\+|or later|or newer|or above|and later)\b/i;
-// Comparators that already say "this version or anything newer". `^` and `~`
-// are deliberately absent: both cap the range at the next major, so they claim
-// something narrower than an engines floor of ">=22.0.0" and still need the
-// wording corrected.
-const floorComparators: ReadonlySet<string> = new Set([">=", ">"]);
+// The only comparator that states the same range an engines floor states.
+// `>` excludes the declared minimum itself, and `^` and `~` cap the range at
+// the next major, so each of them claims a support window the manifest does
+// not, and each is reported with what it got wrong.
+const INCLUSIVE_FLOOR_COMPARATOR = ">=";
+const comparatorFaults: ReadonlyMap<string, string> = new Map([
+  [">", "excludes the declared minimum itself"],
+  ["^", "caps the range at the next major"],
+  ["~", "caps the range at the next minor"],
+  ["=", "pins one version"],
+]);
 const packagesDirectory = path.join(workspaceRoot, PACKAGE_README_ROOT);
 
 if (existsSync(packagesDirectory)) {
@@ -409,7 +431,15 @@ if (existsSync(packagesDirectory)) {
         continue;
       }
       const comparator = mention.groups.comparator;
-      if (comparator !== undefined && floorComparators.has(comparator)) {
+      if (comparator === INCLUSIVE_FLOOR_COMPARATOR) {
+        continue;
+      }
+      const fault =
+        comparator === undefined ? undefined : comparatorFaults.get(comparator);
+      if (fault !== undefined) {
+        problems.push(
+          `${readmeLabel}:${line} says "${mention[0]}", but ${manifestLabel} declares engines.node "${declared}", and "${comparator}" ${fault}\n    write "Node.js ${declaredMajor} or later", or ">=${declaredMajor}", so the README states the same support window as the manifest`,
+        );
         continue;
       }
       const remainder = readmeText.slice(mention.index + mention[0].length);
