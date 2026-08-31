@@ -1024,7 +1024,9 @@ export function ExcelConsolidateTool() {
         <p className="mt-3 text-sm text-fd-muted-foreground">
           {files.length === 0
             ? "Add at least one workbook to consolidate."
-            : `Rows from every worksheet that holds data in ${files.length} ${
+            : `Rows from every ${
+                includeHiddenSheets ? "" : "visible "
+              }worksheet that holds data in ${files.length} ${
                 files.length === 1 ? "workbook" : "workbooks"
               } will be stacked into one table, in the order listed above.`}
         </p>

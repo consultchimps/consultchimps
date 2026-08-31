@@ -15,10 +15,12 @@ import { fileURLToPath } from "node:url";
 // none of these were. Rewrite the sentence to say what is true, or add an
 // allowlist entry below explaining why this particular occurrence is safe.
 //
-// Scope is deliberately narrow. Source comments, tests, changelogs and
-// architecture records are excluded: they describe internals to people reading
-// the code, where "byte-for-byte" is a precise and testable statement about a
-// ZIP part rather than a promise to a user.
+// Scope is deliberately narrow. Tests, changelogs and architecture records are
+// excluded, and comments inside the scanned TypeScript are stripped before
+// matching: they describe internals to people reading the code, where
+// "byte-for-byte" is a precise and testable statement about a ZIP part rather
+// than a promise to a user. What survives stripping in a .ts or .tsx file —
+// string literals and JSX text — is what the site actually renders.
 
 interface ClaimRule {
   /** Stable id, used by allowlist entries. */
@@ -131,6 +133,86 @@ function readTextFile(absolutePath: string): string {
   return readFileSync(absolutePath, "utf8").replace(/\r\n/g, "\n");
 }
 
+/**
+ * Blank out the comments in TypeScript source, leaving the string literals and
+ * JSX text the site actually renders. Comment characters become spaces and
+ * newlines are kept, so reported line numbers still point at the right line.
+ *
+ * The scanner tracks string and template literals, so a URL's `//` and an
+ * apostrophe in JSX text do not derail it. It deliberately does not model
+ * regular-expression literals: a regex holding a lone quote character could
+ * confuse it, which would at worst hide a claim on that line rather than invent
+ * one, and the scanned tree has no such literal today.
+ */
+function withoutSourceComments(source: string): string {
+  const output: string[] = [];
+  let index = 0;
+  let quote: string | null = null;
+
+  while (index < source.length) {
+    const character = source[index] as string;
+    const next = source[index + 1];
+
+    if (quote !== null) {
+      output.push(character);
+      if (character === "\\" && index + 1 < source.length) {
+        output.push(next as string);
+        index += 2;
+        continue;
+      }
+      if (character === quote) {
+        quote = null;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+      output.push(character);
+      index += 1;
+      continue;
+    }
+
+    if (character === "/" && next === "/") {
+      while (index < source.length && source[index] !== "\n") {
+        output.push(" ");
+        index += 1;
+      }
+      continue;
+    }
+
+    if (character === "/" && next === "*") {
+      output.push("  ");
+      index += 2;
+      while (index < source.length) {
+        if (source[index] === "*" && source[index + 1] === "/") {
+          output.push("  ");
+          index += 2;
+          break;
+        }
+        output.push(source[index] === "\n" ? "\n" : " ");
+        index += 1;
+      }
+      continue;
+    }
+
+    output.push(character);
+    index += 1;
+  }
+
+  return output.join("");
+}
+
+/**
+ * The copy of a scanned file the rules are matched against: TypeScript loses
+ * its comments, Markdown and plain text are matched whole.
+ */
+function readScannableText(absolutePath: string): string {
+  const text = readTextFile(absolutePath);
+  return /\.tsx?$/.test(absolutePath) ? withoutSourceComments(text) : text;
+}
+
 function listFilesWithExtensions(
   directory: string,
   extensions: readonly string[],
@@ -195,7 +277,7 @@ const scannedFiles = collectScannedFiles();
 
 for (const absolutePath of scannedFiles) {
   const label = toRepoLabel(absolutePath);
-  const lines = readTextFile(absolutePath).split("\n");
+  const lines = readScannableText(absolutePath).split("\n");
 
   for (const rule of CLAIM_RULES) {
     if (rule.appliesTo && !rule.appliesTo(label)) {
@@ -223,7 +305,7 @@ for (const absolutePath of scannedFiles) {
 // available there, so these are reported per file.
 for (const absolutePath of scannedFiles) {
   const label = toRepoLabel(absolutePath);
-  const collapsed = readTextFile(absolutePath).replace(/\s+/g, " ");
+  const collapsed = readScannableText(absolutePath).replace(/\s+/g, " ");
 
   for (const rule of CLAIM_RULES) {
     if (rule.appliesTo && !rule.appliesTo(label)) {
