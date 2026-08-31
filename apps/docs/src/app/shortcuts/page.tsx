@@ -29,7 +29,9 @@ export default function ShortcutsPage() {
           The keys are the ones on a Windows keyboard, and each entry names the
           physical key rather than the character a shifted key types, so the
           combination published as Ctrl+Shift+* appears here as Ctrl+Shift+8.
-          Everything runs in this tab, and nothing you press is recorded
+          The ribbon routes follow the key tips of English-language Excel, which
+          another Office display language relabels. Everything runs in this tab,
+          and nothing you press is recorded
         </p>
 
         <div className="mt-10">

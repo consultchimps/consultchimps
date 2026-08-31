@@ -11,6 +11,10 @@
  *   Ctrl+Shift+~, but the keys a person presses are Ctrl+Shift+8 and
  *   Ctrl+Shift+`, and this page is driven by real presses. Where the published
  *   spelling differs, the note says so.
+ * - The ribbon routes are the key tips of English-language Excel. Another
+ *   Office display language relabels them, so those sequences lead somewhere
+ *   else there; the page says so, and translated route sets are a separate
+ *   piece of work.
  * - The category describes what the shortcut does, not how it is typed, so a
  *   ribbon route such as Alt, H, O, I sits with the other column-width
  *   shortcuts. The ribbon sequences category is for the shortcuts that drive
@@ -1398,7 +1402,8 @@ export const EXCEL_SHORTCUTS: readonly ExcelShortcut[] = [
   {
     id: "wb-arrange-all",
     keys: [["Alt"], ["W"], ["A"]],
-    action: "Arrange the open workbook windows side by side",
+    action:
+      "Open the Arrange Windows dialog to tile or cascade the open workbooks",
     category: "workbook and window",
   },
   {
