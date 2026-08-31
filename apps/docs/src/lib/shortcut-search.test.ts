@@ -340,9 +340,19 @@ describe("keyTokenFromPress", () => {
     expect(keyTokenFromPress({ code: "MetaLeft", key: "Meta" })).toBe("Win");
   });
 
-  it("reads a letter from the physical key, whatever Shift did to it", () => {
+  it("reads a letter as the letter, in either case", () => {
     expect(keyTokenFromPress({ code: "KeyL", key: "l" })).toBe("L");
     expect(keyTokenFromPress({ code: "KeyL", key: "L" })).toBe("L");
+  });
+
+  it("takes the letter the layout typed, not the key's US position", () => {
+    // On a French layout the key marked A sits where a US keyboard has Q, so
+    // the position would record the wrong letter.
+    expect(keyTokenFromPress({ code: "KeyQ", key: "a" })).toBe("A");
+    expect(keyTokenFromPress({ code: "KeyA", key: "q" })).toBe("Q");
+    // A layout whose character is not one the database spells still falls
+    // back to the position rather than dropping the press.
+    expect(keyTokenFromPress({ code: "KeyL", key: "ł" })).toBe("L");
   });
 
   it("reads a digit as the digit, not the character Shift types", () => {

@@ -60,8 +60,16 @@ export interface KeyPress {
 
 /**
  * The canonical token for a press, or null for a key the database does not
- * model. Letters and digits come from the physical key so that Shift+3 is
- * recorded as Shift+3 rather than as the # it types.
+ * model.
+ *
+ * Printable keys are read from the character the layout produces, then from
+ * the physical key. That order matters twice over, in opposite directions.
+ * `code` names a position on a US keyboard, so on a French layout the key
+ * marked A reports KeyQ: reading the position first would record Q for a
+ * visitor who pressed A. But `key` reports the shifted character, so on a US
+ * layout Ctrl+Shift+8 reports an asterisk, which no shortcut is spelled with.
+ * Taking the character when it is already a token, and the position when it
+ * is not, gets both right.
  */
 export function keyTokenFromPress(press: KeyPress): KeyToken | null {
   const { code, key } = press;
@@ -79,6 +87,13 @@ export function keyTokenFromPress(press: KeyPress): KeyToken | null {
       return "Space";
     default:
       break;
+  }
+
+  if (key.length === 1) {
+    const typed = key.toUpperCase();
+    if (isKeyToken(typed)) {
+      return typed;
+    }
   }
 
   const letter = /^Key([A-Z])$/u.exec(code)?.[1];
