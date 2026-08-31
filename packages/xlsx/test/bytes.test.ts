@@ -121,6 +121,31 @@ const MACRO_WORKBOOK_MAIN_CONTENT_TYPE =
  * is the contradiction the split refuses, so a fixture meant to be valid has
  * to change both.
  */
+/**
+ * Turn any workbook package into a macro-enabled one: a stub VBA project and
+ * the content types that declare it. The declared main-part content type is
+ * what the library reads, so this is what makes a package genuinely `.xlsm`.
+ */
+async function macroPackage(bytes: Uint8Array): Promise<Uint8Array> {
+  const archive = await JSZip.loadAsync(bytes);
+  archive.file("xl/vbaProject.bin", Buffer.from([0xd0, 0xcf, 0x11, 0xe0]));
+  const contentTypes = await archive.file("[Content_Types].xml")!.async("text");
+  // The main workbook part's declared type is what makes a package
+  // macro-enabled, and a package may type it through a Default rather than an
+  // Override. Writing the Override says it unambiguously, which is what a real
+  // .xlsm does and what the library reads.
+  const declared = contentTypes
+    .replace(/<Override PartName="\/xl\/workbook\.xml"[^>]*\/>/u, "")
+    .replace(
+      "</Types>",
+      '<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/>' +
+        `<Override PartName="/xl/workbook.xml" ContentType="${MACRO_WORKBOOK_MAIN_CONTENT_TYPE}"/></Types>`,
+    );
+  expect(declared).toContain(MACRO_WORKBOOK_MAIN_CONTENT_TYPE);
+  archive.file("[Content_Types].xml", declared);
+  return archive.generateAsync({ compression: "DEFLATE", type: "uint8array" });
+}
+
 async function macroWorkbookBytes(
   options: { declareMacroContentType?: boolean } = {},
 ): Promise<Uint8Array> {
@@ -975,6 +1000,130 @@ describe("byte-level workbook splitting", () => {
         column: "Region",
       }),
     ).rejects.toMatchObject({ code: "XLSX_SPLIT_PACKAGE_TYPE_MISMATCH" });
+  });
+
+  it("keeps a preserved table split of a macro workbook macro-enabled", async () => {
+    // A preserved table split copies the source package into every output, so
+    // the macro project and the macro-enabled content type travel with it. The
+    // outputs used to be named .xlsx regardless, which handed back a package
+    // whose contents and name disagreed.
+    const bytes = await macroPackage(await structuredTableBytes());
+    const { outputs, result } = await splitWorkbookBytes({
+      input: { name: "clients.xlsm", bytes },
+      column: "Region",
+      table: "ClientData",
+    });
+
+    expect(outputs.map((output) => output.name)).toEqual([
+      "clients-North.xlsm",
+      "clients-South.xlsm",
+    ]);
+    expect(
+      outputs.every(
+        (output) =>
+          output.mediaType === "application/vnd.ms-excel.sheet.macroEnabled.12",
+      ),
+    ).toBe(true);
+    expect(result.artifacts.map((artifact) => artifact.mediaType)).toEqual(
+      outputs.map((output) => output.mediaType),
+    );
+    const first = await JSZip.loadAsync(outputs[0]!.bytes);
+    expect(first.file("xl/vbaProject.bin")).not.toBeNull();
+
+    // The preview promises exactly what the run produces.
+    const plan = await planSplitWorkbookBytes({
+      input: { name: "clients.xlsm", bytes },
+      column: "Region",
+      table: "ClientData",
+    });
+    expect(plan.outputs.map((output) => output.path)).toEqual(
+      outputs.map((output) => output.name),
+    );
+    expect(plan.outputs.map((output) => output.mediaType)).toEqual(
+      outputs.map((output) => output.mediaType),
+    );
+  });
+
+  it("refuses a mislabelled package in a preserved table split", async () => {
+    const bytes = await macroPackage(await structuredTableBytes());
+    await expect(
+      splitWorkbookBytes({
+        input: { name: "clients.xlsx", bytes },
+        column: "Region",
+        table: "ClientData",
+      }),
+    ).rejects.toMatchObject({
+      code: "XLSX_SPLIT_PACKAGE_TYPE_MISMATCH",
+      details: { declaredExtension: ".xlsm", nameExtension: ".xlsx" },
+    });
+
+    // The inverse, and the preview, refuse for the same reason.
+    await expect(
+      splitWorkbookBytes({
+        input: { name: "clients.xlsm", bytes: await structuredTableBytes() },
+        column: "Region",
+        table: "ClientData",
+      }),
+    ).rejects.toMatchObject({ code: "XLSX_SPLIT_PACKAGE_TYPE_MISMATCH" });
+    await expect(
+      planSplitWorkbookBytes({
+        input: { name: "clients.xlsx", bytes },
+        column: "Region",
+        table: "ClientData",
+      }),
+    ).rejects.toMatchObject({ code: "XLSX_SPLIT_PACKAGE_TYPE_MISMATCH" });
+  });
+
+  it("reports an unreadable content-type declaration as a workbook read failure", async () => {
+    // The declared workbook type is parsed on demand, so a package whose
+    // `[Content_Types].xml` cannot be parsed fails after the package loads. A
+    // caller must still see the operation's stable read failure rather than a
+    // raw XML parser error.
+    const archive = await JSZip.loadAsync(await structuredTableBytes());
+    archive.file(
+      "[Content_Types].xml",
+      '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE Types><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+    );
+    const bytes = await archive.generateAsync({
+      compression: "DEFLATE",
+      type: "uint8array",
+    });
+
+    const failure = splitWorkbookBytes({
+      input: { name: "clients.xlsx", bytes },
+      column: "Region",
+      table: "ClientData",
+    });
+    await expect(failure).rejects.toMatchObject({ code: "XLSX_READ_FAILED" });
+    await expect(
+      failure.catch((error: unknown) => isConsultChimpsError(error)),
+    ).resolves.toBe(true);
+  });
+
+  it("rebuilds a compact split of a macro workbook as an ordinary workbook", async () => {
+    // Without workbook preservation the split writes a fresh package from the
+    // rows it kept, so there is no macro project to carry and the outputs are
+    // ordinary .xlsx workbooks - the one case where the name deliberately does
+    // not follow the source.
+    const { outputs } = await splitWorkbookBytes({
+      input: { name: "clients.xlsm", bytes: await macroWorkbookBytes() },
+      column: "Region",
+      preserveWorkbook: false,
+    });
+
+    expect(outputs.map((output) => output.name)).toEqual([
+      "clients-North.xlsx",
+      "clients-South.xlsx",
+    ]);
+    expect(
+      outputs.every(
+        (output) =>
+          output.mediaType ===
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ),
+    ).toBe(true);
+    const first = await JSZip.loadAsync(outputs[0]!.bytes);
+    expect(first.file("xl/vbaProject.bin")).toBeNull();
   });
 
   it("keeps a macro workbook macro-enabled", async () => {

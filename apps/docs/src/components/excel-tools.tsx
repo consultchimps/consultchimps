@@ -34,6 +34,7 @@ import {
   useOperationRun,
   type UploadedFile,
 } from "@/components/tool-kit";
+import { WORKBOOK_FILES } from "@/lib/accepted-files";
 import type {
   WorkbookSplitOptions,
   WorksheetColumns,
@@ -47,19 +48,8 @@ import { ArrowDown, ArrowUp, FileText, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 
-const WORKBOOK_MEDIA_TYPE =
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-const WORKBOOK_ACCEPT = `${WORKBOOK_MEDIA_TYPE},.xlsx`;
 /** The dropdown entry that hands column naming back to the text field. */
 const MANUAL_COLUMN = "\u0000manual";
-
-function isWorkbookFile(file: File): boolean {
-  return file.type === WORKBOOK_MEDIA_TYPE || /\.xlsx$/iu.test(file.name);
-}
-
-function withoutWorkbookExtension(name: string): string {
-  return name.replace(/\.xlsx$/iu, "");
-}
 
 /**
  * The route of another online tool, taken from the registry so a cross-link
@@ -441,7 +431,7 @@ export function ExcelSplitTool() {
 
   const detectedColumns = detected?.columns ?? [];
   const showManualField = isManualColumn || detectedColumns.length === 0;
-  const archiveName = `${(prefix.trim() || (input ? withoutWorkbookExtension(input.name) : "workbook")).replace(/[<>:"/\\|?*]+/gu, "-")}-split.zip`;
+  const archiveName = `${(prefix.trim() || (input ? WORKBOOK_FILES.stripExtension(input.name) : "workbook")).replace(/[<>:"/\\|?*]+/gu, "-")}-split.zip`;
 
   return (
     <ToolShell
@@ -457,13 +447,13 @@ export function ExcelSplitTool() {
         </h2>
         <div className="mt-4">
           <FilePicker
-            accept={WORKBOOK_ACCEPT}
-            description="Drag an .xlsx workbook here, or pick one with the button below. Only the first workbook is used."
+            accept={WORKBOOK_FILES.accept}
+            description={`Drag ${WORKBOOK_FILES.description} here, or pick one with the button below. Only the first workbook is used.`}
             disabled={isRunning}
             label="Source workbook"
             multiple={false}
             onFiles={(files) => {
-              void readUploads(files, isWorkbookFile).then((read) => {
+              void readUploads(files, WORKBOOK_FILES.accepts).then((read) => {
                 const [first] = read;
                 if (first) {
                   setInput(first);
@@ -556,7 +546,7 @@ export function ExcelSplitTool() {
           <div className="mt-5 flex flex-col gap-5">
             <TextField
               disabled={isRunning}
-              hint="Optional. Defaults to the source filename, so `clients.xlsx` produces `clients-North.xlsx`."
+              hint="Optional. Defaults to the source filename. A split that keeps the whole workbook keeps the source extension with it, so `clients.xlsm` produces `clients-North.xlsm` with its macros; the small, plain workbooks are always `.xlsx` and carry no macros."
               label="Filename prefix"
               onChange={setPrefix}
               placeholder="clients"
@@ -780,7 +770,7 @@ export function ExcelSplitTool() {
 
       <ResultsPanel
         archiveName={archiveName}
-        fallbackMediaType={WORKBOOK_MEDIA_TYPE}
+        fallbackMediaType={WORKBOOK_FILES.fallbackMediaType}
         state={runState}
       />
     </ToolShell>
@@ -837,13 +827,13 @@ export function ExcelMergeTool() {
         </h2>
         <div className="mt-4">
           <FilePicker
-            accept={WORKBOOK_ACCEPT}
-            description="Drag one or more .xlsx workbooks here, or pick them with the button below. Added files keep the order shown."
+            accept={WORKBOOK_FILES.accept}
+            description={`Drag one or more ${WORKBOOK_FILES.pluralDescription} here, or pick them with the button below. Added files keep the order shown.`}
             disabled={isRunning}
             label="Source workbooks"
             multiple
             onFiles={(chosen) => {
-              void readUploads(chosen, isWorkbookFile).then((read) => {
+              void readUploads(chosen, WORKBOOK_FILES.accepts).then((read) => {
                 if (read.length > 0) {
                   add(read);
                   runState.reset();
@@ -858,7 +848,7 @@ export function ExcelMergeTool() {
         <div className="mt-6 flex flex-col gap-5">
           <TextField
             disabled={isRunning}
-            hint="Optional. Defaults to `merged.xlsx`. The `.xlsx` extension is added for you."
+            hint="Optional. Defaults to `merged.xlsx`. The `.xlsx` extension is added for you; end the name in `.xlsm` instead to ask for a macro-enabled workbook, which keeps the macro project when the first workbook in the list is the only one that has one."
             label="Output filename"
             onChange={setOutputName}
             placeholder="all-sheets"
@@ -896,7 +886,10 @@ export function ExcelMergeTool() {
         />
       </section>
 
-      <ResultsPanel fallbackMediaType={WORKBOOK_MEDIA_TYPE} state={runState} />
+      <ResultsPanel
+        fallbackMediaType={WORKBOOK_FILES.fallbackMediaType}
+        state={runState}
+      />
     </ToolShell>
   );
 }
@@ -964,13 +957,13 @@ export function ExcelConsolidateTool() {
         </h2>
         <div className="mt-4">
           <FilePicker
-            accept={WORKBOOK_ACCEPT}
-            description="Drag one or more .xlsx workbooks here, or pick them with the button below. Rows are stacked in the order shown."
+            accept={WORKBOOK_FILES.accept}
+            description={`Drag one or more ${WORKBOOK_FILES.pluralDescription} here, or pick them with the button below. Rows are stacked in the order shown.`}
             disabled={isRunning}
             label="Source workbooks"
             multiple
             onFiles={(chosen) => {
-              void readUploads(chosen, isWorkbookFile).then((read) => {
+              void readUploads(chosen, WORKBOOK_FILES.accepts).then((read) => {
                 if (read.length > 0) {
                   add(read);
                   runState.reset();
@@ -1041,7 +1034,10 @@ export function ExcelConsolidateTool() {
         />
       </section>
 
-      <ResultsPanel fallbackMediaType={WORKBOOK_MEDIA_TYPE} state={runState} />
+      <ResultsPanel
+        fallbackMediaType={WORKBOOK_FILES.fallbackMediaType}
+        state={runState}
+      />
     </ToolShell>
   );
 }

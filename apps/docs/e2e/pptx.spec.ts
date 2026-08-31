@@ -198,6 +198,34 @@ test.describe("/tools/pptx-populate", () => {
     });
   }
 
+  test("reads records from a macro-enabled workbook", async ({ page }) => {
+    await page.goto("/tools/pptx-populate");
+
+    // The records workbook is only read, never rewritten, and the reader is
+    // format-neutral - so the picker takes an .xlsm here too.
+    const [template, records] = await Promise.all([
+      createPresentationUpload("review-template.pptx", REVIEW_TEMPLATE),
+      createWorkbookUpload("records.xlsm", RECORDS, { macroEnabled: true }),
+    ]);
+    await templateInput(page).setInputFiles(template);
+    await recordsInput(page).setInputFiles(records);
+
+    await expect(page.getByTestId("records-summary")).toContainText(
+      "records.xlsm",
+    );
+    await expect(
+      previewPanel(page).getByTestId("planned-outputs"),
+    ).toBeVisible();
+
+    await page.getByTestId("run-button").click();
+    const outputs = resultArtifacts(page);
+    await expect(outputs).toHaveCount(1);
+    // The output is the presentation; the workbook only supplied the records.
+    await expect(outputs.first()).toContainText(
+      "review-template-populated.pptx",
+    );
+  });
+
   test("refuses a template that is not a presentation instead of failing", async ({
     page,
   }) => {

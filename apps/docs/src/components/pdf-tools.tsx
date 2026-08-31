@@ -25,19 +25,13 @@ import {
   PREVIEW_DEBOUNCE_MS,
   compactButtonClass,
 } from "@/components/tool-kit";
+import { PDF_FILES } from "@/lib/accepted-files";
 import { runOperation } from "@/lib/operation-worker";
 import type { OperationPlan } from "@consultchimps/core";
 // Type-only: the runtime module is loaded inside the worker.
 import type { SplitPdfMetric } from "@consultchimps/pdf/bytes";
 import { ArrowDown, ArrowUp, FileText, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useId, useState } from "react";
-
-const PDF_MEDIA_TYPE = "application/pdf";
-const PDF_ACCEPT = "application/pdf,.pdf";
-
-function isPdfFile(file: File): boolean {
-  return file.type === PDF_MEDIA_TYPE || /\.pdf$/iu.test(file.name);
-}
 
 export function PdfSplitTool() {
   const prefixId = useId();
@@ -95,7 +89,7 @@ export function PdfSplitTool() {
     });
   }, [input, prefix, runState]);
 
-  const archiveName = `${(prefix.trim() || input?.name.replace(/\.pdf$/iu, "") || "document").replace(/[<>:"/\\|?*]+/gu, "-")}-pages.zip`;
+  const archiveName = `${(prefix.trim() || PDF_FILES.stripExtension(input?.name ?? "") || "document").replace(/[<>:"/\\|?*]+/gu, "-")}-pages.zip`;
 
   return (
     <ToolShell
@@ -111,13 +105,13 @@ export function PdfSplitTool() {
         </h2>
         <div className="mt-4">
           <FilePicker
-            accept={PDF_ACCEPT}
-            description="Drag a PDF here, or pick one with the button below. Only the first PDF is used."
+            accept={PDF_FILES.accept}
+            description={`Drag ${PDF_FILES.description} here, or pick one with the button below. Only the first PDF is used.`}
             disabled={isRunning}
             label="Source PDF"
             multiple={false}
             onFiles={(files) => {
-              void readUploads(files, isPdfFile).then((read) => {
+              void readUploads(files, PDF_FILES.accepts).then((read) => {
                 const [first] = read;
                 if (first) {
                   setInput(first);
@@ -241,7 +235,7 @@ export function PdfSplitTool() {
 
       <ResultsPanel
         archiveName={archiveName}
-        fallbackMediaType={PDF_MEDIA_TYPE}
+        fallbackMediaType={PDF_FILES.fallbackMediaType}
         state={runState}
       />
     </ToolShell>
@@ -296,13 +290,13 @@ export function PdfMergeTool() {
         <h2 className="text-xl font-bold tracking-[-0.03em]">1. Add PDFs</h2>
         <div className="mt-4">
           <FilePicker
-            accept={PDF_ACCEPT}
-            description="Drag one or more PDFs here, or pick them with the button below. Added files keep the order shown."
+            accept={PDF_FILES.accept}
+            description={`Drag one or more ${PDF_FILES.pluralDescription} here, or pick them with the button below. Added files keep the order shown.`}
             disabled={isRunning}
             label="Source PDFs"
             multiple
             onFiles={(files) => {
-              void readUploads(files, isPdfFile).then((read) => {
+              void readUploads(files, PDF_FILES.accepts).then((read) => {
                 if (read.length > 0) {
                   setInputs((previous) => [...previous, ...read]);
                   runState.reset();
@@ -414,7 +408,10 @@ export function PdfMergeTool() {
         />
       </section>
 
-      <ResultsPanel fallbackMediaType={PDF_MEDIA_TYPE} state={runState} />
+      <ResultsPanel
+        fallbackMediaType={PDF_FILES.fallbackMediaType}
+        state={runState}
+      />
     </ToolShell>
   );
 }

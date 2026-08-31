@@ -38,6 +38,43 @@ function driftedReviewLogs(): Promise<UploadFile[]> {
 }
 
 test.describe("/tools/excel-consolidate", () => {
+  test("takes a macro-enabled workbook and still writes an .xlsx", async ({
+    page,
+  }) => {
+    await page.goto("/tools/excel-consolidate");
+
+    await fileInput(page).setInputFiles(
+      await createWorkbookUpload(
+        "north.xlsm",
+        [
+          {
+            name: "Review Log",
+            rows: [
+              ["Case_ID", "Failed Checks"],
+              ["R-1", 5],
+            ],
+          },
+        ],
+        { macroEnabled: true },
+      ),
+    );
+    await expect(page.getByTestId("source-item")).toContainText("north.xlsm");
+
+    await page.getByTestId("run-button").click();
+
+    // Consolidation writes a fresh table workbook rather than preserving a
+    // source package, so there is nothing macro-enabled to carry: the output
+    // is an .xlsx whatever the inputs were named.
+    const outputs = resultArtifacts(page);
+    await expect(outputs).toHaveCount(1);
+    await expect(outputs.first()).toContainText("consolidated.xlsx");
+    await expectWorkbookDownload(
+      page,
+      () => outputs.first().getByTestId("artifact-download").click(),
+      "consolidated.xlsx",
+    );
+  });
+
   test("stacks rows from both workbooks into one table", async ({ page }) => {
     await page.goto("/tools/excel-consolidate");
     await expect(

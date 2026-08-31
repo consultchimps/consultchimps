@@ -923,6 +923,126 @@ describe("corpus: byte surface", () => {
     },
   );
 
+  it("invariant: a preserved table split round-trips a macro workbook as .xlsm", async () => {
+    // Naming a table keeps the whole workbook by default, so this mode copies
+    // the source package exactly as the all-worksheet split does - and must
+    // therefore name and type its outputs the same way. It used to hand back
+    // .xlsx-named files carrying the macro project, which is the contradiction
+    // the mismatch refusal exists to prevent.
+    const directory = await createCorpusDirectory();
+    // The preserved mode refuses an A1 formula whose row would move, so this
+    // fixture uses the structured references the mode is built for.
+    const input = await writeCorpusWorkbook(directory, "corpus.xlsm", {
+      shape: "table",
+      formulas: "structured",
+      macro: true,
+    });
+    const result = await splitWorkbookByColumn({
+      column: CORPUS_SPLIT_COLUMN,
+      input,
+      outputDirectory: path.join(directory, "out"),
+      table: CORPUS_TABLE_NAME,
+    });
+
+    expect(
+      result.artifacts.every((artifact) => artifact.path.endsWith(".xlsm")),
+    ).toBe(true);
+    expect(
+      result.artifacts.every(
+        (artifact) => artifact.mediaType === MACRO_MEDIA_TYPE,
+      ),
+    ).toBe(true);
+    const alpha = await readWorkbookBytes(result.artifacts[0]!.path);
+    expect(await hasPackagePart(alpha, CORPUS_PARTS.vbaProject)).toBe(true);
+
+    // The byte surface answers identically.
+    const outcome = await splitWorkbookBytes({
+      column: CORPUS_SPLIT_COLUMN,
+      input: {
+        bytes: await buildCorpusWorkbook({
+          shape: "table",
+          formulas: "structured",
+          macro: true,
+        }),
+        name: "corpus.xlsm",
+      },
+      table: CORPUS_TABLE_NAME,
+    });
+    expect(outcome.outputs.map((output) => output.name)).toEqual([
+      "corpus-Alpha.xlsm",
+      "corpus-Beta.xlsm",
+      "corpus-Gamma.xlsm",
+    ]);
+    expect(
+      outcome.outputs.every((output) => output.mediaType === MACRO_MEDIA_TYPE),
+    ).toBe(true);
+    expect(
+      await hasPackagePart(outcome.outputs[0]!.bytes, CORPUS_PARTS.vbaProject),
+    ).toBe(true);
+  });
+
+  it("pins: a compact split of a macro workbook writes ordinary .xlsx workbooks", async () => {
+    // Without workbook preservation the split writes a fresh single-worksheet
+    // package from the rows it kept. There is no macro project in it, so an
+    // .xlsm name would be the same contradiction in the other direction.
+    const outcome = await splitWorkbookBytes({
+      column: CORPUS_SPLIT_COLUMN,
+      input: {
+        bytes: await buildCorpusWorkbook({
+          shape: "table",
+          formulas: "structured",
+          macro: true,
+        }),
+        name: "corpus.xlsm",
+      },
+      preserveWorkbook: false,
+      table: CORPUS_TABLE_NAME,
+    });
+
+    expect(outcome.outputs.map((output) => output.name)).toEqual([
+      "corpus-Alpha.xlsx",
+      "corpus-Beta.xlsx",
+      "corpus-Gamma.xlsx",
+    ]);
+    expect(
+      outcome.outputs.every(
+        (output) =>
+          output.mediaType ===
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ),
+    ).toBe(true);
+    expect(
+      await hasPackagePart(outcome.outputs[0]!.bytes, CORPUS_PARTS.vbaProject),
+    ).toBe(false);
+  });
+
+  it("invariant: a narrowed split refuses a package that contradicts its name", async () => {
+    const macro = await buildCorpusWorkbook({ shape: "table", macro: true });
+    const plain = await buildCorpusWorkbook({ shape: "table" });
+
+    for (const [name, bytes] of [
+      ["corpus.xlsx", macro],
+      ["corpus.xlsm", plain],
+    ] as const) {
+      await expect(
+        splitWorkbookBytes({
+          column: CORPUS_SPLIT_COLUMN,
+          input: { bytes, name },
+          table: CORPUS_TABLE_NAME,
+        }),
+      ).rejects.toMatchObject({ code: "XLSX_SPLIT_PACKAGE_TYPE_MISMATCH" });
+      // The preview refuses for the same reason, so it can never promise a
+      // split the run would then refuse.
+      await expect(
+        planSplitWorkbookBytes({
+          column: CORPUS_SPLIT_COLUMN,
+          input: { bytes, name },
+          table: CORPUS_TABLE_NAME,
+        }),
+      ).rejects.toMatchObject({ code: "XLSX_SPLIT_PACKAGE_TYPE_MISMATCH" });
+    }
+  });
+
   it.each([
     {
       code: "XLSX_SPLIT_UNSUPPORTED_FILE",

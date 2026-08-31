@@ -142,7 +142,14 @@ data-only.
   the folder you choose and names each file after the value alone, such as
   `North.xlsx`, while the browser hands you downloads and keeps the source name
   in front, such as `clients-North.xlsx`. You can change that prefix in the
-  tool.
+  tool. The browser accepts `.xlsm` workbooks as well, and both surfaces follow
+  one rule: a split that preserves the workbook — the default, and a named Excel
+  Table — copies the source package, so `clients.xlsm` gives you
+  `clients-North.xlsm` with the macro project carried into each one, and a
+  package whose declared type contradicts its name is refused before any file is
+  written. A split that rebuilds instead — a named worksheet, a named range, or
+  preservation turned off — writes fresh workbooks from the rows it kept, which
+  are always `.xlsx` and carry no macro project.
 </Callout>
 
 ## Preservation and known limitations
