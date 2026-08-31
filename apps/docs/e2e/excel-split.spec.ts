@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
   createTextUpload,
   createWorkbookUpload,
@@ -44,6 +44,19 @@ const COLUMN_OPTIONS = [
   "Amount",
   "Other (type a name)…",
 ];
+
+/**
+ * The worksheet, table, and range fields sit behind a disclosure, and a closed
+ * `<details>` hides them from Playwright. Opening it directly keeps the test
+ * about the tool rather than about the disclosure widget.
+ */
+async function openAdvancedOptions(page: Page): Promise<void> {
+  for (const details of await page.locator("details").all()) {
+    await details.evaluate((element: HTMLDetailsElement) => {
+      element.open = true;
+    });
+  }
+}
 
 test.describe("/tools/excel-split", () => {
   test("writes one workbook per distinct column value", async ({ page }) => {
@@ -212,6 +225,31 @@ test.describe("/tools/excel-split", () => {
     expect(north.parts).toContain(VBA_PROJECT_PART);
     expect(north.sheetNames).toEqual(["Clients", "Reference"]);
     expect(north.sheet("Clients").numbers).toEqual([10, 30]);
+  });
+
+  test("rebuilds .xlsx files when a macro workbook is narrowed to one sheet", async ({
+    page,
+  }) => {
+    await page.goto("/tools/excel-split");
+    await fileInput(page).setInputFiles(
+      await createWorkbookUpload("clients.xlsm", CLIENTS, {
+        macroEnabled: true,
+      }),
+    );
+
+    const columns = page.getByTestId("column-select");
+    await expect(columns.getByRole("option")).toContainText(COLUMN_OPTIONS);
+    await columns.selectOption("Region");
+    await expect(previewPanel(page)).toContainText("clients-North.xlsm");
+
+    // Naming a worksheet asks for the compact single-source rebuild, which
+    // writes a new workbook rather than preserving the package. There is no
+    // macro project in the result, so the outputs are .xlsx - which is what the
+    // page's filename hint and the guide say.
+    await openAdvancedOptions(page);
+    await page.getByTestId("sheet-input").fill("Clients");
+    await expect(previewPanel(page)).toContainText("clients-North.xlsx");
+    await expect(previewPanel(page)).not.toContainText("clients-North.xlsm");
   });
 
   test("refuses a package whose type contradicts its name", async ({

@@ -546,7 +546,7 @@ export function ExcelSplitTool() {
           <div className="mt-5 flex flex-col gap-5">
             <TextField
               disabled={isRunning}
-              hint="Optional. Defaults to the source filename, and the source extension is kept, so `clients.xlsx` produces `clients-North.xlsx` and `clients.xlsm` produces `clients-North.xlsm`."
+              hint="Optional. Defaults to the source filename. A whole-workbook split keeps the source extension, so `clients.xlsx` produces `clients-North.xlsx` and `clients.xlsm` produces `clients-North.xlsm`; naming a worksheet, table, or range — or turning off keeping the whole workbook — rebuilds plain `.xlsx` files instead."
               label="Filename prefix"
               onChange={setPrefix}
               placeholder="clients"
