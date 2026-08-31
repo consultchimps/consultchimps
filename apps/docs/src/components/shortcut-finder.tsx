@@ -44,7 +44,6 @@ import {
   isMatchedKeyToken,
   keyTokenFromPress,
   nextKeyOptions,
-  removeKeyTokens,
   removeLastKeyEntry,
   type KeyQuery,
 } from "@/lib/shortcut-search";
@@ -107,9 +106,12 @@ export function ShortcutFinder() {
   const [stepClosed, setStepClosed] = useState(false);
   const [isListening, setIsListening] = useState(false);
   // The keys physically down right now, by physical key so a release can be
-  // matched to its press, and carrying the token each one contributed so a
-  // navigation gesture can take its keys back out of the query.
-  const heldKeys = useRef<Map<string, KeyToken>>(new Map());
+  // matched to its press.
+  const heldCodes = useRef<Set<string>>(new Set());
+  // The query as it stood when the current hold began. Tab restores it, which
+  // undoes the hold whatever it did: added a key, opened a step to hold one,
+  // or nothing at all because the step already carried it.
+  const queryBeforeHold = useRef<KeyQuery | null>(null);
   const wordsId = useId();
   const hintId = useId();
 
@@ -153,13 +155,15 @@ export function ShortcutFinder() {
   );
 
   const clearSequence = useCallback(() => {
-    heldKeys.current.clear();
+    heldCodes.current.clear();
+    queryBeforeHold.current = null;
     setQuery(EMPTY_KEY_QUERY);
     setStepClosed(false);
   }, []);
 
   const removeLast = useCallback(() => {
-    heldKeys.current.clear();
+    heldCodes.current.clear();
+    queryBeforeHold.current = null;
     setQuery((previous) => removeLastKeyEntry(previous));
     setStepClosed(false);
   }, []);
@@ -169,15 +173,18 @@ export function ShortcutFinder() {
       // Tab is the one key that keeps its default. Capturing it would leave a
       // visitor who reached this area by keyboard with no way out of it, which
       // is a worse failure than not being able to press Excel's Tab shortcuts
-      // here: those are on the buttons below, as the hint says. Whatever is
-      // still held belongs to the navigation gesture rather than to the
-      // search, so a Shift+Tab out of here does not leave Shift filtering the
-      // list behind it.
+      // here: those are on the buttons below, as the hint says. A hold that
+      // ends in Tab was navigation rather than searching, so the query goes
+      // back to what it was before the hold: a Shift+Tab out of here leaves
+      // neither a stray Shift filtering the list nor the step that was opened
+      // to hold it, and a Shift the step already carried stays put.
       if (event.key === "Tab") {
-        const navigationKeys = [...heldKeys.current.values()];
-        heldKeys.current.clear();
-        if (navigationKeys.length > 0) {
-          setQuery((previous) => removeKeyTokens(previous, navigationKeys));
+        const interrupted = queryBeforeHold.current;
+        heldCodes.current.clear();
+        queryBeforeHold.current = null;
+        if (interrupted !== null) {
+          setQuery(interrupted);
+          setStepClosed(true);
         }
         return;
       }
@@ -200,10 +207,13 @@ export function ShortcutFinder() {
       if (token === null) {
         return;
       }
-      heldKeys.current.set(event.code, token);
+      if (heldCodes.current.size === 0) {
+        queryBeforeHold.current = query;
+      }
+      heldCodes.current.add(event.code);
       addToken(token);
     },
-    [addToken, clearSequence, removeLast],
+    [addToken, clearSequence, query, removeLast],
   );
 
   const handleKeyUp = useCallback(
@@ -221,10 +231,11 @@ export function ShortcutFinder() {
       // Backspace, O has to end as the chord Ctrl+Shift+O rather than as two
       // steps. The same guard covers a key pressed before the area had focus,
       // whose release arrives here on its own.
-      if (!heldKeys.current.delete(event.code)) {
+      if (!heldCodes.current.delete(event.code)) {
         return;
       }
-      if (heldKeys.current.size === 0) {
+      if (heldCodes.current.size === 0) {
+        queryBeforeHold.current = null;
         setStepClosed(true);
       }
     },
@@ -235,7 +246,8 @@ export function ShortcutFinder() {
     // A key released while the focus was elsewhere never reaches the handler,
     // so leaving the area drops whatever it thought was held and treats the
     // step as finished. On an empty query that closing is a no-op.
-    heldKeys.current.clear();
+    heldCodes.current.clear();
+    queryBeforeHold.current = null;
     setIsListening(false);
     setStepClosed(true);
   }, []);

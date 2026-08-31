@@ -249,6 +249,30 @@ test.describe("/shortcuts", () => {
     await expect(page.getByText("Add or remove the filter row")).toBeVisible();
   });
 
+  test("keeps a key the step already held when Shift+Tab moves focus away", async ({
+    page,
+  }) => {
+    await page.goto("/shortcuts");
+
+    // Ctrl and Shift entered with the buttons, so the step is open and
+    // already carries the Shift that the navigation gesture also presses.
+    await palette(page)
+      .getByRole("button", { name: "Ctrl", exact: true })
+      .click();
+    await palette(page)
+      .getByRole("button", { name: "Shift", exact: true })
+      .click();
+    const chosen = await resultCount(page);
+
+    const capture = page.getByTestId("key-capture");
+    await capture.click();
+    await page.keyboard.press("Shift+Tab");
+    await expect(capture).not.toBeFocused();
+
+    await expect(page.getByTestId("entered-sequence")).toContainText("Shift");
+    expect(await resultCount(page)).toBe(chosen);
+  });
+
   test("clears the sequence from the button, and combines both filters", async ({
     page,
   }) => {
