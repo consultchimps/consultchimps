@@ -34,7 +34,9 @@ import {
 import {
   analyzeAllWorksheetSplit,
   plannedAllWorksheetSplitMetrics,
+  preservedSplitExtension,
   runAllWorksheetSplit,
+  splitMediaType,
   workbookExtensionOf,
   type AllWorksheetSplitAnalysis,
   type AllWorksheetSplitSelection,
@@ -152,6 +154,8 @@ export interface ReadWorksheetRecordsBytesOptions {
 }
 
 interface ResolvedSplitBytes extends ResolvedSplitSource {
+  /** The media type every output of this split carries. */
+  mediaType: string;
   outputNames: string[];
 }
 
@@ -233,21 +237,36 @@ async function resolveAllWorksheetSplitBytes(
 async function resolveSplitWorkbookBytes(
   options: SplitWorkbookBytesOptions,
 ): Promise<ResolvedSplitBytes> {
+  const identity = {
+    details: { source: options.input.name },
+    file: options.input.name,
+    label: options.input.name,
+  };
   const resolved = await resolveSplitSource(
     options.input.bytes,
-    {
-      details: { source: options.input.name },
-      file: options.input.name,
-      label: options.input.name,
-    },
+    identity,
     options,
   );
+  // A preserved split hands back the source package, so its outputs have to be
+  // named and typed after that package; a rebuilding split writes a fresh
+  // ordinary workbook and stays .xlsx.
+  const extension = resolved.preserveWorkbook
+    ? await preservedSplitExtension(
+        options.input.bytes,
+        options.input.name,
+        identity,
+      )
+    : WORKBOOK_EXTENSION;
 
   return {
     ...resolved,
+    mediaType: resolved.preserveWorkbook
+      ? splitMediaType(extension)
+      : WORKBOOK_MEDIA_TYPE,
     outputNames: splitOutputFileNames(
       splitFilenamePrefix(options),
       resolved.grouped.groups.map((group) => group.value),
+      extension,
     ),
   };
 }
@@ -295,7 +314,7 @@ export async function planSplitWorkbookBytes(
     inputs: [options.input.name],
     outputs: resolved.outputNames.map((name) => ({
       kind: "file",
-      mediaType: WORKBOOK_MEDIA_TYPE,
+      mediaType: resolved.mediaType,
       path: name,
       exists: false,
     })),
@@ -341,6 +360,7 @@ export async function splitWorkbookBytes(
   }
   const {
     grouped,
+    mediaType,
     outputNames,
     preservedTableDefinition,
     preserveWorkbook,
@@ -365,7 +385,7 @@ export async function splitWorkbookBytes(
         sheetName: table.source?.sheet ?? "Split",
         templateBytes,
       }),
-      mediaType: WORKBOOK_MEDIA_TYPE,
+      mediaType,
     });
     options.onProgress?.({
       operation: SPLIT_OPERATION,
@@ -385,7 +405,7 @@ export async function splitWorkbookBytes(
       operation: SPLIT_OPERATION,
       artifacts: outputs.map((output) => ({
         kind: "file",
-        mediaType: WORKBOOK_MEDIA_TYPE,
+        mediaType,
         path: output.name,
       })),
       warnings: [

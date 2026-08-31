@@ -26,6 +26,11 @@ import {
 
 import { XLSX_ERRORS } from "../errors.js";
 import { WorkbookModel } from "../model/index.js";
+import {
+  MACRO_WORKBOOK_MAIN_CONTENT_TYPE,
+  WORKBOOK_MAIN_PART,
+  WorkbookPackage,
+} from "../package/index.js";
 import type { RowNumber } from "../model/types.js";
 import { isTableEditReport } from "../region/table-binding.js";
 import type { DataRegion } from "../region/types.js";
@@ -286,26 +291,79 @@ function refuseMislabelledPackage(
   extension: WorkbookExtension,
   identity: SplitSourceIdentity,
 ): void {
-  const declaredExtension: WorkbookExtension = workbook.macroEnabled
-    ? ".xlsm"
-    : ".xlsx";
+  refuseMislabelledWorkbookType(workbook.macroEnabled, extension, identity);
+}
+
+/**
+ * The refusal itself, over the one fact it needs.
+ *
+ * Taking `macroEnabled` rather than a whole model is what lets the preserved
+ * Excel Table split reuse it: that mode preserves the source package too, but
+ * it never loads the workbook model, so asking the package alone is both
+ * cheaper and enough.
+ */
+export function refuseMislabelledWorkbookType(
+  macroEnabled: boolean,
+  extension: WorkbookExtension,
+  identity: SplitSourceIdentity,
+): void {
+  const declaredExtension: WorkbookExtension = macroEnabled ? ".xlsm" : ".xlsx";
   if (declaredExtension === extension) {
     return;
   }
   throw new ConsultChimpsError(
     XLSX_ERRORS.XLSX_SPLIT_PACKAGE_TYPE_MISMATCH,
-    workbook.macroEnabled
+    macroEnabled
       ? `The workbook "${identity.label}" is a macro-enabled workbook but is named "${extension}". Rename it with an .xlsm extension, or save it as an ordinary .xlsx workbook in Excel, and run the split again. Splitting it as it is would produce files whose contents and names disagree.`
       : `The workbook "${identity.label}" is named "${extension}" but is an ordinary Excel workbook with no macro project. Rename it with an .xlsx extension, or save it as a macro-enabled workbook in Excel, and run the split again. Splitting it as it is would produce files whose contents and names disagree.`,
     {
       details: {
         declaredExtension,
-        macroEnabled: workbook.macroEnabled,
+        macroEnabled,
         nameExtension: extension,
         ...identity.details,
       },
     },
   );
+}
+
+/**
+ * The extension and media type a split that preserves the source package must
+ * name its outputs with.
+ *
+ * A preserved split copies the source package into every output, so each one
+ * inherits whatever that package declares while taking its name from the
+ * source's name. That is the all-worksheet split's situation exactly, and it
+ * gets the same answer and the same refusal: a macro-enabled package handed
+ * back under an `.xlsx` name, or an ordinary one under `.xlsm`, is a file whose
+ * contents and name disagree, which Excel opens with a corruption warning.
+ *
+ * A split that rebuilds instead writes a fresh ordinary package and is always
+ * `.xlsx`, so this is asked only when the workbook is preserved.
+ */
+export async function preservedSplitExtension(
+  workbookBytes: Uint8Array,
+  name: string,
+  identity: SplitSourceIdentity,
+): Promise<WorkbookExtension> {
+  const extension = workbookExtensionOf(name, identity);
+  let workbookPackage: WorkbookPackage;
+  try {
+    workbookPackage = await WorkbookPackage.load(workbookBytes);
+  } catch (error) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_READ_FAILED,
+      `Could not inspect workbook structure: ${identity.label}. The file may be corrupted, encrypted, or contain invalid workbook XML.`,
+      { cause: error, details: { ...identity.details } },
+    );
+  }
+  refuseMislabelledWorkbookType(
+    workbookPackage.contentTypeOverride(WORKBOOK_MAIN_PART)?.trim() ===
+      MACRO_WORKBOOK_MAIN_CONTENT_TYPE,
+    extension,
+    identity,
+  );
+  return extension;
 }
 
 /**

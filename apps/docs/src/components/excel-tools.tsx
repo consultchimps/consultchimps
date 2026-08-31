@@ -546,7 +546,7 @@ export function ExcelSplitTool() {
           <div className="mt-5 flex flex-col gap-5">
             <TextField
               disabled={isRunning}
-              hint="Optional. Defaults to the source filename. A whole-workbook split keeps the source extension, so `clients.xlsx` produces `clients-North.xlsx` and `clients.xlsm` produces `clients-North.xlsm`; naming a worksheet, table, or range — or turning off keeping the whole workbook — rebuilds plain `.xlsx` files instead."
+              hint="Optional. Defaults to the source filename. A split that keeps the whole workbook keeps the source extension with it, so `clients.xlsm` produces `clients-North.xlsm` with its macros; the small, plain workbooks are always `.xlsx` and carry no macros."
               label="Filename prefix"
               onChange={setPrefix}
               placeholder="clients"
@@ -848,7 +848,7 @@ export function ExcelMergeTool() {
         <div className="mt-6 flex flex-col gap-5">
           <TextField
             disabled={isRunning}
-            hint="Optional. Defaults to `merged.xlsx`. The `.xlsx` extension is added for you; end the name in `.xlsm` instead to ask for a macro-enabled workbook, which keeps the macro project when exactly one source carries one."
+            hint="Optional. Defaults to `merged.xlsx`. The `.xlsx` extension is added for you; end the name in `.xlsm` instead to ask for a macro-enabled workbook, which keeps the macro project when the first workbook in the list is the only one that has one."
             label="Output filename"
             onChange={setOutputName}
             placeholder="all-sheets"

@@ -43,6 +43,10 @@ import {
   type WorksheetVisibility,
 } from "./operations/describe.js";
 import {
+  preservedSplitExtension,
+  splitMediaType,
+} from "./split/all-worksheet.js";
+import {
   type FullWorkbookSplitMetric,
   type FullWorkbookSplitSummary,
   type SplitOutputDetail,
@@ -69,6 +73,7 @@ import {
   skippedRowsWarning,
   splitOutputFileNames,
   SPLIT_OPERATION,
+  WORKBOOK_EXTENSION,
   WORKBOOK_MEDIA_TYPE,
   workbookExcelTables,
   workbookNamedRanges,
@@ -555,6 +560,8 @@ interface ResolvedSplit extends ResolvedSplitSource {
   absoluteInput: string;
   absoluteOutputDirectory: string;
   existingOutputs: Set<string>;
+  /** The media type every output of this split carries. */
+  mediaType: string;
   outputPaths: string[];
   workbookBytes: Buffer;
 }
@@ -586,6 +593,16 @@ async function resolveSplitWorkbookByColumn(
     options,
   );
 
+  // A preserved split hands back the source package, so its outputs have to be
+  // named and typed after that package; a rebuilding split writes a fresh
+  // ordinary workbook and stays .xlsx.
+  const extension = resolved.preserveWorkbook
+    ? await preservedSplitExtension(workbookBytes, absoluteInput, {
+        details,
+        label: absoluteInput,
+      })
+    : WORKBOOK_EXTENSION;
+
   const absoluteOutputDirectory = path.resolve(options.outputDirectory);
   const filenamePrefix = safeNameFragment(
     options.filenamePrefix ?? path.parse(absoluteInput).name,
@@ -594,6 +611,7 @@ async function resolveSplitWorkbookByColumn(
   const outputPaths = splitOutputFileNames(
     filenamePrefix,
     resolved.grouped.groups.map((group) => group.value),
+    extension,
   ).map((filename) => path.join(absoluteOutputDirectory, filename));
 
   outputPaths.forEach((outputPath) =>
@@ -625,6 +643,9 @@ async function resolveSplitWorkbookByColumn(
     absoluteInput,
     absoluteOutputDirectory,
     existingOutputs,
+    mediaType: resolved.preserveWorkbook
+      ? splitMediaType(extension)
+      : WORKBOOK_MEDIA_TYPE,
     outputPaths,
     workbookBytes,
   };
@@ -644,7 +665,7 @@ export async function planSplitWorkbookByColumn(
   const resolved = await resolveSplitWorkbookByColumn(options);
   const outputs: PlannedOutput[] = resolved.outputPaths.map((outputPath) => ({
     kind: "file",
-    mediaType: WORKBOOK_MEDIA_TYPE,
+    mediaType: resolved.mediaType,
     path: outputPath,
     exists: resolved.existingOutputs.has(outputPath),
   }));
@@ -712,6 +733,7 @@ export async function splitWorkbookByColumn(
     absoluteOutputDirectory,
     existingOutputs,
     grouped,
+    mediaType,
     outputPaths,
     preservedTableDefinition,
     preserveWorkbook,
@@ -850,7 +872,7 @@ export async function splitWorkbookByColumn(
     operation: SPLIT_OPERATION,
     artifacts: outputPaths.map((output) => ({
       kind: "file",
-      mediaType: WORKBOOK_MEDIA_TYPE,
+      mediaType,
       path: output,
     })),
     warnings,
