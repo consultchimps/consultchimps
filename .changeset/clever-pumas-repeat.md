@@ -1,5 +1,6 @@
 ---
 "@consultchimps/xlsx": patch
+"consultchimps": patch
 ---
 
 Name a preserved split's outputs after the workbook they actually are. Splitting
@@ -16,3 +17,8 @@ A split that rebuilds instead of preserving (`preserveWorkbook: false`, a named
 worksheet, or a named range) is unchanged: it writes a fresh ordinary package
 from the rows it kept, carries no macro project, and is still `.xlsx` whatever
 the source was called.
+
+The CLI carries the same correction:
+`consultchimps sheets split <workbook.xlsm> --table <name>` now writes `.xlsm`
+files and reports them with the macro-enabled media type, and refuses a workbook
+whose package contradicts its name.

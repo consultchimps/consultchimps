@@ -1074,6 +1074,32 @@ describe("byte-level workbook splitting", () => {
     ).rejects.toMatchObject({ code: "XLSX_SPLIT_PACKAGE_TYPE_MISMATCH" });
   });
 
+  it("reports an unreadable content-type declaration as a workbook read failure", async () => {
+    // The declared workbook type is parsed on demand, so a package whose
+    // `[Content_Types].xml` cannot be parsed fails after the package loads. A
+    // caller must still see the operation's stable read failure rather than a
+    // raw XML parser error.
+    const archive = await JSZip.loadAsync(await structuredTableBytes());
+    archive.file(
+      "[Content_Types].xml",
+      '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE Types><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+    );
+    const bytes = await archive.generateAsync({
+      compression: "DEFLATE",
+      type: "uint8array",
+    });
+
+    const failure = splitWorkbookBytes({
+      input: { name: "clients.xlsx", bytes },
+      column: "Region",
+      table: "ClientData",
+    });
+    await expect(failure).rejects.toMatchObject({ code: "XLSX_READ_FAILED" });
+    await expect(
+      failure.catch((error: unknown) => isConsultChimpsError(error)),
+    ).resolves.toBe(true);
+  });
+
   it("rebuilds a compact split of a macro workbook as an ordinary workbook", async () => {
     // Without workbook preservation the split writes a fresh package from the
     // rows it kept, so there is no macro project to carry and the outputs are

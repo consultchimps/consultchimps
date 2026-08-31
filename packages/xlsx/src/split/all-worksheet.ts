@@ -347,9 +347,16 @@ export async function preservedSplitExtension(
   identity: SplitSourceIdentity,
 ): Promise<WorkbookExtension> {
   const extension = workbookExtensionOf(name, identity);
-  let workbookPackage: WorkbookPackage;
+  // The content-type lookup parses `[Content_Types].xml` on demand, so a
+  // malformed or DOCTYPE-bearing declaration fails here rather than in the
+  // load. Both belong inside the wrapper: a caller of this operation gets the
+  // package's stable read failure, never a raw parser error.
+  let declaresMacroWorkbook: boolean;
   try {
-    workbookPackage = await WorkbookPackage.load(workbookBytes);
+    const workbookPackage = await WorkbookPackage.load(workbookBytes);
+    declaresMacroWorkbook =
+      workbookPackage.contentTypeOverride(WORKBOOK_MAIN_PART)?.trim() ===
+      MACRO_WORKBOOK_MAIN_CONTENT_TYPE;
   } catch (error) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_READ_FAILED,
@@ -357,12 +364,7 @@ export async function preservedSplitExtension(
       { cause: error, details: { ...identity.details } },
     );
   }
-  refuseMislabelledWorkbookType(
-    workbookPackage.contentTypeOverride(WORKBOOK_MAIN_PART)?.trim() ===
-      MACRO_WORKBOOK_MAIN_CONTENT_TYPE,
-    extension,
-    identity,
-  );
+  refuseMislabelledWorkbookType(declaresMacroWorkbook, extension, identity);
   return extension;
 }
 
