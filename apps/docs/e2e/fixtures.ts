@@ -19,6 +19,26 @@ import { PDFDocument } from "pdf-lib";
 const WORKBOOK_MEDIA_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
+/**
+ * The media type a browser reports for a macro-enabled workbook. It is the
+ * registered spelling, mixed case and all; a browser lower-cases it before a
+ * page ever sees it, which is exactly what the pages' predicate has to cope
+ * with.
+ */
+const MACRO_WORKBOOK_MEDIA_TYPE =
+  "application/vnd.ms-excel.sheet.macroEnabled.12";
+
+/** Content type of the main workbook part in an ordinary `.xlsx` package. */
+const WORKBOOK_MAIN_CONTENT_TYPE =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml";
+
+/** Content type of the main workbook part in a macro-enabled `.xlsm` package. */
+const MACRO_WORKBOOK_MAIN_CONTENT_TYPE =
+  "application/vnd.ms-excel.sheet.macroEnabled.main+xml";
+
+/** The opaque VBA project part a macro-enabled workbook carries. */
+export const VBA_PROJECT_PART = "xl/vbaProject.bin";
+
 const PRESENTATION_MEDIA_TYPE =
   "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
@@ -95,17 +115,40 @@ function worksheetXml(rows: WorksheetFixture["rows"]): string {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${body}</sheetData></worksheet>`;
 }
 
+/** How a workbook fixture should differ from a plain `.xlsx` package. */
+export interface WorkbookUploadOptions {
+  /**
+   * Build a macro-enabled package: the main workbook part declares the
+   * macro-enabled content type and a stub `xl/vbaProject.bin` travels with it.
+   * The declared content type is the only thing the library reads to decide
+   * what a package is, which is what lets a test name a package wrongly on
+   * purpose.
+   */
+  readonly macroEnabled?: boolean;
+  /**
+   * Report this media type instead of the one the package declares. Used to
+   * hand a page the mismatched name-and-bytes combination a real visitor
+   * produces by renaming a file.
+   */
+  readonly mimeType?: string;
+}
+
 /**
  * Assembles a minimal but valid `.xlsx` package: one part per worksheet, cell
  * text stored inline so no shared-string table is needed. This is the smallest
  * thing the workbook reader accepts, which keeps every fixture a few hundred
  * bytes and every test fast.
+ *
+ * With `macroEnabled` it assembles the `.xlsm` equivalent instead, so the
+ * macro-enabled path is exercised without a binary in the repository.
  */
 export async function createWorkbookUpload(
   name: string,
   sheets: readonly WorksheetFixture[],
+  options: WorkbookUploadOptions = {},
 ): Promise<UploadFile> {
   const archive = new JSZip();
+  const macroEnabled = options.macroEnabled === true;
 
   const overrides = sheets
     .map(
@@ -113,9 +156,12 @@ export async function createWorkbookUpload(
         `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`,
     )
     .join("");
+  const vbaDefault = macroEnabled
+    ? `<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/>`
+    : "";
   archive.file(
     "[Content_Types].xml",
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${overrides}</Types>`,
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${vbaDefault}<Override PartName="/xl/workbook.xml" ContentType="${macroEnabled ? MACRO_WORKBOOK_MAIN_CONTENT_TYPE : WORKBOOK_MAIN_CONTENT_TYPE}"/>${overrides}</Types>`,
   );
 
   archive.file(
@@ -134,6 +180,9 @@ export async function createWorkbookUpload(
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheetEntries}</sheets></workbook>`,
   );
 
+  const macroRelationship = macroEnabled
+    ? `<Relationship Id="rIdVba" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="vbaProject.bin"/>`
+    : "";
   const relationships = sheets
     .map(
       (_sheet, index) =>
@@ -142,7 +191,7 @@ export async function createWorkbookUpload(
     .join("");
   archive.file(
     "xl/_rels/workbook.xml.rels",
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relationships}</Relationships>`,
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relationships}${macroRelationship}</Relationships>`,
   );
 
   for (const [index, sheet] of sheets.entries()) {
@@ -152,9 +201,20 @@ export async function createWorkbookUpload(
     );
   }
 
+  if (macroEnabled) {
+    // The VBA project is opaque to every operation here, so a recognisable
+    // stub is enough to prove the part travelled into the outputs.
+    archive.file(
+      VBA_PROJECT_PART,
+      Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+    );
+  }
+
   return {
     name,
-    mimeType: WORKBOOK_MEDIA_TYPE,
+    mimeType:
+      options.mimeType ??
+      (macroEnabled ? MACRO_WORKBOOK_MEDIA_TYPE : WORKBOOK_MEDIA_TYPE),
     buffer: await archive.generateAsync({
       compression: "DEFLATE",
       type: "nodebuffer",
@@ -342,6 +402,13 @@ export interface DownloadedWorksheet {
 
 /** A downloaded workbook, addressed by worksheet tab name. */
 export interface DownloadedWorkbook {
+  /**
+   * Every part path the package holds. Worksheets are read through the
+   * workbook's relationships, so this is here for the parts that have no
+   * worksheet to hang off - the VBA project a macro-enabled split must carry
+   * into each output, above all.
+   */
+  readonly parts: readonly string[];
   /** Every worksheet tab name, in workbook order. */
   readonly sheetNames: readonly string[];
   /** The named worksheet; fails the test when the workbook has no such tab. */
@@ -444,6 +511,7 @@ export async function readWorkbookDownload(
   }
 
   return {
+    parts: Object.keys(archive.files),
     sheet(name: string): DownloadedWorksheet {
       const worksheet = worksheets.get(name);
       expect(

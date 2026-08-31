@@ -3,9 +3,21 @@ import {
   createWorkbookUpload,
   expectWorkbookDownload,
   fileInput,
+  readWorkbookDownload,
   resultArtifacts,
   resultsPanel,
+  VBA_PROJECT_PART,
 } from "./fixtures";
+
+const NORTH = [
+  {
+    name: "North",
+    rows: [
+      ["Client", "Amount"],
+      ["Acme", 10],
+    ],
+  },
+] as const;
 
 test.describe("/tools/excel-merge", () => {
   test("combines two workbooks into one", async ({ page }) => {
@@ -59,6 +71,46 @@ test.describe("/tools/excel-merge", () => {
       () => outputs.first().getByTestId("artifact-download").click(),
       "all-sheets.xlsx",
     );
+  });
+
+  test("takes a macro-enabled workbook and names the output as asked", async ({
+    page,
+  }) => {
+    await page.goto("/tools/excel-merge");
+
+    // The picker has to take the .xlsm before anything else can be true of
+    // it, and the merge's own rule decides the output: the extension follows
+    // the name the visitor types, not the inputs.
+    await fileInput(page).setInputFiles(
+      await createWorkbookUpload("macros.xlsm", NORTH, { macroEnabled: true }),
+    );
+    await expect(page.getByTestId("source-item")).toContainText("macros.xlsm");
+
+    // Named without an extension, the merge writes .xlsx and says it dropped
+    // the macro project rather than losing it quietly.
+    await page.getByTestId("output-name-input").fill("all-sheets");
+    await page.getByTestId("run-button").click();
+    await expect(resultArtifacts(page).first()).toContainText(
+      "all-sheets.xlsx",
+    );
+    await expect(page.getByTestId("result-message")).toContainText(
+      "Removed the macro project",
+    );
+
+    // Named .xlsm, with exactly one input carrying macros, the project
+    // travels into an output that says so.
+    await page.getByTestId("output-name-input").fill("all-sheets.xlsm");
+    await page.getByTestId("run-button").click();
+    const outputs = resultArtifacts(page);
+    await expect(outputs).toHaveCount(1);
+    await expect(outputs.first()).toContainText("all-sheets.xlsm");
+
+    const merged = await readWorkbookDownload(
+      page,
+      () => outputs.first().getByTestId("artifact-download").click(),
+      "all-sheets.xlsm",
+    );
+    expect(merged.parts).toContain(VBA_PROJECT_PART);
   });
 
   test("merges in the order the list is arranged", async ({ page }) => {

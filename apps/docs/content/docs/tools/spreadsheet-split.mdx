@@ -142,7 +142,12 @@ data-only.
   the folder you choose and names each file after the value alone, such as
   `North.xlsx`, while the browser hands you downloads and keeps the source name
   in front, such as `clients-North.xlsx`. You can change that prefix in the
-  tool.
+  tool. The browser accepts `.xlsm` workbooks as well and keeps the extension,
+  so `clients.xlsm` gives you `clients-North.xlsm` with the macro project
+  carried into each one; a package whose type contradicts its name — a
+  macro-enabled workbook renamed `.xlsx`, or an ordinary one renamed `.xlsm` —
+  is refused with the same explanation the command line gives, before any file
+  is offered.
 </Callout>
 
 ## Preservation and known limitations

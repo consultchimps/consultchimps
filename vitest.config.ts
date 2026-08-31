@@ -12,6 +12,15 @@ export default defineConfig({
         },
       },
       {
+        // The tool pages' shared browser helpers. They are runtime-neutral
+        // modules with no React or Next imports, so they run here rather than
+        // needing a second test runner inside the documentation app.
+        test: {
+          name: "docs",
+          include: ["apps/docs/src/**/*.test.ts"],
+        },
+      },
+      {
         // The CLI suite spawns the built binary as a subprocess for every
         // assertion, which is far slower than an in-process test and slower
         // still on Windows. It gets its own generous budget so a slow machine

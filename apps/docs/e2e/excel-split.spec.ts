@@ -8,6 +8,7 @@ import {
   readWorkbookDownload,
   resultArtifacts,
   resultsPanel,
+  VBA_PROJECT_PART,
 } from "./fixtures";
 
 /**
@@ -166,6 +167,120 @@ test.describe("/tools/excel-split", () => {
       "ERROR: ConsultChimps could not finish your task.",
     );
     await expect(page.getByTestId("run-button")).toBeEnabled();
+  });
+
+  test("splits a macro-enabled workbook into .xlsm outputs", async ({
+    page,
+  }) => {
+    await page.goto("/tools/excel-split");
+
+    // A genuine .xlsm arrives with its own media type, which is what the
+    // page's picker and drop target have to recognise before any operation
+    // can see the file at all.
+    await fileInput(page).setInputFiles(
+      await createWorkbookUpload("clients.xlsm", CLIENTS, {
+        macroEnabled: true,
+      }),
+    );
+    await expect(page.getByTestId("source-summary")).toContainText(
+      "clients.xlsm",
+    );
+
+    const columns = page.getByTestId("column-select");
+    await expect(columns.getByRole("option")).toContainText(COLUMN_OPTIONS);
+    await columns.selectOption("Region");
+
+    // The split takes its output extension from the source, so a macro
+    // workbook must not be handed back named .xlsx.
+    const preview = previewPanel(page);
+    await expect(preview).toContainText("clients-North.xlsm");
+    await expect(preview).toContainText("clients-South.xlsm");
+
+    await page.getByTestId("run-button").click();
+    await expect(resultsPanel(page)).toBeVisible();
+    const outputs = resultArtifacts(page);
+    await expect(outputs).toHaveCount(2);
+    await expect(outputs.nth(0)).toContainText("clients-North.xlsm");
+
+    const north = await readWorkbookDownload(
+      page,
+      () => outputs.nth(0).getByTestId("artifact-download").click(),
+      "clients-North.xlsm",
+    );
+    // The package is preserved, so the macro project travels with it: an
+    // output that lost the part would be an .xlsm in name only.
+    expect(north.parts).toContain(VBA_PROJECT_PART);
+    expect(north.sheetNames).toEqual(["Clients", "Reference"]);
+    expect(north.sheet("Clients").numbers).toEqual([10, 30]);
+  });
+
+  test("refuses a package whose type contradicts its name", async ({
+    page,
+  }) => {
+    await page.goto("/tools/excel-split");
+
+    // A macro-enabled package renamed .xlsx. The split names its outputs from
+    // the source name and preserves the source package, so every output would
+    // be an .xlsx carrying a macro project the name denies.
+    await fileInput(page).setInputFiles(
+      await createWorkbookUpload("renamed.xlsx", CLIENTS, {
+        macroEnabled: true,
+        mimeType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+    );
+
+    const columns = page.getByTestId("column-select");
+    await expect(columns.getByRole("option")).toContainText(COLUMN_OPTIONS);
+    await columns.selectOption("Region");
+
+    // The preview refuses before promising any output, and says which side to
+    // correct rather than only that something failed.
+    const previewError = page.getByTestId("preview-error");
+    await expect(previewError).toContainText(
+      "is a macro-enabled workbook but is named",
+    );
+    await expect(previewError).toContainText(
+      "XLSX_SPLIT_PACKAGE_TYPE_MISMATCH",
+    );
+    await expect(previewPanel(page).getByTestId("planned-outputs")).toHaveCount(
+      0,
+    );
+
+    // Running anyway fails the same way rather than producing mislabelled
+    // files.
+    await page.getByTestId("run-button").click();
+    await expect(page.getByTestId("failure-message")).toContainText(
+      "XLSX_SPLIT_PACKAGE_TYPE_MISMATCH",
+    );
+    await expect(resultArtifacts(page)).toHaveCount(0);
+  });
+
+  test("refuses an ordinary workbook named .xlsm", async ({ page }) => {
+    await page.goto("/tools/excel-split");
+
+    // The other direction: ordinary bytes under a macro-enabled name, which
+    // the picker now accepts and the operation still refuses.
+    await fileInput(page).setInputFiles(
+      await createWorkbookUpload("renamed.xlsm", CLIENTS, {
+        mimeType: "application/vnd.ms-excel.sheet.macroEnabled.12",
+      }),
+    );
+    await expect(page.getByTestId("source-summary")).toContainText(
+      "renamed.xlsm",
+    );
+
+    const columns = page.getByTestId("column-select");
+    await expect(columns.getByRole("option")).toContainText(COLUMN_OPTIONS);
+    await columns.selectOption("Region");
+
+    const previewError = page.getByTestId("preview-error");
+    await expect(previewError).toContainText(
+      "is an ordinary Excel workbook with no macro project",
+    );
+    await expect(previewError).toContainText(
+      "XLSX_SPLIT_PACKAGE_TYPE_MISMATCH",
+    );
   });
 
   test("refuses a file that is not a workbook instead of failing", async ({

@@ -30,6 +30,7 @@ import {
   useOperationRun,
   type UploadedFile,
 } from "@/components/tool-kit";
+import { PRESENTATION_FILES, WORKBOOK_FILES } from "@/lib/accepted-files";
 import type { PresentationPopulateOptions } from "@/lib/operation-tasks";
 import { runOperation } from "@/lib/operation-worker";
 import type { OperationPlan } from "@consultchimps/core";
@@ -47,21 +48,6 @@ import {
   useRef,
   useState,
 } from "react";
-
-const PRESENTATION_MEDIA_TYPE =
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation";
-const PRESENTATION_ACCEPT = `${PRESENTATION_MEDIA_TYPE},.pptx`;
-const WORKBOOK_MEDIA_TYPE =
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-const WORKBOOK_ACCEPT = `${WORKBOOK_MEDIA_TYPE},.xlsx`;
-
-function isPresentationFile(file: File): boolean {
-  return file.type === PRESENTATION_MEDIA_TYPE || /\.pptx$/iu.test(file.name);
-}
-
-function isWorkbookFile(file: File): boolean {
-  return file.type === WORKBOOK_MEDIA_TYPE || /\.xlsx$/iu.test(file.name);
-}
 
 /**
  * A one-based number field's three states. A field is either not supplied at
@@ -370,12 +356,12 @@ export function PptxPopulateTool() {
   const previewHeadingId = useId();
 
   const templateSelection = useFileSelection(
-    isPresentationFile,
-    "a PowerPoint .pptx presentation",
+    PRESENTATION_FILES.accepts,
+    PRESENTATION_FILES.description,
   );
   const recordsSelection = useFileSelection(
-    isWorkbookFile,
-    "an Excel .xlsx workbook",
+    WORKBOOK_FILES.accepts,
+    WORKBOOK_FILES.description,
   );
   const template = templateSelection.file;
   const workbook = recordsSelection.file;
@@ -516,8 +502,8 @@ export function PptxPopulateTool() {
         </h2>
         <div className="mt-4">
           <FilePicker
-            accept={PRESENTATION_ACCEPT}
-            description="Drag a .pptx presentation here, or pick one with the button below. Its placeholders use the {{field_name}} syntax. Only the first presentation is used."
+            accept={PRESENTATION_FILES.accept}
+            description={`Drag ${PRESENTATION_FILES.description} here, or pick one with the button below. Its placeholders use the {{field_name}} syntax. Only the first presentation is used.`}
             disabled={isRunning}
             label="Template presentation"
             multiple={false}
@@ -558,8 +544,8 @@ export function PptxPopulateTool() {
         </p>
         <div className="mt-4">
           <FilePicker
-            accept={WORKBOOK_ACCEPT}
-            description="Drag an .xlsx workbook here, or pick one with the button below. Only the first workbook is used."
+            accept={WORKBOOK_FILES.accept}
+            description={`Drag ${WORKBOOK_FILES.description} here, or pick one with the button below. Only the first workbook is used.`}
             disabled={isRunning}
             label="Records workbook"
             multiple={false}
@@ -756,7 +742,7 @@ export function PptxPopulateTool() {
         holding one file is friction rather than a convenience.
       */}
       <ResultsPanel
-        fallbackMediaType={PRESENTATION_MEDIA_TYPE}
+        fallbackMediaType={PRESENTATION_FILES.fallbackMediaType}
         state={runState}
       />
     </ToolShell>
@@ -767,8 +753,8 @@ export function PptxInspectTool() {
   const reportHeadingId = useId();
 
   const templateSelection = useFileSelection(
-    isPresentationFile,
-    "a PowerPoint .pptx presentation",
+    PRESENTATION_FILES.accepts,
+    PRESENTATION_FILES.description,
   );
   const template = templateSelection.file;
   const [templateSlide, setTemplateSlide] = useState("");
@@ -847,8 +833,8 @@ export function PptxInspectTool() {
         </h2>
         <div className="mt-4">
           <FilePicker
-            accept={PRESENTATION_ACCEPT}
-            description="Drag a .pptx presentation here, or pick one with the button below. Only the first presentation is used."
+            accept={PRESENTATION_FILES.accept}
+            description={`Drag ${PRESENTATION_FILES.description} here, or pick one with the button below. Only the first presentation is used.`}
             disabled={false}
             label="Template presentation"
             multiple={false}

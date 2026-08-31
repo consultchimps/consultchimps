@@ -91,13 +91,14 @@ visible slide list. Existing output files are protected; add `--force` only when
 replacing the named output is intentional.
 
 The [in-browser populator](/tools/pptx-populate) takes the same two inputs — a
-`.pptx` template and an `.xlsx` records workbook — and offers the same four
-choices: worksheet name, header row, template slide number, and output filename,
-mirroring `--sheet`, `--header-row`, `--template-slide`, and `--output`. It
-shows how many slides the workbook would generate before you run the populate,
-then downloads the finished deck. Overwrite protection does not apply in the
-browser: the tool hands the file to your downloads, so there is no destination
-path to protect and no `--force` equivalent.
+`.pptx` template and an `.xlsx` or `.xlsm` records workbook, which is only read
+and never rewritten — and offers the same four choices: worksheet name, header
+row, template slide number, and output filename, mirroring `--sheet`,
+`--header-row`, `--template-slide`, and `--output`. It shows how many slides the
+workbook would generate before you run the populate, then downloads the finished
+deck. Overwrite protection does not apply in the browser: the tool hands the
+file to your downloads, so there is no destination path to protect and no
+`--force` equivalent.
 
 ## Formatting behavior
 
