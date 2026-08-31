@@ -23,6 +23,16 @@ import ts from "typescript";
 // "byte-for-byte" is a precise and testable statement about a ZIP part rather
 // than a promise to a user. What survives stripping in a .ts or .tsx file —
 // string literals and JSX text — is what the site actually renders.
+//
+// This is a heuristic scan, not a parser or a semver engine, and it is meant to
+// stay one. It does not attempt to understand JSX or JavaScript beyond asking
+// the TypeScript parser where the comments are, it does not evaluate a version
+// range, and it recognises the few Node requirement spellings this repository
+// writes rather than every syntax npm accepts. It is a tripwire: it catches the
+// phrases that have actually shipped as false claims here, and a rewritten
+// sentence or an allowlist entry with a reason is the intended answer when it
+// fires. Widening a rule is worthwhile when a real claim slipped past it;
+// widening it to model a language is not.
 
 interface ClaimRule {
   /** Stable id, used by allowlist entries. */
@@ -298,7 +308,13 @@ function flattenWhitespace(source: string): FlattenedText {
   let line = 1;
   let inWhitespaceRun = false;
 
-  for (const character of source) {
+  // Indexed rather than `for...of`, which walks code points: a match's `index`
+  // is a UTF-16 offset, so one entry per code unit is what keeps the line index
+  // aligned with the flattened text once an emoji appears above a claim. A
+  // surrogate half is never whitespace, so each half is copied through and the
+  // pair rejoins in the output.
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index] as string;
     if (
       character === " " ||
       character === "\t" ||
