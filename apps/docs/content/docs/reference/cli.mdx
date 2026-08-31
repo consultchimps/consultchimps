@@ -162,7 +162,7 @@ Options:
   --range <name>            named range to split instead of the used range
   --header-row <number>     one-based header row
   --hidden                  allow a selected hidden worksheet
-  --preserve-workbook       retain the complete workbook (the default)
+  --preserve-workbook       retain the whole workbook (the default)
   --no-preserve-workbook    create a compact data-only single-source workbook
   --values                  replace formulas with stored values, preserving formatting
   --strict                  compare case, whitespace, and value types exactly
@@ -173,9 +173,9 @@ Options:
 
 Without `--table`, `--range`, or `--sheet`, the command collects normalized,
 non-blank values across every worksheet containing the column, then filters a
-complete workbook copy for each value. Worksheets without the column are copied
-unchanged. `--table`, `--range`, and `--sheet` select the established
-single-source modes.
+copy of the whole workbook for each value. Worksheets without the column are
+copied unchanged; pivot tables and their caches are removed with a warning.
+`--table`, `--range`, and `--sheet` select the established single-source modes.
 
 Every spreadsheet command accepts `--values`. It removes worksheet and Excel
 Table formulas while retaining their stored results. The conversion edits the

@@ -20,9 +20,9 @@ npm install --global consultchimps
 
 Every command, option, default, and example is documented in the
 [CLI reference](https://consultchimps.github.io/consultchimps/docs/reference/cli),
-which is generated from the executable's own help output and verified against it
-on every build. This README is an overview, not a catalogue: when the two
-disagree, the reference is right.
+which the repository checks against the executable's own help output in CI. This
+README is an overview, not a catalogue: when the two disagree, the reference is
+right.
 
 | Command                 | What it does                                                 |
 | ----------------------- | ------------------------------------------------------------ |

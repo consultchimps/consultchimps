@@ -1,14 +1,17 @@
 ---
 title: Split an Excel workbook by column value
 description:
-  Copy a complete workbook for every distinct value found across its worksheets.
+  Write one workbook per distinct value found across the source's worksheets,
+  keeping its sheets, formatting, and supported structure.
 icon: Rows3
 ---
 
-The Excel splitter creates one complete workbook for every distinct, non-blank
-value in a selected column. It edits copies of the original OOXML workbook
-instead of rebuilding worksheets, so the source file remains unchanged and the
-workbook's formatting and embedded objects remain in place.
+The Excel splitter creates one workbook for every distinct, non-blank value in a
+selected column. It edits copies of the original OOXML workbook instead of
+rebuilding worksheets, so the source file remains unchanged and each copy keeps
+the source's worksheets, formatting, and embedded objects. See
+[Preservation and known limitations](#preservation-and-known-limitations) for
+what it changes, removes, or leaves for you to review.
 
 ## Basic usage
 
@@ -123,9 +126,9 @@ consultchimps sheets split clients.xlsx \
 ```
 
 `--table`, `--range`, or `--sheet` selects the legacy one-source grouping path.
-A table split preserves the complete workbook by default and compacts matching
-rows while resizing its table and AutoFilter range. `--no-preserve-workbook`
-creates compact data-only outputs. Named-range and selected-worksheet modes are
+A table split keeps the whole workbook by default and compacts matching rows
+while resizing its table and AutoFilter range. `--no-preserve-workbook` creates
+compact data-only outputs. Named-range and selected-worksheet modes are
 data-only.
 
 <Callout title="What the online tool does">

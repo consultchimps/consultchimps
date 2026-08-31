@@ -2,6 +2,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import ts from "typescript";
+
 // Claims check: a lint over the copy a user actually reads, guarding the one
 // failure mode documentation reviews keep finding here — a sentence that
 // promises more than the implementation delivers. Each banned phrase below was
@@ -64,10 +66,12 @@ const CLAIM_RULES: readonly ClaimRule[] = [
       "the browser and the command line share the operation code but not the naming or every interface default; claim deterministic file contents for identical inputs and options instead",
   },
   {
+    // "complete workbook" is the same promise worn as a noun: the split's
+    // preserve-workbook mode keeps the whole workbook, but not completely.
     id: "complete-copy",
-    pattern: /complete copy/i,
+    pattern: /complete (?:copy|workbooks?)/i,
     advice:
-      "the preserve-workbook split strips pivot tables and their caches by contract (packages/xlsx/src/contract.ts) and leaves external links unrewritten; describe what is preserved, what is removed, and what needs review",
+      'the preserve-workbook split strips pivot tables and their caches by contract (packages/xlsx/src/contract.ts) and leaves external links unrewritten; describe what is preserved, what is removed, and what needs review, and say "the whole workbook" when you mean the mode rather than the guarantee',
   },
   {
     id: "every-tab-or-setting",
@@ -138,70 +142,62 @@ function readTextFile(absolutePath: string): string {
  * JSX text the site actually renders. Comment characters become spaces and
  * newlines are kept, so reported line numbers still point at the right line.
  *
- * The scanner tracks string and template literals, so a URL's `//` and an
- * apostrophe in JSX text do not derail it. It deliberately does not model
- * regular-expression literals: a regex holding a lone quote character could
- * confuse it, which would at worst hide a claim on that line rather than invent
- * one, and the scanned tree has no such literal today.
+ * The comment ranges come from the TypeScript parser rather than a hand-rolled
+ * scanner. A character-level scanner has to guess what a quote character means,
+ * and JSX makes that guess wrong: unquoted element text such as `the operation's
+ * own result` carries a bare apostrophe that is not a string delimiter, so a
+ * scanner following it would stop stripping comments until the next apostrophe.
+ * The parser already knows the difference, and the workspace already depends on
+ * it for the JavaScript compiler API.
  */
-function withoutSourceComments(source: string): string {
-  const output: string[] = [];
-  let index = 0;
-  let quote: string | null = null;
+function withoutSourceComments(source: string, fileName: string): string {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
 
-  while (index < source.length) {
-    const character = source[index] as string;
-    const next = source[index + 1];
-
-    if (quote !== null) {
-      output.push(character);
-      if (character === "\\" && index + 1 < source.length) {
-        output.push(next as string);
-        index += 2;
-        continue;
+  // Every comment is trivia of exactly one token, so walking the token tree
+  // reaches all of them: getChildren, not forEachChild, because comments also
+  // sit against punctuation such as the braces of a JSX expression. Both sides
+  // are collected because the API splits them - a comment that starts on a new
+  // line is leading trivia of the token after it, while one that shares a line
+  // with the token before it is that token's trailing trivia, which is exactly
+  // the `{/* … */}` case. The seen set keeps a range that several ancestors
+  // share from being collected twice.
+  const ranges: Array<{ end: number; pos: number }> = [];
+  const seen = new Set<number>();
+  const collect = (found: readonly ts.CommentRange[] | undefined): void => {
+    for (const range of found ?? []) {
+      if (!seen.has(range.pos)) {
+        seen.add(range.pos);
+        ranges.push({ end: range.end, pos: range.pos });
       }
-      if (character === quote) {
-        quote = null;
+    }
+  };
+  const visit = (node: ts.Node): void => {
+    collect(ts.getLeadingCommentRanges(source, node.getFullStart()));
+    collect(ts.getTrailingCommentRanges(source, node.getEnd()));
+    for (const child of node.getChildren(sourceFile)) {
+      visit(child);
+    }
+  };
+  visit(sourceFile);
+
+  // split("") yields UTF-16 code units, which is the unit the parser's
+  // positions are expressed in; the spread operator would yield code points
+  // and drift on any character outside the basic plane.
+  const characters = source.split("");
+  for (const range of ranges) {
+    for (let index = range.pos; index < range.end; index += 1) {
+      if (characters[index] !== "\n") {
+        characters[index] = " ";
       }
-      index += 1;
-      continue;
     }
-
-    if (character === '"' || character === "'" || character === "`") {
-      quote = character;
-      output.push(character);
-      index += 1;
-      continue;
-    }
-
-    if (character === "/" && next === "/") {
-      while (index < source.length && source[index] !== "\n") {
-        output.push(" ");
-        index += 1;
-      }
-      continue;
-    }
-
-    if (character === "/" && next === "*") {
-      output.push("  ");
-      index += 2;
-      while (index < source.length) {
-        if (source[index] === "*" && source[index + 1] === "/") {
-          output.push("  ");
-          index += 2;
-          break;
-        }
-        output.push(source[index] === "\n" ? "\n" : " ");
-        index += 1;
-      }
-      continue;
-    }
-
-    output.push(character);
-    index += 1;
   }
-
-  return output.join("");
+  return characters.join("");
 }
 
 /**
@@ -210,7 +206,9 @@ function withoutSourceComments(source: string): string {
  */
 function readScannableText(absolutePath: string): string {
   const text = readTextFile(absolutePath);
-  return /\.tsx?$/.test(absolutePath) ? withoutSourceComments(text) : text;
+  return /\.tsx?$/.test(absolutePath)
+    ? withoutSourceComments(text, absolutePath)
+    : text;
 }
 
 function listFilesWithExtensions(
