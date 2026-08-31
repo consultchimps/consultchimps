@@ -181,6 +181,44 @@ test.describe("/shortcuts", () => {
     await expect(page.getByTestId("entered-sequence")).toHaveCount(0);
   });
 
+  test("replaces the last key of a chord after Backspace", async ({ page }) => {
+    await page.goto("/shortcuts");
+    await page.getByTestId("key-capture").click();
+
+    await page.keyboard.down("Control");
+    await page.keyboard.down("Shift");
+    await page.keyboard.press("KeyL");
+    await page.keyboard.up("Shift");
+    await page.keyboard.up("Control");
+    await expect(rows(page)).toHaveCount(1);
+
+    // Backspace edits the chord rather than finishing it, so the next key
+    // joins Ctrl+Shift instead of starting a second step.
+    await page.keyboard.press("Backspace");
+    await page.keyboard.press("KeyO");
+
+    await expect(rows(page)).toHaveCount(1);
+    await expect(
+      page.getByText("Select the cells that carry a note or a comment"),
+    ).toBeVisible();
+  });
+
+  test("lets a keyboard visitor tab out of the capture area", async ({
+    page,
+  }) => {
+    await page.goto("/shortcuts");
+    const capture = page.getByTestId("key-capture");
+    await capture.click();
+    await expect(capture).toBeFocused();
+
+    // Tab keeps its default here: capturing it would leave anyone navigating
+    // by keyboard stuck inside the area.
+    await page.keyboard.press("Tab");
+    await expect(capture).not.toBeFocused();
+    // Nothing was recorded from the press either.
+    await expect(page.getByTestId("entered-sequence")).toHaveCount(0);
+  });
+
   test("clears the sequence from the button, and combines both filters", async ({
     page,
   }) => {

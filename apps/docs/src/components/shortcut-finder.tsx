@@ -21,7 +21,9 @@
  * only called while it holds focus, so pressing Ctrl+P anywhere else on the
  * page still prints. Alt gets the same treatment on both keydown and keyup:
  * on Windows a bare Alt keyup is what opens the browser's menu bar, so the
- * default has to be suppressed on the release as well as the press.
+ * default has to be suppressed on the release as well as the press. Tab is
+ * the deliberate exception, because an area that swallows it is a trap for
+ * anyone navigating by keyboard.
  */
 
 import { EXCEL_SHORTCUTS } from "@/lib/excel-shortcuts-data";
@@ -160,8 +162,15 @@ export function ShortcutFinder() {
 
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
-      // Scoped to this element: the page's other keyboard behaviour, and the
-      // browser's, are untouched everywhere else.
+      // Tab is the one key that keeps its default. Capturing it would leave a
+      // visitor who reached this area by keyboard with no way out of it, which
+      // is a worse failure than not being able to press Excel's Tab shortcuts
+      // here: those are on the buttons below, as the hint says.
+      if (event.key === "Tab") {
+        return;
+      }
+      // Otherwise scoped to this element: the page's other keyboard
+      // behaviour, and the browser's, are untouched everywhere else.
       event.preventDefault();
       event.stopPropagation();
       if (event.repeat) {
@@ -187,11 +196,22 @@ export function ShortcutFinder() {
 
   const handleKeyUp = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (event.key === "Tab") {
+        return;
+      }
       // The release matters as much as the press: a bare Alt keyup is what
       // opens the browser menu bar on Windows.
       event.preventDefault();
       event.stopPropagation();
-      heldCodes.current.delete(event.code);
+      // Only a key this area recorded as held can close the step. Backspace
+      // and Escape are handled on the way down and never join that set, so
+      // their release must not close the chord they just edited: Ctrl+Shift+L,
+      // Backspace, O has to end as the chord Ctrl+Shift+O rather than as two
+      // steps. The same guard covers a key pressed before the area had focus,
+      // whose release arrives here on its own.
+      if (!heldCodes.current.delete(event.code)) {
+        return;
+      }
       if (heldCodes.current.size === 0) {
         setStepClosed(true);
       }
@@ -317,10 +337,10 @@ export function ShortcutFinder() {
           className="mt-3 text-xs leading-5 text-fd-muted-foreground"
           id={hintId}
         >
-          Backspace removes the last key and Escape clears the sequence, so use
-          the buttons below to search for those two. A few combinations belong
-          to the browser or to Windows and never reach this page, Ctrl+W and
-          Alt+F4 among them
+          Backspace removes the last key, Escape clears the sequence, and Tab
+          moves on to the buttons below, so search for those three keys with the
+          buttons. A few combinations belong to the browser or to Windows and
+          never reach this page, Ctrl+W and Alt+F4 among them
         </p>
 
         <div className="mt-4 flex flex-wrap gap-1.5" data-testid="key-palette">
