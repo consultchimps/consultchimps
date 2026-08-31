@@ -140,6 +140,11 @@ const PACKAGE_README_ROOT = "packages";
 const SCANNED_TREES = [
   { root: "apps/docs/content", extensions: [".md", ".mdx"] },
   { root: "apps/docs/src", extensions: [".ts", ".tsx"] },
+  // CLI help is read by more people than any page on the site, and it is
+  // written in string literals like the site's copy. Comments in these files
+  // are stripped before matching, so only the text the executable prints is a
+  // subject.
+  { root: "packages/cli/src", extensions: [".ts"] },
 ] as const;
 
 function toRepoLabel(absolutePath: string): string {
