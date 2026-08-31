@@ -50,8 +50,14 @@ Four things are removed, each reported as a warning in the result: pivot tables
 and their caches (a cache holds a private copy of its source rows), external
 links (they are addressed by position in a single workbook's list), the
 calculation chain (Excel rebuilds it, and the merged workbook asks it to), and a
-macro project unless exactly one input carries one and the output is named
-`.xlsm`.
+macro project unless the first workbook you list is the only one carrying macros
+and the output is named `.xlsm`. That last case is reachable from the library
+and the browser today, not from this command: `sheets merge` collects `.xlsx`
+inputs only, so an `.xlsm` handed to it is filtered out before the merge starts.
+
+[What the Excel operations preserve](/docs/tools/excel-preservation) sets these
+promises out structure by structure, beside what the split and the workbook
+inspection do with the same structures.
 
 The workbook merge is also the tool the "Try Merge tabs online" button at the
 top of this page opens: [merge workbooks in your browser](/tools/excel-merge) to

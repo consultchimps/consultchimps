@@ -152,8 +152,8 @@ worksheet row XML, table ranges, formula metadata in values-only mode,
 calculation-chain references, and the pivot parts described below. This
 preserves sheet order and visibility, cell styles, number formats, row heights,
 column widths, merged cells, freeze panes, filters, conditional formatting, data
-validation, print settings, hyperlinks, comments, images, charts, names,
-workbook properties, and VBA project parts in `.xlsm` files.
+validation, print settings, hyperlinks, comments, images, charts, workbook
+properties, and VBA project parts in `.xlsm` files.
 
 Pivot tables are the one structure the split deliberately removes. A pivot cache
 is a private copy of every source row, and it travels inside the workbook
@@ -167,9 +167,14 @@ Plain worksheet rows retain their original Excel row numbers instead of being
 compacted. This deliberately keeps formulas, drawings, validations, conditional
 formatting, and named-range coordinates stable; deleted rows may therefore
 appear as blank visual gaps. Excel Tables are compacted and resized. External
-links, ActiveX controls, unsupported extension parts, chart source ranges, and
-formulas that depend on removed rows are preserved but are not semantically
-rewritten or recalculated. Review complex workbooks in Excel before delivery.
+links, ActiveX controls, unsupported extension parts, chart source ranges,
+defined names, and formulas that depend on removed rows are preserved but are
+not semantically rewritten or recalculated. Review complex workbooks in Excel
+before delivery.
+
+[What the Excel operations preserve](/docs/tools/excel-preservation) is the
+full, structure-by-structure table, generated from the conformance contract
+these operations are tested against.
 
 ## TypeScript API
 

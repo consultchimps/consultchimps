@@ -36,3 +36,10 @@ issues use these terms with exactly these meanings.
   — each with its own status in the tool registry (ADR 0001).
 - **Source columns**: the provenance columns consolidation appends
   (`_source_file`, `_source_sheet`, `_source_row`).
+- **Preservation matrix**: the published projection of the xlsx conformance
+  contract — what each Excel operation does to each tracked workbook structure.
+  Generated from `packages/xlsx/src/contract.ts` and checked by
+  `pnpm docs:check`. Its statuses are the site's only words for a contract cell:
+  "Preserved" (`preserve`), "Adjusted to stay correct" (`fix`), "Removed,
+  reported as a warning" (`strip-warn`), "Refused before anything is written"
+  (`refuse`), and "Needs review" (no declared cell).

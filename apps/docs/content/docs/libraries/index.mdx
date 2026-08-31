@@ -264,6 +264,49 @@ other reader here; naming a worksheet the workbook does not have is refused with
 `describeWorkbookBytes` is the byte-level twin and produces a structurally
 identical description for the same workbook.
 
+## Read what an Excel operation promises
+
+`@consultchimps/xlsx` exports its conformance contract: for every workbook
+structure it tracks and every operation it offers, what that operation does —
+`preserve`, `fix` (rewritten so it stays valid), `strip-warn` (removed, with a
+warning in the result), or `refuse`. The package's corpus tests exercise the
+table cell by cell, so it states behavior rather than intent.
+
+```ts
+import { CONTRACT, TRACKED_STRUCTURES } from "@consultchimps/xlsx";
+
+const removedByADefaultSplit = TRACKED_STRUCTURES.filter(
+  (structure) => CONTRACT.split[structure] === "strip-warn",
+);
+// ["pivot-tables"]
+```
+
+`CONTRACT.split` describes the default whole-workbook split, the one that edits
+a copy of your workbook. The other selectors do not follow it, so do not quote
+these cells at a caller who chose one:
+
+- `preserveWorkbook: false`, `range`, and `sheet` rebuild a single worksheet
+  from the grouped values and carry none of these structures — no other
+  worksheets, no charts, no macros.
+- `table` runs the preserved-table rewrite, which compacts the table's rows.
+  Because compaction moves rows, an ordinary A1 formula inside that table stops
+  the operation with `XLSX_SPLIT_PRESERVE_FORMULA` instead of being repaired the
+  way this table's `fix` cell describes.
+
+A structure with no entry for an operation is one the package has not decided
+yet; `UNDECIDED_SPLIT_STRUCTURES`, `UNDECIDED_MERGE_STRUCTURES`, and
+`UNDECIDED_DESCRIBE_STRUCTURES` record why each one is still open.
+
+A cell states what an operation ordinarily does, not what a particular run will
+do: it carries no options, no input ordering, and no mode, so a behavior that
+depends on one of those cannot be read off it. `merge["vba-project"]` is
+`strip-warn`, for instance, even though a macro project survives when the first
+input is the only one carrying it and the output is named `.xlsm`. Use a cell to
+tell people what usually happens and read the conditions beside it in
+[what the Excel operations preserve](/docs/tools/excel-preservation), which is
+generated from this table and carries them; treating a cell as a verdict on one
+run will sometimes be wrong.
+
 ## Write values without losing Excel formatting
 
 The Excel consolidation, merge, and split operations accept `values: true`. For

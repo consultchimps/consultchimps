@@ -1,0 +1,134 @@
+---
+title: What the Excel operations preserve
+description:
+  A checked, structure-by-structure map of what splitting, merging, and
+  inspecting a workbook keeps, changes, removes, or leaves for you to review.
+icon: ShieldCheck
+---
+
+Splitting and merging workbooks edit a copy of your file's package rather than
+rebuilding it, so most of what a workbook holds simply travels with it. This
+page is the exception list and the promise list in one: for every structure the
+package tracks, what each Excel operation does to it.
+
+The table below is generated from the conformance contract the package's own
+tests enforce, so it says what the test suite pins rather than what a guide once
+described. A cell reading **Needs review** is not a gap on this page: it is the
+package declining to promise anything about that structure yet, and the note
+beside it says what happens today. Where one status is coarser than the behavior
+you have to plan around — a removal that only happens under a condition, for
+instance — the cell states the condition after it. When a promise changes, the
+table changes in the same pull request or `pnpm docs:check` fails.
+
+{/* preservation-matrix:start */}
+
+## What each status means
+
+| Status                         | What it means                                                                                                                                                                                 |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Preserved                      | Carried into the output untouched, and still correct there. Nothing to check.                                                                                                                 |
+| Adjusted to stay correct       | Rewritten as part of the operation so that it still points at the right rows, cells, or names once the output is open in Excel.                                                               |
+| Removed, reported as a warning | Deliberately left out of the output, and the operation's result says so in plain language rather than removing it quietly.                                                                    |
+| Read only, nothing touched     | The inspection produces no file. It reads the workbook, reports what it found, and leaves every byte of your original in place.                                                               |
+| Read only, not yet promised    | The inspection has no recorded promise about this structure yet. It still writes nothing, so nothing in your file can change; the note on the row says what it does with the structure today. |
+| Needs review                   | Not covered by a checked promise, so the package may still change what it does here. The note on the row says what happens today; open the output and check it before sending the file on.    |
+
+## Structure by operation
+
+| Workbook structure                      | Split by column                                                                                     | Merge tabs                                                                                                           | Inspect                     | What to check                                                                                                                                                                                                |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Merged cells                            | Adjusted to stay correct                                                                            | Preserved                                                                                                            | Read only, nothing touched  | Merged ranges follow the rows they cover, so no merge is left spanning rows an output does not contain.                                                                                                      |
+| Conditional formatting                  | Adjusted to stay correct                                                                            | Preserved                                                                                                            | Read only, nothing touched  | Rules travel with the worksheet together with the formats they name, and a split shrinks the range a rule covers.                                                                                            |
+| Data validation                         | Adjusted to stay correct                                                                            | Preserved                                                                                                            | Read only, nothing touched  | Dropdown lists and entry rules keep their cells, and a split shrinks the range they apply to.                                                                                                                |
+| Hyperlinks                              | Adjusted to stay correct                                                                            | Preserved                                                                                                            | Read only, nothing touched  | A link stays on the cell it decorates and keeps its target.                                                                                                                                                  |
+| Cell comments                           | Adjusted to stay correct                                                                            | Preserved                                                                                                            | Read only, nothing touched  | A comment and the box that draws it follow the row they annotate.                                                                                                                                            |
+| Images, shapes, and charts              | Needs review                                                                                        | Preserved                                                                                                            | Read only, nothing touched  | Pictures and charts travel with their worksheet. A merge rewrites a chart's references when a rename forces it; a split never re-points them, so open each chart in a split output and check what it plots.  |
+| Defined names                           | Needs review                                                                                        | Adjusted to stay correct                                                                                             | Read only, nothing touched  | A merge suffixes a name a later input also claimed but does not update formulas that used it. A split does not move a name's coordinates, so one over filtered rows still spans its original rows.           |
+| Excel Tables                            | Adjusted to stay correct                                                                            | Adjusted to stay correct                                                                                             | Read only, nothing touched  | Table parts travel with their worksheet: a split resizes the table and its filter, and a merge renames a table whose name another input already claimed.                                                     |
+| Excel Table totals rows                 | Needs review                                                                                        | Preserved                                                                                                            | Read only, nothing touched  | The default whole-workbook split keeps the totals row; the compact single-source modes rebuild data only and drop it. Check the foot of each table.                                                          |
+| Pivot tables and their caches           | Removed, reported as a warning                                                                      | Removed, reported as a warning                                                                                       | Read only, nothing touched  | A pivot cache is a private copy of its source rows, so a split and a merge both remove the pivot and its cache and say so. Rebuild it in Excel from the output's own rows.                                   |
+| Calculation chain                       | Adjusted to stay correct                                                                            | Adjusted to stay correct                                                                                             | Read only, nothing touched  | Excel's internal recalculation index. No output keeps an entry for a row that is gone, and a merged workbook asks Excel to rebuild the index when it opens.                                                  |
+| Shared text store                       | Preserved                                                                                           | Adjusted to stay correct                                                                                             | Read only, nothing touched  | The workbook's internal table of cell text. A merge keeps one store and re-points every copied cell at it, so no text is lost or duplicated.                                                                 |
+| Cell styles and number formats          | Preserved                                                                                           | Adjusted to stay correct                                                                                             | Read only, nothing touched  | Fonts, fills, borders, alignment, and number formats stay on their cells; a merge copies and de-duplicates the ones its worksheets use.                                                                      |
+| Macros (VBA project)                    | Preserved                                                                                           | Removed, reported as a warning — kept when the first input is the only one with macros and the output is named .xlsm | Read only, nothing touched  | A split keeps macros and writes .xlsm. A merge carries them only when the first input is the one that has them, no other input does, and the output is named .xlsm; otherwise they are removed and reported. |
+| Links to other workbooks                | Needs review                                                                                        | Needs review — the merge removes them and says so; the contract cannot pin that until a fixture exists               | Read only, not yet promised | A split carries the link but never re-points it, and a merge cannot interleave two workbooks' link lists, so it removes them and reports it. Check every link before delivery.                               |
+| Formulas with saved results             | Preserved — the saved result is not recalculated, so a total over removed rows keeps its old answer | Preserved                                                                                                            | Read only, nothing touched  | The formula travels and its references follow the rows that moved. The result Excel last saved travels with it and is not recalculated, so check any total taken over rows an output no longer holds.        |
+| Formulas Excel never calculated         | Preserved                                                                                           | Preserved                                                                                                            | Read only, nothing touched  | The formula is carried through unchanged. In values-only mode it has no saved result to bake, so the cell becomes a formatted blank and the result names the worksheet and cell.                             |
+| Shared formulas filled across a range   | Adjusted to stay correct                                                                            | Preserved                                                                                                            | Read only, nothing touched  | The range a shared formula spans shrinks with the rows it covers, so the fill stays valid.                                                                                                                   |
+| Array formulas                          | Adjusted to stay correct                                                                            | Preserved                                                                                                            | Read only, nothing touched  | The array's span and its references follow the rows. One array formula anywhere on a sheet stops that sheet's Excel Table from being compacted, which is reported.                                           |
+| Formulas using ordinary cell references | Adjusted to stay correct                                                                            | Adjusted to stay correct                                                                                             | Read only, nothing touched  | References such as =SUM(B2:B40) are rewritten when the rows they name move, and a merge follows a worksheet that a name collision renamed.                                                                   |
+| Formulas using Excel Table names        | Preserved                                                                                           | Adjusted to stay correct                                                                                             | Read only, nothing touched  | A structured reference names a table column rather than a cell address, so it survives a split unchanged and follows a table a merge had to rename.                                                          |
+
+## Operations without a column
+
+- **Consolidate rows.** Consolidation reads stored cell values and writes a new
+  single-worksheet table, so nothing from the source package travels with the
+  rows: no formatting, no formulas, no tables, no macros. A table-aware
+  consolidation that could carry more is planned, and the contract stays silent
+  until it ships.
+- **Values-only output.** Values-only is an option on the operations above
+  rather than an operation of its own. It replaces each formula with the result
+  the source file last saved and leaves every other structure to the operation
+  it runs on, so the rest of this table still applies.
+
+{/* preservation-matrix:end */}
+
+## Which split this describes
+
+The matrix describes the default split, which edits a copy of the whole workbook
+and filters every worksheet that carries your column — with the removals and the
+review items this table names. Selecting a single source changes the answer:
+
+- `--table` edits the whole workbook too, and additionally compacts the named
+  Excel Table and resizes its filter range. Because compaction moves rows, a
+  formula with ordinary cell references inside that table stops the split with
+  `XLSX_SPLIT_PRESERVE_FORMULA` before anything is written; convert it to
+  structured table references, or split without preserving the workbook.
+- `--range`, `--sheet`, and `--no-preserve-workbook` create compact, data-only
+  outputs. They rebuild one worksheet from the grouped values instead of editing
+  your workbook, so nothing in this table travels with them: no other
+  worksheets, no charts, no pivot tables, no macros.
+
+## Before you send an output on
+
+An operation's warnings tell you what it removed or could not repair: rows it
+skipped, pivot tables it took out, macros it could not carry, formulas with no
+saved result to bake. They do not cover the **Needs review** rows — nothing
+warns you about a defined name, a chart, or a link to another workbook that was
+carried across without being re-pointed. Read the warnings in the command's
+output or in `result.warnings`, then open one output in Excel and look at those
+rows yourself.
+
+A plain split also leaves saved results as Excel wrote them: a total taken over
+rows that output no longer holds keeps the whole workbook's answer until it is
+recalculated. Recalculate before you read the numbers, or use `--values`, which
+clears a result computed over removed rows instead of baking a stale one and
+reports each cell it cleared.
+
+## Where this page comes from
+
+The statuses are projected from the conformance contract `@consultchimps/xlsx`
+exports, which its corpus tests exercise cell by cell. `pnpm docs:check` fails
+when a tracked structure or operation has no plain-language label and note, and
+when the block above no longer matches the contract. Regenerate it with:
+
+```bash
+pnpm --filter @consultchimps/xlsx build
+node scripts/check-preservation-matrix.ts --write
+```
+
+The build comes first because the matrix is generated from the contract the
+package exports; `pnpm docs:check` runs it for you before checking the page.
+
+The same table is available to your own code, so a tool can report what an
+operation will do before it runs it:
+
+```ts
+import { CONTRACT } from "@consultchimps/xlsx";
+
+console.log(CONTRACT.split["pivot-tables"]); // "strip-warn"
+```
+
+The operation guides carry the practical detail:
+[split](/docs/tools/spreadsheet-split), [merge](/docs/tools/workbook-merge), and
+[consolidate](/docs/tools/spreadsheet-consolidate).

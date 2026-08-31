@@ -147,6 +147,17 @@ combination exists in fixtures but has no declared behavior. Adding a feature
 therefore _forces_ a decision for every structure — the build demands it, not a
 reviewer.
 
+The table is also public: `src/index.ts` re-exports `CONTRACT`,
+`TRACKED_STRUCTURES`, `OPERATIONS` and the `UNDECIDED_*` records, so a caller
+can report what an operation will do before running it, and so the documentation
+site's preservation matrix
+(`apps/docs/content/docs/tools/excel-preservation.mdx`) is generated from this
+table by `scripts/check-preservation-matrix.ts` rather than restated in prose.
+Changing a cell therefore changes the published page in the same pull request:
+`pnpm docs:check` fails when the generated block is stale, and when a new
+structure, operation, or behavior has no plain-language wording in
+`scripts/preservation-matrix.ts`.
+
 Structures tracked (initial set): merged cells, conditional formatting, data
 validation, hyperlinks, comments, drawings/charts, defined names, Excel Tables
 (incl. totals rows), pivot tables + caches, calcChain, shared strings,
@@ -168,8 +179,20 @@ contract worth stating in prose. Each is reported as a warning in the
 
 Two workbook-unique namespaces are repaired rather than dropped: Excel Table
 names (and ids) and workbook-scoped defined names. First claim wins; a later
-duplicate takes a numeric suffix, the rename is warned about, and every formula
-that named it - structured references included - is rewritten to follow it.
+duplicate takes a numeric suffix and the rename is warned about.
+
+The two differ in how far the repair reaches, and the difference is a known gap
+rather than a design: `NameRewrites` carries sheet and table renames only, so
+every formula that named a renamed table — structured references included — is
+rewritten to follow it, while a formula that named a renamed **defined name** is
+not. `carryDefinedNames` renames the declaration and records it in
+`renamedDefinedNames`; the transplanted formula keeps the original text and
+therefore resolves to the first workbook's definition of that name. Closing this
+means adding a defined-name map to `NameRewrites` and rewriting formula parts
+after the names are resolved, with a corpus assertion on the reference. Until
+then it is stated, not promised: the published preservation matrix tells readers
+to check formulas that used a name a merge had to rename.
+
 Sheet-scoped defined names never collide and simply follow their sheet's new
 index.
 

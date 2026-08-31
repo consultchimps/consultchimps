@@ -6,6 +6,7 @@
     "spreadsheet-consolidate",
     "workbook-merge",
     "spreadsheet-split",
+    "excel-preservation",
     "powerpoint-populate",
     "pdf-split",
     "pdf-merge"

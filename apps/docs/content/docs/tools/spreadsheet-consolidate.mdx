@@ -26,6 +26,12 @@ consolidate. Merging has [its own guide](/docs/tools/workbook-merge), and both
 operations also run in your browser: [merge](/tools/excel-merge) and
 [consolidate](/tools/excel-consolidate).
 
+Because consolidation reads stored cell values and writes a new table, nothing
+else from the source workbooks travels with the rows: no cell formatting, no
+formulas, no Excel Tables, no pivot tables, and no macros.
+[What the Excel operations preserve](/docs/tools/excel-preservation) shows that
+beside the structures a split and a merge do keep.
+
 <Callout title="What the online tool does">
   The [in-browser consolidator](/tools/excel-consolidate) runs the default
   all-worksheet consolidation described below: it stacks every visible,
