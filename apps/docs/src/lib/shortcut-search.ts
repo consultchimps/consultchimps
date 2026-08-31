@@ -186,6 +186,32 @@ export function removeLastKeyEntry(query: KeyQuery): KeyQuery {
   return { steps: [...query.steps.slice(0, -1), shortened] };
 }
 
+/**
+ * Take named keys back out of the step being built. This is for the keys a
+ * visitor was still holding when they used the keyboard to navigate away:
+ * Shift held for a Shift+Tab is part of leaving, not part of the search, and
+ * leaving it behind would filter the list by a key nobody meant to press. A
+ * step emptied this way follows `removeLastKeyEntry`: the only step goes, a
+ * later one stays open for the next key.
+ */
+export function removeKeyTokens(
+  query: KeyQuery,
+  tokens: readonly KeyToken[],
+): KeyQuery {
+  if (query.steps.length === 0 || tokens.length === 0) {
+    return query;
+  }
+  const last = lastStepOf(query);
+  const kept = last.filter((token) => !tokens.includes(token));
+  if (kept.length === last.length) {
+    return query;
+  }
+  if (kept.length === 0 && query.steps.length === 1) {
+    return EMPTY_KEY_QUERY;
+  }
+  return { steps: [...query.steps.slice(0, -1), kept] };
+}
+
 function isSameTokenSet(left: ShortcutStep, right: ShortcutStep): boolean {
   return (
     left.length === right.length && left.every((token) => right.includes(token))

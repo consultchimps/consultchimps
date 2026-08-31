@@ -217,6 +217,15 @@ test.describe("/shortcuts", () => {
     await expect(capture).not.toBeFocused();
     // Nothing was recorded from the press either.
     await expect(page.getByTestId("entered-sequence")).toHaveCount(0);
+
+    // Shift+Tab navigates backwards, and the Shift it is pressed with is part
+    // of leaving rather than part of a search, so it leaves no filter behind.
+    const everything = await resultCount(page);
+    await capture.click();
+    await page.keyboard.press("Shift+Tab");
+    await expect(capture).not.toBeFocused();
+    await expect(page.getByTestId("entered-sequence")).toHaveCount(0);
+    expect(await resultCount(page)).toBe(everything);
   });
 
   test("clears the sequence from the button, and combines both filters", async ({

@@ -15,6 +15,7 @@ import {
   matchesKeyQuery,
   matchesWordQuery,
   nextKeyOptions,
+  removeKeyTokens,
   removeLastKeyEntry,
   type KeyQuery,
 } from "./shortcut-search";
@@ -180,6 +181,32 @@ describe("building a key query", () => {
 
   it("leaves an empty query alone when there is nothing to remove", () => {
     expect(removeLastKeyEntry(EMPTY_KEY_QUERY)).toBe(EMPTY_KEY_QUERY);
+  });
+
+  it("takes the keys of a navigation gesture back out", () => {
+    const held = appendKeyToken(EMPTY_KEY_QUERY, "Shift");
+    // Shift held only to press Shift+Tab leaves nothing filtering the list.
+    expect(removeKeyTokens(held, ["Shift"])).toEqual(EMPTY_KEY_QUERY);
+
+    // A key entered earlier, with the buttons, survives the gesture.
+    const mixed = appendKeyToken(
+      appendKeyToken(EMPTY_KEY_QUERY, "Ctrl"),
+      "Shift",
+    );
+    expect(removeKeyTokens(mixed, ["Shift"]).steps).toEqual([["Ctrl"]]);
+
+    // Nothing held, nothing to give back.
+    expect(removeKeyTokens(mixed, [])).toBe(mixed);
+    expect(removeKeyTokens(mixed, ["Alt"])).toBe(mixed);
+    expect(removeKeyTokens(EMPTY_KEY_QUERY, ["Shift"])).toBe(EMPTY_KEY_QUERY);
+  });
+
+  it("leaves a later step open when a gesture empties it", () => {
+    const secondStep = appendKeyToken(
+      beginKeyStep(appendKeyToken(EMPTY_KEY_QUERY, "Alt")),
+      "Shift",
+    );
+    expect(removeKeyTokens(secondStep, ["Shift"]).steps).toEqual([["Alt"], []]);
   });
 
   it("removes one key of a chord at a time", () => {
