@@ -138,7 +138,7 @@ export const STRUCTURE_DOCUMENTATION: Record<
   },
   "formulas-cached": {
     label: "Formulas with saved results",
-    note: "The formula and the result Excel last saved both travel unchanged; values-only mode keeps the saved result and drops the formula.",
+    note: "The formula travels and its references follow the rows that moved. The result Excel last saved travels with it and is not recalculated, so check any total taken over rows an output no longer holds.",
   },
   "formulas-uncached": {
     label: "Formulas Excel never calculated",
@@ -272,6 +272,15 @@ export const OPERATION_STATUS_OVERRIDES: Partial<
 export const CELL_QUALIFIERS: Partial<
   Record<Operation, Partial<Record<Structure, string>>>
 > = {
+  split: {
+    // The cell is `preserve` and true of the formula: its references follow
+    // the rows. The saved result is another matter - a plain split leaves it
+    // as Excel wrote it, and only a values-only split clears one computed over
+    // removed rows (src/tier1/stale-values.ts), so "nothing to check" would be
+    // the wrong thing to tell someone reading numbers before a recalculation.
+    "formulas-cached":
+      "the saved result is not recalculated, so a total over removed rows keeps its old answer",
+  },
   merge: {
     // The contract cell is `strip-warn`, but the removal is conditional: the
     // project travels when exactly one input carries it and the output name
