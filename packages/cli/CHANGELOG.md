@@ -1,5 +1,43 @@
 # consultchimps
 
+## 0.9.3
+
+### Patch Changes
+
+- e716dc7: Name a preserved split's outputs after the workbook they actually
+  are. Splitting a macro-enabled workbook while naming an Excel Table kept the
+  whole source package — macro project included — but named every output `.xlsx`
+  and reported the ordinary workbook media type, so the file's contents and its
+  name disagreed and Excel opened it with a corruption warning. Those outputs
+  are now named `.xlsm` and carry the macro-enabled media type, exactly as the
+  all-worksheet split has always done, and a package whose declared type
+  contradicts the name it arrived under is refused with
+  `XLSX_SPLIT_PACKAGE_TYPE_MISMATCH` before anything is written — on the preview
+  as well as the run.
+
+  A split that rebuilds instead of preserving (`preserveWorkbook: false`, a
+  named worksheet, or a named range) is unchanged: it writes a fresh ordinary
+  package from the rows it kept, carries no macro project, and is still `.xlsx`
+  whatever the source was called.
+
+  The CLI carries the same correction:
+  `consultchimps sheets split <workbook.xlsm> --table <name>` now writes `.xlsm`
+  files and reports them with the macro-enabled media type, and refuses a
+  workbook whose package contradicts its name.
+
+- 91e298d: Correct two over-broad claims in the packaged CLI.
+  `sheets split --help` said it copies "the complete workbook" once per value;
+  it now says "the whole workbook" and states that pivot tables and their caches
+  are removed and reported as a warning, which is what the operation has always
+  done. The README said the CLI requires Node.js 24 while `engines.node`
+  declares `>=22.0.0`; it now says Node.js 22 or later. The README's command
+  overview also lists `pptx inspect-template`, which it had never mentioned, and
+  points at the CLI reference rather than trying to be a full catalogue.
+- Updated dependencies [e716dc7]
+- Updated dependencies [76ec2b3]
+  - @consultchimps/xlsx@0.14.0
+  - @consultchimps/pptx@0.6.2
+
 ## 0.9.2
 
 ### Patch Changes
