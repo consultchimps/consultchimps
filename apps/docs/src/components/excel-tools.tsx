@@ -203,7 +203,7 @@ function SourceWorkbookList({ disabled, uploads }: SourceWorkbookListProps) {
   if (files.length === 0) {
     return (
       <p className="mt-4 text-sm text-fd-muted-foreground">
-        No workbooks added yet.
+        No workbooks added yet
       </p>
     );
   }
@@ -435,7 +435,7 @@ export function ExcelSplitTool() {
 
   return (
     <ToolShell
-      description="Choose a workbook and a column, and get one workbook per distinct value in that column. By default each new workbook keeps the source workbook's sheets, formatting, and supported workbook structure, removing only the rows that belong to other values. Pivot tables and their caches are removed and reported, so review complex workbooks (pivots, external links, charts, ActiveX controls) in Excel before you deliver them. Everything runs in this page using the same operation the ConsultChimps library uses."
+      description="Choose a workbook and a column, and get one workbook per distinct value in that column. By default each new workbook keeps the source workbook's sheets, formatting, and supported workbook structure, removing only the rows that belong to other values. Pivot tables and their caches are removed and reported, so review complex workbooks (pivots, external links, charts, ActiveX controls) in Excel before you deliver them. Everything runs in this page using the same operation the ConsultChimps library uses"
       guideHref="/docs/tools/spreadsheet-split"
       guideLabel="Read the split guide"
       kicker="Online tool · Excel split"
@@ -448,7 +448,7 @@ export function ExcelSplitTool() {
         <div className="mt-4">
           <FilePicker
             accept={WORKBOOK_FILES.accept}
-            description={`Drag ${WORKBOOK_FILES.description} here, or pick one with the button below. Only the first workbook is used.`}
+            description={`Drag ${WORKBOOK_FILES.description} here, or pick one with the button below. Only the first workbook is used`}
             disabled={isRunning}
             label="Source workbook"
             multiple={false}
@@ -484,8 +484,8 @@ export function ExcelSplitTool() {
         </h2>
         <p className="mt-3 text-sm text-fd-muted-foreground">
           {detectedColumns.length > 0
-            ? `Headers found on worksheet “${detected?.worksheet ?? ""}”. Pick one, or type a column name instead.`
-            : "Type the column name exactly as it appears in the header row."}
+            ? `Headers found on worksheet “${detected?.worksheet ?? ""}”. Pick one, or type a column name instead`
+            : "Type the column name exactly as it appears in the header row"}
         </p>
 
         {detectedColumns.length > 0 ? (
@@ -524,7 +524,7 @@ export function ExcelSplitTool() {
           <div className="mt-4">
             <TextField
               disabled={isRunning}
-              hint="Matching ignores surrounding whitespace and letter case, unless strict matching is turned on below."
+              hint="Matching ignores surrounding whitespace and letter case, unless strict matching is turned on below"
               label="Column name"
               onChange={setColumn}
               placeholder="Region"
@@ -541,12 +541,12 @@ export function ExcelSplitTool() {
           <p className={`${fieldHintClass} mt-3`}>
             Leave the worksheet, table, and range fields empty to split every
             worksheet that contains your column and keep the rest of the
-            workbook in each new file.
+            workbook in each new file
           </p>
           <div className="mt-5 flex flex-col gap-5">
             <TextField
               disabled={isRunning}
-              hint="Optional. Defaults to the source filename. A split that keeps the whole workbook keeps the source extension with it, so `clients.xlsm` produces `clients-North.xlsm` with its macros; the small, plain workbooks are always `.xlsx` and carry no macros."
+              hint="Optional. Defaults to the source filename. A split that keeps the whole workbook keeps the source extension with it, so `clients.xlsm` produces `clients-North.xlsm` with its macros; the small, plain workbooks are always `.xlsx` and carry no macros"
               label="Filename prefix"
               onChange={setPrefix}
               placeholder="clients"
@@ -555,7 +555,7 @@ export function ExcelSplitTool() {
             />
             <TextField
               disabled={isRunning}
-              hint="Optional. Splits one worksheet by name, and the new files then hold only that worksheet's matching rows."
+              hint="Optional. Splits one worksheet by name, and the new files then hold only that worksheet's matching rows"
               label="Worksheet"
               onChange={setSheet}
               placeholder="Clients"
@@ -564,7 +564,7 @@ export function ExcelSplitTool() {
             />
             <TextField
               disabled={isRunning}
-              hint="Optional. Splits a named Excel table, which gives the safest data boundaries. The rest of the workbook is kept unless you turn that off below."
+              hint="Optional. Splits a named Excel table, which gives the safest data boundaries. The rest of the workbook is kept unless you turn that off below"
               label="Excel table"
               onChange={setTable}
               placeholder="ClientData"
@@ -573,7 +573,7 @@ export function ExcelSplitTool() {
             />
             <TextField
               disabled={isRunning}
-              hint="Optional. Splits a workbook-level named range instead, and the new files then hold only that range's matching rows. Cannot be combined with an Excel table."
+              hint="Optional. Splits a workbook-level named range instead, and the new files then hold only that range's matching rows. Cannot be combined with an Excel table"
               label="Named range"
               onChange={setRange}
               placeholder="ClientRange"
@@ -586,7 +586,7 @@ export function ExcelSplitTool() {
               </label>
               <p className={fieldHintClass}>
                 Optional one-based row number. Not available when an Excel table
-                or a named range provides the headers.
+                or a named range provides the headers
               </p>
               <input
                 className={`${inputClass} mt-2`}
@@ -605,8 +605,8 @@ export function ExcelSplitTool() {
               disabled={isRunning || !preserveWorkbookAllowed}
               hint={
                 preserveWorkbookAllowed
-                  ? "On by default. The source workbook's sheets, formatting, and supported workbook structure are kept, and only the rows that do not belong are removed. Pivot tables and their caches are removed, with a warning on the result. Turn it off to get small, plain workbooks holding just the matching rows of the source being split."
-                  : "Not offered for a named worksheet or a named range: those always produce small, plain workbooks holding just the matching rows."
+                  ? "On by default. The source workbook's sheets, formatting, and supported workbook structure are kept, and only the rows that do not belong are removed. Pivot tables and their caches are removed, with a warning on the result. Turn it off to get small, plain workbooks holding just the matching rows of the source being split"
+                  : "Not offered for a named worksheet or a named range: those always produce small, plain workbooks holding just the matching rows"
               }
               label="Keep the whole workbook"
               onChange={setPreserveWorkbook}
@@ -617,8 +617,8 @@ export function ExcelSplitTool() {
               disabled={isRunning || allWorksheetMode}
               hint={
                 allWorksheetMode
-                  ? "Only applies when you name a worksheet, table, or range, or turn off keeping the whole workbook. Otherwise rows with a blank value never get a workbook of their own."
-                  : "Write a workbook for rows whose split value is blank."
+                  ? "Only applies when you name a worksheet, table, or range, or turn off keeping the whole workbook. Otherwise rows with a blank value never get a workbook of their own"
+                  : "Write a workbook for rows whose split value is blank"
               }
               label="Include blank values"
               onChange={setIncludeBlank}
@@ -629,8 +629,8 @@ export function ExcelSplitTool() {
               disabled={isRunning || allWorksheetMode}
               hint={
                 allWorksheetMode
-                  ? "Only applies when you name a worksheet, table, or range, or turn off keeping the whole workbook. Otherwise hidden worksheets are always split too, and stay hidden in every new file."
-                  : "Search hidden and very hidden worksheets as well."
+                  ? "Only applies when you name a worksheet, table, or range, or turn off keeping the whole workbook. Otherwise hidden worksheets are always split too, and stay hidden in every new file"
+                  : "Search hidden and very hidden worksheets as well"
               }
               label="Include hidden worksheets"
               onChange={setIncludeHiddenSheets}
@@ -639,7 +639,7 @@ export function ExcelSplitTool() {
             <CheckboxField
               checked={strict}
               disabled={isRunning}
-              hint="Treat differences in letter case, surrounding whitespace, and value type as different values."
+              hint="Treat differences in letter case, surrounding whitespace, and value type as different values"
               label="Strict matching"
               onChange={setStrict}
               testId="strict-checkbox"
@@ -647,7 +647,7 @@ export function ExcelSplitTool() {
             <CheckboxField
               checked={values}
               disabled={isRunning}
-              hint="Replace every formula with its most recently saved result."
+              hint="Replace every formula with its most recently saved result"
               label="Values only"
               onChange={setValues}
               testId="values-checkbox"
@@ -670,7 +670,7 @@ export function ExcelSplitTool() {
         {!input || !options.column ? (
           <p className="mt-3 text-sm text-fd-muted-foreground">
             Choose a workbook and a column to see the workbooks this task will
-            create.
+            create
           </p>
         ) : null}
         {planError ? (
@@ -754,8 +754,8 @@ export function ExcelSplitTool() {
         <h2 className="text-xl font-bold tracking-[-0.03em]">4. Run</h2>
         <p className="mt-3 text-sm text-fd-muted-foreground">
           {preserveWorkbookAllowed && preserveWorkbook
-            ? "Each new workbook keeps your file's sheets, formatting, and supported workbook structure, holding only the rows for one value. Pivot tables and their caches are removed and reported; review complex workbooks in Excel before delivery."
-            : "Each new workbook is a small, plain file holding only the matching rows from the source you chose."}
+            ? "Each new workbook keeps your file's sheets, formatting, and supported workbook structure, holding only the rows for one value. Pivot tables and their caches are removed and reported; review complex workbooks in Excel before delivery"
+            : "Each new workbook is a small, plain file holding only the matching rows from the source you chose"}
         </p>
         <RunControls
           busyLabel="Splitting…"
@@ -800,7 +800,7 @@ export function ExcelMergeTool() {
 
   return (
     <ToolShell
-      description="Add the workbooks you want to combine, arrange them in the order their tabs should appear, and merge them without uploading anything. Every source worksheet stays its own separate tab. No rows are stacked into one sheet."
+      description="Add the workbooks you want to combine, arrange them in the order their tabs should appear, and merge them without uploading anything. Every source worksheet stays its own separate tab. No rows are stacked into one sheet"
       guideHref="/docs/tools/workbook-merge"
       guideLabel="Read the merge guide"
       kicker="Online tool · Excel merge"
@@ -828,7 +828,7 @@ export function ExcelMergeTool() {
         <div className="mt-4">
           <FilePicker
             accept={WORKBOOK_FILES.accept}
-            description={`Drag one or more ${WORKBOOK_FILES.pluralDescription} here, or pick them with the button below. Added files keep the order shown.`}
+            description={`Drag one or more ${WORKBOOK_FILES.pluralDescription} here, or pick them with the button below. Added files keep the order shown`}
             disabled={isRunning}
             label="Source workbooks"
             multiple
@@ -848,7 +848,7 @@ export function ExcelMergeTool() {
         <div className="mt-6 flex flex-col gap-5">
           <TextField
             disabled={isRunning}
-            hint="Optional. Defaults to `merged.xlsx`. The `.xlsx` extension is added for you; end the name in `.xlsm` instead to ask for a macro-enabled workbook, which keeps the macro project when the first workbook in the list is the only one that has one."
+            hint="Optional. Defaults to `merged.xlsx`. The `.xlsx` extension is added for you; end the name in `.xlsm` instead to ask for a macro-enabled workbook, which keeps the macro project when the first workbook in the list is the only one that has one"
             label="Output filename"
             onChange={setOutputName}
             placeholder="all-sheets"
@@ -858,7 +858,7 @@ export function ExcelMergeTool() {
           <CheckboxField
             checked={values}
             disabled={isRunning}
-            hint="Replace every formula with its most recently saved result."
+            hint="Replace every formula with its most recently saved result"
             label="Values only"
             onChange={setValues}
             testId="values-checkbox"
@@ -870,10 +870,10 @@ export function ExcelMergeTool() {
         <h2 className="text-xl font-bold tracking-[-0.03em]">2. Run</h2>
         <p className="mt-3 text-sm text-fd-muted-foreground">
           {files.length === 0
-            ? "Add at least one workbook to merge."
+            ? "Add at least one workbook to merge"
             : `Every worksheet from ${files.length} ${
                 files.length === 1 ? "workbook" : "workbooks"
-              } will become its own tab, in the order listed above, alongside a Sheet Index tab.`}
+              } will become its own tab, in the order listed above, alongside a Sheet Index tab`}
         </p>
         <RunControls
           busyLabel="Merging…"
@@ -930,7 +930,7 @@ export function ExcelConsolidateTool() {
 
   return (
     <ToolShell
-      description="Add the workbooks you want to stack, arrange them in the order the rows should follow, and get one table holding every row from every visible worksheet that holds data. Hidden worksheets are skipped unless you ask for them. Nothing is uploaded: the whole task runs in this browser tab."
+      description="Add the workbooks you want to stack, arrange them in the order the rows should follow, and get one table holding every row from every visible worksheet that holds data. Hidden worksheets are skipped unless you ask for them. Nothing is uploaded: the whole task runs in this browser tab"
       guideHref="/docs/tools/spreadsheet-consolidate"
       guideLabel="Read the consolidate guide"
       kicker="Online tool · Excel consolidate"
@@ -958,7 +958,7 @@ export function ExcelConsolidateTool() {
         <div className="mt-4">
           <FilePicker
             accept={WORKBOOK_FILES.accept}
-            description={`Drag one or more ${WORKBOOK_FILES.pluralDescription} here, or pick them with the button below. Rows are stacked in the order shown.`}
+            description={`Drag one or more ${WORKBOOK_FILES.pluralDescription} here, or pick them with the button below. Rows are stacked in the order shown`}
             disabled={isRunning}
             label="Source workbooks"
             multiple
@@ -978,7 +978,7 @@ export function ExcelConsolidateTool() {
         <div className="mt-6 flex flex-col gap-5">
           <TextField
             disabled={isRunning}
-            hint="Optional. Defaults to `consolidated.xlsx`. The `.xlsx` extension is added for you."
+            hint="Optional. Defaults to `consolidated.xlsx`. The `.xlsx` extension is added for you"
             label="Output filename"
             onChange={setOutputName}
             placeholder="all-rows"
@@ -988,7 +988,7 @@ export function ExcelConsolidateTool() {
           <CheckboxField
             checked={normalizeHeaders}
             disabled={isRunning}
-            hint="Treat columns whose headers differ only in case, spacing, or punctuation (“Failed Checks” and “Failed_Checks”, say) as one column. The first spelling seen names the output column."
+            hint="Treat columns whose headers differ only in case, spacing, or punctuation (“Failed Checks” and “Failed_Checks”, say) as one column. The first spelling seen names the output column"
             label="Normalize headers"
             onChange={setNormalizeHeaders}
             testId="normalize-headers-checkbox"
@@ -996,7 +996,7 @@ export function ExcelConsolidateTool() {
           <CheckboxField
             checked={addSourceColumns}
             disabled={isRunning}
-            hint="Record where each row came from in added `_source_file`, `_source_sheet`, and `_source_row` columns."
+            hint="Record where each row came from in added `_source_file`, `_source_sheet`, and `_source_row` columns"
             label="Add source columns"
             onChange={setAddSourceColumns}
             testId="source-columns-checkbox"
@@ -1004,7 +1004,7 @@ export function ExcelConsolidateTool() {
           <CheckboxField
             checked={includeHiddenSheets}
             disabled={isRunning}
-            hint="Read hidden and very hidden worksheets as well."
+            hint="Read hidden and very hidden worksheets as well"
             label="Include hidden worksheets"
             onChange={setIncludeHiddenSheets}
             testId="include-hidden-checkbox"
@@ -1016,12 +1016,12 @@ export function ExcelConsolidateTool() {
         <h2 className="text-xl font-bold tracking-[-0.03em]">2. Run</h2>
         <p className="mt-3 text-sm text-fd-muted-foreground">
           {files.length === 0
-            ? "Add at least one workbook to consolidate."
+            ? "Add at least one workbook to consolidate"
             : `Rows from every ${
                 includeHiddenSheets ? "" : "visible "
               }worksheet that holds data in ${files.length} ${
                 files.length === 1 ? "workbook" : "workbooks"
-              } will be stacked into one table, in the order listed above.`}
+              } will be stacked into one table, in the order listed above`}
         </p>
         <RunControls
           busyLabel="Consolidating…"

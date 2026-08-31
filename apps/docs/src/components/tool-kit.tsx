@@ -293,7 +293,7 @@ function PrivacyNotice() {
       data-testid="privacy-notice"
     >
       <ShieldCheck className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-      Your files never leave this browser tab. There is no server.
+      Your files never leave this browser tab. There is no server
     </p>
   );
 }

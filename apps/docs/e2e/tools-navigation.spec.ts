@@ -50,7 +50,7 @@ test.describe("/tools", () => {
   test("lists the in-browser tools", async ({ page }) => {
     await page.goto("/tools");
     await expect(
-      page.getByRole("heading", { level: 1, name: "Run a tool right here." }),
+      page.getByRole("heading", { level: 1, name: "Run a tool right here" }),
     ).toBeVisible();
     for (const tool of BROWSER_TOOLS) {
       await expect(page.getByRole("link", { name: tool.card })).toBeVisible();
@@ -99,7 +99,7 @@ test.describe("/tools", () => {
     await tabs.getByRole("link", { name: "All tools" }).click();
     await expect(page).toHaveURL(/\/tools$/u);
     await expect(
-      page.getByRole("heading", { level: 1, name: "Run a tool right here." }),
+      page.getByRole("heading", { level: 1, name: "Run a tool right here" }),
     ).toBeVisible();
   });
 });

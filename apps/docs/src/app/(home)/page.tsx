@@ -13,17 +13,17 @@ const principles = [
   {
     icon: ShieldCheck,
     title: "Local by default",
-    detail: "Your client files stay on your machine.",
+    detail: "Your client files stay on your machine",
   },
   {
     icon: FileStack,
     title: "Inputs stay intact",
-    detail: "Outputs never replace sources accidentally.",
+    detail: "Outputs never replace sources accidentally",
   },
   {
     icon: TerminalSquare,
     title: "Built to compose",
-    detail: "Use the browser tools, the CLI, or focused TypeScript modules.",
+    detail: "Use the browser tools, the CLI, or focused TypeScript modules",
   },
 ] as const;
 
@@ -38,11 +38,11 @@ export default function HomePage() {
           <h1 className="manual-title mt-8">
             Less busywork.
             <br />
-            More <em>useful</em> work.
+            More <em>useful</em> work
           </h1>
           <p className="manual-intro mt-8 max-w-2xl text-lg leading-8 text-fd-muted-foreground md:text-xl">
             Durable spreadsheet, PowerPoint, and PDF tools for consultants who
-            need repeatable results, visible provenance, and no mystery uploads.
+            need repeatable results, visible provenance, and no mystery uploads
           </p>
           <div className="manual-actions mt-9 flex flex-wrap gap-3">
             <Link
@@ -107,7 +107,7 @@ export default function HomePage() {
               The toolkit
             </div>
             <h2 className="mt-3 max-w-2xl text-4xl font-bold tracking-[-0.05em] md:text-5xl">
-              Recurring chores. One predictable interface.
+              Recurring chores. One predictable interface
             </h2>
           </div>
           <p className="max-w-md text-sm leading-6 text-fd-muted-foreground">
@@ -117,7 +117,6 @@ export default function HomePage() {
             <Link className="text-fd-primary hover:underline" href="/releases">
               release history
             </Link>
-            .
           </p>
         </div>
 

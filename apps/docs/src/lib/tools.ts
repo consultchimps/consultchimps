@@ -64,7 +64,7 @@ export const TOOLS: readonly ConsultTool[] = [
     title: "Consolidate spreadsheets",
     tabLabel: "Consolidate",
     description:
-      "Stack rows from every visible worksheet that holds data into one auditable table, even when columns arrive in different orders.",
+      "Stack rows from every visible worksheet that holds data into one auditable table, even when columns arrive in different orders",
     docHref: "/docs/tools/spreadsheet-consolidate",
     surfaces: {
       cli: "works",
@@ -78,7 +78,7 @@ export const TOOLS: readonly ConsultTool[] = [
     title: "Merge workbook tabs",
     tabLabel: "Merge tabs",
     description:
-      "Copy every source worksheet into one workbook as its own separate tab, never stacking rows into one sheet.",
+      "Copy every source worksheet into one workbook as its own separate tab, never stacking rows into one sheet",
     docHref: "/docs/tools/workbook-merge",
     surfaces: {
       cli: "works",
@@ -92,7 +92,7 @@ export const TOOLS: readonly ConsultTool[] = [
     title: "Split spreadsheets",
     tabLabel: "Split Excel",
     description:
-      "Create one Excel workbook per distinct value, each keeping the source workbook's sheets, formatting, and supported workbook structure, while leaving source workbooks unchanged.",
+      "Create one Excel workbook per distinct value, each keeping the source workbook's sheets, formatting, and supported workbook structure, while leaving source workbooks unchanged",
     docHref: "/docs/tools/spreadsheet-split",
     surfaces: {
       cli: "works",
@@ -106,7 +106,7 @@ export const TOOLS: readonly ConsultTool[] = [
     title: "Populate PowerPoint templates",
     tabLabel: "PowerPoint",
     description:
-      "Turn a designed template slide and Excel records into a review-ready presentation, entirely locally.",
+      "Turn a designed template slide and Excel records into a review-ready presentation, entirely locally",
     docHref: "/docs/tools/powerpoint-populate",
     surfaces: {
       cli: "works",
@@ -120,7 +120,7 @@ export const TOOLS: readonly ConsultTool[] = [
     title: "Split PDF pages",
     tabLabel: "Split PDF",
     description:
-      "Turn a long PDF into predictable, zero-padded page files without sending the document anywhere.",
+      "Turn a long PDF into predictable, zero-padded page files without sending the document anywhere",
     docHref: "/docs/tools/pdf-split",
     surfaces: {
       cli: "works",
@@ -134,7 +134,7 @@ export const TOOLS: readonly ConsultTool[] = [
     title: "Merge PDF packs",
     tabLabel: "Merge PDFs",
     description:
-      "Assemble source PDFs in resolved order and preserve every page in one clean deliverable.",
+      "Assemble source PDFs in resolved order and preserve every page in one clean deliverable",
     docHref: "/docs/tools/pdf-merge",
     surfaces: {
       cli: "works",
@@ -148,7 +148,7 @@ export const TOOLS: readonly ConsultTool[] = [
     title: "Inspect PowerPoint templates",
     tabLabel: "Inspect template",
     description:
-      "Report every placeholder a template slide expects, with occurrence counts and malformed braces, before you populate it.",
+      "Report every placeholder a template slide expects, with occurrence counts and malformed braces, before you populate it",
     docHref: "/docs/tools/powerpoint-populate#inspect-the-template",
     surfaces: {
       cli: "works",
@@ -162,7 +162,7 @@ export const TOOLS: readonly ConsultTool[] = [
     title: "Inspect workbooks",
     tabLabel: "Inspect workbook",
     description:
-      "Report a workbook's worksheets, hidden tabs, header rows, Excel Tables, named ranges, and sample column values before you operate on it.",
+      "Report a workbook's worksheets, hidden tabs, header rows, Excel Tables, named ranges, and sample column values before you operate on it",
     // The library guide is this operation's documentation until the CLI and
     // browser surfaces land and it earns a tool page of its own.
     docHref: "/docs/libraries#inspect-a-workbook-before-operating-on-it",

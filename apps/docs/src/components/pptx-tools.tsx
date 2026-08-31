@@ -81,14 +81,14 @@ function positiveIntegerField(raw: string, label: string): NumberFieldState {
   if (!/^\d+$/u.test(text)) {
     return {
       kind: "invalid",
-      message: `${label} must be a whole number counted from 1, so "${text}" cannot be used.`,
+      message: `${label} must be a whole number counted from 1, so "${text}" cannot be used`,
     };
   }
   const value = Number(text);
   if (value < 1 || !Number.isSafeInteger(value)) {
     return {
       kind: "invalid",
-      message: `${label} is counted from 1, so ${text} cannot be used.`,
+      message: `${label} is counted from 1, so ${text} cannot be used`,
     };
   }
   return { kind: "value", value };
@@ -165,7 +165,7 @@ function useFileSelection(
           }
           setFile(null);
           setRejected(
-            "That file could not be read. It may have moved, gone offline, or been removed. Choose it again, or pick another file.",
+            "That file could not be read. It may have moved, gone offline, or been removed. Choose it again, or pick another file",
           );
           setReading(false);
         });
@@ -329,7 +329,7 @@ function rejectedUploadMessage(
 ): string {
   const [first] = files;
   const named = first ? `"${first.name}" is not` : "Those files are not";
-  return `${named} ${expected}. Nothing is selected now, so choose ${expected} to continue.`;
+  return `${named} ${expected}. Nothing is selected now, so choose ${expected} to continue`;
 }
 
 /** The chosen file's name and size, shown under whichever picker took it. */
@@ -490,7 +490,7 @@ export function PptxPopulateTool() {
 
   return (
     <ToolShell
-      description="Choose a designed template slide and a workbook of records, and get one populated slide per record. Everything runs in this page using the same operation the ConsultChimps command line uses."
+      description="Choose a designed template slide and a workbook of records, and get one populated slide per record. Everything runs in this page using the same operation the ConsultChimps command line uses"
       guideHref="/docs/tools/powerpoint-populate"
       guideLabel="Read the PowerPoint guide"
       kicker="Online tool · PowerPoint populate"
@@ -503,7 +503,7 @@ export function PptxPopulateTool() {
         <div className="mt-4">
           <FilePicker
             accept={PRESENTATION_FILES.accept}
-            description={`Drag ${PRESENTATION_FILES.description} here, or pick one with the button below. Its placeholders use the {{field_name}} syntax. Only the first presentation is used.`}
+            description={`Drag ${PRESENTATION_FILES.description} here, or pick one with the button below. Its placeholders use the {{field_name}} syntax. Only the first presentation is used`}
             disabled={isRunning}
             label="Template presentation"
             multiple={false}
@@ -540,12 +540,12 @@ export function PptxPopulateTool() {
           Every nonempty row below the header row becomes one slide. Each
           template placeholder must match a column header exactly: whitespace
           inside the braces and around the header is trimmed first, and the two
-          are then compared character for character, including case.
+          are then compared character for character, including case
         </p>
         <div className="mt-4">
           <FilePicker
             accept={WORKBOOK_FILES.accept}
-            description={`Drag ${WORKBOOK_FILES.description} here, or pick one with the button below. Only the first workbook is used.`}
+            description={`Drag ${WORKBOOK_FILES.description} here, or pick one with the button below. Only the first workbook is used`}
             disabled={isRunning}
             label="Records workbook"
             multiple={false}
@@ -576,7 +576,7 @@ export function PptxPopulateTool() {
         <div className="mt-6 flex flex-col gap-5">
           <TextField
             disabled={isRunning}
-            hint="Optional. Defaults to `<template>-populated.pptx`. The `.pptx` extension is added for you."
+            hint="Optional. Defaults to `<template>-populated.pptx`. The `.pptx` extension is added for you"
             label="Output filename"
             onChange={setOutputName}
             placeholder="quarterly-review"
@@ -592,7 +592,7 @@ export function PptxPopulateTool() {
           <div className="mt-5 flex flex-col gap-5">
             <TextField
               disabled={isRunning}
-              hint="Optional. Reads the records from one worksheet by name. Defaults to the first worksheet."
+              hint="Optional. Reads the records from one worksheet by name. Defaults to the first worksheet"
               label="Worksheet"
               onChange={setWorksheet}
               placeholder="Records"
@@ -602,7 +602,7 @@ export function PptxPopulateTool() {
             <NumberField
               disabled={isRunning}
               error={fieldMessage(headerRowField)}
-              hint="Optional one-based row number. Defaults to the first nonempty row in the worksheet."
+              hint="Optional one-based row number. Defaults to the first nonempty row in the worksheet"
               label="Header row"
               onChange={setHeaderRow}
               placeholder="1"
@@ -612,7 +612,7 @@ export function PptxPopulateTool() {
             <NumberField
               disabled={isRunning}
               error={fieldMessage(templateSlideField)}
-              hint="Optional one-based slide number. Defaults to the first slide in the template. The finished presentation holds one populated copy of this slide per record and nothing else. The original template slide and any other slides in the template are not carried into the output."
+              hint="Optional one-based slide number. Defaults to the first slide in the template. The finished presentation holds one populated copy of this slide per record and nothing else. The original template slide and any other slides in the template are not carried into the output"
               label="Template slide"
               onChange={setTemplateSlide}
               placeholder="1"
@@ -637,7 +637,7 @@ export function PptxPopulateTool() {
         {!template || !workbook ? (
           <p className="mt-3 text-sm text-fd-muted-foreground">
             Choose a template and a records workbook to see the presentation
-            this task will create.
+            this task will create
           </p>
         ) : null}
         {/*
@@ -821,7 +821,7 @@ export function PptxInspectTool() {
 
   return (
     <ToolShell
-      description="Choose a template presentation and see every placeholder its slide expects, with occurrence counts, before you populate it. The template is read in this page and never uploaded."
+      description="Choose a template presentation and see every placeholder its slide expects, with occurrence counts, before you populate it. The template is read in this page and never uploaded"
       guideHref="/docs/tools/powerpoint-populate#inspect-the-template"
       guideLabel="Read the PowerPoint guide"
       kicker="Online tool · PowerPoint inspect"
@@ -834,7 +834,7 @@ export function PptxInspectTool() {
         <div className="mt-4">
           <FilePicker
             accept={PRESENTATION_FILES.accept}
-            description={`Drag ${PRESENTATION_FILES.description} here, or pick one with the button below. Only the first presentation is used.`}
+            description={`Drag ${PRESENTATION_FILES.description} here, or pick one with the button below. Only the first presentation is used`}
             disabled={false}
             label="Template presentation"
             multiple={false}
@@ -865,7 +865,7 @@ export function PptxInspectTool() {
           <NumberField
             disabled={false}
             error={slideNumberError}
-            hint="Optional one-based slide number. Defaults to the first slide in the template."
+            hint="Optional one-based slide number. Defaults to the first slide in the template"
             label="Template slide"
             onChange={setTemplateSlide}
             placeholder="1"
@@ -889,7 +889,7 @@ export function PptxInspectTool() {
         </h2>
         {!template ? (
           <p className="mt-3 text-sm text-fd-muted-foreground">
-            Choose a template to see the placeholders its slide expects.
+            Choose a template to see the placeholders its slide expects
           </p>
         ) : null}
         {readyToInspect && current === null ? (
