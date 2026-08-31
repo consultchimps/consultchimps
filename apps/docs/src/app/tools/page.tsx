@@ -17,7 +17,7 @@ export default function Page() {
       <div className="mx-auto w-full max-w-[1100px] px-6 pb-24 pt-14 lg:px-8">
         <div className="manual-kicker">Online tools · in-browser</div>
         <h1 className="mt-6 text-4xl font-bold tracking-[-0.04em] md:text-5xl">
-          Run a tool right here.
+          Run a tool right here
         </h1>
         <p className="mt-5 max-w-2xl text-lg leading-8 text-fd-muted-foreground">
           These tools run entirely in your browser tab. Your files are never
@@ -26,7 +26,7 @@ export default function Page() {
           options produce the same file contents. What differs is naming and a
           few interface defaults: the browser hands you downloads instead of
           writing into a folder you choose. Each guide notes where its online
-          tool differs.
+          tool differs
         </p>
 
         <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
@@ -69,7 +69,7 @@ export default function Page() {
             <p className="mt-3 max-w-2xl leading-7 text-fd-muted-foreground">
               The rest of the kit currently runs through the command line or the
               TypeScript libraries. Each guide covers installation and a worked
-              example.
+              example
             </p>
             <ul
               className="mt-6 grid gap-3 sm:grid-cols-2"

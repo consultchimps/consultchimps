@@ -17,12 +17,11 @@ export default function ReleasesPage() {
       <div className="mx-auto w-full max-w-[900px] px-6 pb-24 pt-14 lg:px-8">
         <div className="manual-kicker">Release history · auto-generated</div>
         <h1 className="mt-6 text-4xl font-bold tracking-[-0.04em] md:text-5xl">
-          What shipped, and when.
+          What shipped, and when
         </h1>
         <p className="mt-5 max-w-2xl text-lg leading-8 text-fd-muted-foreground">
           This page is generated from the package changelogs on every site
-          deploy. Full histories live in each package&apos;s CHANGELOG on
-          GitHub.
+          deploy. Full histories live in each package&apos;s CHANGELOG on GitHub
         </p>
 
         <div className="mt-12 space-y-12">
@@ -53,7 +52,7 @@ export default function ReleasesPage() {
               <div className="mt-4 space-y-4 border-l-2 border-fd-border pl-5">
                 {entries.length === 0 ? (
                   <p className="text-sm text-fd-muted-foreground">
-                    No released changes recorded yet.
+                    No released changes recorded yet
                   </p>
                 ) : (
                   entries.map(({ version: entryVersion, notes }) => (
@@ -69,7 +68,7 @@ export default function ReleasesPage() {
                         </ul>
                       ) : (
                         <p className="mt-1.5 text-sm text-fd-muted-foreground">
-                          Dependency updates only.
+                          Dependency updates only
                         </p>
                       )}
                     </div>

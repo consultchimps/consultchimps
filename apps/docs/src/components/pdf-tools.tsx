@@ -93,7 +93,7 @@ export function PdfSplitTool() {
 
   return (
     <ToolShell
-      description="Drop a PDF below to write every page to its own file. The split runs in this page using the same operation the ConsultChimps command line uses."
+      description="Drop a PDF below to write every page to its own file. The split runs in this page using the same operation the ConsultChimps command line uses"
       guideHref="/docs/tools/pdf-split"
       guideLabel="Read the split guide"
       kicker="Online tool · PDF split"
@@ -106,7 +106,7 @@ export function PdfSplitTool() {
         <div className="mt-4">
           <FilePicker
             accept={PDF_FILES.accept}
-            description={`Drag ${PDF_FILES.description} here, or pick one with the button below. Only the first PDF is used.`}
+            description={`Drag ${PDF_FILES.description} here, or pick one with the button below. Only the first PDF is used`}
             disabled={isRunning}
             label="Source PDF"
             multiple={false}
@@ -142,7 +142,7 @@ export function PdfSplitTool() {
           </label>
           <p className="mt-1 text-sm text-fd-muted-foreground">
             Optional. Defaults to the source filename, so `report.pdf` produces
-            `report-page-001.pdf`.
+            `report-page-001.pdf`
           </p>
           <input
             className={`${inputClass} mt-3`}
@@ -171,7 +171,7 @@ export function PdfSplitTool() {
         {!input ? (
           <p className="mt-3 text-sm text-fd-muted-foreground">
             Choose a PDF to see the pages it contains and the files this task
-            will create.
+            will create
           </p>
         ) : null}
         {planError ? (
@@ -280,7 +280,7 @@ export function PdfMergeTool() {
 
   return (
     <ToolShell
-      description="Add the PDFs you want to combine, arrange them in the order they should appear, and merge them without uploading anything."
+      description="Add the PDFs you want to combine, arrange them in the order they should appear, and merge them without uploading anything"
       guideHref="/docs/tools/pdf-merge"
       guideLabel="Read the merge guide"
       kicker="Online tool · PDF merge"
@@ -291,7 +291,7 @@ export function PdfMergeTool() {
         <div className="mt-4">
           <FilePicker
             accept={PDF_FILES.accept}
-            description={`Drag one or more ${PDF_FILES.pluralDescription} here, or pick them with the button below. Added files keep the order shown.`}
+            description={`Drag one or more ${PDF_FILES.pluralDescription} here, or pick them with the button below. Added files keep the order shown`}
             disabled={isRunning}
             label="Source PDFs"
             multiple
@@ -308,7 +308,7 @@ export function PdfMergeTool() {
 
         {inputs.length === 0 ? (
           <p className="mt-4 text-sm text-fd-muted-foreground">
-            No PDFs added yet.
+            No PDFs added yet
           </p>
         ) : (
           <ol className="mt-4 flex flex-col gap-2" data-testid="source-list">
@@ -373,7 +373,7 @@ export function PdfMergeTool() {
           </label>
           <p className="mt-1 text-sm text-fd-muted-foreground">
             Optional. Defaults to `combined.pdf`. The `.pdf` extension is added
-            for you.
+            for you
           </p>
           <input
             className={`${inputClass} mt-3`}
@@ -392,10 +392,10 @@ export function PdfMergeTool() {
         <h2 className="text-xl font-bold tracking-[-0.03em]">2. Run</h2>
         <p className="mt-3 text-sm text-fd-muted-foreground">
           {inputs.length === 0
-            ? "Add at least one PDF to merge."
+            ? "Add at least one PDF to merge"
             : `Every page from ${inputs.length} ${
                 inputs.length === 1 ? "PDF" : "PDFs"
-              } will be copied in the order listed above.`}
+              } will be copied in the order listed above`}
         </p>
         <RunControls
           busyLabel="Merging…"
