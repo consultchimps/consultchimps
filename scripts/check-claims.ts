@@ -89,7 +89,9 @@ const CLAIM_RULES: readonly ClaimRule[] = [
   },
   {
     id: "stale-node-version",
-    pattern: /Node(?:\.js)?\s+24/i,
+    // Comparators are allowed for so the phrase rule agrees with the
+    // engines check below, which reads "Node.js >=24" as a version claim too.
+    pattern: /Node(?:\.js)?\s*(?:>=|>|\^|~|=)?\s*v?24/i,
     advice:
       'published packages declare engines.node ">=22.0.0"; a package README must state the supported floor, not the version the maintainers develop on',
     appliesTo: isPackageReadme,
@@ -350,8 +352,17 @@ interface PackageManifest {
   engines?: { node?: string };
 }
 
-const nodeMentionPattern = /\bNode(?:\.js)?\s+v?(\d+)(?:\.\d+)*/gi;
+// A README may name the version in prose ("Node.js 22 or later") or in the
+// comparator syntax an engines field uses ("Node.js >=22"). Both forms are
+// matched, so neither can slip past the check by not looking like a mention.
+const nodeMentionPattern =
+  /\bNode(?:\.js)?\s*(?<comparator>>=|>|\^|~|=)?\s*v?(?<major>\d+)(?:\.\d+)*/gi;
 const floorSuffixPattern = /^\s*(?:\+|or later|or newer|or above|and later)\b/i;
+// Comparators that already say "this version or anything newer". `^` and `~`
+// are deliberately absent: both cap the range at the next major, so they claim
+// something narrower than an engines floor of ">=22.0.0" and still need the
+// wording corrected.
+const floorComparators: ReadonlySet<string> = new Set([">=", ">"]);
 const packagesDirectory = path.join(workspaceRoot, PACKAGE_README_ROOT);
 
 if (existsSync(packagesDirectory)) {
@@ -391,10 +402,14 @@ if (existsSync(packagesDirectory)) {
 
     for (const mention of mentions) {
       const line = readmeText.slice(0, mention.index).split("\n").length;
-      if (mention[1] !== declaredMajor) {
+      if (mention.groups?.major !== declaredMajor) {
         problems.push(
           `${readmeLabel}:${line} says "${mention[0]}", but ${manifestLabel} declares engines.node "${declared}"\n    state the supported floor, or change engines.node if the support window really moved`,
         );
+        continue;
+      }
+      const comparator = mention.groups.comparator;
+      if (comparator !== undefined && floorComparators.has(comparator)) {
         continue;
       }
       const remainder = readmeText.slice(mention.index + mention[0].length);

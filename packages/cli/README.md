@@ -18,11 +18,13 @@ npm install --global consultchimps
 
 ## Commands
 
-Every command, option, default, and example is documented in the
-[CLI reference](https://consultchimps.github.io/consultchimps/docs/reference/cli),
-which the repository checks against the executable's own help output in CI. This
-README is an overview, not a catalogue: when the two disagree, the reference is
-right.
+The
+[CLI reference](https://consultchimps.github.io/consultchimps/docs/reference/cli)
+lists the commands and their options; CI checks that it names every command and
+long option the executable exposes, so nothing goes missing from it. It does not
+reproduce every example or default, and neither does this README, which is an
+overview rather than a catalogue. `consultchimps <group> <command> --help` is
+the executable speaking for itself and is authoritative on both.
 
 | Command                 | What it does                                                 |
 | ----------------------- | ------------------------------------------------------------ |
@@ -34,7 +36,6 @@ right.
 | `pdf split`             | Write one zero-padded file per page                          |
 | `pdf merge`             | Assemble source PDFs in resolved order into one document     |
 
-Run `consultchimps <group> <command> --help` for the options of any one of them.
 A few representative invocations:
 
 ```bash
