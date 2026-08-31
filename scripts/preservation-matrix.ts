@@ -264,7 +264,12 @@ export function undeclaredOperations(): readonly Operation[] {
   );
 }
 
-/** The status the contract implies for one cell of the published matrix. */
+/**
+ * The status the contract implies for one cell of the published matrix. An
+ * absent cell is the contract's own debt ledger, so it renders as "Needs
+ * review"; a behavior with no status cannot reach here, because
+ * `collectProjectionProblems` fails the check before anything is rendered.
+ */
 export function statusFor(
   operation: Operation,
   structure: Structure,
@@ -272,7 +277,7 @@ export function statusFor(
   const behavior = CONTRACT[operation][structure];
   return behavior === undefined
     ? NEEDS_REVIEW_STATUS
-    : (BEHAVIOR_STATUS[behavior] ?? NEEDS_REVIEW_STATUS);
+    : BEHAVIOR_STATUS[behavior];
 }
 
 /**

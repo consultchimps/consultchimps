@@ -133,19 +133,19 @@ if (currentBlock !== expectedBlock) {
 
 // Check 3: every Excel guide sends the reader to the matrix rather than
 // keeping its own list of what an operation preserves.
-const missingLinks = guidesLinkingToMatrix.filter((guideLabel) => {
+for (const guideLabel of guidesLinkingToMatrix) {
   const guidePath = path.join(workspaceRoot, ...guideLabel.split("/"));
   if (!existsSync(guidePath)) {
-    problems.push(`${guideLabel} does not exist`);
-    return false;
+    problems.push(
+      `${guideLabel} does not exist; update the list of Excel guides in this script if the page was renamed`,
+    );
+    continue;
   }
-  return !readTextFile(guidePath).includes(matrixPageHref);
-});
-
-for (const guideLabel of missingLinks) {
-  problems.push(
-    `${guideLabel} does not link to ${matrixPageHref}; every Excel guide's limitations section must point at the full matrix`,
-  );
+  if (!readTextFile(guidePath).includes(matrixPageHref)) {
+    problems.push(
+      `${guideLabel} does not link to ${matrixPageHref}; every Excel guide's limitations section must point at the full matrix`,
+    );
+  }
 }
 
 if (problems.length > 0) {
