@@ -19,7 +19,7 @@
     "changeset": "changeset",
     "check": "pnpm format:check && pnpm lint && pnpm build && pnpm typecheck && pnpm test:coverage && pnpm package:check && pnpm docs:check",
     "consultchimps": "node packages/cli/dist/index.js",
-    "docs:check": "node scripts/check-cli-reference.ts && node scripts/check-registry-site.ts",
+    "docs:check": "node scripts/check-cli-reference.ts && node scripts/check-registry-site.ts && node scripts/check-claims.ts && node scripts/check-readme-operations.ts",
     "docs:dev": "pnpm --filter @consultchimps/docs dev",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

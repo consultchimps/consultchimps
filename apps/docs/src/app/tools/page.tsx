@@ -21,8 +21,12 @@ export default function Page() {
         </h1>
         <p className="mt-5 max-w-2xl text-lg leading-8 text-fd-muted-foreground">
           These tools run entirely in your browser tab. Your files are never
-          uploaded, and the results match the ConsultChimps command line
-          byte-for-byte.
+          uploaded, and each tool runs the same operation code as the
+          ConsultChimps command line and libraries, so identical inputs and
+          options produce the same file contents. What differs is naming and a
+          few interface defaults: the browser hands you downloads instead of
+          writing into a folder you choose. Each guide notes where its online
+          tool differs.
         </p>
 
         <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
@@ -50,11 +54,12 @@ export default function Page() {
         </div>
 
         {/*
-          Every operation the registry declares now has a working browser
-          surface, so this section has nothing to list. It renders only when
-          something is genuinely missing from the browser: a heading over an
-          empty list, above a paragraph promising "the rest of the kit", reads
-          as a page that failed to load rather than as a complete toolkit.
+          This section lists the registry entries whose browser surface does
+          not work yet, so it is empty exactly when every declared operation
+          runs in the browser and populated as soon as one does not. It is
+          rendered only when it has rows: a heading over an empty list, above a
+          paragraph promising "the rest of the kit", reads as a page that
+          failed to load rather than as a complete toolkit.
         */}
         {guideOnlyTools.length > 0 ? (
           <>

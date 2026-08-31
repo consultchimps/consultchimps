@@ -445,7 +445,7 @@ export function ExcelSplitTool() {
 
   return (
     <ToolShell
-      description="Choose a workbook and a column, and get one workbook per distinct value in that column. By default each new workbook is a complete copy of the original — every tab, layout, and setting kept — with only the rows for one value left in place. Everything runs in this page using the same operation the ConsultChimps library uses."
+      description="Choose a workbook and a column, and get one workbook per distinct value in that column. By default each new workbook keeps the source workbook's sheets, formatting, and supported workbook structure, removing only the rows that belong to other values. Pivot tables and their caches are removed and reported, so review complex workbooks — pivots, external links, charts, ActiveX controls — in Excel before you deliver them. Everything runs in this page using the same operation the ConsultChimps library uses."
       guideHref="/docs/tools/spreadsheet-split"
       guideLabel="Read the split guide"
       kicker="Online tool · Excel split"
@@ -615,7 +615,7 @@ export function ExcelSplitTool() {
               disabled={isRunning || !preserveWorkbookAllowed}
               hint={
                 preserveWorkbookAllowed
-                  ? "On by default. Every tab, layout, and setting is kept, and only the rows that do not belong are removed. Turn it off to get small, plain workbooks holding just the matching rows of the source being split."
+                  ? "On by default. The source workbook's sheets, formatting, and supported workbook structure are kept, and only the rows that do not belong are removed. Pivot tables and their caches are removed, with a warning on the result. Turn it off to get small, plain workbooks holding just the matching rows of the source being split."
                   : "Not offered for a named worksheet or a named range: those always produce small, plain workbooks holding just the matching rows."
               }
               label="Keep the whole workbook"
@@ -764,7 +764,7 @@ export function ExcelSplitTool() {
         <h2 className="text-xl font-bold tracking-[-0.03em]">4. Run</h2>
         <p className="mt-3 text-sm text-fd-muted-foreground">
           {preserveWorkbookAllowed && preserveWorkbook
-            ? "Each new workbook is a complete copy of your file, with every tab, layout, and setting kept, holding only the rows for one value."
+            ? "Each new workbook keeps your file's sheets, formatting, and supported workbook structure, holding only the rows for one value. Pivot tables and their caches are removed and reported; review complex workbooks in Excel before delivery."
             : "Each new workbook is a small, plain file holding only the matching rows from the source you chose."}
         </p>
         <RunControls
@@ -937,7 +937,7 @@ export function ExcelConsolidateTool() {
 
   return (
     <ToolShell
-      description="Add the workbooks you want to stack, arrange them in the order the rows should follow, and get one table holding every row from every useful worksheet. Nothing is uploaded — the whole task runs in this browser tab."
+      description="Add the workbooks you want to stack, arrange them in the order the rows should follow, and get one table holding every row from every visible worksheet that holds data. Hidden worksheets are skipped unless you ask for them. Nothing is uploaded — the whole task runs in this browser tab."
       guideHref="/docs/tools/spreadsheet-consolidate"
       guideLabel="Read the consolidate guide"
       kicker="Online tool · Excel consolidate"
@@ -1024,7 +1024,7 @@ export function ExcelConsolidateTool() {
         <p className="mt-3 text-sm text-fd-muted-foreground">
           {files.length === 0
             ? "Add at least one workbook to consolidate."
-            : `Rows from every useful worksheet in ${files.length} ${
+            : `Rows from every worksheet that holds data in ${files.length} ${
                 files.length === 1 ? "workbook" : "workbooks"
               } will be stacked into one table, in the order listed above.`}
         </p>

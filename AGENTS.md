@@ -419,6 +419,23 @@ Documentation and CLI help must evolve with the public interface.
 - Keep terminology consistent: use `ConsultChimps` for the project and
   `consultchimps` for the package and executable.
 
+### Claims vocabulary
+
+<!--
+Every false claim a documentation review has found here was an unconditional
+word standing in for a rule nobody had written down. `pnpm docs:check` lints
+the worst offenders through `scripts/check-claims.ts`.
+-->
+
+- Avoid unconditional words in user-facing copy — every, all, always, never,
+  complete, exact, identical, byte-for-byte, fully preserved — unless a test or
+  a declared contract holds the claim up. Otherwise state the actual rule.
+- For preservation-heavy operations, describe Preserved / Changed or removed /
+  Needs review rather than promising the whole document survives.
+- Source-of-truth first: check `apps/docs/src/lib/tools.ts`,
+  `packages/xlsx/src/contract.ts`, and the package's `engines` before writing a
+  sentence about what a surface supports.
+
 ## Dependencies
 
 <!--

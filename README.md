@@ -10,16 +10,25 @@ tools do not require Codex or any hosted service.
 Documentation:
 [consultchimps.github.io/consultchimps](https://consultchimps.github.io/consultchimps/)
 
-## Initial tools
+## Operations
 
-| Tool                  | Command                            | Status  |
-| --------------------- | ---------------------------------- | ------- |
-| Excel consolidation   | `consultchimps sheets consolidate` | Working |
-| Excel worksheet merge | `consultchimps sheets merge`       | Working |
-| Excel split by column | `consultchimps sheets split`       | Working |
-| PowerPoint population | `consultchimps pptx populate`      | Working |
-| PDF page splitting    | `consultchimps pdf split`          | Working |
-| PDF document merging  | `consultchimps pdf merge`          | Working |
+Every operation the toolkit ships, and which of its three surfaces you can use
+it from today. The rows come from the operation registry in
+[`apps/docs/src/lib/tools.ts`](apps/docs/src/lib/tools.ts), which is what the
+documentation site renders its cards and tabs from;
+`scripts/check-readme-operations.ts` fails the build when this table and that
+registry disagree.
+
+| Operation                     | CLI     | Library | Browser |
+| ----------------------------- | ------- | ------- | ------- |
+| Consolidate spreadsheets      | Works   | Works   | Works   |
+| Merge workbook tabs           | Works   | Works   | Works   |
+| Split spreadsheets            | Works   | Works   | Works   |
+| Populate PowerPoint templates | Works   | Works   | Works   |
+| Split PDF pages               | Works   | Works   | Works   |
+| Merge PDF packs               | Works   | Works   | Works   |
+| Inspect PowerPoint templates  | Works   | Works   | Works   |
+| Inspect workbooks             | Planned | Works   | Planned |
 
 ## Packages
 

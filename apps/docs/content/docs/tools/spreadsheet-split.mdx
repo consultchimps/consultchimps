@@ -130,13 +130,16 @@ data-only.
 
 <Callout title="What the online tool does">
   The [in-browser splitter](/tools/excel-split) runs the same all-worksheet
-  split as the command line, so each workbook it creates is a complete copy of
-  your file with the other values' rows removed. Naming a table, a range, or a
-  worksheet narrows it to that one source there too. Only the names of the
-  finished files differ: the command line saves into the folder you choose and
-  names each file after the value alone, such as `North.xlsx`, while the browser
-  hands you downloads and keeps the source name in front, such as
-  `clients-North.xlsx`. You can change that prefix in the tool.
+  split as the command line, so each workbook it creates keeps the source
+  workbook's sheets, formatting, and supported workbook structure with the other
+  values' rows removed — and removes the same pivot tables, described under
+  [Preservation and known limitations](#preservation-and-known-limitations).
+  Naming a table, a range, or a worksheet narrows it to that one source there
+  too. Only the names of the finished files differ: the command line saves into
+  the folder you choose and names each file after the value alone, such as
+  `North.xlsx`, while the browser hands you downloads and keeps the source name
+  in front, such as `clients-North.xlsx`. You can change that prefix in the
+  tool.
 </Callout>
 
 ## Preservation and known limitations
@@ -148,6 +151,14 @@ styles, number formats, row heights, column widths, merged cells, freeze panes,
 filters, conditional formatting, data validation, print settings, hyperlinks,
 comments, images, charts, names, workbook properties, and VBA project parts in
 `.xlsm` files.
+
+Pivot tables are the one structure the split deliberately removes. A pivot cache
+is a private copy of every source row, and it travels inside the workbook
+whether or not anyone opens the pivot, so leaving it in place would hand each
+output the rows belonging to every other value. The split therefore strips every
+pivot table and its caches, counts them in `metrics.pivotTablesRemoved`, and
+says so in the result's warnings. Rebuild the pivot in Excel from an output's
+own rows when you need it.
 
 Plain worksheet rows retain their original Excel row numbers instead of being
 compacted. This deliberately keeps formulas, drawings, validations, conditional

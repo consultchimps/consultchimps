@@ -86,7 +86,9 @@ test.describe("/tools/excel-split", () => {
     );
   });
 
-  test("gives back a complete copy of the workbook", async ({ page }) => {
+  test("keeps every worksheet and removes only the other values' rows", async ({
+    page,
+  }) => {
     await page.goto("/tools/excel-split");
     await fileInput(page).setInputFiles(
       await createWorkbookUpload("clients.xlsx", CLIENTS),

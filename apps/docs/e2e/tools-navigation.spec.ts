@@ -149,12 +149,15 @@ test.describe("tool guides", () => {
     });
   }
 
-  // There is deliberately no "this guide offers no online tool" table here:
-  // every operation the registry declares now has a working browser surface,
-  // so such a table would have no rows. The rule it used to assert — a guide
-  // may only offer a button for an operation whose browser surface works — is
-  // enforced for every entry by scripts/check-registry-site.ts, which reads
-  // the registry the pages render from.
+  // There is deliberately no "this guide offers no online tool" table here.
+  // The registry does declare operations whose browser surface is still
+  // planned — workbook inspection is one — but none of them has a guide page
+  // of its own to drive: that entry documents itself inside the libraries
+  // guide. Such a table would therefore still have no rows. The rule it used
+  // to assert — a guide may only offer a button for an operation whose browser
+  // surface works — is enforced for every entry by
+  // scripts/check-registry-site.ts, which reads the registry the pages render
+  // from.
 
   // Two registry entries — populate and template inspection — point their
   // docHref at the same PowerPoint guide, the inspection one through an

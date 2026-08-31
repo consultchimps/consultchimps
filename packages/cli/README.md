@@ -2,7 +2,7 @@
 
 Local-first spreadsheet, PowerPoint, and PDF operations for consultants.
 
-Requires Node.js 24.
+Requires Node.js 22 or later.
 
 ## Run
 
@@ -18,6 +18,25 @@ npm install --global consultchimps
 
 ## Commands
 
+Every command, option, default, and example is documented in the
+[CLI reference](https://consultchimps.github.io/consultchimps/docs/reference/cli),
+which is generated from the executable's own help output and verified against it
+on every build. This README is an overview, not a catalogue: when the two
+disagree, the reference is right.
+
+| Command                 | What it does                                                 |
+| ----------------------- | ------------------------------------------------------------ |
+| `sheets consolidate`    | Stack rows from many workbooks into one auditable table      |
+| `sheets merge`          | Copy every source worksheet into one workbook as its own tab |
+| `sheets split`          | Write one workbook per distinct value in a chosen column     |
+| `pptx inspect-template` | List the placeholders one template slide expects             |
+| `pptx populate`         | Fill a template slide once per record from a workbook        |
+| `pdf split`             | Write one zero-padded file per page                          |
+| `pdf merge`             | Assemble source PDFs in resolved order into one document     |
+
+Run `consultchimps <group> <command> --help` for the options of any one of them.
+A few representative invocations:
+
 ```bash
 consultchimps sheets consolidate "inputs/**/*.xlsx" \
   --output outputs/consolidated.xlsx
@@ -30,16 +49,8 @@ consultchimps sheets split clients.xlsx \
   --column Region \
   --output outputs/by-region
 
-consultchimps sheets split clients.xlsx \
-  --table ClientData \
-  --column Region \
-  --output outputs/by-region
-
-consultchimps sheets split clients.xlsx \
-  --table ClientData \
-  --column Region \
-  --preserve-workbook \
-  --output outputs/by-region
+consultchimps pptx inspect-template profile-template.pptx \
+  --template-slide 1
 
 consultchimps pptx populate \
   --template profile-template.pptx \
