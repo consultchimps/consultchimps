@@ -420,9 +420,15 @@ Documentation and CLI help must evolve with the public interface.
   `consultchimps` for the package and executable.
 - No em or en dashes anywhere, in prose, comments, or UI strings; use commas,
   colons, parentheses, or separate sentences, and write a numeric range as "22
-  to 26". A fragment carries no full stop: headings, table cells, labels, button
-  text, and single-clause hints end without one, while real sentences keep
-  theirs. `scripts/check-typography.ts` fails `pnpm docs:check` on a dash.
+  to 26". `scripts/check-typography.ts` fails `pnpm docs:check` on a dash.
+- Full stops: in repository prose (guides, README, comments), a fragment carries
+  no full stop while real sentences keep theirs. On the documentation site's
+  rendered interface (cards, headings, hero copy, picker descriptions, field
+  hints, run summaries, empty states, field errors, notices), every string ends
+  without a terminal full stop, even when it is a sentence; internal stops in
+  multi-sentence strings stay. Exceptions: `metadata` descriptions (never
+  rendered on the page) and sentence fragments spliced into
+  `@consultchimps/messages` prose, which keep sentence punctuation.
 
 ### Claims vocabulary
 
