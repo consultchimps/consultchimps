@@ -64,6 +64,9 @@ export const GENERATED_BLOCK_END = "{/* preservation-matrix:end */}";
  */
 const MAX_NOTE_LENGTH = 220;
 
+/** A qualifier shares a cell with its status, so it stays a clause. */
+const MAX_QUALIFIER_LENGTH = 120;
+
 export const STRUCTURE_DOCUMENTATION: Record<
   Structure,
   StructureDocumentation
@@ -215,13 +218,39 @@ export const BEHAVIOR_STATUS: Record<ContractBehavior, StatusDocumentation> = {
 
 /**
  * The status for a structure the contract deliberately leaves undeclared. The
- * absent cells are the package's own debt ledger, so the honest reading is
- * "carried as far as it can be, promised nowhere" rather than a guarantee.
+ * absent cells are the package's own debt ledger, so this status promises
+ * nothing at all: what the operation does today is stated in the row's note and
+ * in its qualifier, not implied by the status.
  */
 export const NEEDS_REVIEW_STATUS: StatusDocumentation = {
   label: "Needs review",
   meaning:
-    "Not yet covered by a checked promise. Whatever the file holds is carried through as it stands, but nothing re-points or rebuilds it, so open the output and check this before sending it on.",
+    "Not covered by a checked promise, so the package may still change what it does here. The note on the row says what happens today; open the output and check it before sending the file on.",
+};
+
+/**
+ * Per-cell qualifiers, for the cells where one contract word is coarser than
+ * the behavior a reader has to plan around: a promise that holds only under a
+ * condition, or an undeclared cell whose shipped behavior is not the neutral
+ * "carried as it stands". The status still comes from the contract; the
+ * qualifier only says what the single word leaves out, and is checked to name
+ * a tracked structure in an operation that has a column.
+ */
+export const CELL_QUALIFIERS: Partial<
+  Record<Operation, Partial<Record<Structure, string>>>
+> = {
+  merge: {
+    // The contract cell is `strip-warn`, but the removal is conditional: the
+    // project travels when exactly one input carries it and the output name
+    // admits macros. See ARCHITECTURE.md, "The merge's removals".
+    "vba-project":
+      "kept when exactly one input has macros and the output is named .xlsm",
+    // The cell is absent because no corpus fixture can exercise it yet, but
+    // the transplant already removes external links and warns about it, so
+    // the bare status would read as more preservation than the merge offers.
+    "external-links":
+      "the merge removes them and says so; the contract cannot pin that until a fixture exists",
+  },
 };
 
 /**
@@ -278,6 +307,18 @@ export function statusFor(
   return behavior === undefined
     ? NEEDS_REVIEW_STATUS
     : BEHAVIOR_STATUS[behavior];
+}
+
+/** The rendered cell: the contract's status, plus a qualifier where one exists. */
+export function cellTextFor(
+  operation: Operation,
+  structure: Structure,
+): string {
+  const status = statusFor(operation, structure);
+  const qualifier = CELL_QUALIFIERS[operation]?.[structure];
+  return qualifier === undefined
+    ? status.label
+    : `${status.label} — ${qualifier}`;
 }
 
 /**
@@ -377,6 +418,32 @@ export function collectProjectionProblems(): string[] {
     }
   }
 
+  const operationsWithColumn = new Set<string>(columnOperations());
+  for (const [operation, qualifiers] of Object.entries(CELL_QUALIFIERS)) {
+    if (!operationsWithColumn.has(operation)) {
+      problems.push(
+        `CELL_QUALIFIERS qualifies cells of "${operation}", which has no column in the matrix, so the qualifier would never be rendered`,
+      );
+      continue;
+    }
+    for (const [structure, qualifier] of Object.entries(qualifiers ?? {})) {
+      if (!trackedStructures.has(structure)) {
+        problems.push(
+          `CELL_QUALIFIERS qualifies ${operation}.${structure}, which the contract does not track`,
+        );
+        continue;
+      }
+      if (qualifier.trim() === "") {
+        problems.push(`the qualifier on ${operation}.${structure} is empty`);
+      }
+      if (qualifier.length > MAX_QUALIFIER_LENGTH) {
+        problems.push(
+          `the qualifier on ${operation}.${structure} is ${qualifier.length} characters; keep it under ${MAX_QUALIFIER_LENGTH} so the cell stays readable`,
+        );
+      }
+    }
+  }
+
   return problems;
 }
 
@@ -413,9 +480,8 @@ export function renderPreservationMatrixBlock(): string {
   const rows = TRACKED_STRUCTURES.map((structure) => {
     const documentation = STRUCTURE_DOCUMENTATION[structure];
     const cells = operations.map((operation) => {
-      const status = statusFor(operation, structure);
-      usedStatuses.add(status.label);
-      return status.label;
+      usedStatuses.add(statusFor(operation, structure).label);
+      return cellTextFor(operation, structure);
     });
     return [documentation.label, ...cells, documentation.note];
   });
