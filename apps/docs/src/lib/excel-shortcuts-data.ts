@@ -1462,7 +1462,7 @@ export const EXCEL_SHORTCUTS: readonly ExcelShortcut[] = [
     keys: [["Alt"]],
     action: "Show the ribbon key tips, then type the letters they display",
     category: "ribbon sequences",
-    note: "Every sequence on this page that starts with Alt is read from those key tips",
+    note: "The multi-step routes here, the ones whose first step is Alt on its own, are read from those key tips. A chord such as Alt+Enter is not one of them",
   },
   {
     id: "ribbon-key-tips-f10",
