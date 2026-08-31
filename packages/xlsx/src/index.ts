@@ -91,6 +91,24 @@ import type {
 } from "./shared.js";
 
 export { XLSX_ERRORS, type XlsxErrorCode } from "./errors.js";
+/**
+ * The conformance contract: what this package promises to do to each tracked
+ * workbook structure, per operation, with a recorded reason for every cell it
+ * has not decided yet. Exported so that documentation and tooling can be
+ * generated from the same table the corpus tests enforce, instead of restating
+ * it in prose that drifts.
+ */
+export {
+  CONTRACT,
+  OPERATIONS,
+  TRACKED_STRUCTURES,
+  UNDECIDED_DESCRIBE_STRUCTURES,
+  UNDECIDED_MERGE_STRUCTURES,
+  UNDECIDED_SPLIT_STRUCTURES,
+  type ContractBehavior,
+  type Operation as ContractOperation,
+  type Structure as ContractStructure,
+} from "./contract.js";
 export type {
   ConsolidateWorkbooksMetric,
   ConsolidateWorkbooksPlanMetric,

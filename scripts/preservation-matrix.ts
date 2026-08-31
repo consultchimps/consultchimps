@@ -1,13 +1,18 @@
 /**
  * The documentation projection of the xlsx conformance contract.
  *
- * `packages/xlsx/src/contract.ts` is the single source of truth for what each
- * Excel operation promises to do to each workbook structure. It is written for
- * the package's own tests, in the package's vocabulary. This module is the one
- * place that translates it for readers of the documentation site: a human label
- * and one short note per structure, a plain-language status per declared
- * behavior, and the markdown block that
- * `apps/docs/content/docs/tools/excel-preservation.mdx` carries.
+ * `@consultchimps/xlsx` exports the contract (`packages/xlsx/src/contract.ts`)
+ * as the single source of truth for what each Excel operation promises to do
+ * to each workbook structure. It is written for the package's own tests, in
+ * the package's vocabulary. This module is the one place that translates it
+ * for readers of the documentation site: a human label and one short note per
+ * structure, a plain-language status per declared behavior, and the markdown
+ * block that `apps/docs/content/docs/tools/excel-preservation.mdx` carries.
+ *
+ * It is read through the package's public entry point rather than its source
+ * tree, so this projection sees exactly the surface a consumer sees, and
+ * `pnpm docs:check` needs a build first - as the CLI reference check needs the
+ * built CLI.
  *
  * Nothing here may invent a promise. Every status in the rendered table is
  * derived from a contract cell, and a structure the contract deliberately
@@ -25,9 +30,9 @@ import {
   UNDECIDED_MERGE_STRUCTURES,
   UNDECIDED_SPLIT_STRUCTURES,
   type ContractBehavior,
-  type Operation,
-  type Structure,
-} from "../packages/xlsx/src/contract.ts";
+  type ContractOperation as Operation,
+  type ContractStructure as Structure,
+} from "@consultchimps/xlsx";
 
 /** How the site names one workbook structure, and what a reader should know. */
 export interface StructureDocumentation {
@@ -93,7 +98,7 @@ export const STRUCTURE_DOCUMENTATION: Record<
   },
   "drawings-charts": {
     label: "Images, shapes, and charts",
-    note: "Pictures and charts are carried with their worksheet, but a chart's source range is never re-pointed: open each chart in an output and check what it plots.",
+    note: "Pictures and charts travel with their worksheet. A merge rewrites a chart's references when a rename forces it; a split never re-points them, so open each chart in a split output and check what it plots.",
   },
   "defined-names": {
     label: "Defined names",
@@ -228,6 +233,34 @@ export const NEEDS_REVIEW_STATUS: StatusDocumentation = {
     "Not covered by a checked promise, so the package may still change what it does here. The note on the row says what happens today; open the output and check it before sending the file on.",
 };
 
+/** What a cell of the contract holds: a declared behavior, or nothing yet. */
+export type CellKind = ContractBehavior | "undeclared";
+
+/**
+ * Statuses that replace the shared wording for one operation, because the
+ * shared wording describes an output that operation never produces. The
+ * inspection is the case: it writes nothing, so "carried into the output" is a
+ * promise it cannot make and "check the output before sending it on" is advice
+ * about a file that does not exist. What it does promise - your file is
+ * untouched - its corpus proves by comparing the input's bytes before and after.
+ */
+export const OPERATION_STATUS_OVERRIDES: Partial<
+  Record<Operation, Partial<Record<CellKind, StatusDocumentation>>>
+> = {
+  describe: {
+    preserve: {
+      label: "Read only, nothing touched",
+      meaning:
+        "The inspection produces no file. It reads the workbook, reports what it found, and leaves every byte of your original in place.",
+    },
+    undeclared: {
+      label: "Read only, not yet promised",
+      meaning:
+        "The inspection has no recorded promise about this structure yet. It still writes nothing, so nothing in your file can change; the note on the row says what it does with the structure today.",
+    },
+  },
+};
+
 /**
  * Per-cell qualifiers, for the cells where one contract word is coarser than
  * the behavior a reader has to plan around: a promise that holds only under a
@@ -267,13 +300,19 @@ const UNDECIDED_STRUCTURES_BY_OPERATION: Partial<
 };
 
 /** Legend order: declared behaviors first, then the undeclared status. */
-const STATUS_ORDER: readonly StatusDocumentation[] = [
-  BEHAVIOR_STATUS.preserve,
-  BEHAVIOR_STATUS.fix,
-  BEHAVIOR_STATUS["strip-warn"],
-  BEHAVIOR_STATUS.refuse,
-  NEEDS_REVIEW_STATUS,
-];
+function statusOrder(): readonly StatusDocumentation[] {
+  const ordered: StatusDocumentation[] = [
+    BEHAVIOR_STATUS.preserve,
+    BEHAVIOR_STATUS.fix,
+    BEHAVIOR_STATUS["strip-warn"],
+    BEHAVIOR_STATUS.refuse,
+  ];
+  for (const overrides of Object.values(OPERATION_STATUS_OVERRIDES)) {
+    ordered.push(...Object.values(overrides ?? {}));
+  }
+  ordered.push(NEEDS_REVIEW_STATUS);
+  return ordered;
+}
 
 function declaredStructureCount(operation: Operation): number {
   return Object.keys(CONTRACT[operation]).length;
@@ -304,6 +343,11 @@ export function statusFor(
   structure: Structure,
 ): StatusDocumentation {
   const behavior = CONTRACT[operation][structure];
+  const override =
+    OPERATION_STATUS_OVERRIDES[operation]?.[behavior ?? "undeclared"];
+  if (override !== undefined) {
+    return override;
+  }
   return behavior === undefined
     ? NEEDS_REVIEW_STATUS
     : BEHAVIOR_STATUS[behavior];
@@ -419,6 +463,46 @@ export function collectProjectionProblems(): string[] {
   }
 
   const operationsWithColumn = new Set<string>(columnOperations());
+  for (const [operation, overrides] of Object.entries(
+    OPERATION_STATUS_OVERRIDES,
+  )) {
+    if (!operationsWithColumn.has(operation)) {
+      problems.push(
+        `OPERATION_STATUS_OVERRIDES gives "${operation}" its own statuses, but it has no column in the matrix, so they would never be rendered`,
+      );
+      continue;
+    }
+    for (const [kind, status] of Object.entries(overrides ?? {})) {
+      if (
+        kind !== "undeclared" &&
+        BEHAVIOR_STATUS[kind as ContractBehavior] === undefined
+      ) {
+        problems.push(
+          `OPERATION_STATUS_OVERRIDES overrides ${operation}.${kind}, which is neither a contract behavior nor "undeclared"`,
+        );
+        continue;
+      }
+      if (status.label.trim() === "" || status.meaning.trim() === "") {
+        problems.push(
+          `the ${operation} status for "${kind}" needs both a label and a meaning`,
+        );
+      }
+    }
+  }
+
+  // Two statuses sharing a label would collapse into one legend row, and a
+  // reader would have no way to tell which of them a cell meant.
+  const meaningByLabel = new Map<string, string>();
+  for (const status of statusOrder()) {
+    const existing = meaningByLabel.get(status.label);
+    if (existing !== undefined && existing !== status.meaning) {
+      problems.push(
+        `two statuses are both labelled "${status.label}" with different meanings; give one of them its own wording`,
+      );
+    }
+    meaningByLabel.set(status.label, status.meaning);
+  }
+
   for (const [operation, qualifiers] of Object.entries(CELL_QUALIFIERS)) {
     if (!operationsWithColumn.has(operation)) {
       problems.push(
@@ -464,9 +548,9 @@ function renderTable(
 function renderStatusLegend(usedStatuses: ReadonlySet<string>): string {
   return renderTable(
     ["Status", "What it means"],
-    STATUS_ORDER.filter((status) => usedStatuses.has(status.label)).map(
-      (status) => [status.label, status.meaning],
-    ),
+    statusOrder()
+      .filter((status) => usedStatuses.has(status.label))
+      .map((status) => [status.label, status.meaning]),
   );
 }
 

@@ -147,6 +147,17 @@ combination exists in fixtures but has no declared behavior. Adding a feature
 therefore _forces_ a decision for every structure — the build demands it, not a
 reviewer.
 
+The table is also public: `src/index.ts` re-exports `CONTRACT`,
+`TRACKED_STRUCTURES`, `OPERATIONS` and the `UNDECIDED_*` records, so a caller
+can report what an operation will do before running it, and so the documentation
+site's preservation matrix
+(`apps/docs/content/docs/tools/excel-preservation.mdx`) is generated from this
+table by `scripts/check-preservation-matrix.ts` rather than restated in prose.
+Changing a cell therefore changes the published page in the same pull request:
+`pnpm docs:check` fails when the generated block is stale, and when a new
+structure, operation, or behavior has no plain-language wording in
+`scripts/preservation-matrix.ts`.
+
 Structures tracked (initial set): merged cells, conditional formatting, data
 validation, hyperlinks, comments, drawings/charts, defined names, Excel Tables
 (incl. totals rows), pivot tables + caches, calcChain, shared strings,

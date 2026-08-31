@@ -264,6 +264,30 @@ other reader here; naming a worksheet the workbook does not have is refused with
 `describeWorkbookBytes` is the byte-level twin and produces a structurally
 identical description for the same workbook.
 
+## Read what an Excel operation promises
+
+`@consultchimps/xlsx` exports its conformance contract: for every workbook
+structure it tracks and every operation it offers, what that operation does —
+`preserve`, `fix` (rewritten so it stays valid), `strip-warn` (removed, with a
+warning in the result), or `refuse`. The package's corpus tests exercise the
+table cell by cell, so it states behavior rather than intent.
+
+```ts
+import { CONTRACT, TRACKED_STRUCTURES } from "@consultchimps/xlsx";
+
+const removedByASplit = TRACKED_STRUCTURES.filter(
+  (structure) => CONTRACT.split[structure] === "strip-warn",
+);
+// ["pivot-tables"]
+```
+
+A structure with no entry for an operation is one the package has not decided
+yet; `UNDECIDED_SPLIT_STRUCTURES`, `UNDECIDED_MERGE_STRUCTURES`, and
+`UNDECIDED_DESCRIBE_STRUCTURES` record why each one is still open. Use the table
+to warn people before a run, or read it as prose in
+[what the Excel operations preserve](/docs/tools/excel-preservation), which is
+generated from it.
+
 ## Write values without losing Excel formatting
 
 The Excel consolidation, merge, and split operations accept `values: true`. For

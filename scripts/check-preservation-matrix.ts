@@ -4,27 +4,42 @@ import { fileURLToPath } from "node:url";
 
 import { format, resolveConfig } from "prettier";
 
-import {
+// Contract <-> site conformance check for the Excel preservation matrix. The
+// published table is generated from the contract @consultchimps/xlsx exports
+// rather than written by hand, so this check does two things: it fails when
+// the projection in scripts/preservation-matrix.ts has no words for something
+// the contract now declares, and it fails when the block committed to the page
+// differs from what the contract renders today. Run it with --write to
+// regenerate the page after changing the contract.
+
+const workspaceRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
+const xlsxEntryPoint = path.join(
+  workspaceRoot,
+  "packages",
+  "xlsx",
+  "dist",
+  "index.js",
+);
+
+if (!existsSync(xlsxEntryPoint)) {
+  throw new Error(
+    `The built xlsx package was not found at ${xlsxEntryPoint}. Run \`pnpm build\` first: the preservation matrix is generated from the contract that package exports, not from its source tree.`,
+  );
+}
+
+// Imported after the guard so a missing build reports the line above rather
+// than an unresolved module specifier.
+const {
   collectProjectionProblems,
   columnOperations,
   GENERATED_BLOCK_END,
   GENERATED_BLOCK_START,
   renderPreservationMatrixBlock,
   undeclaredOperations,
-} from "./preservation-matrix.ts";
-
-// Contract <-> site conformance check for the Excel preservation matrix. The
-// published table is generated from packages/xlsx/src/contract.ts rather than
-// written by hand, so this check does two things: it fails when the projection
-// in scripts/preservation-matrix.ts has no words for something the contract
-// now declares, and it fails when the block committed to the page differs from
-// what the contract renders today. Run it with --write to regenerate the page
-// after changing the contract.
-
-const workspaceRoot = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-);
+} = await import("./preservation-matrix.ts");
 const matrixPagePath = path.join(
   workspaceRoot,
   "apps",
@@ -61,7 +76,7 @@ problems.push(...collectProjectionProblems());
 
 if (problems.length > 0) {
   throw new Error(
-    `The Excel preservation matrix cannot describe the contract in packages/xlsx/src/contract.ts:\n${problems
+    `The Excel preservation matrix cannot describe the contract @consultchimps/xlsx exports (packages/xlsx/src/contract.ts):\n${problems
       .map((problem) => `- ${problem}`)
       .join(
         "\n",
@@ -111,7 +126,7 @@ if (currentBlock !== expectedBlock) {
       "utf8",
     );
     process.stdout.write(
-      `Regenerated the preservation matrix in ${matrixPageLabel} from packages/xlsx/src/contract.ts.\n`,
+      `Regenerated the preservation matrix in ${matrixPageLabel} from the contract @consultchimps/xlsx exports.\n`,
     );
   } else {
     const currentLines = currentBlock.split("\n");
@@ -126,7 +141,7 @@ if (currentBlock !== expectedBlock) {
             currentLines[firstDifference] ?? "(missing)"
           }\n  contract: ${expectedLines[firstDifference]}`;
     throw new Error(
-      `${matrixPageLabel} no longer matches the contract in packages/xlsx/src/contract.ts (${difference}).\nRun \`node scripts/check-preservation-matrix.ts --write\` to regenerate the page, and review the change: it means the promises the package makes about workbook structures have moved.`,
+      `${matrixPageLabel} no longer matches the contract @consultchimps/xlsx exports (${difference}).\nRun \`node scripts/check-preservation-matrix.ts --write\` to regenerate the page, and review the change: it means the promises the package makes about workbook structures have moved.`,
     );
   }
 }
@@ -157,5 +172,5 @@ if (problems.length > 0) {
 }
 
 process.stdout.write(
-  `Verified the preservation matrix in ${matrixPageLabel} against packages/xlsx/src/contract.ts: ${columnOperations().length} operation columns, ${undeclaredOperations().length} operations explained without one, and ${guidesLinkingToMatrix.length} guides linking to it.\n`,
+  `Verified the preservation matrix in ${matrixPageLabel} against the contract @consultchimps/xlsx exports: ${columnOperations().length} operation columns, ${undeclaredOperations().length} operations explained without one, and ${guidesLinkingToMatrix.length} guides linking to it.\n`,
 );
