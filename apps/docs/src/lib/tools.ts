@@ -64,7 +64,7 @@ export const TOOLS: readonly ConsultTool[] = [
     title: "Consolidate spreadsheets",
     tabLabel: "Consolidate",
     description:
-      "Stack rows from every useful worksheet into one auditable table, even when columns arrive in different orders.",
+      "Stack rows from every visible worksheet that holds data into one auditable table, even when columns arrive in different orders.",
     docHref: "/docs/tools/spreadsheet-consolidate",
     surfaces: {
       cli: "works",
@@ -92,7 +92,7 @@ export const TOOLS: readonly ConsultTool[] = [
     title: "Split spreadsheets",
     tabLabel: "Split Excel",
     description:
-      "Create one Excel workbook per distinct value, each a complete copy of the original, while keeping source workbooks unchanged.",
+      "Create one Excel workbook per distinct value, each keeping the source workbook's sheets, formatting, and supported workbook structure, while leaving source workbooks unchanged.",
     docHref: "/docs/tools/spreadsheet-split",
     surfaces: {
       cli: "works",

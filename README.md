@@ -10,16 +10,25 @@ tools do not require Codex or any hosted service.
 Documentation:
 [consultchimps.github.io/consultchimps](https://consultchimps.github.io/consultchimps/)
 
-## Initial tools
+## Operations
 
-| Tool                  | Command                            | Status  |
-| --------------------- | ---------------------------------- | ------- |
-| Excel consolidation   | `consultchimps sheets consolidate` | Working |
-| Excel worksheet merge | `consultchimps sheets merge`       | Working |
-| Excel split by column | `consultchimps sheets split`       | Working |
-| PowerPoint population | `consultchimps pptx populate`      | Working |
-| PDF page splitting    | `consultchimps pdf split`          | Working |
-| PDF document merging  | `consultchimps pdf merge`          | Working |
+Every operation the toolkit ships, and which of its three surfaces you can use
+it from today. The rows come from the operation registry in
+[`apps/docs/src/lib/tools.ts`](apps/docs/src/lib/tools.ts), which is what the
+documentation site renders its cards and tabs from;
+`scripts/check-readme-operations.ts` fails `pnpm docs:check`, and therefore
+`pnpm check` and CI, when this table and that registry disagree.
+
+| Operation                     | CLI     | Library | Browser |
+| ----------------------------- | ------- | ------- | ------- |
+| Consolidate spreadsheets      | Works   | Works   | Works   |
+| Merge workbook tabs           | Works   | Works   | Works   |
+| Split spreadsheets            | Works   | Works   | Works   |
+| Populate PowerPoint templates | Works   | Works   | Works   |
+| Split PDF pages               | Works   | Works   | Works   |
+| Merge PDF packs               | Works   | Works   | Works   |
+| Inspect PowerPoint templates  | Works   | Works   | Works   |
+| Inspect workbooks             | Planned | Works   | Planned |
 
 ## Packages
 
@@ -120,16 +129,16 @@ case-insensitive header name, and adds `_source_file`, `_source_sheet`, and
 `_source_row` columns. Consolidated cells are values rather than formulas.
 Original files are never modified.
 
-Excel splitting creates one complete workbook per normalized, non-blank value
-found in the selected column across all worksheets. Each output retains every
-worksheet in its original order; sheets containing the column are filtered and
-sheets without it are copied unchanged. Matching trims whitespace, ignores case,
-and treats ordinary numeric text like the equivalent number. Filenames are
-portable, all destinations are checked before writing, and `.xlsx` and `.xlsm`
-sources are supported. Add `--values` to replace formulas across the outputs
-with their saved cached results while preserving formatting. A named Excel
-Table, named range, or worksheet can still be selected for the established
-single-source modes.
+Excel splitting creates one workbook per normalized, non-blank value found in
+the selected column across all worksheets. Each output retains every worksheet
+in its original order; sheets containing the column are filtered and sheets
+without it are copied unchanged. Matching trims whitespace, ignores case, and
+treats ordinary numeric text like the equivalent number. Filenames are portable,
+all destinations are checked before writing, and `.xlsx` and `.xlsm` sources are
+supported. Add `--values` to replace formulas across the outputs with their
+saved cached results while preserving formatting. A named Excel Table, named
+range, or worksheet can still be selected for the established single-source
+modes.
 
 PowerPoint population reads `{{field_name}}` placeholders from one selected
 template slide and creates one populated slide per nonempty Excel record. The

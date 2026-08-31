@@ -552,7 +552,9 @@ export function PptxPopulateTool() {
         </h2>
         <p className="mt-3 text-sm text-fd-muted-foreground">
           Every nonempty row below the header row becomes one slide. Each
-          template placeholder must exactly match a column header.
+          template placeholder must match a column header exactly: whitespace
+          inside the braces and around the header is trimmed first, and the two
+          are then compared character for character, including case.
         </p>
         <div className="mt-4">
           <FilePicker
@@ -624,7 +626,7 @@ export function PptxPopulateTool() {
             <NumberField
               disabled={isRunning}
               error={fieldMessage(templateSlideField)}
-              hint="Optional one-based slide number. Defaults to the first slide in the template."
+              hint="Optional one-based slide number. Defaults to the first slide in the template. The finished presentation holds one populated copy of this slide per record and nothing else — the original template slide and any other slides in the template are not carried into the output."
               label="Template slide"
               onChange={setTemplateSlide}
               placeholder="1"

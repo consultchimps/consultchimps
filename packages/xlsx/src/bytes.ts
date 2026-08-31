@@ -474,8 +474,11 @@ async function splitAllWorksheetsBytes(
 }
 
 /**
- * Stack the rows of every useful worksheet in every input workbook into one
- * table and write it as a single workbook.
+ * Stack the rows of every worksheet that yields a table in every input workbook
+ * into one table and write it as a single workbook. A worksheet yields a table
+ * when it is visible (or `includeHiddenSheets` is set), passes the `sheets`
+ * filter, has a resolvable header row, and holds at least one non-blank row
+ * below it.
  *
  * This is the byte-level twin of `consolidateWorkbooks`: it reads the same
  * worksheet tables, hands them to the same consolidation core, and serializes

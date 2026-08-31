@@ -26,9 +26,9 @@ command when `out/` is missing.
   downloading the result.
 - `excel-split.spec.ts` — detecting a workbook's column headers, splitting on
   one of them into a workbook per distinct value, downloading one of them,
-  reading a downloaded workbook back to confirm it is a complete copy of the
-  source, reporting a column the workbook does not have, and refusing a file
-  that is not a workbook.
+  reading a downloaded workbook back to confirm it keeps every source worksheet
+  and removes only the other values' rows, reporting a column the workbook does
+  not have, and refusing a file that is not a workbook.
 - `excel-merge.spec.ts` — merging two workbooks into one, reordering and
   removing sources, and downloading the result.
 - `excel-consolidate.spec.ts` — stacking two workbooks whose headers drifted

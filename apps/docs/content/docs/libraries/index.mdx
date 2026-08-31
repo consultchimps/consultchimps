@@ -404,11 +404,12 @@ single-source modes, which are also the only modes where `includeBlank` and
 `includeHiddenSheets` apply. `strict` compares values without trimming, case
 folding, or numeric coercion. `mergeWorkbooksBytes` combines every worksheet of
 every input, keeping tabs and formatting and adding the same `Sheet Index`;
-`consolidateWorkbooksBytes` stacks the rows of every useful worksheet into one
-table, with the same `normalizeHeaders`, `addSourceColumns`,
-worksheet-selection, and header-row options as the path-based consolidation; and
-`populatePresentationBytes` fills a template presentation from either records
-you already hold or the bytes of a workbook.
+`consolidateWorkbooksBytes` stacks the rows of every visible worksheet that
+holds data into one table — hidden and very hidden worksheets are skipped unless
+`includeHiddenSheets` is set — with the same `normalizeHeaders`,
+`addSourceColumns`, worksheet-selection, and header-row options as the
+path-based consolidation; and `populatePresentationBytes` fills a template
+presentation from either records you already hold or the bytes of a workbook.
 
 ```ts
 import {

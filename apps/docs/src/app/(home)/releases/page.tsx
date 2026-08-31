@@ -20,9 +20,9 @@ export default function ReleasesPage() {
           What shipped, and when.
         </h1>
         <p className="mt-5 max-w-2xl text-lg leading-8 text-fd-muted-foreground">
-          This page is generated from the package changelogs every time the site
-          deploys, so it always reflects what is actually on npm. Full histories
-          live in each package&apos;s CHANGELOG on GitHub.
+          This page is generated from the package changelogs on every site
+          deploy. Full histories live in each package&apos;s CHANGELOG on
+          GitHub.
         </p>
 
         <div className="mt-12 space-y-12">

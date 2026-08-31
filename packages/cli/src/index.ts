@@ -444,8 +444,11 @@ Examples:
 What happens:
   1. By default, ConsultChimps finds --column in every worksheet.
   2. It collects distinct non-blank values across all matching worksheets.
-  3. It copies the complete workbook once per value and removes other rows.
+  3. It copies the whole workbook once per value and removes other rows.
   4. Worksheets without --column are copied unchanged.
+  5. Pivot tables and their caches are removed and reported as a warning: a
+     cache holds a private copy of every source row, so it would carry other
+     values into each file.
 
 Matching trims surrounding whitespace, ignores case, and treats ordinary
 numeric text like the equivalent number. Use --strict for exact matching.

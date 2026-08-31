@@ -65,8 +65,9 @@ have a trusted publisher yet; bootstrap its first version with the temporary
 its trusted publisher and remove the token again.
 
 The publish workflow runs `pnpm check` before publishing. This includes creating
-all six tarballs in a temporary directory, installing them into a clean consumer
-project, importing every library, and running the packaged CLI.
+a tarball for every published package in a temporary directory, installing them
+into a clean consumer project, importing every library, and running the packaged
+CLI.
 
 For later releases, review and merge the generated version pull request. Its
 package-version changes automatically trigger the **Publish packages** workflow
