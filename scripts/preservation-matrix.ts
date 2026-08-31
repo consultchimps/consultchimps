@@ -372,7 +372,7 @@ export function cellTextFor(
   const qualifier = CELL_QUALIFIERS[operation]?.[structure];
   return qualifier === undefined
     ? status.label
-    : `${status.label} — ${qualifier}`;
+    : `${status.label} (${qualifier})`;
 }
 
 /**

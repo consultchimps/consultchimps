@@ -1,5 +1,5 @@
 /**
- * L2 region layer — the one resolver.
+ * L2 region layer: the one resolver.
  *
  * Every discovery heuristic in the package lands here: NFKC/trim/case-folded
  * header search, the `headerRow` override, and the rule that associates a

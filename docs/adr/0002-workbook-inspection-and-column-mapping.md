@@ -10,9 +10,9 @@ feeding the mapping review UI.
 
 ## Decisions
 
-- **Inspection is a first-class operation** — library (`describeWorkbook` /
-  `describeWorkbookBytes`), CLI (`sheets inspect`), and browser
-  (`/tools/excel-inspect`) — mirroring `pptx.inspect-template` as the
+- **Inspection is a first-class operation** on the library (`describeWorkbook` /
+  `describeWorkbookBytes`), the CLI (`sheets inspect`), and the browser
+  (`/tools/excel-inspect`), mirroring `pptx.inspect-template` as the
   create-nothing precedent. Its result carries structure (sheets with visibility
   and dimensions, header previews, Excel Tables, named ranges) plus **bounded**
   per-column sample values, because samples are what mapping review and the tool
@@ -31,11 +31,11 @@ feeding the mapping review UI.
 - **The v1 mapping file is versioned JSON, global-scope**: canonical column →
   aliases, optional per-column coercions (dates from a declared format,
   numbers), and constant columns. YAML and per-source override sections are
-  deferred, not rejected — additive later. JSON was chosen to add zero
+  deferred, not rejected: they are additive later. JSON was chosen to add zero
   dependencies. Validation rejects a mapping whose aliases collide on normalized
-  keys — within one canonical column or across two — before any data is read,
+  keys, within one canonical column or across two, before any data is read,
   since matching is normalized and such a document is ambiguous by construction.
-- **Unmapped columns pass through with a warning** listing them — loud but
+- **Unmapped columns pass through with a warning** listing them: loud but
   lossless. **Two same-sheet columns mapping to one canonical is a refusal**
   with a stable error naming the sheet, columns, and canonical: merging same-row
   values silently would be data loss, and the house rule is to fail before
@@ -47,7 +47,7 @@ feeding the mapping review UI.
   sample-value overlap were considered and rejected for v1: the mission requires
   deterministic, explainable behavior, and equivalence grouping proposes no
   matches beyond spelling variants of one name. Normalization can still conflate
-  punctuation-distinct headers ("A+B" and "A-B" both normalize to `a_b`) — one
+  punctuation-distinct headers ("A+B" and "A-B" both normalize to `a_b`), one
   more reason every suggestion is reviewed, never applied silently. Synonym
   headers ("Timestamp" vs "Run Time") remain a manual mapping entry.
 

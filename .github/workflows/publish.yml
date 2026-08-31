@@ -67,8 +67,8 @@ jobs:
       # Agents and locked-down environments can fetch one file instead of
       # resolving packages: the standalone bundle compiles every runtime
       # dependency into a single consultchimps.mjs that runs on Node 22+.
-      # Uploads only when the CLI tag points at THIS commit — i.e. this run's
-      # publish created it — so a manifest-only push can never attach a
+      # Uploads only when the CLI tag points at THIS commit, meaning this
+      # run's publish created it, so a manifest-only push can never attach a
       # bundle built from newer source to an older version's release.
       - name: Attach the standalone CLI bundle to its release
         env:
@@ -79,7 +79,7 @@ jobs:
           tag_commit="$(git rev-parse -q --verify "refs/tags/${tag}^{commit}" || true)"
           if [ -n "${tag_commit}" ] && [ "${tag_commit}" = "$(git rev-parse HEAD)" ]; then
             gh release create "${tag}" --verify-tag --title "${tag}" \
-              --notes "Standalone CLI: download consultchimps.mjs and run \`node consultchimps.mjs --help\` on Node.js 22 or later — no npm access required. Changelog: https://github.com/consultchimps/consultchimps/blob/main/packages/cli/CHANGELOG.md" \
+              --notes "Standalone CLI: download consultchimps.mjs and run \`node consultchimps.mjs --help\` on Node.js 22 or later. No npm access required. Changelog: https://github.com/consultchimps/consultchimps/blob/main/packages/cli/CHANGELOG.md" \
               || true
             gh release upload "${tag}" packages/cli/dist-bundle/consultchimps.mjs --clobber
           else

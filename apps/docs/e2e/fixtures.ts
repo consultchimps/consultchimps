@@ -236,7 +236,7 @@ function slideXml(runs: ReadonlyArray<string>): string {
  * Assembles a minimal but valid `.pptx` package: one text shape per slide,
  * whose single paragraph carries one `<a:r>` run per string given for that
  * slide. Splitting the placeholder text across runs the way PowerPoint does is
- * the point — the populate engine has to stitch runs back together before it
+ * the point: the populate engine has to stitch runs back together before it
  * can see a `{{field}}`, so a checked-in deck would hide that behaviour behind
  * an opaque binary. Generating the package here keeps every fixture a few
  * hundred bytes, keeps the run layout visible in the test that depends on it,
@@ -442,8 +442,8 @@ function rowNumbersOf(xml: string): number[] {
 }
 
 /**
- * Numeric cell values only. Cells carrying a `t` attribute hold text — either
- * inline or through the shared-string table — so skipping them keeps these
+ * Numeric cell values only. Cells carrying a `t` attribute hold text, either
+ * inline or through the shared-string table, so skipping them keeps these
  * assertions independent of how the writer chose to store strings.
  */
 function numbersOf(xml: string): number[] {

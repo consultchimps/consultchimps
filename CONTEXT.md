@@ -10,12 +10,12 @@ issues use these terms with exactly these meanings.
 - **Split (spreadsheets)**: produce one workbook per distinct value of a column.
 - **Split (PDF)**: produce one file per page of a document.
 - **Inspect**: describe an input's structure without producing files. The
-  toolkit's single verb for this — used by PowerPoint template inspection and
+  toolkit's single verb for this, used by PowerPoint template inspection and
   workbook inspection alike ("describe" appears only in library function names
   such as `describeWorkbook`).
 - **Column key**: the case-folded, trimmed form of a header used for matching
   (`columnKey`).
-- **Normalized column key**: the aggressive matching form — lowercased, every
+- **Normalized column key**: the aggressive matching form: lowercased, every
   separator run collapsed to one underscore (`normalizedColumnKey`). Matching
   only; never shown as output.
 - **Canonical column**: the output column name a mapping declares. Written
@@ -32,12 +32,12 @@ issues use these terms with exactly these meanings.
 - **Assist / suggestion**: a drafted mapping produced from
   normalization-equivalence groups for the user to review. Never applied
   silently.
-- **Surface**: one of the three ways an operation ships — CLI, library, browser
-  — each with its own status in the tool registry (ADR 0001).
+- **Surface**: one of the three ways an operation ships (CLI, library, browser),
+  each with its own status in the tool registry (ADR 0001).
 - **Source columns**: the provenance columns consolidation appends
   (`_source_file`, `_source_sheet`, `_source_row`).
 - **Preservation matrix**: the published projection of the xlsx conformance
-  contract — what each Excel operation does to each tracked workbook structure.
+  contract: what each Excel operation does to each tracked workbook structure.
   Generated from `packages/xlsx/src/contract.ts` and checked by
   `pnpm docs:check`. Its statuses are the site's only words for a contract cell:
   "Preserved" (`preserve`), "Adjusted to stay correct" (`fix`), "Removed,

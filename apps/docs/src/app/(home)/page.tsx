@@ -111,7 +111,7 @@ export default function HomePage() {
             </h2>
           </div>
           <p className="max-w-md text-sm leading-6 text-fd-muted-foreground">
-            Every operation returns artifacts, warnings, and metrics—useful for
+            Every operation returns artifacts, warnings, and metrics, useful for
             humans at a terminal and automations that need structured output.
             See what shipped recently in the{" "}
             <Link className="text-fd-primary hover:underline" href="/releases">

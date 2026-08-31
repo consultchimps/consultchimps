@@ -5,10 +5,10 @@
 ### Minor Changes
 
 - cef85f7: Explain workbook inspection results in plain language. A
-  `sheets.inspect` result now renders its own summary and next steps — counts of
+  `sheets.inspect` result now renders its own summary and next steps: counts of
   worksheets, columns, data rows, Excel Tables, and named ranges, with wording
-  that never points at output files, because an inspection creates none — and
-  its metrics read as readable labels rather than internal names.
+  that never points at output files, because an inspection creates none. Its
+  metrics read as readable labels rather than internal names.
 
 ### Patch Changes
 
@@ -29,8 +29,8 @@
   `formatHumanResult` now recognises the `pptx.inspect-template` operation: it
   says what the slide contains, states that nothing was created or changed
   rather than pointing at output files that do not exist, and labels the
-  inspection metrics — malformed placeholder locations, placeholders outside a
-  supported text shape, and placeholders split across text runs — instead of
+  inspection metrics (malformed placeholder locations, placeholders outside a
+  supported text shape, and placeholders split across text runs) instead of
   printing their internal names.
 
 ## 0.2.4

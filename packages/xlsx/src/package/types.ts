@@ -1,5 +1,5 @@
 /**
- * L0 seam — the package model. See packages/xlsx/ARCHITECTURE.md.
+ * L0 seam: the package model. See packages/xlsx/ARCHITECTURE.md.
  *
  * This file freezes the interface between parallel implementation streams.
  * Deviations require justification at integration time; do not edit casually.

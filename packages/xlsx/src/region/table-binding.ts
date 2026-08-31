@@ -1,5 +1,5 @@
 /**
- * L2 region layer — the Excel Table binding.
+ * L2 region layer: the Excel Table binding.
  *
  * `TableBinding` owns everything that is true only of Excel Tables: the body
  * stops above a totals row, the columns come from the table definition rather

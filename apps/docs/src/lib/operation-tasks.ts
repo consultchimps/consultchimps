@@ -2,7 +2,7 @@
  * The wire contract between the tool pages and the operation Web Worker.
  *
  * Only this module is shared by both sides, and it deliberately contains types
- * plus one tiny helper — no engine imports. The worker resolves a task to the
+ * plus one tiny helper, with no engine imports. The worker resolves a task to the
  * matching byte-level operation and loads that engine on demand, so a page that
  * is merely open never downloads a PDF or workbook engine.
  *
@@ -41,7 +41,7 @@ export interface NamedBytes {
 
 /**
  * The template and records selection a population reads. The two tasks that
- * populate — the preview and the run — take exactly the same options, so the
+ * populate, the preview and the run, take exactly the same options, so the
  * page builds one object and sends it to both.
  */
 export interface PresentationPopulateOptions {
@@ -59,7 +59,7 @@ export interface PresentationPopulateOptions {
  * is not `false` runs the all-worksheet split, where every worksheet carrying
  * the column is filtered in place and the rest of the workbook travels with
  * each output. Naming any one source, or passing `preserveWorkbook: false`,
- * selects a single-source split instead — and that is the only case where
+ * selects a single-source split instead, and that is the only case where
  * `includeBlank` and `includeHiddenSheets` mean anything, because the
  * all-worksheet engine ignores both.
  */

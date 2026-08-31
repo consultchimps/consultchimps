@@ -244,7 +244,7 @@ describe("human-readable CLI output", () => {
     expect(output).toContain("No files were created.");
     expect(output).not.toContain("Open the files");
 
-    // The names are not in this text — only the counts are — so the next step
+    // The names are not in this text, only the counts are, so the next step
     // sends the reader to the inspection report rather than "above".
     expect(output).toContain(
       "Read the placeholder names from the inspection report that accompanies this result",
@@ -301,7 +301,7 @@ describe("human-readable CLI output", () => {
     expect(output).not.toContain("Open the files");
     expect(output).not.toContain("Open the new");
 
-    // The names are not in this text — only the counts are — so the next step
+    // The names are not in this text, only the counts are, so the next step
     // sends the reader to the description rather than "above".
     expect(output).toContain(
       "Read the worksheet names, column headers, and sample values from the description that accompanies this result",

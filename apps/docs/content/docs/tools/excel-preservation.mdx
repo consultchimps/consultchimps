@@ -16,9 +16,9 @@ tests enforce, so it says what the test suite pins rather than what a guide once
 described. A cell reading **Needs review** is not a gap on this page: it is the
 package declining to promise anything about that structure yet, and the note
 beside it says what happens today. Where one status is coarser than the behavior
-you have to plan around — a removal that only happens under a condition, for
-instance — the cell states the condition after it. When a promise changes, the
-table changes in the same pull request or `pnpm docs:check` fails.
+you have to plan around, such as a removal that only happens under a condition,
+the cell states the condition after it. When a promise changes, the table
+changes in the same pull request or `pnpm docs:check` fails.
 
 {/* preservation-matrix:start */}
 
@@ -50,9 +50,9 @@ table changes in the same pull request or `pnpm docs:check` fails.
 | Calculation chain                       | Adjusted to stay correct                                                                            | Adjusted to stay correct                                                                                             | Read only, nothing touched  | Excel's internal recalculation index. No output keeps an entry for a row that is gone, and a merged workbook asks Excel to rebuild the index when it opens.                                                  |
 | Shared text store                       | Preserved                                                                                           | Adjusted to stay correct                                                                                             | Read only, nothing touched  | The workbook's internal table of cell text. A merge keeps one store and re-points every copied cell at it, so no text is lost or duplicated.                                                                 |
 | Cell styles and number formats          | Preserved                                                                                           | Adjusted to stay correct                                                                                             | Read only, nothing touched  | Fonts, fills, borders, alignment, and number formats stay on their cells; a merge copies and de-duplicates the ones its worksheets use.                                                                      |
-| Macros (VBA project)                    | Preserved                                                                                           | Removed, reported as a warning — kept when the first input is the only one with macros and the output is named .xlsm | Read only, nothing touched  | A split keeps macros and writes .xlsm. A merge carries them only when the first input is the one that has them, no other input does, and the output is named .xlsm; otherwise they are removed and reported. |
-| Links to other workbooks                | Needs review                                                                                        | Needs review — the merge removes them and says so; the contract cannot pin that until a fixture exists               | Read only, not yet promised | A split carries the link but never re-points it, and a merge cannot interleave two workbooks' link lists, so it removes them and reports it. Check every link before delivery.                               |
-| Formulas with saved results             | Preserved — the saved result is not recalculated, so a total over removed rows keeps its old answer | Preserved                                                                                                            | Read only, nothing touched  | The formula travels and its references follow the rows that moved. The result Excel last saved travels with it and is not recalculated, so check any total taken over rows an output no longer holds.        |
+| Macros (VBA project)                    | Preserved                                                                                           | Removed, reported as a warning (kept when the first input is the only one with macros and the output is named .xlsm) | Read only, nothing touched  | A split keeps macros and writes .xlsm. A merge carries them only when the first input is the one that has them, no other input does, and the output is named .xlsm; otherwise they are removed and reported. |
+| Links to other workbooks                | Needs review                                                                                        | Needs review (the merge removes them and says so; the contract cannot pin that until a fixture exists)               | Read only, not yet promised | A split carries the link but never re-points it, and a merge cannot interleave two workbooks' link lists, so it removes them and reports it. Check every link before delivery.                               |
+| Formulas with saved results             | Preserved (the saved result is not recalculated, so a total over removed rows keeps its old answer) | Preserved                                                                                                            | Read only, nothing touched  | The formula travels and its references follow the rows that moved. The result Excel last saved travels with it and is not recalculated, so check any total taken over rows an output no longer holds.        |
 | Formulas Excel never calculated         | Preserved                                                                                           | Preserved                                                                                                            | Read only, nothing touched  | The formula is carried through unchanged. In values-only mode it has no saved result to bake, so the cell becomes a formatted blank and the result names the worksheet and cell.                             |
 | Shared formulas filled across a range   | Adjusted to stay correct                                                                            | Preserved                                                                                                            | Read only, nothing touched  | The range a shared formula spans shrinks with the rows it covers, so the fill stays valid.                                                                                                                   |
 | Array formulas                          | Adjusted to stay correct                                                                            | Preserved                                                                                                            | Read only, nothing touched  | The array's span and its references follow the rows. One array formula anywhere on a sheet stops that sheet's Excel Table from being compacted, which is reported.                                           |
@@ -76,7 +76,7 @@ table changes in the same pull request or `pnpm docs:check` fails.
 ## Which split this describes
 
 The matrix describes the default split, which edits a copy of the whole workbook
-and filters every worksheet that carries your column — with the removals and the
+and filters every worksheet that carries your column, with the removals and the
 review items this table names. Selecting a single source changes the answer:
 
 - `--table` edits the whole workbook too, and additionally compacts the named
@@ -93,8 +93,8 @@ review items this table names. Selecting a single source changes the answer:
 
 An operation's warnings tell you what it removed or could not repair: rows it
 skipped, pivot tables it took out, macros it could not carry, formulas with no
-saved result to bake. They do not cover the **Needs review** rows — nothing
-warns you about a defined name, a chart, or a link to another workbook that was
+saved result to bake. They do not cover the **Needs review** rows: nothing warns
+you about a defined name, a chart, or a link to another workbook that was
 carried across without being re-pointed. Read the warnings in the command's
 output or in `result.warnings`, then open one output in Excel and look at those
 rows yourself.

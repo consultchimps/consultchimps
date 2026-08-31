@@ -15,11 +15,11 @@ Both operations combine several Excel workbooks into one file; they differ in
 the shape of the result. `sheets merge` keeps every source worksheet as its own
 tab, while `sheets consolidate` stacks all rows into a single table.
 
-|                   | `sheets merge`                                                                                      | `sheets consolidate`                                                                                                         |
-| ----------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Result shape      | One workbook, every source worksheet kept as its own tab                                            | One worksheet, all rows stacked into a single table                                                                          |
-| When to use       | Keep sheets intact side by side for reference                                                       | Analyze all rows together — filter or pivot across sources                                                                   |
-| What carries over | Formatting, formulas as stored, conditional formatting, layout — nothing is combined into one table | Cell values only — columns matched by header name, optional provenance columns; formatting and formulas are not carried over |
+|                   | `sheets merge`                                                                                      | `sheets consolidate`                                                                                                        |
+| ----------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Result shape      | One workbook, every source worksheet kept as its own tab                                            | One worksheet, all rows stacked into a single table                                                                         |
+| When to use       | Keep sheets intact side by side for reference                                                       | Analyze all rows together: filter or pivot across sources                                                                   |
+| What carries over | Formatting, formulas as stored, conditional formatting, layout (nothing is combined into one table) | Cell values only: columns matched by header name, optional provenance columns; formatting and formulas are not carried over |
 
 Rule of thumb: tabs kept means merge; rows stacked into one sheet means
 consolidate. Merging has [its own guide](/docs/tools/workbook-merge), and both
@@ -36,7 +36,7 @@ beside the structures a split and a merge do keep.
   The [in-browser consolidator](/tools/excel-consolidate) runs the default
   all-worksheet consolidation described below: it stacks every visible,
   non-empty worksheet of each workbook you add into one table and writes a
-  single workbook — `consolidated.xlsx` by default, on a worksheet named
+  single workbook, `consolidated.xlsx` by default, on a worksheet named
   `Consolidated`. Workbooks are combined in the order they appear on the page,
   and that list can be reordered. The page offers four controls: the output
   filename, "Normalize headers", "Add source columns" (on by default), and

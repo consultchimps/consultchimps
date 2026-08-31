@@ -51,7 +51,7 @@ import {
 
 /**
  * A one-based number field's three states. A field is either not supplied at
- * all — the operation then applies its own documented default — or supplied
+ * all (the operation then applies its own documented default), or supplied
  * with a usable value, or supplied with something the operation cannot honour.
  *
  * The third state has to be distinct from the first. Reading `0`, `1.5`, or
@@ -68,7 +68,7 @@ type NumberFieldState =
 
 /**
  * Parse an optional one-based number field, accepting only whole numbers
- * counted from 1 — the same values the `--template-slide` and `--header-row`
+ * counted from 1, the same values the `--template-slide` and `--header-row`
  * command-line options accept.
  */
 function positiveIntegerField(raw: string, label: string): NumberFieldState {
@@ -463,7 +463,7 @@ export function PptxPopulateTool() {
 
   // The key the finished deck was built from. A deck belongs to the options
   // that made it, so changing any of them withdraws it rather than leaving it
-  // on offer beside a preview that now describes something else — a worksheet
+  // on offer beside a preview that now describes something else: a worksheet
   // change can even produce a deck with the identical filename.
   const ranKey = useRef<string | null>(null);
   const { reset: resetRun } = runState;
@@ -612,7 +612,7 @@ export function PptxPopulateTool() {
             <NumberField
               disabled={isRunning}
               error={fieldMessage(templateSlideField)}
-              hint="Optional one-based slide number. Defaults to the first slide in the template. The finished presentation holds one populated copy of this slide per record and nothing else — the original template slide and any other slides in the template are not carried into the output."
+              hint="Optional one-based slide number. Defaults to the first slide in the template. The finished presentation holds one populated copy of this slide per record and nothing else. The original template slide and any other slides in the template are not carried into the output."
               label="Template slide"
               onChange={setTemplateSlide}
               placeholder="1"

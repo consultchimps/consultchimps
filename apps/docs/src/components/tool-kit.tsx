@@ -156,7 +156,7 @@ function saveArtifact(artifact: ByteArtifact, fallbackMediaType: string): void {
 /**
  * Bundle several outputs into one archive, written the way the package writers
  * write theirs: deflated so the download is no larger than it needs to be, and
- * deterministic — a fixed timestamp instead of the visitor's clock, no folder
+ * deterministic: a fixed timestamp instead of the visitor's clock, no folder
  * entries, and DOS metadata so the file opens the same way everywhere.
  */
 async function saveArchive(
@@ -293,7 +293,7 @@ function PrivacyNotice() {
       data-testid="privacy-notice"
     >
       <ShieldCheck className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-      Your files never leave this browser tab — there is no server.
+      Your files never leave this browser tab. There is no server.
     </p>
   );
 }

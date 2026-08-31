@@ -123,7 +123,7 @@ async function resolveRecords(
 
   const workbook = options.workbook!;
   // Last abort boundary before the workbook parse, which is synchronous and
-  // cannot be interrupted once entered — a cancel that arrived while the
+  // cannot be interrupted once entered. A cancel that arrived while the
   // slide XML was being awaited must stop the task here.
   throwIfAborted(options.signal, POPULATE_OPERATION, "memory");
   const worksheetRecords = await readWorksheetRecordsBytes(workbook, {
@@ -149,9 +149,9 @@ export async function inspectPresentationBytes(
 ): Promise<PowerPointTemplateInspection> {
   const templateSlide = options.templateSlide ?? DEFAULT_TEMPLATE_SLIDE;
   // Two package reads make up the whole cost: opening the archive, then
-  // decompressing the selected slide. Both boundaries carry an abort check —
-  // a page inspecting a different slide has no use for this answer and should
-  // not queue behind it — and a progress event, so a caller can show which of
+  // decompressing the selected slide. Both boundaries carry an abort check (a
+  // page inspecting a different slide has no use for this answer and should
+  // not queue behind it) and a progress event, so a caller can show which of
   // the two a large deck is currently in. The stages and their counts depend
   // only on the operation, never on the template, so they are identical for
   // identical inputs.
@@ -187,7 +187,7 @@ export async function inspectPresentationBytes(
  * The outcome of a template inspection: the structured operation result every
  * completed operation reports, plus the placeholder report it describes. The
  * two travel side by side for the same reason `ByteOperationOutcome` keeps
- * `outputs` beside `result` — metrics are counts, and the placeholder names
+ * `outputs` beside `result`: metrics are counts, and the placeholder names
  * are not counts.
  */
 export interface PresentationInspectionOutcome {
@@ -212,7 +212,7 @@ export async function inspectPresentationOutcomeBytes(
 /**
  * Resolving reads two whole packages, which is the slow half of both planning
  * and populating. The abort checks sit between those reads so a caller that
- * has moved on — a page replanning after a keystroke, say — stops paying for
+ * has moved on, such as a page replanning after a keystroke, stops paying for
  * work whose answer it will discard, instead of only ignoring it at the end.
  */
 async function resolvePopulatePresentationBytes(

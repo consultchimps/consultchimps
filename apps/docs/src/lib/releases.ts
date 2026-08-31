@@ -4,7 +4,7 @@ import path from "node:path";
 /**
  * Build-time readers for package versions and changelogs. The docs site is a
  * static export, so everything here runs while `next build` executes inside
- * the monorepo — the deployed pages are plain HTML that updates on every
+ * the monorepo. The deployed pages are plain HTML that updates on every
  * deploy without manual edits.
  */
 export interface ReleaseEntry {

@@ -12,8 +12,8 @@
  * The split runs the byte API's default all-worksheet mode, matching the
  * command line: with no source named it filters every worksheet that carries
  * the chosen column and carries the rest of the workbook into each output
- * untouched. Naming a worksheet, Excel Table, or named range — or clearing
- * whole-workbook preservation — selects the narrower single-source modes that
+ * untouched. Naming a worksheet, Excel Table, or named range (or clearing
+ * whole-workbook preservation) selects the narrower single-source modes that
  * write compact, data-only workbooks, so the controls below have to say which
  * mode the current selection is really in.
  */
@@ -155,8 +155,8 @@ interface OrderedUploads {
 
 /**
  * The hand-arranged list of workbooks both multi-input tools collect. Order is
- * part of the request in each of them — it decides tab order for the merge and
- * row order for the consolidate — so entries stay where they were put and are
+ * part of the request in each of them: it decides tab order for the merge and
+ * row order for the consolidate, so entries stay where they were put and are
  * only ever moved deliberately.
  */
 function useOrderedUploads(): OrderedUploads {
@@ -435,7 +435,7 @@ export function ExcelSplitTool() {
 
   return (
     <ToolShell
-      description="Choose a workbook and a column, and get one workbook per distinct value in that column. By default each new workbook keeps the source workbook's sheets, formatting, and supported workbook structure, removing only the rows that belong to other values. Pivot tables and their caches are removed and reported, so review complex workbooks — pivots, external links, charts, ActiveX controls — in Excel before you deliver them. Everything runs in this page using the same operation the ConsultChimps library uses."
+      description="Choose a workbook and a column, and get one workbook per distinct value in that column. By default each new workbook keeps the source workbook's sheets, formatting, and supported workbook structure, removing only the rows that belong to other values. Pivot tables and their caches are removed and reported, so review complex workbooks (pivots, external links, charts, ActiveX controls) in Excel before you deliver them. Everything runs in this page using the same operation the ConsultChimps library uses."
       guideHref="/docs/tools/spreadsheet-split"
       guideLabel="Read the split guide"
       kicker="Online tool · Excel split"
@@ -800,7 +800,7 @@ export function ExcelMergeTool() {
 
   return (
     <ToolShell
-      description="Add the workbooks you want to combine, arrange them in the order their tabs should appear, and merge them without uploading anything. Every source worksheet stays its own separate tab — no rows are stacked into one sheet."
+      description="Add the workbooks you want to combine, arrange them in the order their tabs should appear, and merge them without uploading anything. Every source worksheet stays its own separate tab. No rows are stacked into one sheet."
       guideHref="/docs/tools/workbook-merge"
       guideLabel="Read the merge guide"
       kicker="Online tool · Excel merge"
@@ -812,12 +812,12 @@ export function ExcelMergeTool() {
           <Link className={inlineLinkClass} href={consolidateHref}>
             Consolidate the workbooks
           </Link>{" "}
-          to stack every worksheet&rsquo;s rows into a single sheet —{" "}
+          to stack every worksheet&rsquo;s rows into a single sheet.{" "}
           <Link
             className={inlineLinkClass}
             href="/docs/tools/workbook-merge#which-one-do-i-want"
           >
-            which one do I want?
+            Which one do I want?
           </Link>
         </p>
       ) : null}
@@ -930,7 +930,7 @@ export function ExcelConsolidateTool() {
 
   return (
     <ToolShell
-      description="Add the workbooks you want to stack, arrange them in the order the rows should follow, and get one table holding every row from every visible worksheet that holds data. Hidden worksheets are skipped unless you ask for them. Nothing is uploaded — the whole task runs in this browser tab."
+      description="Add the workbooks you want to stack, arrange them in the order the rows should follow, and get one table holding every row from every visible worksheet that holds data. Hidden worksheets are skipped unless you ask for them. Nothing is uploaded: the whole task runs in this browser tab."
       guideHref="/docs/tools/spreadsheet-consolidate"
       guideLabel="Read the consolidate guide"
       kicker="Online tool · Excel consolidate"
@@ -941,13 +941,13 @@ export function ExcelConsolidateTool() {
           Want each worksheet kept as its own tab instead of one stacked table?{" "}
           <Link className={inlineLinkClass} href={mergeHref}>
             Merge the workbooks
-          </Link>{" "}
-          —{" "}
+          </Link>
+          .{" "}
           <Link
             className={inlineLinkClass}
             href="/docs/tools/workbook-merge#which-one-do-i-want"
           >
-            which one do I want?
+            Which one do I want?
           </Link>
         </p>
       ) : null}
@@ -988,7 +988,7 @@ export function ExcelConsolidateTool() {
           <CheckboxField
             checked={normalizeHeaders}
             disabled={isRunning}
-            hint="Treat columns whose headers differ only in case, spacing, or punctuation — “Failed Checks” and “Failed_Checks”, say — as one column. The first spelling seen names the output column."
+            hint="Treat columns whose headers differ only in case, spacing, or punctuation (“Failed Checks” and “Failed_Checks”, say) as one column. The first spelling seen names the output column."
             label="Normalize headers"
             onChange={setNormalizeHeaders}
             testId="normalize-headers-checkbox"

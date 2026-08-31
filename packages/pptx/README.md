@@ -42,7 +42,7 @@ path-based inspection and plan. Output names are sanitized portable filenames,
 never paths, and identical inputs produce byte-identical presentations.
 
 `inspectPresentationOutcomeBytes()` reports the same inspection as the
-structured `OperationResult` every completed operation returns — counts as
+structured `OperationResult` every completed operation returns: counts as
 metrics, no artifacts, and one warning for each condition that would make a
 population refuse the template:
 

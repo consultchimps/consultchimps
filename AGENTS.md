@@ -40,16 +40,16 @@ or hosted services.
 
 Every change must preserve these principles:
 
-- Deterministic behavior for identical inputs and options.
-- Local processing by default.
-- Immutable source files unless mutation is an explicit, documented operation.
-- Complete destination validation before writing any output.
-- Portable behavior across Windows, macOS, and Linux.
-- Structured results and stable, actionable errors.
+- Deterministic behavior for identical inputs and options
+- Local processing by default
+- Immutable source files unless mutation is an explicit, documented operation
+- Complete destination validation before writing any output
+- Portable behavior across Windows, macOS, and Linux
+- Structured results and stable, actionable errors
 - Detailed, plain-language messages that explain outcomes and next steps to
-  non-technical users.
-- Small composable operations instead of narrowly tailored one-off scripts.
-- No collection, transmission, or retention of client data.
+  non-technical users
+- Small composable operations instead of narrowly tailored one-off scripts
+- No collection, transmission, or retention of client data
 
 ## Required toolchain
 
@@ -198,13 +198,13 @@ accidental runtime coupling and unreviewed public API expansion.
 
 Match the repository's formatting:
 
-- Double quotes.
-- Semicolons.
-- Trailing commas where supported.
-- Prettier-managed wrapping and whitespace.
-- Descriptive names over abbreviations.
-- Comments that explain intent, invariants, or non-obvious constraints—not a
-  line-by-line restatement of the code.
+- Double quotes
+- Semicolons
+- Trailing commas where supported
+- Prettier-managed wrapping and whitespace
+- Descriptive names over abbreviations
+- Comments that explain intent, invariants, or non-obvious constraints, not a
+  line-by-line restatement of the code
 
 Run Prettier rather than manually fighting its output.
 
@@ -418,6 +418,11 @@ Documentation and CLI help must evolve with the public interface.
 - Use relative repository links where possible.
 - Keep terminology consistent: use `ConsultChimps` for the project and
   `consultchimps` for the package and executable.
+- No em or en dashes anywhere, in prose, comments, or UI strings; use commas,
+  colons, parentheses, or separate sentences, and write a numeric range as "22
+  to 26". A fragment carries no full stop: headings, table cells, labels, button
+  text, and single-clause hints end without one, while real sentences keep
+  theirs. `scripts/check-typography.ts` fails `pnpm docs:check` on a dash.
 
 ### Claims vocabulary
 
@@ -427,9 +432,9 @@ word standing in for a rule nobody had written down. `pnpm docs:check` lints
 the worst offenders through `scripts/check-claims.ts`.
 -->
 
-- Avoid unconditional words in user-facing copy — every, all, always, never,
-  complete, exact, identical, byte-for-byte, fully preserved — unless a test or
-  a declared contract holds the claim up. Otherwise state the actual rule.
+- Avoid unconditional words in user-facing copy (every, all, always, never,
+  complete, exact, identical, byte-for-byte, fully preserved) unless a test or a
+  declared contract holds the claim up. Otherwise state the actual rule.
 - For preservation-heavy operations, describe Preserved / Changed or removed /
   Needs review rather than promising the whole document survives.
 - Source-of-truth first: check `apps/docs/src/lib/tools.ts`,
@@ -454,11 +459,11 @@ Before adding a dependency:
 
 Do not add:
 
-- Analytics or telemetry SDKs.
-- Hosted-service clients for core operations.
-- Dependencies that upload or inspect user documents remotely.
-- A large framework for a small utility problem.
-- Duplicate libraries that solve an existing dependency's role.
+- Analytics or telemetry SDKs
+- Hosted-service clients for core operations
+- Dependencies that upload or inspect user documents remotely
+- A large framework for a small utility problem
+- Duplicate libraries that solve an existing dependency's role
 
 Published packages must declare only registry-installable dependencies. A
 tarball URL, git remote, or local path in a publishable package's
@@ -488,9 +493,9 @@ behavior, API, CLI, packaged files, or runtime behavior.
 
 Use the smallest correct semantic-version bump:
 
-- `patch`: backward-compatible fixes and small improvements.
-- `minor`: backward-compatible new capabilities.
-- `major`: breaking changes.
+- `patch`: backward-compatible fixes and small improvements
+- `minor`: backward-compatible new capabilities
+- `major`: breaking changes
 
 Changeset requirements:
 
@@ -594,16 +599,16 @@ hard requirements even when test data appears harmless.
 
 Never commit or expose:
 
-- Client or confidential data.
-- Generated client outputs.
-- Credentials, tokens, passwords, cookies, or private keys.
-- `.env` files or machine-specific authentication configuration.
-- Real personal data used as a convenient test fixture.
+- Client or confidential data
+- Generated client outputs
+- Credentials, tokens, passwords, cookies, or private keys
+- `.env` files or machine-specific authentication configuration
+- Real personal data used as a convenient test fixture
 - Personal email addresses or editors' legal/full names in commit metadata,
   trailers, docs examples, or support text (use GitHub usernames and private
-  noreply addresses instead).
-- Browser profiles, session stores, or package-manager credentials.
-- `node_modules`, build caches, or local editor state.
+  noreply addresses instead)
+- Browser profiles, session stores, or package-manager credentials
+- `node_modules`, build caches, or local editor state
 
 Additional safeguards:
 
@@ -629,7 +634,7 @@ in the author's shell is incomplete.
 - Do not construct paths by concatenating separators.
 - Do not assume a POSIX shell, GNU utility, drive letter, or case-sensitive
   filesystem.
-- Quote glob examples so the application—not the shell—resolves them.
+- Quote glob examples so the application, not the shell, resolves them.
 - Avoid filenames invalid on Windows.
 - Account for reserved device names and trailing spaces or periods in generated
   filenames.

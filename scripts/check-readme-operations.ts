@@ -7,7 +7,7 @@ import { TOOLS } from "../apps/docs/src/lib/tools.ts";
 
 // Root README <-> registry conformance check. The README's operations matrix is
 // the first thing a visitor reads, and it is hand-written, so it drifts the
-// moment an operation is added or a surface flips status — exactly what
+// moment an operation is added or a surface flips status, exactly what
 // happened when workbook inspection landed and the table still listed six
 // tools. The registry in apps/docs/src/lib/tools.ts is the single source of
 // truth (ADR 0001), so it is imported directly here, the same way
@@ -27,7 +27,7 @@ const tableHeading = "## Operations";
 const STATUS_LABELS: Readonly<Record<SurfaceStatus, string>> = {
   works: "Works",
   planned: "Planned",
-  none: "—",
+  none: "None",
 };
 
 const EXPECTED_HEADER = ["Operation", "CLI", "Library", "Browser"] as const;

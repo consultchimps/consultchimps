@@ -16,10 +16,10 @@ import {
  * the template, so reaching a plan at all proves the runs were stitched back
  * together before `{{field}}` was looked for.
  */
-const REVIEW_TEMPLATE = [["{{ti", "tle}} — ", "{{region}}"]] as const;
+const REVIEW_TEMPLATE = [["{{ti", "tle}}, ", "{{region}}"]] as const;
 
 /** The same slide asking for a field the records below do not carry. */
-const AMOUNT_TEMPLATE = [["{{title}} — ", "{{amount}}"]] as const;
+const AMOUNT_TEMPLATE = [["{{title}}, ", "{{amount}}"]] as const;
 
 const RECORDS = [
   {
@@ -349,7 +349,7 @@ test.describe("/tools/pptx-inspect", () => {
     // `{{title}}` twice and `{{region}}` once, so the report has to count
     // occurrences rather than distinct names.
     const template = await createPresentationUpload("review-template.pptx", [
-      ["{{title}} — ", "{{region}} — ", "{{title}}"],
+      ["{{title}}, ", "{{region}}, ", "{{title}}"],
     ]);
     await page
       .getByTestId("source-section")
@@ -438,7 +438,7 @@ test.describe("/tools/pptx-inspect", () => {
 
     const template = await createPresentationUpload("two-slides.pptx", [
       ["{{title}}"],
-      ["{{region}} — ", "{{amount}}"],
+      ["{{region}}, ", "{{amount}}"],
     ]);
     await page
       .getByTestId("source-section")
