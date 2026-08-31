@@ -97,6 +97,17 @@ export { XLSX_ERRORS, type XlsxErrorCode } from "./errors.js";
  * has not decided yet. Exported so that documentation and tooling can be
  * generated from the same table the corpus tests enforce, instead of restating
  * it in prose that drifts.
+ *
+ * A cell states one operation's ordinary outcome, not a prediction for a
+ * particular run: it carries no options, no input ordering and no mode, so it
+ * cannot express a behavior that depends on them. Two live examples, both
+ * documented at /docs/tools/excel-preservation: `merge["vba-project"]` reads
+ * `strip-warn`, yet a macro project survives when the first input is the only
+ * one carrying it and the output is named `.xlsm`; and the `split` column
+ * describes the default whole-workbook split, while `preserveWorkbook: false`,
+ * `range` and `sheet` rebuild one worksheet of values and `table` refuses an
+ * A1 formula it would have to move. Present a cell as what the operation
+ * usually does and read the conditions beside it - never as this run's verdict.
  */
 export {
   CONTRACT,

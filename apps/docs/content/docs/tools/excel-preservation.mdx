@@ -75,13 +75,13 @@ table changes in the same pull request or `pnpm docs:check` fails.
 
 ## Which split this describes
 
-The matrix describes the default split, which keeps the complete workbook and
-filters every worksheet that carries your column. Selecting a single source
-changes the answer:
+The matrix describes the default split, which edits a copy of the whole workbook
+and filters every worksheet that carries your column — with the removals and the
+review items this table names. Selecting a single source changes the answer:
 
-- `--table` also keeps the complete workbook, and additionally compacts the
-  named Excel Table and resizes its filter range. Because compaction moves rows,
-  a formula with ordinary cell references inside that table stops the split with
+- `--table` edits the whole workbook too, and additionally compacts the named
+  Excel Table and resizes its filter range. Because compaction moves rows, a
+  formula with ordinary cell references inside that table stops the split with
   `XLSX_SPLIT_PRESERVE_FORMULA` before anything is written; convert it to
   structured table references, or split without preserving the workbook.
 - `--range`, `--sheet`, and `--no-preserve-workbook` create compact, data-only

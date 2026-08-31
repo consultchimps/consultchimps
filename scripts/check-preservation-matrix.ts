@@ -24,65 +24,14 @@ const xlsxEntryPoint = path.join(
   "index.js",
 );
 
-const xlsxSourceRoot = path.join(workspaceRoot, "packages", "xlsx", "src");
-
+// `docs:check` builds the xlsx package immediately before running this script,
+// so the contract read below is the one the package currently ships and cannot
+// be a stale build. Run on its own, the check names the command that produces
+// the entry point it needs.
 if (!existsSync(xlsxEntryPoint)) {
   throw new Error(
-    `The built xlsx package was not found at ${xlsxEntryPoint}. Run \`pnpm build\` first: the preservation matrix is generated from the contract that package exports, not from its source tree.`,
+    `The built xlsx package was not found at ${xlsxEntryPoint}. Run \`pnpm docs:check\`, which builds it first: the preservation matrix is generated from the contract that package exports, not from its source tree.`,
   );
-}
-
-// A build older than the contract it was built from would let this check read
-// promises nobody ships and still report success, so the built table is
-// compared with the source table before anything is rendered. This is the only
-// place the source module is read, and only to prove the two agree: the
-// projection itself sees the package exactly as a consumer does.
-const contractSourcePath = path.join(xlsxSourceRoot, "contract.ts");
-const [builtContract, sourceContract] = await Promise.all([
-  import("@consultchimps/xlsx"),
-  import("../packages/xlsx/src/contract.ts"),
-]);
-
-/** Stable text for a contract value, so key order cannot read as a difference. */
-function canonicalize(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalize).join(",")}]`;
-  }
-  if (typeof value === "object" && value !== null) {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalize(entry)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
-
-const contractExports = [
-  "CONTRACT",
-  "OPERATIONS",
-  "TRACKED_STRUCTURES",
-  "UNDECIDED_DESCRIBE_STRUCTURES",
-  "UNDECIDED_MERGE_STRUCTURES",
-  "UNDECIDED_SPLIT_STRUCTURES",
-] as const;
-
-for (const exportName of contractExports) {
-  const built = canonicalize(
-    (builtContract as Record<string, unknown>)[exportName],
-  );
-  const declared = canonicalize(
-    (sourceContract as Record<string, unknown>)[exportName],
-  );
-  if (built !== declared) {
-    throw new Error(
-      `The built xlsx package at ${xlsxEntryPoint} exports a different \`${exportName}\` from ${path
-        .relative(workspaceRoot, contractSourcePath)
-        .split(path.sep)
-        .join(
-          "/",
-        )}, so the build is stale. Run \`pnpm build\` and check the matrix again: it must be generated from the contract the package actually ships.`,
-    );
-  }
 }
 
 // Imported after the guard so a missing build reports the line above rather

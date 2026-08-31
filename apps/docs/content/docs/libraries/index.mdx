@@ -295,10 +295,17 @@ these cells at a caller who chose one:
 
 A structure with no entry for an operation is one the package has not decided
 yet; `UNDECIDED_SPLIT_STRUCTURES`, `UNDECIDED_MERGE_STRUCTURES`, and
-`UNDECIDED_DESCRIBE_STRUCTURES` record why each one is still open. Use the table
-to warn people before a run, or read it as prose in
+`UNDECIDED_DESCRIBE_STRUCTURES` record why each one is still open.
+
+A cell states what an operation ordinarily does, not what a particular run will
+do: it carries no options, no input ordering, and no mode, so a behavior that
+depends on one of those cannot be read off it. `merge["vba-project"]` is
+`strip-warn`, for instance, even though a macro project survives when the first
+input is the only one carrying it and the output is named `.xlsm`. Use a cell to
+tell people what usually happens and read the conditions beside it in
 [what the Excel operations preserve](/docs/tools/excel-preservation), which is
-generated from it and spells out the same limits.
+generated from this table and carries them; treating a cell as a verdict on one
+run will sometimes be wrong.
 
 ## Write values without losing Excel formatting
 
