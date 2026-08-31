@@ -102,7 +102,7 @@ export const STRUCTURE_DOCUMENTATION: Record<
   },
   "defined-names": {
     label: "Defined names",
-    note: "A merge makes a duplicate name unique and updates the formulas that used it. A split does not move a name's coordinates, so a name over filtered rows still spans its original rows.",
+    note: "A merge suffixes a name a later input also claimed but does not update formulas that used it. A split does not move a name's coordinates, so one over filtered rows still spans its original rows.",
   },
   "excel-tables": {
     label: "Excel Tables",

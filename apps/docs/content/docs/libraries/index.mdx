@@ -282,11 +282,16 @@ const removedByADefaultSplit = TRACKED_STRUCTURES.filter(
 ```
 
 `CONTRACT.split` describes the default whole-workbook split, the one that edits
-a copy of your workbook. Passing `preserveWorkbook: false`, `range`, or `sheet`
-selects a compact mode instead, which rebuilds a single worksheet from the
-grouped values and carries none of these structures — no other worksheets, no
-charts, no macros — so do not quote these cells at a caller who selected one of
-those modes.
+a copy of your workbook. The other selectors do not follow it, so do not quote
+these cells at a caller who chose one:
+
+- `preserveWorkbook: false`, `range`, and `sheet` rebuild a single worksheet
+  from the grouped values and carry none of these structures — no other
+  worksheets, no charts, no macros.
+- `table` runs the preserved-table rewrite, which compacts the table's rows.
+  Because compaction moves rows, an ordinary A1 formula inside that table stops
+  the operation with `XLSX_SPLIT_PRESERVE_FORMULA` instead of being repaired the
+  way this table's `fix` cell describes.
 
 A structure with no entry for an operation is one the package has not decided
 yet; `UNDECIDED_SPLIT_STRUCTURES`, `UNDECIDED_MERGE_STRUCTURES`, and
