@@ -126,7 +126,7 @@ function listTrackedTextFiles(): string[] {
     .sort();
 }
 
-/** A single character's worth of context, enough to see the sentence it broke. */
+/** Enough of the offending line to see the sentence the dash sits in. */
 function excerpt(line: string): string {
   const trimmed = line.trim();
   return trimmed.length > 120 ? `${trimmed.slice(0, 117)}...` : trimmed;

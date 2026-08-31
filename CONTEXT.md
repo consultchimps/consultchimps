@@ -15,7 +15,7 @@ issues use these terms with exactly these meanings.
   such as `describeWorkbook`).
 - **Column key**: the case-folded, trimmed form of a header used for matching
   (`columnKey`).
-- **Normalized column key**: the aggressive matching form: lowercased, every
+- **Normalized column key**: the aggressive matching form, lowercased with every
   separator run collapsed to one underscore (`normalizedColumnKey`). Matching
   only; never shown as output.
 - **Canonical column**: the output column name a mapping declares. Written
@@ -37,8 +37,8 @@ issues use these terms with exactly these meanings.
 - **Source columns**: the provenance columns consolidation appends
   (`_source_file`, `_source_sheet`, `_source_row`).
 - **Preservation matrix**: the published projection of the xlsx conformance
-  contract: what each Excel operation does to each tracked workbook structure.
-  Generated from `packages/xlsx/src/contract.ts` and checked by
+  contract, stating what each Excel operation does to each tracked workbook
+  structure. Generated from `packages/xlsx/src/contract.ts` and checked by
   `pnpm docs:check`. Its statuses are the site's only words for a contract cell:
   "Preserved" (`preserve`), "Adjusted to stay correct" (`fix`), "Removed,
   reported as a warning" (`strip-warn`), "Refused before anything is written"

@@ -154,8 +154,8 @@ test.describe("tool guides", () => {
   // planned (workbook inspection is one), but none of them has a guide page
   // of its own to drive: that entry documents itself inside the libraries
   // guide. Such a table would therefore still have no rows. The rule it used
-  // to assert, that a guide may only offer a button for an operation whose
-  // browser surface works, is enforced for every entry by
+  // to assert (a guide may only offer a button for an operation whose browser
+  // surface works) is enforced for every entry by
   // scripts/check-registry-site.ts, which reads the registry the pages render
   // from.
 

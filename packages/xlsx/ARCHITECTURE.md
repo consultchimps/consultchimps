@@ -2,8 +2,8 @@
 
 <!--
 This document is the binding design for the xlsx package. Every contributor
-implements against it, whether human or agent and whatever their capability. When code
-and this document disagree, either the code is wrong or this document must
+implements against it, whether human or agent and whatever their capability.
+When code and this document disagree, either the code is wrong or this document must
 be changed in the same pull request, deliberately.
 -->
 
@@ -290,8 +290,9 @@ introduce a second implementation of anything L0/L1/L2 owns.
   rewritten are part paths, relationship ids, the two per-workbook index spaces
   (shared strings, styles/dxfs) and the names a collision forced to change. Its
   contract column is populated; see "The merge's removals" below.
-- **Phase 2**: the remaining contract cells decided: defined names, drawings and
-  charts, external links, and the totals-row asymmetry between bindings.
+- **Phase 2**: the remaining contract cells decided, covering defined names,
+  drawings and charts, external links, and the totals-row asymmetry between
+  bindings.
 - **Later**: group mapping (many values → one output), multi-column split keys,
   table-aware consolidate, region-aware browser workbench chaining.
 
