@@ -190,9 +190,14 @@ export function removeLastKeyEntry(query: KeyQuery): KeyQuery {
  * Take named keys back out of the step being built. This is for the keys a
  * visitor was still holding when they used the keyboard to navigate away:
  * Shift held for a Shift+Tab is part of leaving, not part of the search, and
- * leaving it behind would filter the list by a key nobody meant to press. A
- * step emptied this way follows `removeLastKeyEntry`: the only step goes, a
- * later one stays open for the next key.
+ * leaving it behind would filter the list by a key nobody meant to press.
+ *
+ * A step the gesture empties goes with it, which is the difference from
+ * `removeLastKeyEntry`. Pressing Shift after a finished Ctrl+Shift+L opens a
+ * step to hold it, and keeping that step empty would leave a two-step query
+ * that the one-step chord cannot match: navigating away would silently empty
+ * the results the visitor was reading. The next key opens a fresh step anyway,
+ * because leaving the area closes the current one.
  */
 export function removeKeyTokens(
   query: KeyQuery,
@@ -206,8 +211,9 @@ export function removeKeyTokens(
   if (kept.length === last.length) {
     return query;
   }
-  if (kept.length === 0 && query.steps.length === 1) {
-    return EMPTY_KEY_QUERY;
+  if (kept.length === 0) {
+    const remaining = query.steps.slice(0, -1);
+    return remaining.length === 0 ? EMPTY_KEY_QUERY : { steps: remaining };
   }
   return { steps: [...query.steps.slice(0, -1), kept] };
 }

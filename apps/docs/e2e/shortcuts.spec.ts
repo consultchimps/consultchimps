@@ -228,6 +228,27 @@ test.describe("/shortcuts", () => {
     expect(await resultCount(page)).toBe(everything);
   });
 
+  test("keeps a finished chord when Shift+Tab moves focus away", async ({
+    page,
+  }) => {
+    await page.goto("/shortcuts");
+    const capture = page.getByTestId("key-capture");
+    await capture.click();
+
+    await page.keyboard.down("Control");
+    await page.keyboard.down("Shift");
+    await page.keyboard.press("KeyL");
+    await page.keyboard.up("Shift");
+    await page.keyboard.up("Control");
+    await expect(rows(page)).toHaveCount(1);
+
+    // Navigating away leaves the search the visitor was reading alone.
+    await page.keyboard.press("Shift+Tab");
+    await expect(capture).not.toBeFocused();
+    await expect(rows(page)).toHaveCount(1);
+    await expect(page.getByText("Add or remove the filter row")).toBeVisible();
+  });
+
   test("clears the sequence from the button, and combines both filters", async ({
     page,
   }) => {

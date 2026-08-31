@@ -201,12 +201,28 @@ describe("building a key query", () => {
     expect(removeKeyTokens(EMPTY_KEY_QUERY, ["Shift"])).toBe(EMPTY_KEY_QUERY);
   });
 
-  it("leaves a later step open when a gesture empties it", () => {
+  it("drops the step a gesture empties, leaving the query it interrupted", () => {
+    // Shift pressed after a finished chord opens a step to hold it. Undoing
+    // the gesture has to take that step with it: an empty trailing step is a
+    // second step, and the one-step chord would stop matching.
+    const finished = query(["Ctrl", "Shift", "L"]);
+    const withGesture = appendKeyToken(beginKeyStep(finished), "Shift");
+    expect(withGesture.steps).toEqual([["Ctrl", "Shift", "L"], ["Shift"]]);
+    expect(removeKeyTokens(withGesture, ["Shift"]).steps).toEqual([
+      ["Ctrl", "Shift", "L"],
+    ]);
+    expect(
+      matchesKeyQuery(
+        TOGGLE_FILTERS.keys,
+        removeKeyTokens(withGesture, ["Shift"]),
+      ),
+    ).toBe(true);
+
     const secondStep = appendKeyToken(
       beginKeyStep(appendKeyToken(EMPTY_KEY_QUERY, "Alt")),
       "Shift",
     );
-    expect(removeKeyTokens(secondStep, ["Shift"]).steps).toEqual([["Alt"], []]);
+    expect(removeKeyTokens(secondStep, ["Shift"]).steps).toEqual([["Alt"]]);
   });
 
   it("removes one key of a chord at a time", () => {
