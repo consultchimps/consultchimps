@@ -50,8 +50,8 @@ Four things are removed, each reported as a warning in the result: pivot tables
 and their caches (a cache holds a private copy of its source rows), external
 links (they are addressed by position in a single workbook's list), the
 calculation chain (Excel rebuilds it, and the merged workbook asks it to), and a
-macro project unless exactly one input carries one and the output is named
-`.xlsm`.
+macro project unless the first workbook you list is the only one carrying macros
+and the output is named `.xlsm`.
 
 [What the Excel operations preserve](/docs/tools/excel-preservation) sets these
 promises out structure by structure, beside what the split and the workbook

@@ -1,5 +1,5 @@
 ---
-"@consultchimps/xlsx": patch
+"@consultchimps/xlsx": minor
 ---
 
 Export the conformance contract: `CONTRACT`, `TRACKED_STRUCTURES`, `OPERATIONS`,

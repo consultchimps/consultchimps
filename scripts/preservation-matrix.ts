@@ -130,7 +130,7 @@ export const STRUCTURE_DOCUMENTATION: Record<
   },
   "vba-project": {
     label: "Macros (VBA project)",
-    note: "A split keeps macros and writes .xlsm. A merge carries them only when exactly one input has them and the output is named .xlsm; otherwise they are removed and reported.",
+    note: "A split keeps macros and writes .xlsm. A merge carries them only when the first input is the one that has them, no other input does, and the output is named .xlsm; otherwise they are removed and reported.",
   },
   "external-links": {
     label: "Links to other workbooks",
@@ -283,10 +283,11 @@ export const CELL_QUALIFIERS: Partial<
   },
   merge: {
     // The contract cell is `strip-warn`, but the removal is conditional: the
-    // project travels when exactly one input carries it and the output name
-    // admits macros. See ARCHITECTURE.md, "The merge's removals".
+    // project travels when the seed - the first input - is the only one
+    // carrying it and the output name admits macros (`resolveMacroProject`
+    // requires all three). See ARCHITECTURE.md, "The merge's removals".
     "vba-project":
-      "kept when exactly one input has macros and the output is named .xlsm",
+      "kept when the first input is the only one with macros and the output is named .xlsm",
     // The cell is absent because no corpus fixture can exercise it yet, but
     // the transplant already removes external links and warns about it, so
     // the bare status would read as more preservation than the merge offers.
