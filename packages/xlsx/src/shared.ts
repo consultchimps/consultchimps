@@ -5,12 +5,19 @@
  */
 import { ConsultChimpsError } from "@consultchimps/core";
 import {
+  applyColumnMappingToTables,
   type CellValue,
+  type ColumnHeaderSource,
+  type ColumnMapping,
+  type ColumnMappingSuggestion,
   groupTableByColumn,
+  normalizedColumnKey,
+  suggestColumnMapping,
   type Table,
   type TableRow,
   uniqueHeaders,
   unionTables,
+  validateColumnMapping,
 } from "@consultchimps/tabular";
 import * as XLSX from "xlsx";
 
@@ -55,7 +62,12 @@ const FIXED_WORKBOOK_DATE = new Date(0);
 const WORKBOOK_CREATOR = "ConsultChimps";
 
 export type ConsolidateWorkbooksMetric =
-  "inputFiles" | "inputTables" | "outputColumns" | "outputRows";
+  | "inputFiles"
+  | "inputTables"
+  | "outputColumns"
+  | "outputRows"
+  | "suggestedColumns"
+  | "unmappedColumns";
 export type ConsolidateWorkbooksPlanMetric = "inputFiles" | "outputFiles";
 export type MergeWorkbooksMetric =
   "hiddenSheets" | "inputFiles" | "outputSheets";
@@ -101,6 +113,12 @@ export function yieldToEventLoop(): Promise<void> {
 export interface ConsolidateTablesOptions {
   addSourceColumns?: boolean | undefined;
   /**
+   * Fold the source headers into canonical columns before the union. The
+   * mapping is matched by normalized column key whatever `normalizeHeaders`
+   * says, so the two options never compete: see {@link consolidateTables}.
+   */
+  mapping?: ColumnMapping | undefined;
+  /**
    * Match columns whose headers differ only in case, spacing, or punctuation
    * (for example "Failed Checks" and "Failed_Checks") instead of requiring
    * the exact same header in every worksheet.
@@ -108,16 +126,194 @@ export interface ConsolidateTablesOptions {
   normalizeHeaders?: boolean | undefined;
 }
 
+/** One consolidated table, plus the columns no mapping entry claimed. */
+export interface ConsolidateTablesResult {
+  table: Table;
+  /**
+   * Every distinct unmapped spelling across the inputs, in first-seen order.
+   * Empty when no mapping was applied.
+   */
+  unmappedColumns: string[];
+}
+
+/** The portable filename a byte-level mapping draft is offered under. */
+export const SUGGESTED_MAPPING_FILE_NAME = "mapping-draft.json";
+/** The media type a written column mapping carries as an artifact. */
+export const MAPPING_MEDIA_TYPE = "application/json";
+
 /**
- * The consolidation core both surfaces call: stack every worksheet table read
- * from the inputs into one union table. Keeping the refusal and the union in
- * one place is what makes the file API and the byte API produce the same
- * columns, the same row order, and the same bytes for the same workbooks.
+ * Describe the worksheet a table came from, for error messages: " in sheet
+ * \"South\" of \"records.xlsx\"", or "" when the table carries no provenance.
+ */
+function describeTableSource(table: Table): string {
+  const sheet = table.source?.sheet;
+  const file = table.source?.file;
+  if (sheet && file) {
+    return ` in sheet "${sheet}" of "${file}"`;
+  }
+  if (sheet) {
+    return ` in sheet "${sheet}"`;
+  }
+  if (file) {
+    return ` in "${file}"`;
+  }
+  return "";
+}
+
+function tableSourceDetails(table: Table): Record<string, unknown> {
+  const details: Record<string, unknown> = {};
+  if (table.source?.file !== undefined) {
+    details["file"] = table.source.file;
+  }
+  if (table.source?.sheet !== undefined) {
+    details["sheet"] = table.source.sheet;
+  }
+  return details;
+}
+
+function tableSourceRowNumber(table: Table, index: number): number {
+  return table.sourceRows?.[index] ?? (table.source?.firstDataRow ?? 2) + index;
+}
+
+/**
+ * The exact shape `cellToPrimitive` writes for a cell the workbook stores as a
+ * real date, and nothing a person types into a cell: the reader parses with
+ * `cellDates`, so such a cell arrives as a JavaScript date rendered in full ISO
+ * 8601. Matching it is how a date coercion can tell "the workbook already holds
+ * this as a date" from ordinary text it should try to parse.
+ */
+const WORKBOOK_DATE_TEXT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
+
+/**
+ * Refuse a declared date coercion the worksheet cannot honestly satisfy.
+ *
+ * A mapping's date coercion parses a column's *text*, written in a format the
+ * mapping declares. A worksheet hands that column two other shapes for the
+ * same idea, and neither one is that text:
+ *
+ * - A number. Excel stores a date as a count of days from an epoch, and which
+ *   day the count starts from is a property of the workbook, not of the value:
+ *   the 1900 and 1904 date systems sit 1462 days apart, and the 1900 system
+ *   deliberately reproduces Lotus 1-2-3's non-existent 29 February 1900, so
+ *   serial 60 names no calendar day at all. The table model a mapping sees
+ *   carries no epoch, and a bare number is indistinguishable from a case
+ *   number, a quantity, or an amount. Converting one would be a guess dressed
+ *   as a conversion, so the run stops instead.
+ * - A date the workbook already stores as a date, which reaches the table as a
+ *   full ISO 8601 instant. There is no text in the declared format to parse,
+ *   and the value is already unambiguous, so the honest answer is to drop the
+ *   coercion rather than to reinterpret the instant.
+ *
+ * Either refuses before anything is written, naming the file, the worksheet,
+ * the column, and the row, so the message says which cell to look at.
+ */
+function refuseNonTextDateColumns(
+  tables: Table[],
+  mapping: ColumnMapping,
+): void {
+  const dateColumnByKey = new Map<string, { format: string; name: string }>();
+  for (const column of mapping.columns) {
+    if (column.coercion?.type !== "date") {
+      continue;
+    }
+    const entry = { format: column.coercion.format, name: column.name };
+    for (const spelling of [column.name, ...column.aliases]) {
+      dateColumnByKey.set(normalizedColumnKey(spelling), entry);
+    }
+  }
+  if (dateColumnByKey.size === 0) {
+    return;
+  }
+
+  for (const table of tables) {
+    const dateColumns = table.columns
+      .map((column) => ({
+        canonical: dateColumnByKey.get(normalizedColumnKey(column)),
+        column,
+      }))
+      .filter(
+        (
+          entry,
+        ): entry is {
+          canonical: { format: string; name: string };
+          column: string;
+        } => entry.canonical !== undefined,
+      );
+    if (dateColumns.length === 0) {
+      continue;
+    }
+
+    table.rows.forEach((row, index) => {
+      for (const { canonical, column } of dateColumns) {
+        const value = Object.hasOwn(row, column) ? (row[column] ?? null) : null;
+        // A blank cell stays blank, and ordinary text is exactly what the
+        // coercion is for; everything else is refused below.
+        const isSourceText =
+          typeof value === "string" && !WORKBOOK_DATE_TEXT.test(value);
+        if (value === null || isSourceText) {
+          continue;
+        }
+
+        const location = `Row ${tableSourceRowNumber(table, index)} of column "${column}"${describeTableSource(table)}`;
+        const declared = `the canonical column "${canonical.name}" declares a date coercion, which reads text written in the format "${canonical.format}"`;
+        const problem =
+          typeof value === "number"
+            ? {
+                message: `${location} holds the number ${value}, and ${declared}. Excel counts a date as a number of days, and the day that count starts from belongs to the workbook rather than to the cell, so a bare number cannot be read as a date without guessing. Format that column as text in the source workbook, or remove the date coercion for "${canonical.name}". Nothing was written.`,
+                valueType: "number",
+              }
+            : typeof value === "string"
+              ? {
+                  message: `${location} holds a value the workbook stores as a date rather than as text, and ${declared}. A cell the workbook already holds as a date needs no coercion. Remove the date coercion for "${canonical.name}" and the value carries through. Nothing was written.`,
+                  valueType: "workbook-date",
+                }
+              : {
+                  message: `${location} does not hold text, and ${declared}. Correct that cell, or remove the date coercion for "${canonical.name}". Nothing was written.`,
+                  valueType: typeof value,
+                };
+
+        throw new ConsultChimpsError(
+          XLSX_ERRORS.XLSX_MAPPING_DATE_NOT_TEXT,
+          problem.message,
+          {
+            details: {
+              canonicalColumn: canonical.name,
+              column,
+              format: canonical.format,
+              row: tableSourceRowNumber(table, index),
+              valueType: problem.valueType,
+              ...tableSourceDetails(table),
+            },
+          },
+        );
+      }
+    });
+  }
+}
+
+/**
+ * The consolidation core both surfaces call: fold the source headers into
+ * canonical columns when a mapping is supplied, then stack every worksheet
+ * table read from the inputs into one union table. Keeping the refusal, the
+ * mapping, and the union in one place is what makes the file API and the byte
+ * API produce the same columns, the same row order, and the same bytes for the
+ * same workbooks.
+ *
+ * The mapping is applied per source table, before the union, so that two
+ * columns of one worksheet folding into a single canonical column is caught as
+ * that worksheet's ambiguity rather than silently merged across the inputs.
+ *
+ * `mapping` and `normalizeHeaders` do not compete. A mapping always matches by
+ * normalized column key, so the flag changes nothing about which source header
+ * reaches which canonical column; canonical names are written verbatim and are
+ * identical in every mapped table, so they union exactly either way.
+ * `normalizeHeaders` continues to govern only how the columns the mapping did
+ * not claim are matched against each other.
  */
 export function consolidateTables(
   tables: Table[],
   options: ConsolidateTablesOptions = {},
-): Table {
+): ConsolidateTablesResult {
   if (tables.length === 0) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_NO_TABLES,
@@ -125,10 +321,83 @@ export function consolidateTables(
     );
   }
 
-  return unionTables(tables, {
+  const unionOptions = {
     addSourceColumns: options.addSourceColumns,
     normalizeHeaders: options.normalizeHeaders,
-  });
+  };
+
+  if (!options.mapping) {
+    return { table: unionTables(tables, unionOptions), unmappedColumns: [] };
+  }
+
+  const mapping = validateColumnMapping(options.mapping);
+  refuseNonTextDateColumns(tables, mapping);
+  const mapped = applyColumnMappingToTables(tables, mapping);
+  return {
+    table: unionTables(mapped.tables, unionOptions),
+    unmappedColumns: mapped.unmappedColumns,
+  };
+}
+
+/**
+ * Draft a mapping from the headers of the tables a consolidation just read,
+ * carrying each table's file and worksheet through as the evidence a reviewer
+ * needs to judge a proposed group.
+ */
+export function suggestMappingForTables(
+  tables: Table[],
+): ColumnMappingSuggestion {
+  return suggestColumnMapping(
+    tables.map((table) => {
+      const source: ColumnHeaderSource = { columns: table.columns };
+      if (table.source?.file !== undefined) {
+        source.file = table.source.file;
+      }
+      if (table.source?.sheet !== undefined) {
+        source.sheet = table.source.sheet;
+      }
+      return source;
+    }),
+  );
+}
+
+/**
+ * Render a mapping as the JSON document both surfaces hand back, indented so a
+ * reviewer can edit it and ending in a newline so it appends cleanly. Identical
+ * inputs produce identical bytes, as every other output of this package does.
+ */
+export function serializeColumnMapping(mapping: ColumnMapping): string {
+  return `${JSON.stringify(mapping, null, 2)}\n`;
+}
+
+/**
+ * The warning that keeps an unmapped column loud but lossless: it passed
+ * through under its own name, and here is its name.
+ */
+export function unmappedColumnsWarning(columns: string[]): string {
+  const one = columns.length === 1;
+  return `${columns.length} column${one ? "" : "s"} did not match the column mapping and ${
+    one ? "kept its own name" : "kept their own names"
+  }: ${columns.map((column) => `"${column}"`).join(", ")}. Add ${
+    one ? "it" : "them"
+  } to the mapping if ${one ? "it belongs" : "they belong"} in a canonical column.`;
+}
+
+/**
+ * Refuse a run that both applies a mapping and drafts one.
+ *
+ * ADR 0002 fixed neither reading: drafting from the source headers ignores the
+ * mapping that is being applied, and drafting from the mapped headers proposes
+ * a second review of the first one's output. Both are defensible, so the
+ * toolkit declines to pick one on the caller's behalf. A refusal stays
+ * reversible; a guess would become a compatibility promise.
+ */
+export function refuseMappingWithSuggestion(): void {
+  throw new ConsultChimpsError(
+    XLSX_ERRORS.XLSX_MAPPING_SUGGEST_CONFLICT,
+    "Choose either a column mapping to apply or a drafted mapping to review, not both in one run. Applying a mapping and drafting one describe two different reviews of the same headers, and ConsultChimps will not decide which was meant. Run the consolidation twice if both are wanted.",
+    { details: { problem: "mapping_and_suggestion" } },
+  );
 }
 
 export interface ReadWorkbookExcelTablesOptions {

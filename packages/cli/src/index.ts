@@ -39,11 +39,13 @@ interface ConsolidateOptions {
   force?: boolean;
   headerRow?: number;
   hidden?: boolean;
+  map?: string;
   normalizeHeaders?: boolean;
   output: string;
   outputSheet?: string;
   sheet?: string[];
   source?: boolean;
+  suggestMap?: string;
   values?: boolean;
 }
 
@@ -312,6 +314,14 @@ sheets
     'match columns whose headers differ only in case, spacing, or punctuation, such as "Failed Checks" and "Failed_Checks"',
   )
   .option(
+    "--map <file>",
+    "JSON column mapping that folds differently named columns into one column each",
+  )
+  .option(
+    "--suggest-map <file>",
+    "write a draft column mapping built from the headers found, for you to review",
+  )
+  .option(
     "--no-source",
     "leave out columns that identify each row's source file, worksheet, and row",
   )
@@ -345,6 +355,17 @@ Your original workbooks are never changed.
 Consolidation already writes stored values rather than copying formulas;
 --values makes that requirement explicit.
 
+Matching columns that are named differently:
+  consultchimps sheets consolidate inputs/ --suggest-map draft.json -o combined.xlsx
+  consultchimps sheets consolidate inputs/ --map mapping.json -o combined.xlsx
+
+  --suggest-map writes a draft mapping grouping the headers that differ only in
+  case, spacing, or punctuation, for you to read and edit; nothing is applied
+  for you. --map then folds every listed spelling into the one column you named.
+  A column no mapping entry covers keeps its own name and is reported as a
+  warning. Two columns of one worksheet folding into one column stop the run
+  rather than quietly losing a value. Use one option or the other, not both.
+
 When you want each worksheet kept as its own tab instead:
   Use consultchimps sheets merge to copy every worksheet into one workbook
   without combining any rows.
@@ -361,11 +382,13 @@ When you want each worksheet kept as its own tab instead:
       addSourceColumns: options.source !== false,
       headerRow: options.headerRow,
       includeHiddenSheets: options.hidden === true,
+      mappingFile: options.map,
       normalizeHeaders: options.normalizeHeaders === true,
       onProgress: progress.report,
       outputSheetName: options.outputSheet,
       overwrite: options.force === true,
       sheets: options.sheet,
+      suggestMappingOutput: options.suggestMap,
       values: options.values === true,
     });
     progress.finish();

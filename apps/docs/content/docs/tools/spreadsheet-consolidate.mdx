@@ -110,6 +110,118 @@ failed  checks
 Headers that differ in their words, such as `Name` and `Client Name`, remain
 separate columns.
 
+## Map columns onto one schema
+
+`--normalize-headers` reaches spelling variants of one header. When the same
+field arrives under genuinely different names, such as `Case ID` from one system
+and `Reference` from another, a **column mapping** folds them into one
+**canonical column** instead. A mapping is a versioned JSON document listing
+canonical columns, the **aliases** that fold into each, optional per-column
+**coercions**, and constant columns:
+
+```json
+{
+  "version": 1,
+  "columns": [
+    { "name": "Case_ID", "aliases": ["Reference", "Case Number"] },
+    {
+      "name": "Amount",
+      "aliases": ["Total"],
+      "coercion": {
+        "type": "number",
+        "decimalSeparator": ",",
+        "thousandsSeparator": "."
+      }
+    }
+  ],
+  "constants": { "Dataset": "quarterly" }
+}
+```
+
+```bash
+consultchimps sheets consolidate inputs/ \
+  --map mapping.json \
+  --output outputs/consolidated.xlsx
+```
+
+The document's full rules, including what makes a mapping ambiguous and how each
+coercion parses, are in
+[Map columns onto one schema](/docs/libraries#map-columns-onto-one-schema) in
+the libraries guide. The mapping file is a public file format: a change to its
+shape is a versioned change and gets a new `version`.
+
+What the run does with it:
+
+- **Aliases match by normalized column key**, always. One entry catches every
+  case, spacing, and punctuation variant of that spelling, and a canonical
+  column matches its own name without repeating it. Canonical names are written
+  to the output exactly as you spelled them.
+- **`--normalize-headers` and `--map` do not compete.** A mapping matches by
+  normalized key whether or not you pass `--normalize-headers`, so the flag
+  never changes which source header reaches which canonical column. It continues
+  to govern only how the columns the mapping did not claim are matched against
+  each other.
+- **A column no entry claims keeps its own name** and is reported as a warning
+  listing it: loud, but lossless.
+- **Two columns of one worksheet folding into one canonical column stop the
+  run**, naming the file, the worksheet, both columns, and the canonical column.
+  Combining them would drop one of the two values, so nothing is written.
+- **Constant columns come last**, after the mapped and unmapped columns and
+  before the provenance columns.
+
+### Dates and a date coercion
+
+A `date` coercion reads a column's **text**, written in the format the mapping
+declares, and writes an ISO 8601 date such as `2024-03-09`. Declare it only for
+columns whose cells Excel holds as text.
+
+If such a column holds a number, or a value Excel already stores as a date, the
+run stops with `XLSX_MAPPING_DATE_NOT_TEXT` naming the file, worksheet, column,
+and row. Neither is converted, for two different reasons:
+
+- A **number** is not evidence of a date. Excel counts a date as a number of
+  days from an epoch, and which day the count starts from belongs to the
+  workbook, not to the cell: the 1900 and 1904 date systems sit 1462 days apart,
+  and the 1900 system reproduces a spreadsheet-era bug in which 29 February 1900
+  exists, so serial 60 names no real day. A bare number is also
+  indistinguishable from a case number or a quantity. Reading one as a date
+  would be a guess, so ConsultChimps refuses instead. Format that column as text
+  in the source workbook, or drop the coercion.
+- A value **Excel already stores as a date** is unambiguous and needs no
+  coercion. Drop the coercion for that canonical column and the value carries
+  through.
+
+### Draft a mapping from the headers you have
+
+`--suggest-map` writes a draft mapping built from the headers the run read,
+grouping the columns whose normalized keys already match, and still writes the
+consolidated workbook:
+
+```bash
+consultchimps sheets consolidate inputs/ \
+  --suggest-map outputs/mapping-draft.json \
+  --output outputs/consolidated.xlsx
+```
+
+The draft is evidence for you to read and edit, never applied for you. It uses
+no similarity scoring and no sample values, so it proposes nothing beyond
+spelling variants of one name: headers that mean different things but differ
+only in punctuation, such as `A+B` and `A-B`, group together, and synonyms that
+share no spelling, such as `Timestamp` and `Run Time`, stay for you to add by
+hand. Review the draft, edit it, then apply it with `--map` on a second run.
+
+The draft goes through the same never-overwrite rule as any other output, so
+replacing an existing draft needs `--force`. `--map` and `--suggest-map` cannot
+be combined: applying a mapping and drafting one describe two different reviews
+of the same headers, and ConsultChimps declines to choose between them. Run the
+consolidation twice if you want both.
+
+<Callout title="Mapping is a command-line feature today">
+  The [in-browser consolidator](/tools/excel-consolidate) does not offer column
+  mapping or mapping suggestions. Both are available through the command line
+  and the TypeScript API.
+</Callout>
+
 ## Keep provenance
 
 By default, every output row includes:
@@ -164,7 +276,7 @@ consultchimps sheets consolidate inputs/ \
 ```
 
 - `--output-sheet` changes the destination worksheet name.
-- `--force` replaces an existing output file.
+- `--force` replaces an existing output file, including a drafted mapping.
 - `--values` explicitly requests values-only output. Consolidation already reads
   stored cell results and never copies formulas.
 - The output table receives an autofilter and practical column widths.
@@ -180,10 +292,33 @@ const result = await consolidateWorkbooks({
   output: "outputs/master.xlsx",
   addSourceColumns: true,
   headerRow: 2,
+  mappingFile: "mapping.json",
   outputSheetName: "Master",
   sheets: ["Revenue"],
   values: true,
 });
 
 console.log(result.metrics.outputRows);
+console.log(result.metrics.unmappedColumns);
 ```
+
+`mappingFile` is read, parsed, and validated before any workbook is opened.
+Replace it with `suggestMappingOutput` to write a draft instead; the drafted
+mapping and the evidence behind it also come back on the result as `suggestion`.
+The two options cannot be passed together.
+
+The byte-level twin takes a parsed mapping rather than a path, because that
+surface has no filesystem:
+
+```ts
+import { consolidateWorkbooksBytes } from "@consultchimps/xlsx/bytes";
+import { validateColumnMapping } from "@consultchimps/tabular";
+
+const { result, outputs } = await consolidateWorkbooksBytes({
+  inputs: [{ name: "north.xlsx", bytes: northBytes }],
+  mapping: validateColumnMapping(JSON.parse(mappingText)),
+});
+```
+
+Passing `suggestMapping: true` instead offers the draft as a second output named
+`mapping-draft.json`.

@@ -17,6 +17,8 @@ import {
   ensureOutputAvailable,
   ensureParentDirectory,
   FILES_ERRORS,
+  isPathWithin,
+  isSameFilesystemPath,
   pathExists,
   refuseInputOverwrite,
 } from "../src/index.js";
@@ -169,4 +171,38 @@ describe("path helpers", () => {
       );
     },
   );
+
+  it("compares paths the way the running filesystem does", () => {
+    expect(
+      isSameFilesystemPath("outputs/combined.xlsx", "outputs/combined.xlsx"),
+    ).toBe(true);
+    expect(
+      isSameFilesystemPath(
+        path.join("outputs", "a", "..", "combined.xlsx"),
+        path.join("outputs", "combined.xlsx"),
+      ),
+    ).toBe(true);
+    expect(
+      isSameFilesystemPath("outputs/combined.xlsx", "outputs/other.xlsx"),
+    ).toBe(false);
+    // Case folding is the platform's answer, not the string's.
+    expect(
+      isSameFilesystemPath("outputs/Combined.xlsx", "outputs/combined.xlsx"),
+    ).toBe(process.platform === "win32" || process.platform === "darwin");
+  });
+
+  it("recognizes a path nested beneath another", () => {
+    const parent = path.resolve("outputs", "report.xlsx");
+    expect(isPathWithin(path.join(parent, "mapping.json"), parent)).toBe(true);
+    expect(isPathWithin(path.join(parent, "a", "b.json"), parent)).toBe(true);
+    expect(isPathWithin(parent, parent)).toBe(true);
+    expect(isPathWithin(path.resolve("outputs", "other.json"), parent)).toBe(
+      false,
+    );
+    // A sibling whose name merely starts with the ancestor's is not inside it.
+    expect(
+      isPathWithin(path.resolve("outputs", "report.xlsx.bak"), parent),
+    ).toBe(false);
+    expect(isPathWithin(path.resolve("outputs"), parent)).toBe(false);
+  });
 });

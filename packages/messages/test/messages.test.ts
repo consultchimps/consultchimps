@@ -178,6 +178,15 @@ describe("human-readable CLI output", () => {
       expected: "Check the workbook, worksheet, table, column name",
     },
     {
+      code: "TABLE_MAPPING_COLUMN_COLLISION",
+      expected:
+        "Nothing was created or changed: a column mapping is checked and applied before any output is written.",
+    },
+    {
+      code: "XLSX_MAPPING_DATE_NOT_TEXT",
+      expected: "Open the column mapping and check the canonical column names",
+    },
+    {
       code: "PDF_NO_PAGES",
       expected: "Confirm that every source file is a readable PDF",
     },
@@ -197,6 +206,134 @@ describe("human-readable CLI output", () => {
       expect(output).toContain(code);
     },
   );
+
+  it("explains a consolidation that mapped columns and drafted a mapping", () => {
+    const mapped = formatHumanResult(
+      result(
+        "sheets.consolidate",
+        {
+          inputFiles: 2,
+          inputTables: 2,
+          outputColumns: 5,
+          outputRows: 10,
+          suggestedColumns: 0,
+          unmappedColumns: 2,
+        },
+        ["combined.xlsx"],
+        ['2 columns did not match the column mapping: "Region", "Owner".'],
+      ),
+      cli,
+    );
+    expect(mapped).toContain(
+      "2 columns did not match the column mapping and kept their own names",
+    );
+    expect(mapped).toContain(
+      "Columns that did not match the column mapping: 2",
+    );
+    expect(mapped).not.toContain("drafted a column mapping");
+
+    const drafted = formatHumanResult(
+      {
+        operation: "sheets.consolidate",
+        artifacts: [
+          { kind: "file", path: "combined.xlsx" },
+          {
+            kind: "file",
+            mediaType: "application/json",
+            path: "mapping.json",
+          },
+        ],
+        metrics: {
+          inputFiles: 2,
+          inputTables: 2,
+          outputColumns: 5,
+          outputRows: 10,
+          suggestedColumns: 3,
+          unmappedColumns: 0,
+        },
+        warnings: [],
+      },
+      cli,
+    );
+    expect(drafted).toContain(
+      "It also drafted a column mapping proposing 3 canonical columns, and applied none of them.",
+    );
+    expect(drafted).toContain(
+      "Review and edit the drafted column mapping listed below",
+    );
+    expect(drafted).not.toContain("did not match the column mapping and");
+
+    // A plain consolidation adds neither sentence; the two counts still
+    // appear among the detailed results, reporting zero.
+    const plain = formatHumanResult(
+      result(
+        "sheets.consolidate",
+        {
+          inputFiles: 2,
+          inputTables: 2,
+          outputColumns: 5,
+          outputRows: 10,
+          suggestedColumns: 0,
+          unmappedColumns: 0,
+        },
+        ["combined.xlsx"],
+      ),
+      cli,
+    );
+    expect(plain).not.toContain("did not match the column mapping and");
+    expect(plain).not.toContain("drafted a column mapping");
+    expect(plain).toContain("Columns that did not match the column mapping: 0");
+
+    // A draft over headers that already agree is a real file proposing
+    // nothing, so the reader is still told what it is and that it was not
+    // applied. The count cannot answer that; the artifact can.
+    const empty = formatHumanResult(
+      {
+        operation: "sheets.consolidate",
+        artifacts: [
+          { kind: "file", path: "combined.xlsx" },
+          {
+            kind: "file",
+            mediaType: "application/json",
+            path: "mapping.json",
+          },
+        ],
+        metrics: {
+          inputFiles: 2,
+          inputTables: 2,
+          outputColumns: 5,
+          outputRows: 10,
+          suggestedColumns: 0,
+          unmappedColumns: 0,
+        },
+        warnings: [],
+      },
+      cli,
+    );
+    expect(empty).toContain(
+      "It also drafted a column mapping. Every header was already spelled the same way, so the draft proposes no canonical columns.",
+    );
+    expect(empty).toContain("Review and edit the drafted column mapping");
+  });
+
+  it("names a written column mapping as its own kind of file", () => {
+    const output = formatHumanResult(
+      {
+        operation: "sheets.consolidate",
+        artifacts: [
+          {
+            kind: "file",
+            mediaType: "application/json",
+            path: "mapping.json",
+          },
+        ],
+        metrics: {},
+        warnings: [],
+      },
+      cli,
+    );
+    expect(output).toContain("Type: Column mapping file");
+  });
 
   it("omits the error reference when no code is available", () => {
     const output = formatHumanError("Something failed.", undefined, cli);
