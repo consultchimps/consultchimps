@@ -121,11 +121,25 @@ Options:
   --hidden                  include hidden worksheets
   --normalize-headers       match headers that differ only in case, spacing,
                             or punctuation
+  --map <file>              JSON column mapping applied before the union
+  --suggest-map <file>      write a draft column mapping for review
   --no-source               omit file, sheet, and row provenance
   --output-sheet <name>     output worksheet name (default: Consolidated)
   --values                  write values instead of formulas, preserving formatting
   -f, --force               replace an existing output file
 ```
+
+`--map` folds columns that are named differently into one canonical column each,
+using the versioned JSON document described in
+[Map columns onto one schema](/docs/tools/spreadsheet-consolidate#map-columns-onto-one-schema).
+A column no entry claims keeps its own name and is reported as a warning. Two
+columns of one worksheet folding into one canonical column stop the run.
+
+`--suggest-map` writes a draft mapping built from the headers that were read and
+still writes the consolidated workbook. The draft is never applied; it goes
+through the same never-overwrite rule as any other output, so `--force` is
+needed to replace one. `--map` and `--suggest-map` cannot be combined in one
+run.
 
 ## Spreadsheet worksheet merging
 

@@ -118,12 +118,22 @@ export const CLI_VOCABULARY: MessageVocabulary = {
 };
 
 interface OperationExplanation {
-  readonly nextSteps: (vocabulary: MessageVocabulary) => readonly string[];
+  readonly nextSteps: (
+    vocabulary: MessageVocabulary,
+    result: OperationResult,
+  ) => readonly string[];
   readonly summary: (result: OperationResult) => readonly string[];
   readonly title: string;
 }
 
 const numberFormatter = new Intl.NumberFormat("en-US");
+
+/**
+ * The media type a written column mapping carries. It is the only JSON
+ * document any operation produces, so it names both the artifact's type and
+ * the presence of a drafted mapping in a consolidation's explanation.
+ */
+const MAPPING_MEDIA_TYPE = "application/json";
 
 function metric(result: OperationResult, name: string): number {
   return result.metrics[name] ?? 0;
@@ -180,6 +190,17 @@ function quantity(
   return `${formatNumber(value)} ${value === 1 ? singular : plural}`;
 }
 
+/**
+ * Whether this result wrote a drafted column mapping. The artifact answers
+ * that; the proposed-column count does not, because a run over headers that
+ * already agree writes a real file proposing nothing.
+ */
+function hasMappingDraft(result: OperationResult): boolean {
+  return result.artifacts.some(
+    (artifact) => artifact.mediaType === MAPPING_MEDIA_TYPE,
+  );
+}
+
 const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
   "sheets.merge": {
     title: "Your Excel workbook merge is complete.",
@@ -195,15 +216,45 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
   },
   "sheets.consolidate": {
     title: "Your Excel consolidation is complete.",
-    summary: (result) => [
-      `ConsultChimps read ${quantity(metric(result, "inputFiles"), "Excel file")} and combined ${quantity(metric(result, "inputTables"), "visible worksheet")}.`,
-      `The finished workbook contains ${quantity(metric(result, "outputRows"), "data row")} arranged across ${quantity(metric(result, "outputColumns"), "column")}.`,
-      "Your original Excel files were not changed.",
-    ],
-    nextSteps: (vocabulary) => [
-      `Open the new Excel workbook ${vocabulary.artifactListReference} and review the consolidated worksheet.`,
-      "Keep the source columns in the workbook if you need to trace a row back to its original file and worksheet.",
-    ],
+    summary: (result) => {
+      const lines = [
+        `ConsultChimps read ${quantity(metric(result, "inputFiles"), "Excel file")} and combined ${quantity(metric(result, "inputTables"), "visible worksheet")}.`,
+        `The finished workbook contains ${quantity(metric(result, "outputRows"), "data row")} arranged across ${quantity(metric(result, "outputColumns"), "column")}.`,
+      ];
+      // A column mapping folds source headers into canonical columns, so the
+      // sentence below is reported only when one did; a plain consolidation
+      // says nothing about it.
+      if (metric(result, "unmappedColumns") > 0) {
+        lines.push(
+          `${quantity(metric(result, "unmappedColumns"), "column")} did not match the column mapping and ${metric(result, "unmappedColumns") === 1 ? "kept its own name" : "kept their own names"}; the warnings name ${metric(result, "unmappedColumns") === 1 ? "it" : "them"}.`,
+        );
+      }
+      // Whether a draft was written is answered by the artifact, not by the
+      // count: a run over headers that already agree drafts an empty mapping,
+      // and a reader handed that file still needs to be told what it is and
+      // that nothing was applied.
+      if (hasMappingDraft(result)) {
+        lines.push(
+          metric(result, "suggestedColumns") === 0
+            ? "It also drafted a column mapping. Every header was already spelled the same way, so the draft proposes no canonical columns."
+            : `It also drafted a column mapping proposing ${quantity(metric(result, "suggestedColumns"), "canonical column")}, and applied none of them.`,
+        );
+      }
+      lines.push("Your original Excel files were not changed.");
+      return lines;
+    },
+    nextSteps: (vocabulary, result) => {
+      const steps = [
+        `Open the new Excel workbook ${vocabulary.artifactListReference} and review the consolidated worksheet.`,
+        "Keep the source columns in the workbook if you need to trace a row back to its original file and worksheet.",
+      ];
+      if (hasMappingDraft(result)) {
+        steps.push(
+          `Review and edit the drafted column mapping ${vocabulary.artifactListReference} before you use it: a draft groups headers that are spelled differently, which is evidence rather than a decision, and nothing was applied for you.`,
+        );
+      }
+      return steps;
+    },
   },
   "sheets.split-by-column": {
     title: "Your Excel workbook split is complete.",
@@ -352,6 +403,8 @@ const metricLabels: Readonly<Record<string, string>> = {
   rowsDeleted: "Rows deleted across output workbooks",
   sheetsCopiedUnchanged: "Worksheets copied without filtering",
   sheetsFiltered: "Worksheets filtered",
+  suggestedColumns: "Canonical columns proposed in the drafted mapping",
+  unmappedColumns: "Columns that did not match the column mapping",
   unsupportedPlacementPlaceholders:
     "Placeholders outside a supported text shape",
   unsupportedSplitRunPlaceholders: "Placeholders split across text runs",
@@ -374,6 +427,13 @@ function artifactType(artifact: Artifact): string {
   }
   if (artifact.mediaType === "application/pdf") {
     return "PDF document";
+  }
+  // The drafted column mapping is the only JSON document any operation
+  // produces, so the label names it rather than saying "JSON file", which
+  // would tell a non-technical reader nothing. Revisit when a second one
+  // appears.
+  if (artifact.mediaType === MAPPING_MEDIA_TYPE) {
+    return "Column mapping file";
   }
   if (
     artifact.mediaType ===
@@ -464,7 +524,7 @@ function renderResult(
   lines.push(
     "",
     "What you can do next:",
-    ...explanation.nextSteps(vocabulary).map((step) => `  - ${step}`),
+    ...explanation.nextSteps(vocabulary, result).map((step) => `  - ${step}`),
     "",
   );
 
@@ -506,6 +566,17 @@ function recoverySteps(
     return [
       "Open the source workbooks and confirm that they contain at least one visible worksheet with data.",
       vocabulary.hiddenWorksheetOption,
+    ];
+  }
+  // A mapping is checked and applied before anything is written, so every one
+  // of these failures leaves the destination untouched. Saying so is the most
+  // useful first sentence: it tells the reader nothing needs cleaning up
+  // before they correct the mapping and try again.
+  if (code?.startsWith("TABLE_MAPPING_") || code?.startsWith("XLSX_MAPPING_")) {
+    return [
+      "Nothing was created or changed: a column mapping is checked and applied before any output is written.",
+      "Open the column mapping and check the canonical column names, the aliases listed under them, any declared coercions, and the column named in the message above.",
+      vocabulary.spreadsheetOptionsReference,
     ];
   }
   if (code?.startsWith("XLSX_")) {

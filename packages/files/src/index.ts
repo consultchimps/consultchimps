@@ -48,6 +48,48 @@ function filesystemPathKey(filePath: string): string {
     : resolved;
 }
 
+/**
+ * Whether two paths name the same file on this platform.
+ *
+ * Comparing resolved path strings is not enough: Windows and the usual macOS
+ * volume fold case, so "Combined.xlsx" and "combined.xlsx" are one file there
+ * and two files on Linux. An operation deciding whether two of its
+ * destinations collide has to ask the platform's question, not the string's,
+ * or it writes one output over another and still reports both.
+ */
+export function isSameFilesystemPath(
+  firstPath: string,
+  secondPath: string,
+): boolean {
+  return filesystemPathKey(firstPath) === filesystemPathKey(secondPath);
+}
+
+/**
+ * Whether `candidatePath` is `ancestorPath` itself or sits beneath it.
+ *
+ * Two destinations can collide without being equal: naming a file
+ * "report.xlsx" and a second output "report.xlsx/mapping.json" asks for one
+ * path to be a file and a directory at once, which no filesystem grants. The
+ * check is case-folded like {@link isSameFilesystemPath} for the same reason.
+ */
+export function isPathWithin(
+  candidatePath: string,
+  ancestorPath: string,
+): boolean {
+  const candidate = filesystemPathKey(candidatePath);
+  const ancestor = filesystemPathKey(ancestorPath);
+  if (candidate === ancestor) {
+    return true;
+  }
+  const relative = path.relative(ancestor, candidate);
+  return (
+    relative !== "" &&
+    !relative.startsWith(`..${path.sep}`) &&
+    relative !== ".." &&
+    !path.isAbsolute(relative)
+  );
+}
+
 export async function discoverFiles(
   inputs: string[],
   options: DiscoverFilesOptions = {},

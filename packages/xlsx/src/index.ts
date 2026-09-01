@@ -12,6 +12,7 @@ import {
   ConsultChimpsError,
   safeNameFragment,
   throwIfAborted,
+  type Artifact,
   type OperationControlOptions,
   type OperationPlan,
   type OperationResult,
@@ -21,10 +22,17 @@ import {
   ensureDirectory,
   ensureOutputAvailable,
   ensureParentDirectory,
+  isPathWithin,
+  isSameFilesystemPath,
   pathExists,
   refuseInputOverwrite,
 } from "@consultchimps/files";
-import type { Table } from "@consultchimps/tabular";
+import {
+  validateColumnMapping,
+  type ColumnMapping,
+  type ColumnMappingSuggestion,
+  type Table,
+} from "@consultchimps/tabular";
 import type * as XLSX from "xlsx";
 
 import { XLSX_ERRORS } from "./errors.js";
@@ -65,14 +73,19 @@ import {
   INSPECT_OPERATION,
   isMacroWorkbookName,
   MACRO_WORKBOOK_MEDIA_TYPE,
+  MAPPING_MEDIA_TYPE,
   MERGE_OPERATION,
   parseExcelTableDefinitions,
   parseWorkbookBytes,
   preservedSplitTemplateBytes,
+  refuseMappingWithSuggestion,
   resolveSplitSource,
+  serializeColumnMapping,
   skippedRowsWarning,
   splitOutputFileNames,
   SPLIT_OPERATION,
+  suggestMappingForTables,
+  unmappedColumnsWarning,
   WORKBOOK_EXTENSION,
   WORKBOOK_MEDIA_TYPE,
   workbookExcelTables,
@@ -162,14 +175,36 @@ export interface ConsolidateWorkbooksOptions
   output: string;
   addSourceColumns?: boolean | undefined;
   /**
+   * Path to a version 1 column mapping document. It is read, parsed, and
+   * validated before any workbook is opened, and applied to each worksheet
+   * table before the union. Cannot be combined with `suggestMappingOutput`.
+   */
+  mappingFile?: string | undefined;
+  /**
    * Match columns whose headers differ only in case, spacing, or punctuation
    * (for example "Failed Checks" and "Failed_Checks") instead of requiring
-   * the exact same header in every worksheet.
+   * the exact same header in every worksheet. A mapping matches by normalized
+   * column key whatever this option says; the flag governs only the columns
+   * the mapping did not claim.
    */
   normalizeHeaders?: boolean | undefined;
   outputSheetName?: string | undefined;
   overwrite?: boolean | undefined;
+  /**
+   * Where to write a drafted mapping built from the headers that were read.
+   * The draft is written for review, never applied. Cannot be combined with
+   * `mappingFile`.
+   */
+  suggestMappingOutput?: string | undefined;
   values?: boolean | undefined;
+}
+
+export interface ConsolidateWorkbooksResult extends OperationResult<ConsolidateWorkbooksMetric> {
+  /**
+   * The drafted mapping and the evidence behind it, present only when
+   * `suggestMappingOutput` asked for one. Nothing applies it for the caller.
+   */
+  suggestion?: ColumnMappingSuggestion | undefined;
 }
 
 export interface MergeWorkbooksOptions extends OperationControlOptions {
@@ -368,6 +403,66 @@ export async function writeTable(
 interface ResolvedConsolidate {
   absoluteInputs: string[];
   absoluteOutput: string;
+  absoluteSuggestOutput?: string | undefined;
+}
+
+/**
+ * Read, parse, and validate a mapping document from disk. Reading the file is
+ * this package's job because `@consultchimps/tabular` never touches a
+ * filesystem; the document's rules stay that package's to enforce, so an
+ * ambiguous mapping still fails as `TABLE_MAPPING_INVALID`.
+ */
+async function readColumnMappingFile(
+  mappingFilePath: string,
+): Promise<ColumnMapping> {
+  const absolutePath = path.resolve(mappingFilePath);
+  const details = { mappingFile: absolutePath };
+  let text: string;
+
+  try {
+    text = await readFile(absolutePath, "utf8");
+  } catch (error) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_MAPPING_FILE_UNREADABLE,
+      `Could not read the column mapping file: ${absolutePath}`,
+      { cause: error, details },
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_MAPPING_FILE_INVALID,
+      `The column mapping file is not valid JSON: ${absolutePath}`,
+      { cause: error, details },
+    );
+  }
+
+  return validateColumnMapping(parsed);
+}
+
+/**
+ * Refuse a destination that already holds something other than a file, such as
+ * a folder. `ensureOutputAvailable` cannot answer this on its own: with
+ * overwrite enabled it returns before looking, and overwrite means replacing a
+ * file, never replacing a folder with one.
+ */
+async function refuseNonFileDestination(outputPath: string): Promise<void> {
+  try {
+    if ((await stat(outputPath)).isFile()) {
+      return;
+    }
+  } catch {
+    // Nothing is there, which is the ordinary case and no problem at all.
+    return;
+  }
+  throw new ConsultChimpsError(
+    XLSX_ERRORS.XLSX_MAPPING_OUTPUT_NOT_FILE,
+    `The drafted mapping cannot be written to ${outputPath}, because something that is not a file already stands there. Choose a filename for the draft, or move what is in the way.`,
+    { details: { outputPath } },
+  );
 }
 
 function resolveConsolidateWorkbooks(
@@ -379,20 +474,69 @@ function resolveConsolidateWorkbooks(
       "At least one workbook is required.",
     );
   }
+  if (
+    options.mappingFile !== undefined &&
+    options.suggestMappingOutput !== undefined
+  ) {
+    refuseMappingWithSuggestion();
+  }
 
   const absoluteInputs = options.inputs.map((inputPath) =>
     path.resolve(inputPath),
   );
   const absoluteOutput = path.resolve(options.output);
-  refuseInputOverwrite(absoluteOutput, absoluteInputs);
-  return { absoluteInputs, absoluteOutput };
+  // The mapping document is an input of this run like any workbook, so an
+  // output aimed at it is refused before `overwrite` gets a chance to destroy
+  // the very file the run was told to read.
+  refuseInputOverwrite(
+    absoluteOutput,
+    options.mappingFile === undefined
+      ? absoluteInputs
+      : [...absoluteInputs, path.resolve(options.mappingFile)],
+  );
+
+  if (options.suggestMappingOutput === undefined) {
+    return { absoluteInputs, absoluteOutput };
+  }
+
+  const absoluteSuggestOutput = path.resolve(options.suggestMappingOutput);
+  refuseInputOverwrite(absoluteSuggestOutput, absoluteInputs);
+  // Two destinations collide when they name one file - which on Windows and
+  // the usual macOS volume includes a difference of case alone - and also when
+  // one sits beneath the other, since no filesystem lets "report.xlsx" be a
+  // file and a directory at once. Either way the second write would destroy or
+  // fail over the first, so both are refused before anything is written.
+  if (
+    isSameFilesystemPath(absoluteSuggestOutput, absoluteOutput) ||
+    isPathWithin(absoluteSuggestOutput, absoluteOutput) ||
+    isPathWithin(absoluteOutput, absoluteSuggestOutput)
+  ) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_MAPPING_SUGGEST_CONFLICT,
+      `The drafted mapping (${absoluteSuggestOutput}) and the consolidated workbook (${absoluteOutput}) cannot share one destination, and neither can sit inside the other. Give the draft a location of its own.`,
+      {
+        details: {
+          outputPath: absoluteOutput,
+          problem: "suggestion_shares_output",
+          suggestOutputPath: absoluteSuggestOutput,
+        },
+      },
+    );
+  }
+  return { absoluteInputs, absoluteOutput, absoluteSuggestOutput };
 }
 
 export async function planConsolidateWorkbooks(
   options: ConsolidateWorkbooksOptions,
 ): Promise<OperationPlan<ConsolidateWorkbooksPlanMetric>> {
-  const { absoluteInputs, absoluteOutput } =
+  const { absoluteInputs, absoluteOutput, absoluteSuggestOutput } =
     resolveConsolidateWorkbooks(options);
+
+  // A plan promises the run's destinations, so an unusable mapping has to fail
+  // here too rather than surviving until the workbooks are read.
+  if (options.mappingFile !== undefined) {
+    await readColumnMappingFile(options.mappingFile);
+  }
 
   for (const absoluteInput of absoluteInputs) {
     if (!(await pathExists(absoluteInput))) {
@@ -405,6 +549,14 @@ export async function planConsolidateWorkbooks(
   }
 
   const exists = await pathExists(absoluteOutput);
+  const outputs: PlannedOutput[] = [
+    {
+      kind: "file",
+      mediaType: WORKBOOK_MEDIA_TYPE,
+      path: absoluteOutput,
+      exists,
+    },
+  ];
   const warnings =
     exists && options.overwrite !== true
       ? [
@@ -412,31 +564,69 @@ export async function planConsolidateWorkbooks(
         ]
       : [];
 
+  if (absoluteSuggestOutput !== undefined) {
+    const suggestExists = await pathExists(absoluteSuggestOutput);
+    outputs.push({
+      kind: "file",
+      mediaType: MAPPING_MEDIA_TYPE,
+      path: absoluteSuggestOutput,
+      exists: suggestExists,
+    });
+    if (suggestExists && options.overwrite !== true) {
+      warnings.push(
+        "The planned mapping draft already exists; executing without overwrite will fail.",
+      );
+    }
+  }
+
   return {
     operation: CONSOLIDATE_OPERATION,
-    inputs: absoluteInputs,
-    outputs: [
-      {
-        kind: "file",
-        mediaType: WORKBOOK_MEDIA_TYPE,
-        path: absoluteOutput,
-        exists,
-      },
-    ],
+    // A plan lists every file the run will read, and a mapping document is one
+    // of them. `inputFiles` stays the workbook count, which is what it has
+    // always meant and what the result reports.
+    inputs:
+      options.mappingFile === undefined
+        ? absoluteInputs
+        : [...absoluteInputs, path.resolve(options.mappingFile)],
+    outputs,
     warnings,
     metrics: {
       inputFiles: absoluteInputs.length,
-      outputFiles: 1,
+      outputFiles: outputs.length,
     },
   };
 }
 
 export async function consolidateWorkbooks(
   options: ConsolidateWorkbooksOptions,
-): Promise<OperationResult<ConsolidateWorkbooksMetric>> {
+): Promise<ConsolidateWorkbooksResult> {
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
-  const { absoluteInputs, absoluteOutput } =
+  const { absoluteInputs, absoluteOutput, absoluteSuggestOutput } =
     resolveConsolidateWorkbooks(options);
+
+  // Both the mapping and the draft's destination are settled before a single
+  // workbook is opened, so an unusable mapping or an occupied destination
+  // costs nothing and leaves nothing behind.
+  const mapping =
+    options.mappingFile === undefined
+      ? undefined
+      : await readColumnMappingFile(options.mappingFile);
+  if (absoluteSuggestOutput !== undefined) {
+    // Overwrite permits replacing a file, never turning a folder into one, and
+    // it skips the availability check that would otherwise have noticed. The
+    // check is made here so a folder standing at the draft's destination is
+    // reported before the workbook is written rather than as an EISDIR after.
+    await refuseNonFileDestination(absoluteSuggestOutput);
+    await ensureOutputAvailable(absoluteSuggestOutput, {
+      overwrite: options.overwrite,
+    });
+    // The draft's folder is made now rather than beside its write, because a
+    // parent that cannot be a folder - a plain file already standing where one
+    // is wanted - is only discovered by trying. Discovering it after the
+    // workbook has been written would leave that workbook behind on a run that
+    // reports failure.
+    await ensureParentDirectory(absoluteSuggestOutput);
+  }
 
   const tables: Table[] = [];
   for (const [index, absoluteInput] of absoluteInputs.entries()) {
@@ -451,7 +641,14 @@ export async function consolidateWorkbooks(
     });
   }
 
-  const table = consolidateTables(tables, options);
+  const { table, unmappedColumns } = consolidateTables(tables, {
+    ...options,
+    mapping,
+  });
+  const suggestion =
+    absoluteSuggestOutput === undefined
+      ? undefined
+      : suggestMappingForTables(tables);
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
   const output = await writeTable(absoluteOutput, table, {
     overwrite: options.overwrite,
@@ -465,23 +662,56 @@ export async function consolidateWorkbooks(
     detail: path.basename(output),
   });
 
-  return {
+  const artifacts: Artifact[] = [
+    {
+      kind: "file",
+      mediaType: WORKBOOK_MEDIA_TYPE,
+      path: output,
+    },
+  ];
+  if (absoluteSuggestOutput !== undefined && suggestion) {
+    await ensureOutputAvailable(absoluteSuggestOutput, {
+      overwrite: options.overwrite,
+    });
+    await writeFile(
+      absoluteSuggestOutput,
+      serializeColumnMapping(suggestion.mapping),
+      "utf8",
+    );
+    artifacts.push({
+      kind: "file",
+      mediaType: MAPPING_MEDIA_TYPE,
+      path: absoluteSuggestOutput,
+    });
+    options.onProgress?.({
+      operation: CONSOLIDATE_OPERATION,
+      stage: "writing-mapping-draft",
+      completed: 1,
+      total: 1,
+      detail: path.basename(absoluteSuggestOutput),
+    });
+  }
+
+  const result: ConsolidateWorkbooksResult = {
     operation: CONSOLIDATE_OPERATION,
-    artifacts: [
-      {
-        kind: "file",
-        mediaType: WORKBOOK_MEDIA_TYPE,
-        path: output,
-      },
-    ],
-    warnings: [],
+    artifacts,
+    warnings:
+      unmappedColumns.length > 0
+        ? [unmappedColumnsWarning(unmappedColumns)]
+        : [],
     metrics: {
       inputFiles: absoluteInputs.length,
       inputTables: tables.length,
       outputColumns: table.columns.length,
       outputRows: table.rows.length,
+      suggestedColumns: suggestion?.mapping.columns.length ?? 0,
+      unmappedColumns: unmappedColumns.length,
     },
   };
+  if (suggestion) {
+    result.suggestion = suggestion;
+  }
+  return result;
 }
 
 export async function mergeWorkbooks(
