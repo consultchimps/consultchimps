@@ -23,8 +23,7 @@ import {
 } from "@consultchimps/tabular";
 
 import { XLSX_ERRORS } from "./errors.js";
-import JSZip from "jszip";
-import { generatePackageBytes, replacePackagePart } from "./package-zip.js";
+import { WorkbookPackage } from "./package/index.js";
 import {
   describeWorkbookModel,
   loadWorkbookModelForDescribe,
@@ -133,9 +132,11 @@ export async function unprotectWorkbookBytes(
       XLSX_ERRORS.XLSX_UNPROTECT_UNSUPPORTED_FILE,
       "Excel Unprotect accepts only .xlsx and .xlsm files.",
     );
-  let archive: JSZip;
+  let archive: WorkbookPackage;
   try {
-    archive = await JSZip.loadAsync(options.input.bytes);
+    archive = await WorkbookPackage.load(options.input.bytes, {
+      sourceLabel: options.input.name,
+    });
   } catch (error) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_UNPROTECT_UNSUPPORTED_FILE,
@@ -143,28 +144,27 @@ export async function unprotectWorkbookBytes(
       { cause: error },
     );
   }
-  const workbook = archive.file("xl/workbook.xml");
-  if (!workbook || !archive.file("[Content_Types].xml"))
+  const workbook = archive.part("xl/workbook.xml");
+  if (!workbook || !archive.part("[Content_Types].xml"))
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_UNPROTECT_UNSUPPORTED_FILE,
       "This file is not a valid OOXML Excel workbook. Encrypted or password-required Office files are not supported.",
     );
   const workbookResult = removeProtection(
-    await workbook.async("string"),
+    await workbook.text(),
     "workbookProtection",
   );
   if (workbookResult.matches)
-    replacePackagePart(archive, "xl/workbook.xml", workbookResult.xml);
+    archive.setPartText("xl/workbook.xml", workbookResult.xml);
   let sheetProtectionsRemoved = 0;
-  for (const entry of Object.values(archive.files)) {
-    if (!/^xl\/worksheets\/[^/]+\.xml$/iu.test(entry.name) || entry.dir)
-      continue;
+  for (const partPath of archive.partPaths()) {
+    if (!/^xl\/worksheets\/[^/]+\.xml$/iu.test(partPath)) continue;
     const result = removeProtection(
-      await entry.async("string"),
+      await archive.part(partPath)!.text(),
       "sheetProtection",
     );
     sheetProtectionsRemoved += result.matches;
-    if (result.matches) replacePackagePart(archive, entry.name, result.xml);
+    if (result.matches) archive.setPartText(partPath, result.xml);
   }
   const outputName = options.outputName ?? inputName;
   options.onProgress?.({
@@ -189,7 +189,7 @@ export async function unprotectWorkbookBytes(
     outputs: [
       {
         name: outputName,
-        bytes: await generatePackageBytes(archive),
+        bytes: await archive.save(),
         mediaType: WORKBOOK_MEDIA_TYPE,
       },
     ],
