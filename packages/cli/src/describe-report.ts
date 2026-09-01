@@ -27,13 +27,47 @@ function quantity(value: number, singular: string): string {
 }
 
 /**
+ * Text from the workbook, made safe to print.
+ *
+ * Sheet names, headers, table names, and cell values are input, and input files
+ * are untrusted. This report goes straight to a terminal, where a control
+ * character is an instruction rather than a character: a header carrying an
+ * escape can move the cursor, recolor or erase the lines already printed, or
+ * reach a terminal feature, so a crafted workbook could make the report say
+ * something the workbook does not contain. Excel's own writer stores a control
+ * character as the literal text `_x001b_`, but a numeric XML character
+ * reference decodes to the character itself, so a hand-built package reaches
+ * this function with the real thing.
+ *
+ * Every control character is therefore shown as a visible `\\uXXXX` escape,
+ * which also keeps a newline inside a cell from breaking the report's layout.
+ * The value itself is untouched: `--json` reports the raw string, where JSON's
+ * own escaping already makes a control character inert.
+ */
+function printable(text: string): string {
+  let rendered = "";
+  for (const character of text) {
+    const code = character.codePointAt(0) ?? 0;
+    // C0 (including DEL) and C1: the ranges a terminal reads as commands.
+    // The test is a comparison rather than a character class because a
+    // regular expression carrying these characters is itself the thing lint
+    // warns about, and the bounds say which ranges are meant.
+    const isControl = code < 0x20 || (code >= 0x7f && code <= 0x9f);
+    rendered += isControl
+      ? `\\u${code.toString(16).toUpperCase().padStart(4, "0")}`
+      : character;
+  }
+  return rendered;
+}
+
+/**
  * One sample value, written the way the workbook stores it. Text is quoted and
  * every other stored value is written bare, because the description keeps the
  * number 1 and the text "1" apart on purpose and a reader comparing two columns
  * needs to see which one a cell holds.
  */
 function formatSampleValue(value: SampleValue): string {
-  return typeof value === "string" ? `"${value}"` : String(value);
+  return typeof value === "string" ? `"${printable(value)}"` : String(value);
 }
 
 function formatColumn(column: WorkbookColumnDescription): string {
@@ -43,7 +77,7 @@ function formatColumn(column: WorkbookColumnDescription): string {
       : "no sample values";
   // The position is the column's own zero-based index, shown counted from 1 so
   // it reads like a spreadsheet column rather than an array offset.
-  return `       ${column.index + 1}. ${column.header}: ${samples}`;
+  return `       ${column.index + 1}. ${printable(column.header)}: ${samples}`;
 }
 
 /**
@@ -56,7 +90,7 @@ export function formatWorkbookDescription(
   description: WorkbookDescription,
 ): string {
   const lines = [
-    `Excel workbook inspection: ${description.source}`,
+    `Excel workbook inspection: ${printable(description.source)}`,
     "",
     "Worksheets:",
   ];
@@ -66,7 +100,7 @@ export function formatWorkbookDescription(
   }
   description.sheets.forEach((sheet, index) => {
     lines.push(
-      `  ${index + 1}. ${sheet.name} (${sheet.visibility})`,
+      `  ${index + 1}. ${printable(sheet.name)} (${sheet.visibility})`,
       `     Used range: ${quantity(sheet.rowCount, "row")} by ${quantity(
         sheet.columnCount,
         "column",
@@ -86,8 +120,10 @@ export function formatWorkbookDescription(
   }
   description.excelTables.forEach((table, index) => {
     lines.push(
-      `  ${index + 1}. ${table.name} on worksheet ${table.sheet} (${table.range})`,
-      `     Columns: ${table.headers.join(", ") || "None"}`,
+      `  ${index + 1}. ${printable(table.name)} on worksheet ${printable(
+        table.sheet,
+      )} (${printable(table.range)})`,
+      `     Columns: ${table.headers.map(printable).join(", ") || "None"}`,
     );
   });
 
@@ -97,7 +133,9 @@ export function formatWorkbookDescription(
   }
   description.namedRanges.forEach((range, index) => {
     lines.push(
-      `  ${index + 1}. ${range.name} on worksheet ${range.sheet} (${range.ref})`,
+      `  ${index + 1}. ${printable(range.name)} on worksheet ${printable(
+        range.sheet,
+      )} (${printable(range.ref)})`,
     );
   });
 

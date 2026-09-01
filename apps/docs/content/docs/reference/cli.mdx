@@ -135,6 +135,11 @@ the number `1` and the text `"1"` stay apart. `--samples 0` reports headers with
 no values. A count above five is refused with `XLSX_INVALID_SAMPLE_LIMIT` rather
 than reduced to five, so the same request means the same thing at every layer.
 
+Input files are untrusted, and the report is written to a terminal, so a control
+character in a worksheet name, header, or value is printed as a visible `\uXXXX`
+escape instead of reaching the terminal as an instruction. The value itself is
+unchanged: `--json` reports what the workbook holds.
+
 ```bash
 consultchimps sheets inspect clients.xlsx --hidden --samples 2
 ```

@@ -612,6 +612,58 @@ describe("consultchimps CLI", () => {
     expect(outcome.result.warnings).toEqual([]);
   });
 
+  it("shows control characters from a crafted workbook rather than sending them to the terminal", async () => {
+    // Written as a code point so this file carries no control character of its
+    // own, which would defeat the point of the assertions below.
+    const escapeCharacter = String.fromCharCode(27);
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "inputs", "crafted.xlsx");
+    await writeWorkbook(input, [
+      [
+        "Sheet1",
+        [
+          ["RegionMARKER", "Owner"],
+          ["NorthMARKER", "Ana"],
+        ],
+      ],
+    ]);
+
+    // Excel's own writer stores a control character as the literal text
+    // `_x001b_`, so the reachable path is a hand-built package: a numeric XML
+    // character reference decodes to the character itself. Patching the marker
+    // into one produces exactly that workbook without committing a binary.
+    const zip = await JSZip.loadAsync(await readFile(input));
+    const sheetEntry = zip.file("xl/worksheets/sheet1.xml");
+    const sheetXml = await sheetEntry!.async("string");
+    expect(sheetXml).toContain("MARKER");
+    zip.file(
+      "xl/worksheets/sheet1.xml",
+      sheetXml.replaceAll("MARKER", "&#27;[31m"),
+    );
+    await writeFile(
+      input,
+      await zip.generateAsync({ compression: "DEFLATE", type: "nodebuffer" }),
+    );
+
+    const command = await runCli(["sheets", "inspect", input]);
+    // The report is written to a terminal, where an escape is an instruction:
+    // it must arrive as visible text instead.
+    expect(command.stdout).not.toContain(escapeCharacter);
+    expect(command.stdout).toContain("1. Region\\u001B[31m:");
+    expect(command.stdout).toContain('"North\\u001B[31m"');
+
+    // The structured result is data rather than terminal output, and JSON's own
+    // escaping already makes a control character inert, so it keeps the value
+    // the workbook holds.
+    const json = await runCli(["--json", "sheets", "inspect", input]);
+    const outcome = parseJsonSuccess(json.stdout) as {
+      description: { sheets: Array<{ columns: Array<{ header: string }> }> };
+    };
+    expect(outcome.description.sheets[0]?.columns[0]?.header).toBe(
+      `Region${escapeCharacter}[31m`,
+    );
+  });
+
   it("surfaces the library's refusals when inspecting a workbook", async () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "inputs", "review-log.xlsx");
