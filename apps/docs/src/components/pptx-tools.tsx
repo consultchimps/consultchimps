@@ -16,19 +16,19 @@
  */
 
 import {
+  ChosenFile,
   describeFailure,
   FilePicker,
-  formatBytes,
   inputClass,
   noticeClass,
   PREVIEW_DEBOUNCE_MS,
-  readUploads,
+  ReadingFile,
   ResultsPanel,
   RunControls,
   sectionClass,
   ToolShell,
+  useFileSelection,
   useOperationRun,
-  type UploadedFile,
 } from "@/components/tool-kit";
 import { PRESENTATION_FILES, WORKBOOK_FILES } from "@/lib/accepted-files";
 import type { PresentationPopulateOptions } from "@/lib/operation-tasks";
@@ -39,7 +39,6 @@ import type {
   PopulatePowerPointTemplatePlanMetric,
   PresentationInspectionOutcome,
 } from "@consultchimps/pptx/bytes";
-import { FileText } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -101,92 +100,6 @@ function suppliedNumber(state: NumberFieldState): number | undefined {
 
 function fieldMessage(state: NumberFieldState): string | undefined {
   return state.kind === "invalid" ? state.message : undefined;
-}
-
-interface FileSelection {
-  /** The chosen file, or null while nothing usable is selected. */
-  readonly file: UploadedFile | null;
-  /** Set when the last pick was rejected; cleared by the next one. */
-  readonly rejected: string | null;
-  /** True between choosing a file and finishing its read. */
-  readonly reading: boolean;
-  readonly choose: (files: readonly File[], onChange: () => void) => void;
-}
-
-/**
- * One picker's selection, held so that at no instant does the page offer to
- * run against a document the visitor is not looking at.
- *
- * Reading an upload is asynchronous, and both hazards that follow from that
- * are handled here rather than at each call site:
- *
- * - The moment a pick starts, the previous selection is cleared. A large or
- *   cloud-backed replacement can take a noticeable time to read, and leaving
- *   the old file live for that window would let Run populate the very
- *   document that was just replaced.
- * - A read applies only while it is still the newest. Picking twice in quick
- *   succession leaves two reads in flight, and a big deck picked first can
- *   finish after a small one picked second; without the token the older read
- *   would win.
- */
-function useFileSelection(
-  accepts: (file: File) => boolean,
-  expected: string,
-): FileSelection {
-  const [file, setFile] = useState<UploadedFile | null>(null);
-  const [rejected, setRejected] = useState<string | null>(null);
-  const [reading, setReading] = useState(false);
-  const latest = useRef(0);
-
-  const choose = useCallback(
-    (files: readonly File[], onChange: () => void) => {
-      const token = (latest.current += 1);
-      setFile(null);
-      setRejected(null);
-      setReading(true);
-      onChange();
-
-      void readUploads(files, accepts)
-        .then((read) => {
-          if (token !== latest.current) {
-            return;
-          }
-          const [first] = read;
-          setFile(first ?? null);
-          setRejected(first ? null : rejectedUploadMessage(files, expected));
-          setReading(false);
-        })
-        .catch(() => {
-          // A cloud-backed or removable file can go unreadable mid-read.
-          // Without this the picker would sit in its reading state forever,
-          // with nothing selected and Run disabled, and say nothing about why.
-          if (token !== latest.current) {
-            return;
-          }
-          setFile(null);
-          setRejected(
-            "That file could not be read. It may have moved, gone offline, or been removed. Choose it again, or pick another file",
-          );
-          setReading(false);
-        });
-    },
-    [accepts, expected],
-  );
-
-  return { choose, file, reading, rejected };
-}
-
-/** Shown in place of the file summary while a pick is still being read. */
-function ReadingFile({ testId }: { readonly testId: string }) {
-  return (
-    <p
-      className="mt-3 text-sm text-fd-muted-foreground"
-      data-testid={testId}
-      role="status"
-    >
-      Reading the file…
-    </p>
-  );
 }
 
 /**
@@ -310,45 +223,6 @@ function NumberField({
         </p>
       ) : null}
     </div>
-  );
-}
-
-/**
- * The message shown when a picker rejects everything it was given.
- *
- * `readUploads` drops files the tool cannot process and says nothing, which is
- * right when nothing was chosen yet. It is not right when a document is
- * already selected: silently keeping it would let someone who meant to replace
- * a template populate the old one instead. Both pages therefore clear the
- * selection and say why, so a run can only ever use a file that was chosen on
- * purpose.
- */
-function rejectedUploadMessage(
-  files: readonly File[],
-  expected: string,
-): string {
-  const [first] = files;
-  const named = first ? `"${first.name}" is not` : "Those files are not";
-  return `${named} ${expected}. Nothing is selected now, so choose ${expected} to continue`;
-}
-
-/** The chosen file's name and size, shown under whichever picker took it. */
-function ChosenFile({
-  file,
-  testId,
-}: {
-  readonly file: UploadedFile;
-  readonly testId: string;
-}) {
-  return (
-    <p
-      className="mt-3 flex items-center gap-2 text-sm text-fd-muted-foreground"
-      data-testid={testId}
-    >
-      <FileText aria-hidden="true" className="size-4 shrink-0" />
-      <span className="truncate font-mono">{file.name}</span>
-      <span className="shrink-0">{formatBytes(file.bytes.byteLength)}</span>
-    </p>
   );
 }
 

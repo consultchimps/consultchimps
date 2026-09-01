@@ -19,6 +19,7 @@
  */
 
 import {
+  ChosenFile,
   compactButtonClass,
   describeFailure,
   FilePicker,
@@ -26,14 +27,17 @@ import {
   inputClass,
   noticeClass,
   PREVIEW_DEBOUNCE_MS,
+  ReadingFile,
   readUploads,
   ResultsPanel,
   RunControls,
   sectionClass,
   ToolShell,
+  useFileSelection,
   useOperationRun,
   type UploadedFile,
 } from "@/components/tool-kit";
+import { WorkbookInspector } from "@/components/workbook-inspector";
 import { WORKBOOK_FILES } from "@/lib/accepted-files";
 import type {
   WorkbookSplitOptions,
@@ -889,6 +893,83 @@ export function ExcelMergeTool() {
       <ResultsPanel
         fallbackMediaType={WORKBOOK_FILES.fallbackMediaType}
         state={runState}
+      />
+    </ToolShell>
+  );
+}
+
+/**
+ * The standalone workbook inspection page: a picker, one option, and the
+ * shared report.
+ *
+ * There is no Run button and no Results panel because the operation creates
+ * nothing: the report is the whole answer, and it follows the chosen workbook
+ * after the usual preview debounce. Everything below the picker lives in
+ * `WorkbookInspector`, which is what the split and consolidate pages will
+ * embed beside their own pickers without this page's chrome.
+ */
+export function ExcelInspectTool() {
+  const selection = useFileSelection(
+    WORKBOOK_FILES.accepts,
+    WORKBOOK_FILES.description,
+  );
+  const workbook = selection.file;
+  // On by default: a page whose whole job is "what is in this file" would
+  // otherwise leave out the worksheets a reader is most likely hunting for.
+  // Every worksheet in the report carries its visibility, so nothing hidden is
+  // passed off as ordinary.
+  const [includeHiddenSheets, setIncludeHiddenSheets] = useState(true);
+
+  return (
+    <ToolShell
+      description="Choose a workbook and see what an operation would find in it: every worksheet with its visibility, the header row that would be used, the Excel Tables and named ranges it declares, and a few sample values from each column. Nothing is created and nothing is uploaded, because the workbook is read in this browser tab"
+      guideHref="/docs/tools/workbook-inspect"
+      guideLabel="Read the inspection guide"
+      kicker="Online tool · Excel inspect"
+      title="Inspect an Excel workbook"
+    >
+      <section className={sectionClass} data-testid="source-section">
+        <h2 className="text-xl font-bold tracking-[-0.03em]">
+          1. Choose a workbook
+        </h2>
+        <div className="mt-4">
+          <FilePicker
+            accept={WORKBOOK_FILES.accept}
+            description={`Drag ${WORKBOOK_FILES.description} here, or pick one with the button below. Only the first workbook is used, and it is only ever read`}
+            disabled={false}
+            label="Workbook to inspect"
+            multiple={false}
+            onFiles={(files) => {
+              selection.choose(files);
+            }}
+          />
+        </div>
+        {selection.reading ? <ReadingFile testId="source-reading" /> : null}
+        {workbook ? (
+          <ChosenFile file={workbook} testId="source-summary" />
+        ) : null}
+        {selection.rejected ? (
+          <p className={noticeClass} data-testid="source-rejected" role="alert">
+            {selection.rejected}
+          </p>
+        ) : null}
+
+        <div className="mt-6">
+          <CheckboxField
+            checked={includeHiddenSheets}
+            disabled={false}
+            hint="On by default here, so the report covers the whole workbook. Turn it off to see what an operation that skips hidden and very hidden worksheets would find"
+            label="Include hidden worksheets"
+            onChange={setIncludeHiddenSheets}
+            testId="include-hidden-checkbox"
+          />
+        </div>
+      </section>
+
+      <WorkbookInspector
+        file={workbook}
+        heading="2. What is in the workbook"
+        includeHiddenSheets={includeHiddenSheets}
       />
     </ToolShell>
   );

@@ -28,7 +28,7 @@ documentation site renders its cards and tabs from;
 | Split PDF pages               | Works   | Works   | Works   |
 | Merge PDF packs               | Works   | Works   | Works   |
 | Inspect PowerPoint templates  | Works   | Works   | Works   |
-| Inspect workbooks             | Planned | Works   | Planned |
+| Inspect workbooks             | Planned | Works   | Works   |
 
 ## Packages
 

@@ -1,0 +1,97 @@
+---
+title: Inspect a workbook
+description:
+  Report a workbook's worksheets, header rows, Excel Tables, named ranges, and
+  sample column values without creating anything.
+icon: ScanSearch
+---
+
+<Callout title="No installation needed">
+  [Use this tool in your browser](/tools/excel-inspect). The inspection runs
+  entirely in the page, so your workbook never leaves the browser tab.
+</Callout>
+
+The inspection answers two questions about a workbook: what is in it, and what
+another operation would see in it. It reads the file and reports; it writes
+nothing, creates no output, and leaves the original untouched.
+
+## What it reports
+
+- **Worksheets**, in workbook order, each with its visibility (visible, hidden,
+  or very hidden), the size of its used range, and how many rows sit below its
+  header row.
+- **The header row** each worksheet would be read from. It comes from the same
+  region resolver the workbook split uses, rather than from a second header
+  detection written for the report, so the answer moves with the operation.
+- **Column headers** from that row, blanks filled in and repeats made unique the
+  way an operation would name them.
+- **Sample values**: up to five distinct non-empty values per column, in the
+  order the rows carry them. Values are reported as the workbook stores them,
+  with nothing type-inferred, so the number `1` and the text `1` stay apart. The
+  browser tool quotes text samples and leaves numbers and booleans bare, so you
+  can see which of the two a cell holds.
+- **Excel Tables** and **named ranges** the package declares, with the sheet and
+  range each one covers.
+- **Warnings** from the operation itself, naming what a later operation would
+  stumble on: worksheets left out of the description, or a worksheet with no
+  header row to match columns by.
+
+## When to use it
+
+Reach for it before an operation rather than after a surprising result:
+
+- A consolidation unioned more columns than you expected. The header preview
+  shows which spellings the sources actually carry.
+- A split reports no rows for a column you can see in Excel. The report says
+  which header row each worksheet resolves to, and whether the data sits on a
+  worksheet an operation would skip.
+- You are about to name a worksheet, Excel Table, or named range in another
+  command and want the spelling the workbook stores.
+
+## The online tool
+
+[The browser tool](/tools/excel-inspect) takes `.xlsx` and `.xlsm` workbooks,
+reads them in the page, and renders the report. There is no Run button and no
+download, because the inspection produces no file: choosing a workbook is the
+whole interaction.
+
+One interface default differs from the library's. The browser tool describes
+hidden and very hidden worksheets by default, since a page whose job is to say
+what is in a file would otherwise leave out the worksheets people most often go
+looking for. Every worksheet in the report carries its visibility, and the
+"Include hidden worksheets" checkbox turns the description back to what an
+operation that skips them would find.
+
+## From the command line
+
+Workbook inspection ships as a library operation and as the browser tool above.
+The [CLI reference](/docs/reference/cli) lists the commands the installed
+release provides.
+
+## TypeScript API
+
+```ts
+import { describeWorkbook } from "@consultchimps/xlsx";
+
+const { description, result } = await describeWorkbook("review-log.xlsx", {
+  includeHiddenSheets: true,
+});
+
+for (const sheet of description.sheets) {
+  console.log(`${sheet.name} (${sheet.visibility})`);
+  console.log(`  header row: ${sheet.headerRow ?? "none found"}`);
+  for (const column of sheet.columns) {
+    console.log(`  ${column.header}: ${column.sampleValues.join(", ")}`);
+  }
+}
+
+console.log(result.metrics.worksheets, result.warnings);
+```
+
+`describeWorkbookBytes` is the byte-level twin, and the one the browser tool
+runs. Both produce a structurally identical description for the same workbook.
+The libraries guide covers the
+[options and the result shape](/docs/libraries#inspect-a-workbook-before-operating-on-it)
+in full, and
+[what the Excel operations preserve](/docs/tools/excel-preservation) records the
+inspection beside the operations that do write files.

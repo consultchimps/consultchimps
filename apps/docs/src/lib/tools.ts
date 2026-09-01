@@ -163,13 +163,11 @@ export const TOOLS: readonly ConsultTool[] = [
     tabLabel: "Inspect workbook",
     description:
       "Report a workbook's worksheets, hidden tabs, header rows, Excel Tables, named ranges, and sample column values before you operate on it",
-    // The library guide is this operation's documentation until the CLI and
-    // browser surfaces land and it earns a tool page of its own.
-    docHref: "/docs/libraries#inspect-a-workbook-before-operating-on-it",
+    docHref: "/docs/tools/workbook-inspect",
     surfaces: {
       cli: "planned",
       library: "works",
-      browser: { status: "planned" },
+      browser: { status: "works", href: "/tools/excel-inspect" },
     },
     icon: ScanSearch,
   },

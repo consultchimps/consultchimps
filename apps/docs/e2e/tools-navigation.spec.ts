@@ -44,6 +44,12 @@ const BROWSER_TOOLS = [
     heading: "Inspect a PowerPoint template",
     card: "Inspect PowerPoint templates",
   },
+  {
+    tab: "Inspect workbook",
+    route: "/tools/excel-inspect",
+    heading: "Inspect an Excel workbook",
+    card: "Inspect workbooks",
+  },
 ] as const;
 
 test.describe("/tools", () => {
@@ -136,6 +142,11 @@ test.describe("tool guides", () => {
       tool: "/tools/pptx-populate",
       label: "PowerPoint",
     },
+    {
+      url: "/docs/tools/workbook-inspect",
+      tool: "/tools/excel-inspect",
+      label: "Inspect workbook",
+    },
   ] as const;
 
   for (const guide of GUIDES) {
@@ -150,11 +161,10 @@ test.describe("tool guides", () => {
   }
 
   // There is deliberately no "this guide offers no online tool" table here.
-  // The registry does declare operations whose browser surface is still
-  // planned (workbook inspection is one), but none of them has a guide page
-  // of its own to drive: that entry documents itself inside the libraries
-  // guide. Such a table would therefore still have no rows. The rule it used
-  // to assert (a guide may only offer a button for an operation whose browser
+  // Every registry entry's browser surface currently works, so such a table
+  // would have no rows, and an entry whose surface is planned again would need
+  // a guide page of its own before it could have one. The rule it used to
+  // assert (a guide may only offer a button for an operation whose browser
   // surface works) is enforced for every entry by
   // scripts/check-registry-site.ts, which reads the registry the pages render
   // from.

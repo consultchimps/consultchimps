@@ -177,6 +177,16 @@ async function perform(
         worksheet: records.worksheet,
       });
     }
+    case "xlsx.inspect": {
+      const { describeWorkbookBytes } =
+        await import("@consultchimps/xlsx/bytes");
+      return answerWithValue(
+        await describeWorkbookBytes(
+          { bytes: task.input.bytes, name: task.input.name },
+          { ...controls, ...task.options },
+        ),
+      );
+    }
     case "pptx.inspect": {
       const { inspectPresentationOutcomeBytes } =
         await import("@consultchimps/pptx/bytes");

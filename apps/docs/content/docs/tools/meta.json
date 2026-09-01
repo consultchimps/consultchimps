@@ -6,6 +6,7 @@
     "spreadsheet-consolidate",
     "workbook-merge",
     "spreadsheet-split",
+    "workbook-inspect",
     "excel-preservation",
     "powerpoint-populate",
     "pdf-split",

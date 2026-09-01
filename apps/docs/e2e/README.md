@@ -35,6 +35,14 @@ command when `out/` is missing.
   apart into one table, downloading the result, and checking that the "Normalize
   headers" and "Add source columns" checkboxes change the columns the finished
   workbook holds.
+- `excel-inspect.spec.ts`: describing a workbook's worksheets, hidden tabs,
+  header rows, Excel Table, named range, and sample column values, turning the
+  hidden-worksheet option off to get the description an operation would see,
+  inspecting a macro-enabled workbook, refusing a file that is not a workbook,
+  explaining a workbook the picker accepts but the operation cannot read (the
+  stable error reference included), shortening a 120-column worksheet until the
+  toggle asks for the rest, and replacing a workbook mid-inspection so the
+  withdrawn report cannot describe the file that was replaced.
 - `pptx.spec.ts`: populating a template slide from workbook records into one
   deck, naming the output, downloading it, reporting a placeholder no column
   feeds, refusing a template that is not a presentation, and inspecting a
@@ -83,6 +91,25 @@ consolidate page adds `output-name-input`, `normalize-headers-checkbox`,
 inputs through the "Move X earlier", "Move X later", and "Remove X" buttons on
 each `source-item`.
 
+The Excel inspect page has a single `source-section` (with `source-summary`,
+`source-reading`, `source-rejected`, and `include-hidden-checkbox`) and reports
+into `inspection-section`, the shared `WorkbookInspector`. That section renders
+the metric tiles `inspection-worksheets`, `inspection-data-rows`,
+`inspection-excel-tables`, and `inspection-named-ranges`, then
+`hidden-worksheets-callout` when the description covers a hidden worksheet, then
+`worksheet-list` with one `worksheet-item` per worksheet, each carrying a
+`worksheet-name`, a `worksheet-visibility` badge when it is not visible, a
+`worksheet-summary`, and a `column-list` of `column-item` entries holding a
+`column-header` and its `sample-value` chips. A worksheet wider than the preview
+limit renders only the first hundred columns, with `column-preview-note` naming
+both counts and `column-toggle` revealing the rest and putting them away again.
+`excel-table-list` and `named-range-list` follow, with `no-excel-tables` and
+`no-named-ranges` in their place when the workbook declares none, and
+`inspection-warnings` holds one `inspection-warning` per condition the operation
+reported, or `inspection-error` when the workbook cannot be read. Like the
+PowerPoint inspect page it has no Run button and no Results panel: the operation
+creates nothing, so the report is the whole answer.
+
 The PowerPoint populate page takes two files, so it wraps each picker in its own
 section: `template-section` (with `template-summary`) and `records-section`
 (with `records-summary` and the advanced controls `worksheet-input`,
@@ -126,7 +153,14 @@ better.
 
 PDFs are generated in memory with pdf-lib, and workbooks and presentations are
 assembled from minimal OOXML parts with jszip, all in `fixtures.ts`, and
-uploaded as buffers. `createPresentationUpload` takes one array of run strings
-per slide, so a fixture spells out how a paragraph is split across text runs,
-the detail the populate engine has to stitch back together before it can see a
-`{{field}}`. Nothing binary is checked in and no temporary files are written.
+uploaded as buffers. `createWorkbookUpload` takes one fixture per worksheet, and
+a worksheet may declare a `state` (`hidden` or `veryHidden`) and an Excel
+`table`; workbook-level `definedNames` are passed alongside the macro-enabled
+option. Those three are what the inspection report is built to describe, so the
+fixtures spell them out in the parts a package reader actually reads: a `state`
+attribute on the sheet entry, a table part reached through the worksheet's own
+relationships, and defined names in the workbook part.
+`createPresentationUpload` takes one array of run strings per slide, so a
+fixture spells out how a paragraph is split across text runs, the detail the
+populate engine has to stitch back together before it can see a `{{field}}`.
+Nothing binary is checked in and no temporary files are written.
