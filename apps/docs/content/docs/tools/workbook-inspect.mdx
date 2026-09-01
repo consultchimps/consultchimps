@@ -20,9 +20,9 @@ nothing, creates no output, and leaves the original untouched.
 - **Worksheets**, in workbook order, each with its visibility (visible, hidden,
   or very hidden), the size of its used range, and how many rows sit below its
   header row.
-- **The header row** each worksheet would actually be read from. This is the row
-  the split, consolidate, and populate operations resolve, not a second guess
-  made here, so the answer moves with them.
+- **The header row** each worksheet would be read from. It comes from the same
+  region resolver the workbook split uses, rather than from a second header
+  detection written for the report, so the answer moves with the operation.
 - **Column headers** from that row, blanks filled in and repeats made unique the
   way an operation would name them.
 - **Sample values**: up to five distinct non-empty values per column, in the
