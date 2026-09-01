@@ -64,9 +64,20 @@ operation that skips them would find.
 
 ## From the command line
 
-Workbook inspection ships as a library operation and as the browser tool above.
-The [CLI reference](/docs/reference/cli) lists the commands the installed
-release provides.
+```bash
+consultchimps sheets inspect clients.xlsx
+consultchimps sheets inspect --sheet North --sheet South clients.xlsx
+```
+
+The command reads an `.xlsx` or `.xlsm` workbook and writes nothing: it prints
+the description as a report, then the plain-language explanation of the result
+and its warnings. `--sheet` names one worksheet and may be repeated,
+`--header-row` names the row the headers sit on, `--hidden` includes hidden
+worksheets, and `--samples` sets how many sample values each column reports,
+from 0 to 5. Placing the global `--json` before the command returns the
+description beside the operation result instead. The
+[CLI reference](/docs/reference/cli#spreadsheet-inspection) documents them in
+full.
 
 ## TypeScript API
 

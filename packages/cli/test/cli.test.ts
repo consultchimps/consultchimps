@@ -354,6 +354,21 @@ describe("consultchimps CLI", () => {
     expect(humanError.stderr).toContain(
       "required option '-c, --column <name>' not specified",
     );
+    // Commander quotes the argument it could not parse, and an argument is
+    // untrusted: a shell expanding a pattern can hand over a filename that
+    // begins with a dash and carries a terminal escape. Commander writes that
+    // prose itself, before it throws, so it is escaped on the way out.
+    const escapeCharacter = String.fromCharCode(0x1b);
+    const craftedArgument = await runCli(
+      ["sheets", "inspect", `--x${escapeCharacter}[31mclients.xlsx`],
+      1,
+    );
+    expect(craftedArgument.stderr).not.toContain(escapeCharacter);
+    expect(craftedArgument.stderr).toContain(
+      "unknown option '--x\\u001B[31mclients.xlsx'",
+    );
+    // The prose keeps its own line breaks, so it stays readable.
+    expect(craftedArgument.stderr.endsWith("\n")).toBe(true);
   });
 
   it("inspects and populates a PowerPoint template through the built command", async () => {
@@ -455,6 +470,321 @@ describe("consultchimps CLI", () => {
       "If you intentionally want to replace the existing output",
     );
     expect(error.stderr).toContain("FILES_OUTPUT_EXISTS");
+  });
+
+  it("describes a workbook without creating or changing anything", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "inputs", "clients.xlsx");
+    await copyFile(structuredTableFixture, input);
+    const before = await readFile(input);
+
+    const help = await runCli(["sheets", "inspect", "--help"]);
+    expect(help.stdout).toContain("--sheet <name>");
+    expect(help.stdout).toContain("--header-row <number>");
+    expect(help.stdout).toContain("--hidden");
+    expect(help.stdout).toContain("--samples <number>");
+    expect(help.stdout).toContain("consultchimps sheets inspect clients.xlsx");
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "No file is created and nothing in the workbook is changed.",
+    );
+
+    const command = await runCli(["sheets", "inspect", input]);
+    expect(command.stdout).toContain("Excel workbook inspection: clients.xlsx");
+    // The header row this fixture resolves without help is its report title,
+    // which is exactly the mistake an inspection exists to expose before a
+    // consolidation matches columns on it.
+    expect(command.stdout).toContain("2. Clients (visible)");
+    expect(command.stdout).toContain("Used range: 8 rows by 7 columns");
+    expect(command.stdout).toContain("Header row: 1");
+    expect(command.stdout).toContain("Data rows below the header: 7");
+    expect(command.stdout).toContain(
+      "1. ClientData on worksheet Clients (B4:D8)",
+    );
+    // Each table column name is quoted, so a header spelled "City, State" can
+    // never read as two columns.
+    expect(command.stdout).toContain('Columns: "Client", "Region", "Amount"');
+    expect(command.stdout).toContain("Named ranges:");
+    // The description is rendered beside the result the messages package
+    // explains, and an inspection reports no artifacts because it writes none.
+    expect(command.stdout).toContain(
+      "Your Excel workbook inspection is complete.",
+    );
+    expect(command.stdout).toContain(
+      "Nothing was created or changed. An inspection only reads the workbook.",
+    );
+    expect(command.stdout).toContain("No files were created.");
+
+    // Naming the real header row moves every reported column, and nothing is
+    // written either way. The options come first here, as the usage line says
+    // they may: a repeatable --sheet takes one name each, so the workbook is
+    // still there to be read afterwards.
+    const withHeaderRow = await runCli([
+      "sheets",
+      "inspect",
+      "--sheet",
+      "Clients",
+      "--header-row",
+      "4",
+      "--samples",
+      "2",
+      input,
+    ]);
+    expect(withHeaderRow.stdout).toContain("Header row: 4");
+    expect(withHeaderRow.stdout).toContain('2. Client: "A", "B"');
+    expect(withHeaderRow.stdout).toContain('3. Region: "North", "South"');
+    expect(withHeaderRow.stdout).toContain("4. Amount: 10, 20");
+
+    expect(await readdir(path.join(directory, "inputs"))).toEqual([
+      "clients.xlsx",
+    ]);
+    expect(await readdir(path.join(directory, "outputs"))).toEqual([]);
+    expect(await readFile(input)).toEqual(before);
+  });
+
+  it("returns the whole inspection outcome through the --json envelope", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "inputs", "review-log.xlsx");
+    await writeWorkbook(
+      input,
+      [
+        [
+          "Reviews",
+          [
+            ["Region", "Owner", "Score"],
+            ["North", "Ana", 10],
+            ["South", "Ben", 20],
+            ["North", "Ana", 10],
+          ],
+        ],
+        ["Archive", [["Note"], ["Archived"]]],
+      ],
+      ["Archive"],
+    );
+
+    const command = await runCli([
+      "--json",
+      "sheets",
+      "inspect",
+      input,
+      "--samples",
+      "2",
+    ]);
+    // --json carries the description as well as the result: the counts alone
+    // would drop the sheet names, headers, and samples an inspection is for.
+    expect(parseJsonSuccess(command.stdout)).toMatchObject({
+      description: {
+        excelTables: [],
+        namedRanges: [],
+        sheets: [
+          {
+            columnCount: 3,
+            columns: [
+              { header: "Region", index: 0, sampleValues: ["North", "South"] },
+              { header: "Owner", index: 1, sampleValues: ["Ana", "Ben"] },
+              // Stored values keep their type, so the number 10 is not "10".
+              { header: "Score", index: 2, sampleValues: [10, 20] },
+            ],
+            dataRowCount: 3,
+            headerRow: 1,
+            name: "Reviews",
+            rowCount: 4,
+            visibility: "visible",
+          },
+        ],
+        source: "review-log.xlsx",
+      },
+      result: {
+        artifacts: [],
+        metrics: {
+          dataRows: 3,
+          excelTables: 0,
+          headerColumns: 3,
+          hiddenWorksheets: 0,
+          namedRanges: 0,
+          worksheets: 1,
+        },
+        operation: "sheets.inspect",
+        warnings: [
+          "1 worksheet is hidden and was not described. Include hidden worksheets to describe it.",
+        ],
+      },
+    });
+    expect(command.stderr).toBe("");
+
+    const withHidden = await runCli([
+      "--json",
+      "sheets",
+      "inspect",
+      input,
+      "--hidden",
+    ]);
+    const outcome = parseJsonSuccess(withHidden.stdout) as {
+      description: { sheets: Array<{ name: string; visibility: string }> };
+      result: { metrics: Record<string, number>; warnings: string[] };
+    };
+    expect(outcome.description.sheets.map((sheet) => sheet.name)).toEqual([
+      "Reviews",
+      "Archive",
+    ]);
+    expect(outcome.description.sheets[1]?.visibility).toBe("hidden");
+    expect(outcome.result.metrics.hiddenWorksheets).toBe(1);
+    expect(outcome.result.warnings).toEqual([]);
+  });
+
+  it("shows control characters from a crafted workbook rather than sending them to the terminal", async () => {
+    // Written as code points so this file carries no control character of its
+    // own, which would defeat the point of the assertions below. The escape is
+    // what a workbook's cells can carry; the C1 control byte is what its
+    // worksheet names can, because the strict parser the workbook part is read
+    // with rejects a character reference for an escape outright.
+    const escapeCharacter = String.fromCharCode(0x1b);
+    const c1Character = String.fromCharCode(0x9b);
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "inputs", "crafted.xlsx");
+    await writeWorkbook(input, [
+      [
+        "SheetNAMEMARK",
+        [
+          ["RegionMARKER", "Owner", "Notes"],
+          ["NorthMARKER", "Ana", 'a "quoted" value \\ backslash'],
+        ],
+      ],
+      // An empty worksheet earns the "no header row" warning, which quotes the
+      // worksheet name back at the reader.
+      ["EmptyNAMEMARK", [[null]]],
+    ]);
+
+    // Excel's own writer stores a control character as the literal text
+    // `_x001b_`, so the reachable path is a hand-built package. Patching the
+    // markers into one produces exactly that workbook without committing a
+    // binary: the worksheet part carries the header and the values, and the
+    // workbook part the worksheet name, which the CLI also narrates as
+    // progress on stderr.
+    const zip = await JSZip.loadAsync(await readFile(input));
+    const sheetXml = await zip
+      .file("xl/worksheets/sheet1.xml")!
+      .async("string");
+    expect(sheetXml).toContain("MARKER");
+    zip.file(
+      "xl/worksheets/sheet1.xml",
+      sheetXml.replaceAll("MARKER", "&#27;[31m"),
+    );
+    const workbookXml = await zip.file("xl/workbook.xml")!.async("string");
+    expect(workbookXml).toContain("NAMEMARK");
+    zip.file(
+      "xl/workbook.xml",
+      workbookXml.replaceAll("NAMEMARK", `${c1Character}[31m`),
+    );
+    await writeFile(
+      input,
+      await zip.generateAsync({ compression: "DEFLATE", type: "nodebuffer" }),
+    );
+
+    const command = await runCli(["sheets", "inspect", input]);
+    // The report is written to a terminal, where a control character is an
+    // instruction: it must arrive as visible text instead. Progress narration
+    // carries the worksheet name too, so it is held to the same rule.
+    expect(command.stdout).not.toContain(escapeCharacter);
+    expect(command.stdout).not.toContain(c1Character);
+    expect(command.stderr).not.toContain(c1Character);
+    expect(command.stdout).toContain("1. Sheet\\u009B[31m (visible)");
+    expect(command.stderr).toContain(
+      "Describing worksheets 1/2: Sheet\\u009B[31m",
+    );
+    expect(command.stdout).toContain("1. Region\\u001B[31m:");
+    // The library's warnings quote the worksheet name back at the reader, and
+    // the messages package writes them to stdout, so they are escaped as well.
+    expect(command.stdout).toContain(
+      'No header row was found in "Empty\\u009B[31m"',
+    );
+    expect(command.stdout).toContain('"North\\u001B[31m"');
+    // The quotes are the sample's boundary, so a quote inside the text is
+    // escaped and a backslash is doubled: the value must not read as two
+    // samples, and an escape must not read as text the workbook holds.
+    expect(command.stdout).toContain(
+      '3. Notes: "a \\"quoted\\" value \\\\ backslash"',
+    );
+
+    // The structured result is data rather than terminal output, and JSON's own
+    // escaping already makes a control character inert, so it keeps the values
+    // the workbook holds.
+    const json = await runCli(["--json", "sheets", "inspect", input]);
+    const outcome = parseJsonSuccess(json.stdout) as {
+      description: {
+        sheets: Array<{ columns: Array<{ header: string }>; name: string }>;
+      };
+    };
+    expect(outcome.description.sheets[0]?.name).toBe(`Sheet${c1Character}[31m`);
+    expect(outcome.description.sheets[0]?.columns[0]?.header).toBe(
+      `Region${escapeCharacter}[31m`,
+    );
+  });
+
+  it("surfaces the library's refusals when inspecting a workbook", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "inputs", "review-log.xlsx");
+    await writeWorkbook(input, [
+      [
+        "Reviews",
+        [
+          ["Region", "Owner"],
+          ["North", "Ana"],
+        ],
+      ],
+    ]);
+
+    // The sample bound belongs to the library, which refuses an out-of-range
+    // request with a stable code rather than quietly clamping it.
+    const tooManySamples = await runCli(
+      ["--json", "sheets", "inspect", input, "--samples", "50"],
+      1,
+    );
+    expect(parseJsonError(tooManySamples.stdout)).toEqual({
+      code: "XLSX_INVALID_SAMPLE_LIMIT",
+      message: "The sample value count must be a whole number from 0 to 5.",
+    });
+
+    const missingSheet = await runCli(
+      ["--json", "sheets", "inspect", input, "--sheet", "Nowhere"],
+      1,
+    );
+    expect(parseJsonError(missingSheet.stdout).code).toBe(
+      "XLSX_WORKSHEET_NOT_FOUND",
+    );
+
+    // A header row the library would reject must reach it rather than being
+    // rounded down here, which would describe a row nobody asked for.
+    // Blank text is the one value Number reads as a number, so it is refused
+    // rather than quietly meaning "no samples".
+    const blankSamples = await runCli(
+      ["--json", "sheets", "inspect", input, "--samples", ""],
+      1,
+    );
+    expect(parseJsonError(blankSamples.stdout).code).toBe(
+      "XLSX_INVALID_SAMPLE_LIMIT",
+    );
+
+    for (const headerRow of ["1.5", "3junk", "0"]) {
+      const rejected = await runCli(
+        ["--json", "sheets", "inspect", input, "--header-row", headerRow],
+        1,
+      );
+      expect(parseJsonError(rejected.stdout)).toEqual({
+        code: "XLSX_INVALID_HEADER_ROW",
+        message:
+          "The header row must be a positive whole number counted from 1.",
+      });
+    }
+
+    const missingFile = await runCli(
+      ["sheets", "inspect", path.join(directory, "inputs", "absent.xlsx")],
+      1,
+    );
+    expect(missingFile.stderr).toContain(
+      "ERROR: ConsultChimps could not finish your task.",
+    );
+    expect(missingFile.stderr).toContain("FILES_NOT_FOUND");
+    expect(missingFile.stdout).toBe("");
   });
 
   it("consolidates workbook globs through the built command", async () => {

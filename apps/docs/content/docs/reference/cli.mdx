@@ -107,6 +107,59 @@ they work: the current stage with counts, such as
 terminal and printed as plain lines elsewhere. Progress never appears under
 `--json`, so piped output stays clean.
 
+Documents and filenames are untrusted input, and a control character written to
+a terminal is an instruction rather than a character. Four places carry such
+text and print its control characters as a visible `\uXXXX` escape instead: the
+workbook inspection report, a result's warnings and the paths of the files it
+created, the progress lines, and the message of a failure. The values are
+unchanged: `--json` reports the original text, where JSON's own escaping already
+makes a control character inert.
+
+## Spreadsheet inspection
+
+```text
+consultchimps sheets inspect [options] <input>
+
+Options:
+  --sheet <name>            describe only this worksheet; repeat for several
+  --header-row <number>     one-based header row
+  --hidden                  describe hidden worksheets as well
+  --samples <number>        sample values per column, 0 to 5 (default: 5)
+```
+
+The command describes an `.xlsx` or `.xlsm` workbook and writes nothing: no
+output file, no directory, and no change to the workbook it read. The report
+lists each described worksheet with its visibility, the size of its used range,
+the header row an operation would resolve, the number of data rows below it, and
+each header with a few of the values stored beneath it, followed by the Excel
+Tables and named ranges those worksheets contain. The result that closes the
+report has no artifacts, and its warnings name what a later operation would
+stumble on: hidden worksheets left out of the description, or a worksheet with
+no header row to match columns by.
+
+Sample values are the first few distinct non-empty values a column stores, at
+most five, reported as the workbook holds them. Text is quoted in the report so
+the number `1` and the text `"1"` stay apart. `--samples 0` reports headers with
+no values. A count above five is refused with `XLSX_INVALID_SAMPLE_LIMIT` rather
+than reduced to five, so the same request means the same thing at every layer.
+
+Sample values and Excel Table column names are quoted, with a quote inside one
+escaped and a backslash doubled, so one value can never read as two. Worksheet
+names, headers, and values follow the control-character rule described under
+Human-readable output, in the report and in the progress lines alike.
+
+`--sheet` takes one worksheet name and may be repeated, so the workbook can be
+named either before or after the options:
+
+```bash
+consultchimps sheets inspect clients.xlsx --hidden --samples 2
+consultchimps sheets inspect --sheet North --sheet South clients.xlsx
+```
+
+Under `--json` the envelope's `result` carries the whole inspection outcome: a
+`description` object holding the worksheets, Excel Tables, and named ranges, and
+a `result` object holding the operation result with its metrics and warnings.
+
 ## Spreadsheet consolidation
 
 ```text
@@ -191,7 +244,8 @@ copy of the whole workbook for each value. Worksheets without the column are
 copied unchanged; pivot tables and their caches are removed with a warning.
 `--table`, `--range`, and `--sheet` select the established single-source modes.
 
-Every spreadsheet command accepts `--values`. It removes worksheet and Excel
+Consolidation, worksheet merging, and splitting accept `--values`; inspection
+creates no workbook, so it has no such option. It removes worksheet and Excel
 Table formulas while retaining their stored results. The conversion edits the
 underlying workbook cells rather than reconstructing them, so styles, number
 formats, dimensions, and workbook layout are preserved. A formula with no stored

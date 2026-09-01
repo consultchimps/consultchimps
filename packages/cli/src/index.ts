@@ -15,6 +15,7 @@ import {
 } from "@consultchimps/pptx";
 import {
   consolidateWorkbooks,
+  describeWorkbook,
   mergeWorkbooks,
   splitWorkbookByColumn,
 } from "@consultchimps/xlsx";
@@ -25,7 +26,12 @@ import {
 } from "@consultchimps/messages";
 import { Command, CommanderError } from "commander";
 
+import { formatWorkbookDescription } from "./describe-report.js";
 import { createCliProgress, finishActiveProgress } from "./progress.js";
+import {
+  withoutTerminalControls,
+  withoutTerminalControlsInProse,
+} from "./text.js";
 
 interface GlobalOptions {
   json?: boolean;
@@ -54,6 +60,13 @@ interface SheetMergeOptions {
   index: boolean;
   output: string;
   values?: boolean;
+}
+
+interface SheetInspectOptions {
+  headerRow?: number;
+  hidden?: boolean;
+  samples?: number;
+  sheet?: string[];
 }
 
 interface SheetSplitOptions {
@@ -106,6 +119,32 @@ function positiveInteger(value: string): number {
   return parsed;
 }
 
+// Reads a numeric option without judging it, for the options whose rule the
+// library owns. `describeWorkbook` validates both its numbers before it reads
+// anything and refuses a bad one with a stable code and a sentence naming the
+// rule, so the parsing here only has to convert. Converting leniently, the way
+// Number.parseInt does, would be worse than useless: it reads "1.5" as 1 and
+// "3junk" as 3, and the inspection would then describe a row the reader never
+// asked for. Number leaves those as NaN, which the library refuses like any
+// other invalid value, so one mistake produces one refusal. Blank text is the
+// one value Number reads as a number at all, and `--samples ""` meaning "no
+// samples" is a coincidence rather than a request, so it joins them.
+function numericOption(value: string): number {
+  return value.trim() === "" ? Number.NaN : Number(value);
+}
+
+// Collects one worksheet name per occurrence of an option.
+//
+// The variadic form (`--sheet <names...>`) reads every following word as a
+// name, including the positional workbook, so `--sheet North clients.xlsx`
+// would take the workbook as a second worksheet name and then report the
+// argument as missing. That is only safe where the positional is itself
+// variadic and last, as it is for consolidate. Repeating the option instead
+// binds exactly one name to each flag, so the workbook is always still there.
+function collectName(value: string, previous: string[] | undefined): string[] {
+  return previous ? [...previous, value] : [value];
+}
+
 // The --json envelope is a stable machine-readable contract: exactly one JSON
 // object on a single line, so a consumer can parse stdout without first
 // separating prose from data. "ok" discriminates the two shapes, which lets
@@ -135,8 +174,22 @@ function printResult<TMetric extends string>(
     return;
   }
 
+  // A warning quotes worksheet names and headers, and an artifact path quotes a
+  // filename: all of them input, and all of them about to be written to a
+  // terminal, where a control character is an instruction. The structured
+  // result above is untouched, so --json still reports the original text.
   process.stdout.write(
-    formatHumanResult(result, { vocabulary: CLI_VOCABULARY }),
+    formatHumanResult(
+      {
+        ...result,
+        artifacts: result.artifacts.map((artifact) => ({
+          ...artifact,
+          path: withoutTerminalControls(artifact.path),
+        })),
+        warnings: result.warnings.map(withoutTerminalControls),
+      },
+      { vocabulary: CLI_VOCABULARY },
+    ),
   );
 }
 
@@ -166,6 +219,17 @@ if (jsonRequested) {
   // JSON mode emits nothing but the envelope. Help and version text goes
   // through writeOut and is deliberately left alone.
   program.configureOutput({ writeErr: () => {} });
+} else {
+  // That same prose quotes the argument it could not parse, and an argument is
+  // untrusted text: a shell expanding a pattern can hand over a filename that
+  // begins with a dash and carries a terminal escape, which Commander then
+  // reports as an unknown option. It writes this before it throws, so the
+  // handler at the end of this file never sees it. Its own line breaks survive;
+  // everything else a terminal would read as an instruction does not.
+  program.configureOutput({
+    writeErr: (text) =>
+      process.stderr.write(withoutTerminalControlsInProse(text)),
+  });
 }
 
 // The standalone single-file bundle ships with no package.json beside it, so
@@ -195,6 +259,7 @@ program
     "after",
     `
 Quick start:
+  consultchimps sheets inspect clients.xlsx
   consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
   consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx
   consultchimps sheets split clients.xlsx -c Region -o by-region
@@ -218,12 +283,13 @@ Run consultchimps help <command> or append --help to a command for all options.
 const sheets = program
   .command("sheets")
   .description(
-    "combine or divide Excel workbooks without changing the original files",
+    "inspect, combine, or divide Excel workbooks without changing the original files",
   )
   .addHelpText(
     "after",
     `
 Examples:
+  consultchimps sheets inspect clients.xlsx
   consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
   consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx
   consultchimps sheets split clients.xlsx -c Region -o by-region
@@ -537,6 +603,92 @@ Your original workbook is never changed.
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
+sheets
+  .command("inspect")
+  .description(
+    "describe what is in an Excel workbook, creating and changing nothing",
+  )
+  .argument("<input>", "the .xlsx or .xlsm workbook to describe")
+  .option(
+    "--sheet <name>",
+    "describe only the worksheet with this exact name; repeat for several",
+    collectName,
+  )
+  .option(
+    "--header-row <number>",
+    "row containing column names, counted from 1",
+    numericOption,
+  )
+  .option("--hidden", "describe hidden worksheets as well as visible ones")
+  .option(
+    "--samples <number>",
+    "distinct sample values to report per column, from 0 to 5 (default: 5)",
+    numericOption,
+  )
+  .addHelpText(
+    "after",
+    `
+Examples:
+  consultchimps sheets inspect clients.xlsx
+  consultchimps sheets inspect clients.xlsx --hidden --samples 2
+  consultchimps sheets inspect --sheet North --sheet South clients.xlsx
+
+What you get:
+  1. Each described worksheet, with its visibility, the size of its used range,
+     and how many data rows sit below its header row.
+  2. The header row an operation would actually use, and every column on it
+     with a few of the values stored beneath it.
+  3. The Excel Tables and named ranges the described worksheets contain.
+
+Sample values are the first few distinct non-empty values a column stores, at
+most five, reported exactly as the workbook holds them: text is quoted, so the
+number 1 and the text "1" stay apart. Use --samples 0 for headers only.
+
+No file is created and nothing in the workbook is changed. Run this before
+consolidating, merging, or splitting to confirm the worksheet names, header
+rows, and column spellings those commands will match on.
+`,
+  )
+  .action(async (input: string, options: SheetInspectOptions) => {
+    const inputPaths = await discoverFiles([input], {
+      extensions: [".xlsx", ".xlsm"],
+    });
+    if (inputPaths.length !== 1) {
+      throw new Error(
+        `Expected exactly one input workbook; found ${inputPaths.length}.`,
+      );
+    }
+
+    const inputPath = inputPaths[0];
+    if (!inputPath) {
+      throw new Error("No input workbook was found.");
+    }
+
+    const json = program.opts<GlobalOptions>().json === true;
+    const progress = createCliProgress(json);
+    const outcome = await describeWorkbook(inputPath, {
+      headerRow: options.headerRow,
+      includeHiddenSheets: options.hidden === true,
+      onProgress: progress.report,
+      sampleValues: options.samples,
+      sheets: options.sheet,
+    });
+    progress.finish();
+
+    if (json) {
+      // The whole outcome, exactly as the library returns it: the counts alone
+      // would drop the worksheet names, headers, and samples an inspection
+      // exists to report.
+      printJsonResult(outcome);
+      return;
+    }
+
+    // The description first, then the explanation of the result that closes
+    // every command's output with its warnings and next steps.
+    process.stdout.write(`${formatWorkbookDescription(outcome.description)}\n`);
+    printResult(outcome.result, false);
+  });
+
 const pptx = program
   .command("pptx")
   .description(
@@ -817,10 +969,15 @@ try {
     if (json) {
       printJsonFailure(message, code);
     } else {
+      // An error message names the worksheet, column, or file it failed on, so
+      // it carries input to a terminal exactly as a warning does. The JSON
+      // envelope above keeps the original text.
       process.stderr.write(
-        formatHumanError(message, expected ? error.code : undefined, {
-          vocabulary: CLI_VOCABULARY,
-        }),
+        formatHumanError(
+          withoutTerminalControls(message),
+          expected ? error.code : undefined,
+          { vocabulary: CLI_VOCABULARY },
+        ),
       );
     }
     process.exitCode = 1;

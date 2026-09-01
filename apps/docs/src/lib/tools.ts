@@ -165,7 +165,7 @@ export const TOOLS: readonly ConsultTool[] = [
       "Report a workbook's worksheets, hidden tabs, header rows, Excel Tables, named ranges, and sample column values before you operate on it",
     docHref: "/docs/tools/workbook-inspect",
     surfaces: {
-      cli: "planned",
+      cli: "works",
       library: "works",
       browser: { status: "works", href: "/tools/excel-inspect" },
     },
