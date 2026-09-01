@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   createTextUpload,
+  createUnreadableWorkbookUpload,
   createWorkbookUpload,
   fileInput,
   resultsPanel,
@@ -193,6 +194,39 @@ test.describe("/tools/excel-inspect", () => {
       "notes.txt",
     );
     await expect(report(page).getByTestId("worksheet-list")).toHaveCount(0);
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("explains a workbook the operation cannot read", async ({ page }) => {
+    const pageErrors: Error[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error));
+
+    await page.goto("/tools/excel-inspect");
+
+    // An accepted name over bytes that are not a package: the picker takes it,
+    // so this reaches the worker and exercises the operation's own refusal,
+    // not the picker's. The error class is rebuilt on this side of the worker
+    // boundary from the code the worker sent, which is what puts the stable
+    // reference and the recovery steps on the page rather than a bare message.
+    await fileInput(page).setInputFiles(
+      createUnreadableWorkbookUpload("broken.xlsx"),
+    );
+    await expect(page.getByTestId("source-summary")).toContainText(
+      "broken.xlsx",
+    );
+
+    const failure = report(page).getByTestId("inspection-error");
+    await expect(failure).toContainText(
+      "ERROR: ConsultChimps could not finish your task.",
+    );
+    await expect(failure).toContainText("Could not read workbook: broken.xlsx");
+    await expect(failure).toContainText("What you can do:");
+    await expect(failure).toContainText("Error reference:");
+    await expect(failure).toContainText("XLSX_READ_FAILED");
+
+    // Nothing is described, and nothing was created to describe.
+    await expect(report(page).getByTestId("worksheet-list")).toHaveCount(0);
+    await expect(resultsPanel(page)).toHaveCount(0);
     expect(pageErrors).toEqual([]);
   });
 

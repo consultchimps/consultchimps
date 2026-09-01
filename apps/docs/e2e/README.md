@@ -39,8 +39,9 @@ command when `out/` is missing.
   header rows, Excel Table, named range, and sample column values, turning the
   hidden-worksheet option off to get the description an operation would see,
   inspecting a macro-enabled workbook, refusing a file that is not a workbook,
-  and replacing a workbook mid-inspection so the withdrawn report cannot
-  describe the file that was replaced.
+  explaining a workbook the picker accepts but the operation cannot read (the
+  stable error reference included), and replacing a workbook mid-inspection so
+  the withdrawn report cannot describe the file that was replaced.
 - `pptx.spec.ts`: populating a template slide from workbook records into one
   deck, naming the output, downloading it, reporting a placeholder no column
   feeds, refusing a template that is not a presentation, and inspecting a

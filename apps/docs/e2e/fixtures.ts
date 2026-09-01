@@ -393,6 +393,21 @@ export async function createPresentationUpload(
   };
 }
 
+/**
+ * A file a workbook picker accepts and the operation then cannot read: an
+ * accepted name and media type over bytes that are not an OOXML package, which
+ * is what a renamed, truncated, or half-synced file looks like to a picker.
+ * Unlike `createTextUpload`, this one reaches the worker, so it exercises the
+ * operation's own refusal rather than the picker's.
+ */
+export function createUnreadableWorkbookUpload(name: string): UploadFile {
+  return {
+    name,
+    mimeType: WORKBOOK_MEDIA_TYPE,
+    buffer: Buffer.from("This is not a workbook package.\n", "utf8"),
+  };
+}
+
 /** A file the tools must refuse: right shape, wrong media type. */
 export function createTextUpload(name: string): UploadFile {
   return {
