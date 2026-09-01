@@ -42,9 +42,22 @@ describe("parseColumnMapping", () => {
     ]);
   });
 
-  it("says plainly when the file is not JSON at all", () => {
-    // No engine ever sees this one, so the message has to come from here.
-    expect(() => parseColumnMapping("version: 1\n")).toThrow(/not valid JSON/u);
+  it("refuses a file that is not JSON at all under a stable code", () => {
+    // No engine ever sees this one, so the refusal is raised here, under the
+    // code the file surface uses for the same failure.
+    let thrown: unknown;
+    try {
+      parseColumnMapping("version: 1\n");
+    } catch (error) {
+      thrown = error;
+    }
+    expect(isConsultChimpsError(thrown)).toBe(true);
+    expect(isConsultChimpsError(thrown) && thrown.code).toBe(
+      "XLSX_MAPPING_FILE_INVALID",
+    );
+    expect(isConsultChimpsError(thrown) && thrown.message).toMatch(
+      /not valid JSON/u,
+    );
   });
 
   it("hands a parsed but unusable document to the engine's refusal", () => {

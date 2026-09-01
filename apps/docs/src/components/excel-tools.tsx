@@ -1147,9 +1147,13 @@ export function ExcelConsolidateTool() {
     () => readMappingSelection(mappingFile),
     [mappingFile],
   );
-  // A document that was added and cannot be read is not a mapping the run may
-  // quietly ignore, so Run waits until it is replaced or removed.
-  const mappingUnusable = mappingFile !== null && mapping === null;
+  // A mapping the run may not quietly ignore: a document that was added and
+  // cannot be read, and equally one still being read. The selection is cleared
+  // the instant a pick starts, so without the reading test a large or
+  // cloud-backed mapping leaves Run enabled over an empty mapping for as long
+  // as the read takes, and the visitor gets an unmapped table.
+  const mappingUnusable =
+    mappingSelection.reading || (mappingFile !== null && mapping === null);
 
   // A draft is evidence about one list of workbooks read one way. Adding,
   // removing, or reordering them, or changing whether hidden worksheets are
@@ -1551,17 +1555,19 @@ export function ExcelConsolidateTool() {
         <p className="mt-3 text-sm text-fd-muted-foreground">
           {files.length === 0
             ? "Add at least one workbook to consolidate"
-            : mappingUnusable
-              ? "The column mapping you added could not be read, so nothing will run until you replace it or remove it"
-              : `Rows from every ${
-                  includeHiddenSheets ? "" : "visible "
-                }worksheet that holds data in ${files.length} ${
-                  files.length === 1 ? "workbook" : "workbooks"
-                } will be stacked into one table, in the order listed above${
-                  mapping
-                    ? ", with your column mapping applied and any column it does not claim kept under its own name and named in a warning"
-                    : ""
-                }`}
+            : mappingSelection.reading
+              ? "The column mapping you added is still being read, so Run waits until it is ready"
+              : mappingUnusable
+                ? "The column mapping you added could not be read, so nothing will run until you replace it or remove it"
+                : `Rows from every ${
+                    includeHiddenSheets ? "" : "visible "
+                  }worksheet that holds data in ${files.length} ${
+                    files.length === 1 ? "workbook" : "workbooks"
+                  } will be stacked into one table, in the order listed above${
+                    mapping
+                      ? ", with your column mapping applied and any column it does not claim kept under its own name and named in a warning"
+                      : ""
+                  }`}
         </p>
         <RunControls
           busyLabel="Consolidating…"
