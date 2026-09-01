@@ -23,6 +23,8 @@ import {
 } from "@consultchimps/tabular";
 
 import { XLSX_ERRORS } from "./errors.js";
+import JSZip from "jszip";
+import { generatePackageBytes, replacePackagePart } from "./package-zip.js";
 import {
   describeWorkbookModel,
   loadWorkbookModelForDescribe,
@@ -98,6 +100,100 @@ import {
   type WorkbookNamedRange,
   type WorksheetRecords,
 } from "./shared.js";
+
+export const UNPROTECT_OPERATION = "sheets.unprotect";
+export type UnprotectWorkbookMetric =
+  "sheetProtectionsRemoved" | "workbookProtectionsRemoved";
+export interface UnprotectWorkbookBytesOptions extends OperationControlOptions {
+  input: WorkbookInputBytes;
+  outputName?: string;
+}
+
+function removeProtection(
+  xml: string,
+  tag: "sheetProtection" | "workbookProtection",
+) {
+  const expression = new RegExp(
+    `<(?:[A-Za-z_][\\w.-]*:)?${tag}\\b[^>]*(?:\\/>|>[\\s\\S]*?<\\/${tag}\\s*>)`,
+    "gu",
+  );
+  return {
+    xml: xml.replace(expression, ""),
+    matches: xml.match(expression)?.length ?? 0,
+  };
+}
+
+export async function unprotectWorkbookBytes(
+  options: UnprotectWorkbookBytesOptions,
+): Promise<ByteOperationOutcome<UnprotectWorkbookMetric>> {
+  throwIfAborted(options.signal, UNPROTECT_OPERATION, "memory");
+  if (!/\.xlsm?$/iu.test(options.input.name))
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_UNPROTECT_UNSUPPORTED_FILE,
+      "Excel Unprotect accepts only .xlsx and .xlsm files.",
+    );
+  let archive: JSZip;
+  try {
+    archive = await JSZip.loadAsync(options.input.bytes);
+  } catch (error) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_UNPROTECT_UNSUPPORTED_FILE,
+      "This file is not a readable OOXML Excel workbook. Encrypted or password-required Office files are not supported.",
+      { cause: error },
+    );
+  }
+  const workbook = archive.file("xl/workbook.xml");
+  if (!workbook || !archive.file("[Content_Types].xml"))
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_UNPROTECT_UNSUPPORTED_FILE,
+      "This file is not a valid OOXML Excel workbook. Encrypted or password-required Office files are not supported.",
+    );
+  const workbookResult = removeProtection(
+    await workbook.async("string"),
+    "workbookProtection",
+  );
+  if (workbookResult.matches)
+    replacePackagePart(archive, "xl/workbook.xml", workbookResult.xml);
+  let sheetProtectionsRemoved = 0;
+  for (const entry of Object.values(archive.files)) {
+    if (!/^xl\/worksheets\/[^/]+\.xml$/iu.test(entry.name) || entry.dir)
+      continue;
+    const result = removeProtection(
+      await entry.async("string"),
+      "sheetProtection",
+    );
+    sheetProtectionsRemoved += result.matches;
+    if (result.matches) replacePackagePart(archive, entry.name, result.xml);
+  }
+  const outputName = options.outputName ?? options.input.name;
+  options.onProgress?.({
+    operation: UNPROTECT_OPERATION,
+    stage: "writing-output",
+    completed: 1,
+    total: 1,
+    detail: outputName,
+  });
+  return {
+    result: {
+      operation: UNPROTECT_OPERATION,
+      artifacts: [
+        { kind: "file", mediaType: WORKBOOK_MEDIA_TYPE, path: outputName },
+      ],
+      warnings: [],
+      metrics: {
+        sheetProtectionsRemoved,
+        workbookProtectionsRemoved: workbookResult.matches,
+      },
+    },
+    outputs: [
+      {
+        name: outputName,
+        bytes: await generatePackageBytes(archive),
+        mediaType: WORKBOOK_MEDIA_TYPE,
+      },
+    ],
+  };
+}
 
 export interface WorkbookInputBytes {
   name: string;

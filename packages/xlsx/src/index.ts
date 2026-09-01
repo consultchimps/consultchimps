@@ -34,6 +34,10 @@ import {
   type Table,
 } from "@consultchimps/tabular";
 import type * as XLSX from "xlsx";
+import {
+  unprotectWorkbookBytes,
+  type UnprotectWorkbookMetric,
+} from "./bytes.js";
 
 import { XLSX_ERRORS } from "./errors.js";
 import {
@@ -150,6 +154,32 @@ export type {
   WorkbookNamedRange,
   WorksheetRecords,
 };
+export type { UnprotectWorkbookMetric };
+export interface UnprotectWorkbookOptions extends OperationControlOptions {
+  input: string;
+  output: string;
+  overwrite?: boolean | undefined;
+}
+export async function unprotectWorkbook(
+  options: UnprotectWorkbookOptions,
+): Promise<OperationResult<UnprotectWorkbookMetric>> {
+  const input = path.resolve(options.input);
+  const output = path.resolve(options.output);
+  refuseInputOverwrite(output, [input]);
+  await ensureOutputAvailable(output, { overwrite: options.overwrite });
+  const outcome = await unprotectWorkbookBytes({
+    input: { name: path.basename(input), bytes: await readFile(input) },
+    outputName: path.basename(output),
+    onProgress: options.onProgress,
+    signal: options.signal,
+  });
+  await ensureParentDirectory(output);
+  await writeFile(output, outcome.outputs[0]!.bytes);
+  return {
+    ...outcome.result,
+    artifacts: [{ kind: "file", mediaType: WORKBOOK_MEDIA_TYPE, path: output }],
+  };
+}
 export { MAX_COLUMN_SAMPLE_VALUES };
 export type {
   DescribeWorkbookMetric,
