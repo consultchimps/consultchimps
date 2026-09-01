@@ -288,7 +288,8 @@ kbd {
   transform: rotate(-3deg);
 }
 
-.tool-card h2 {
+.tool-card h2,
+.tool-card h3 {
   margin-bottom: 0.65rem;
   font-size: 1.55rem;
   font-weight: 700;

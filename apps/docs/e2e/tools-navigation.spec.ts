@@ -61,6 +61,24 @@ test.describe("/tools", () => {
     for (const tool of BROWSER_TOOLS) {
       await expect(page.getByRole("link", { name: tool.card })).toBeVisible();
     }
+    await expect(
+      page.getByRole("heading", { name: "Excel tools" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "PDF tools" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "PowerPoint tools" }),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("excel-tool-group").getByRole("link"),
+    ).toHaveCount(5);
+    await expect(
+      page.getByTestId("pdf-tool-group").getByRole("link"),
+    ).toHaveCount(2);
+    await expect(
+      page.getByTestId("powerpoint-tool-group").getByRole("link"),
+    ).toHaveCount(2);
   });
 
   test("never shows an empty 'Not in the browser yet' section", async ({
@@ -93,6 +111,14 @@ test.describe("/tools", () => {
     // The landing cards link to the same routes, so the tabs are addressed
     // through the sub-bar's accessible name.
     const tabs = page.getByRole("navigation", { name: "Online tools" });
+
+    await expect(
+      tabs.getByRole("group", { name: "Excel tools" }),
+    ).toBeVisible();
+    await expect(tabs.getByRole("group", { name: "PDF tools" })).toBeVisible();
+    await expect(
+      tabs.getByRole("group", { name: "PowerPoint tools" }),
+    ).toBeVisible();
 
     for (const tool of BROWSER_TOOLS) {
       await tabs.getByRole("link", { name: tool.tab, exact: true }).click();
