@@ -352,11 +352,11 @@ export function WorkbookInspector({
               className="mt-2 flex flex-col gap-2"
               data-testid="excel-table-list"
             >
-              {description.excelTables.map((table) => (
+              {description.excelTables.map((table, position) => (
                 <li
                   className={rowClass}
                   data-testid="excel-table-item"
-                  key={`${table.sheet}:${table.name}`}
+                  key={`${position}:${table.sheet}:${table.name}`}
                 >
                   <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                     <span
@@ -389,11 +389,20 @@ export function WorkbookInspector({
               className="mt-2 flex flex-col gap-2"
               data-testid="named-range-list"
             >
-              {description.namedRanges.map((range) => (
+              {/*
+                Keyed by position first. A workbook-scoped name and a
+                sheet-scoped one may share a spelling on the same sheet, which
+                is valid in Excel and which the description reports as two
+                entries, so name and sheet together are not an identity. The
+                list is a pure function of one description and is never
+                reordered or edited in place, so position is the stable part
+                and the rest of the key is there to keep it readable.
+              */}
+              {description.namedRanges.map((range, position) => (
                 <li
                   className={rowClass}
                   data-testid="named-range-item"
-                  key={`${range.sheet}:${range.name}`}
+                  key={`${position}:${range.sheet}:${range.name}:${range.ref}`}
                 >
                   <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                     <span
