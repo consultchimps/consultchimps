@@ -485,7 +485,9 @@ describe("consultchimps CLI", () => {
     expect(command.stdout).toContain(
       "1. ClientData on worksheet Clients (B4:D8)",
     );
-    expect(command.stdout).toContain("Columns: Client, Region, Amount");
+    // Each table column name is quoted, so a header spelled "City, State" can
+    // never read as two columns.
+    expect(command.stdout).toContain('Columns: "Client", "Region", "Amount"');
     expect(command.stdout).toContain("Named ranges:");
     // The description is rendered beside the result the messages package
     // explains, and an inspection reports no artifacts because it writes none.
@@ -613,32 +615,45 @@ describe("consultchimps CLI", () => {
   });
 
   it("shows control characters from a crafted workbook rather than sending them to the terminal", async () => {
-    // Written as a code point so this file carries no control character of its
-    // own, which would defeat the point of the assertions below.
-    const escapeCharacter = String.fromCharCode(27);
+    // Written as code points so this file carries no control character of its
+    // own, which would defeat the point of the assertions below. The escape is
+    // what a workbook's cells can carry; the C1 control byte is what its
+    // worksheet names can, because the strict parser the workbook part is read
+    // with rejects a character reference for an escape outright.
+    const escapeCharacter = String.fromCharCode(0x1b);
+    const c1Character = String.fromCharCode(0x9b);
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "inputs", "crafted.xlsx");
     await writeWorkbook(input, [
       [
-        "Sheet1",
+        "SheetNAMEMARK",
         [
           ["RegionMARKER", "Owner", "Notes"],
-          ["NorthMARKER", "Ana", String.raw`a "quoted" value \ backslash`],
+          ["NorthMARKER", "Ana", 'a "quoted" value \\ backslash'],
         ],
       ],
     ]);
 
     // Excel's own writer stores a control character as the literal text
-    // `_x001b_`, so the reachable path is a hand-built package: a numeric XML
-    // character reference decodes to the character itself. Patching the marker
-    // into one produces exactly that workbook without committing a binary.
+    // `_x001b_`, so the reachable path is a hand-built package. Patching the
+    // markers into one produces exactly that workbook without committing a
+    // binary: the worksheet part carries the header and the values, and the
+    // workbook part the worksheet name, which the CLI also narrates as
+    // progress on stderr.
     const zip = await JSZip.loadAsync(await readFile(input));
-    const sheetEntry = zip.file("xl/worksheets/sheet1.xml");
-    const sheetXml = await sheetEntry!.async("string");
+    const sheetXml = await zip
+      .file("xl/worksheets/sheet1.xml")!
+      .async("string");
     expect(sheetXml).toContain("MARKER");
     zip.file(
       "xl/worksheets/sheet1.xml",
       sheetXml.replaceAll("MARKER", "&#27;[31m"),
+    );
+    const workbookXml = await zip.file("xl/workbook.xml")!.async("string");
+    expect(workbookXml).toContain("NAMEMARK");
+    zip.file(
+      "xl/workbook.xml",
+      workbookXml.replaceAll("NAMEMARK", `${c1Character}[31m`),
     );
     await writeFile(
       input,
@@ -646,25 +661,35 @@ describe("consultchimps CLI", () => {
     );
 
     const command = await runCli(["sheets", "inspect", input]);
-    // The report is written to a terminal, where an escape is an instruction:
-    // it must arrive as visible text instead.
+    // The report is written to a terminal, where a control character is an
+    // instruction: it must arrive as visible text instead. Progress narration
+    // carries the worksheet name too, so it is held to the same rule.
     expect(command.stdout).not.toContain(escapeCharacter);
+    expect(command.stdout).not.toContain(c1Character);
+    expect(command.stderr).not.toContain(c1Character);
+    expect(command.stdout).toContain("1. Sheet\\u009B[31m (visible)");
+    expect(command.stderr).toContain(
+      "Describing worksheets 1/1: Sheet\\u009B[31m",
+    );
     expect(command.stdout).toContain("1. Region\\u001B[31m:");
     expect(command.stdout).toContain('"North\\u001B[31m"');
     // The quotes are the sample's boundary, so a quote inside the text is
     // escaped and a backslash is doubled: the value must not read as two
     // samples, and an escape must not read as text the workbook holds.
     expect(command.stdout).toContain(
-      String.raw`3. Notes: "a \"quoted\" value \\ backslash"`,
+      '3. Notes: "a \\"quoted\\" value \\\\ backslash"',
     );
 
     // The structured result is data rather than terminal output, and JSON's own
-    // escaping already makes a control character inert, so it keeps the value
+    // escaping already makes a control character inert, so it keeps the values
     // the workbook holds.
     const json = await runCli(["--json", "sheets", "inspect", input]);
     const outcome = parseJsonSuccess(json.stdout) as {
-      description: { sheets: Array<{ columns: Array<{ header: string }> }> };
+      description: {
+        sheets: Array<{ columns: Array<{ header: string }>; name: string }>;
+      };
     };
+    expect(outcome.description.sheets[0]?.name).toBe(`Sheet${c1Character}[31m`);
     expect(outcome.description.sheets[0]?.columns[0]?.header).toBe(
       `Region${escapeCharacter}[31m`,
     );
