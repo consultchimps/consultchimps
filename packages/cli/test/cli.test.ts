@@ -354,6 +354,21 @@ describe("consultchimps CLI", () => {
     expect(humanError.stderr).toContain(
       "required option '-c, --column <name>' not specified",
     );
+    // Commander quotes the argument it could not parse, and an argument is
+    // untrusted: a shell expanding a pattern can hand over a filename that
+    // begins with a dash and carries a terminal escape. Commander writes that
+    // prose itself, before it throws, so it is escaped on the way out.
+    const escapeCharacter = String.fromCharCode(0x1b);
+    const craftedArgument = await runCli(
+      ["sheets", "inspect", `--x${escapeCharacter}[31mclients.xlsx`],
+      1,
+    );
+    expect(craftedArgument.stderr).not.toContain(escapeCharacter);
+    expect(craftedArgument.stderr).toContain(
+      "unknown option '--x\\u001B[31mclients.xlsx'",
+    );
+    // The prose keeps its own line breaks, so it stays readable.
+    expect(craftedArgument.stderr.endsWith("\n")).toBe(true);
   });
 
   it("inspects and populates a PowerPoint template through the built command", async () => {

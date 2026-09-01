@@ -30,10 +30,26 @@ function isControlCode(code: number): boolean {
  * and the bounds above say which ranges are meant.
  */
 export function withoutTerminalControls(text: string): string {
+  return escapeControls(text, false);
+}
+
+/**
+ * The same, for text that arrives already laid out in lines: a library's own
+ * usage prose, for instance, which is written as one block and would be
+ * unreadable with its line breaks escaped. Only the line feed is spared, and
+ * only because the text this is used on brings its own; a carriage return is
+ * not, because on its own it rewrites the line already printed.
+ */
+export function withoutTerminalControlsInProse(text: string): string {
+  return escapeControls(text, true);
+}
+
+function escapeControls(text: string, keepLineFeeds: boolean): string {
   let rendered = "";
   for (const character of text) {
     const code = character.codePointAt(0) ?? 0;
-    rendered += isControlCode(code)
+    const escaped = isControlCode(code) && !(keepLineFeeds && code === 0x0a);
+    rendered += escaped
       ? `\\u${code.toString(16).toUpperCase().padStart(4, "0")}`
       : character;
   }

@@ -108,12 +108,12 @@ terminal and printed as plain lines elsewhere. Progress never appears under
 `--json`, so piped output stays clean.
 
 Documents and filenames are untrusted input, and a control character written to
-a terminal is an instruction rather than a character. So wherever text from a
-document reaches the terminal, whether it is a worksheet name quoted in a
-warning, the path of a created file, a progress line, or the name in an error
-message, its control characters are printed as a visible `\uXXXX` escape. The
-values are unchanged: `--json` reports the original text, where JSON's own
-escaping already makes a control character inert.
+a terminal is an instruction rather than a character. So wherever such text
+reaches the terminal, whether it is a worksheet name quoted in a warning, the
+path of a created file, a progress line, the name in an error message, or an
+argument a command could not parse, its control characters are printed as a
+visible `\uXXXX` escape. The values are unchanged: `--json` reports the original
+text, where JSON's own escaping already makes a control character inert.
 
 ## Spreadsheet inspection
 

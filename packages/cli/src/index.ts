@@ -28,7 +28,10 @@ import { Command, CommanderError } from "commander";
 
 import { formatWorkbookDescription } from "./describe-report.js";
 import { createCliProgress, finishActiveProgress } from "./progress.js";
-import { withoutTerminalControls } from "./text.js";
+import {
+  withoutTerminalControls,
+  withoutTerminalControlsInProse,
+} from "./text.js";
 
 interface GlobalOptions {
   json?: boolean;
@@ -204,6 +207,17 @@ if (jsonRequested) {
   // JSON mode emits nothing but the envelope. Help and version text goes
   // through writeOut and is deliberately left alone.
   program.configureOutput({ writeErr: () => {} });
+} else {
+  // That same prose quotes the argument it could not parse, and an argument is
+  // untrusted text: a shell expanding a pattern can hand over a filename that
+  // begins with a dash and carries a terminal escape, which Commander then
+  // reports as an unknown option. It writes this before it throws, so the
+  // handler at the end of this file never sees it. Its own line breaks survive;
+  // everything else a terminal would read as an instruction does not.
+  program.configureOutput({
+    writeErr: (text) =>
+      process.stderr.write(withoutTerminalControlsInProse(text)),
+  });
 }
 
 // The standalone single-file bundle ships with no package.json beside it, so
