@@ -31,6 +31,7 @@ import type {
   MergeWorkbooksMetric,
   SplitWorkbookByColumnPlanMetric,
   SplitWorkbookBytesOutcome,
+  WorkbookDescriptionOutcome,
 } from "@consultchimps/xlsx/bytes";
 
 /** One in-memory input, in the shape every byte-level operation accepts. */
@@ -75,6 +76,21 @@ export interface WorkbookSplitOptions {
   readonly strict?: boolean | undefined;
   readonly table?: string | undefined;
   readonly values?: boolean | undefined;
+}
+
+/**
+ * What a workbook inspection is allowed to vary.
+ *
+ * Both fields mean what they mean to every other workbook reader here, so a
+ * page that already collects a header row or a hidden-worksheet choice can
+ * hand the inspector the same values it hands the operation it is previewing.
+ * The sample bound is deliberately absent: the report renders whatever the
+ * library's own limit allows, and a page that asked for fewer samples than the
+ * split page shows would make two views of one workbook disagree.
+ */
+export interface WorkbookInspectOptions {
+  readonly headerRow?: number | undefined;
+  readonly includeHiddenSheets?: boolean | undefined;
 }
 
 export type OperationTask =
@@ -124,6 +140,14 @@ export type OperationTask =
       readonly input: NamedBytes;
       readonly headerRow?: number | undefined;
       readonly worksheet?: string | undefined;
+    }
+  | {
+      // Creates nothing: the answer is the description itself, which is why
+      // this sits with the plan and column tasks rather than with the byte
+      // operations below.
+      readonly kind: "xlsx.inspect";
+      readonly input: NamedBytes;
+      readonly options: WorkbookInspectOptions;
     }
   | {
       readonly kind: "pptx.inspect";
@@ -178,6 +202,9 @@ interface OperationTaskResults {
   "xlsx.merge": ByteOperationOutcome<MergeWorkbooksMetric>;
   "xlsx.consolidate": ByteOperationOutcome<ConsolidateWorkbooksMetric>;
   "xlsx.columns": WorksheetColumns;
+  // The description travels beside the operation's structured result, so the
+  // page can render both the structure and the counts the library derived.
+  "xlsx.inspect": WorkbookDescriptionOutcome;
   "pptx.inspect": PresentationInspectionOutcome;
   "pptx.plan-populate": OperationPlan<PopulatePowerPointTemplatePlanMetric>;
   "pptx.populate": ByteOperationOutcome<PopulatePowerPointTemplateMetric>;

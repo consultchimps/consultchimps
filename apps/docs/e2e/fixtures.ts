@@ -49,10 +49,34 @@ export interface UploadFile {
   readonly buffer: Buffer;
 }
 
+/** An Excel Table anchored on a worksheet, declared by its own package part. */
+export interface ExcelTableFixture {
+  /** The column names the table part declares, in table order. */
+  readonly columns: readonly string[];
+  readonly name: string;
+  /** The A1 range the table covers, header row included. */
+  readonly ref: string;
+}
+
 /** One worksheet: a name and its rows, top-left aligned at A1. */
 export interface WorksheetFixture {
   readonly name: string;
   readonly rows: ReadonlyArray<ReadonlyArray<number | string>>;
+  /**
+   * How Excel presents the tab. Absent means visible. `veryHidden` is the
+   * state only the VBA editor can reverse, which the workbook part spells
+   * exactly this way.
+   */
+  readonly state?: "hidden" | "veryHidden";
+  /** An Excel Table anchored on this worksheet, if it declares one. */
+  readonly table?: ExcelTableFixture;
+}
+
+/** One workbook-level defined name, as the workbook part stores it. */
+export interface DefinedNameFixture {
+  readonly name: string;
+  /** The reference, sheet-qualified: `'Review Log'!$A$1:$C$4`. */
+  readonly reference: string;
 }
 
 /**
@@ -97,7 +121,28 @@ function columnLetter(index: number): string {
   return letters;
 }
 
-function worksheetXml(rows: WorksheetFixture["rows"]): string {
+/** Content type of an Excel Table part. */
+const TABLE_CONTENT_TYPE =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml";
+
+/** The relationship a worksheet uses to point at its Excel Table part. */
+const TABLE_RELATIONSHIP_TYPE =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/table";
+
+function tableXml(table: ExcelTableFixture, id: number): string {
+  const columns = table.columns
+    .map(
+      (name, index) =>
+        `<tableColumn id="${index + 1}" name="${escapeXml(name)}"/>`,
+    )
+    .join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="${id}" name="${escapeXml(table.name)}" displayName="${escapeXml(table.name)}" ref="${table.ref}" totalsRowCount="0"><autoFilter ref="${table.ref}"/><tableColumns count="${table.columns.length}">${columns}</tableColumns></table>`;
+}
+
+function worksheetXml(
+  rows: WorksheetFixture["rows"],
+  hasTable: boolean,
+): string {
   const body = rows
     .map((cells, rowIndex) => {
       const reference = rowIndex + 1;
@@ -112,11 +157,26 @@ function worksheetXml(rows: WorksheetFixture["rows"]): string {
       return `<row r="${reference}">${cellXml}</row>`;
     })
     .join("");
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${body}</sheetData></worksheet>`;
+  // The relationship namespace and the tableParts element travel together:
+  // a worksheet declares its Excel Table by relationship id, and a package
+  // reader finds the table part through that relationship, not by guessing.
+  const namespaces = hasTable
+    ? ` xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"`
+    : "";
+  const tableParts = hasTable
+    ? `<tableParts count="1"><tablePart r:id="rIdTable"/></tableParts>`
+    : "";
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"${namespaces}><sheetData>${body}</sheetData>${tableParts}</worksheet>`;
 }
 
 /** How a workbook fixture should differ from a plain `.xlsx` package. */
 export interface WorkbookUploadOptions {
+  /**
+   * Workbook-level defined names, written into the workbook part verbatim.
+   * A name beginning `_xlnm.` is one of Excel's own reserved names, which an
+   * inspection deliberately leaves out of its named ranges.
+   */
+  readonly definedNames?: readonly DefinedNameFixture[];
   /**
    * Build a macro-enabled package: the main workbook part declares the
    * macro-enabled content type and a stub `xl/vbaProject.bin` travels with it.
@@ -152,8 +212,11 @@ export async function createWorkbookUpload(
 
   const overrides = sheets
     .map(
-      (_sheet, index) =>
-        `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`,
+      (sheet, index) =>
+        `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>` +
+        (sheet.table
+          ? `<Override PartName="/xl/tables/table${index + 1}.xml" ContentType="${TABLE_CONTENT_TYPE}"/>`
+          : ""),
     )
     .join("");
   const vbaDefault = macroEnabled
@@ -172,12 +235,26 @@ export async function createWorkbookUpload(
   const sheetEntries = sheets
     .map(
       (sheet, index) =>
-        `<sheet name="${escapeXml(sheet.name)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`,
+        `<sheet name="${escapeXml(sheet.name)}" sheetId="${index + 1}" r:id="rId${index + 1}"${
+          sheet.state ? ` state="${sheet.state}"` : ""
+        }/>`,
     )
     .join("");
+  const definedNames = options.definedNames ?? [];
+  const definedNameEntries =
+    definedNames.length === 0
+      ? ""
+      : `<definedNames>${definedNames
+          .map(
+            (definedName) =>
+              `<definedName name="${escapeXml(definedName.name)}">${escapeXml(
+                definedName.reference,
+              )}</definedName>`,
+          )
+          .join("")}</definedNames>`;
   archive.file(
     "xl/workbook.xml",
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheetEntries}</sheets></workbook>`,
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheetEntries}</sheets>${definedNameEntries}</workbook>`,
   );
 
   const macroRelationship = macroEnabled
@@ -197,8 +274,18 @@ export async function createWorkbookUpload(
   for (const [index, sheet] of sheets.entries()) {
     archive.file(
       `xl/worksheets/sheet${index + 1}.xml`,
-      worksheetXml(sheet.rows),
+      worksheetXml(sheet.rows, sheet.table !== undefined),
     );
+    if (sheet.table) {
+      archive.file(
+        `xl/worksheets/_rels/sheet${index + 1}.xml.rels`,
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdTable" Type="${TABLE_RELATIONSHIP_TYPE}" Target="../tables/table${index + 1}.xml"/></Relationships>`,
+      );
+      archive.file(
+        `xl/tables/table${index + 1}.xml`,
+        tableXml(sheet.table, index + 1),
+      );
+    }
   }
 
   if (macroEnabled) {
