@@ -590,6 +590,46 @@ describe("consolidateWorkbooks with a column mapping", () => {
           mappingFile: path.join(directory, "absent.json"),
         }),
       ).rejects.toMatchObject({ code: "XLSX_MAPPING_FILE_UNREADABLE" });
+
+      // A plan lists every file the run reads, so the mapping joins the
+      // workbooks without changing the workbook count.
+      const mappingFile = await writeMapping(path.join(directory, "map.json"), {
+        version: 1,
+        columns: [{ name: "Case_ID", aliases: ["Case ID"] }],
+      });
+      const mapped = await planConsolidateWorkbooks({
+        inputs: [input],
+        output: path.join(directory, "combined.xlsx"),
+        mappingFile,
+      });
+      expect(mapped.inputs).toEqual([input, mappingFile]);
+      expect(mapped.metrics.inputFiles).toBe(1);
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("refuses a draft whose folder is already a file, before writing the workbook", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
+
+    try {
+      const input = path.join(directory, "north.xlsx");
+      await createWorkbook(input, "Cases", [["Case ID"], ["R-1"]]);
+      const output = path.join(directory, "combined.xlsx");
+      // A plain file already stands where the draft's folder would go. Only
+      // trying to create the folder reveals that, so it is tried up front.
+      const blocker = path.join(directory, "drafts");
+      await writeFile(blocker, "not a folder", "utf8");
+
+      await expect(
+        consolidateWorkbooks({
+          inputs: [input],
+          output,
+          suggestMappingOutput: path.join(blocker, "mapping.json"),
+        }),
+      ).rejects.toThrow();
+      await expect(readFile(output)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readFile(blocker, "utf8")).toBe("not a folder");
     } finally {
       await rm(directory, { force: true, recursive: true });
     }

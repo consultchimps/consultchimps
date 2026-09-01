@@ -559,7 +559,13 @@ export async function planConsolidateWorkbooks(
 
   return {
     operation: CONSOLIDATE_OPERATION,
-    inputs: absoluteInputs,
+    // A plan lists every file the run will read, and a mapping document is one
+    // of them. `inputFiles` stays the workbook count, which is what it has
+    // always meant and what the result reports.
+    inputs:
+      options.mappingFile === undefined
+        ? absoluteInputs
+        : [...absoluteInputs, path.resolve(options.mappingFile)],
     outputs,
     warnings,
     metrics: {
@@ -587,6 +593,12 @@ export async function consolidateWorkbooks(
     await ensureOutputAvailable(absoluteSuggestOutput, {
       overwrite: options.overwrite,
     });
+    // The draft's folder is made now rather than beside its write, because a
+    // parent that cannot be a folder - a plain file already standing where one
+    // is wanted - is only discovered by trying. Discovering it after the
+    // workbook has been written would leave that workbook behind on a run that
+    // reports failure.
+    await ensureParentDirectory(absoluteSuggestOutput);
   }
 
   const tables: Table[] = [];
@@ -631,7 +643,6 @@ export async function consolidateWorkbooks(
     },
   ];
   if (absoluteSuggestOutput !== undefined && suggestion) {
-    await ensureParentDirectory(absoluteSuggestOutput);
     await ensureOutputAvailable(absoluteSuggestOutput, {
       overwrite: options.overwrite,
     });
