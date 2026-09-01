@@ -194,7 +194,9 @@ async function perform(
         await unprotectWorkbookBytes({
           ...controls,
           input: task.input,
-          outputName: task.outputName,
+          ...(task.outputName === undefined
+            ? {}
+            : { outputName: task.outputName }),
         }),
       );
     }
@@ -233,6 +235,7 @@ async function perform(
       );
     }
   }
+  throw new Error("Unsupported operation task");
 }
 
 async function execute(id: number, task: OperationTask): Promise<void> {
