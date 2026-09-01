@@ -197,6 +197,40 @@ test.describe("/tools/excel-inspect", () => {
     expect(pageErrors).toEqual([]);
   });
 
+  test("shortens a very wide worksheet until asked for the rest", async ({
+    page,
+  }) => {
+    await page.goto("/tools/excel-inspect");
+
+    // 120 columns: enough to pass the preview limit, which is what stops a
+    // worksheet that carries thousands from laying every row out at once.
+    const headers = Array.from(
+      { length: 120 },
+      (_index, position) => `Column ${position + 1}`,
+    );
+    await fileInput(page).setInputFiles(
+      await createWorkbookUpload("wide.xlsx", [
+        { name: "Wide", rows: [headers, headers.map(() => "value")] },
+      ]),
+    );
+
+    await expect(report(page).getByTestId("column-item")).toHaveCount(100);
+    await expect(report(page).getByTestId("column-preview-note")).toHaveText(
+      "Showing the first 100 of 120 columns",
+    );
+
+    await report(page).getByTestId("column-toggle").click();
+    await expect(report(page).getByTestId("column-item")).toHaveCount(120);
+    await expect(report(page).getByTestId("column-preview-note")).toHaveCount(
+      0,
+    );
+
+    // And back, so a reader who expanded a genuinely wide sheet is not stuck
+    // with it.
+    await report(page).getByTestId("column-toggle").click();
+    await expect(report(page).getByTestId("column-item")).toHaveCount(100);
+  });
+
   test("explains a workbook the operation cannot read", async ({ page }) => {
     const pageErrors: Error[] = [];
     page.on("pageerror", (error) => pageErrors.push(error));

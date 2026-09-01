@@ -40,8 +40,9 @@ command when `out/` is missing.
   hidden-worksheet option off to get the description an operation would see,
   inspecting a macro-enabled workbook, refusing a file that is not a workbook,
   explaining a workbook the picker accepts but the operation cannot read (the
-  stable error reference included), and replacing a workbook mid-inspection so
-  the withdrawn report cannot describe the file that was replaced.
+  stable error reference included), shortening a 120-column worksheet until the
+  toggle asks for the rest, and replacing a workbook mid-inspection so the
+  withdrawn report cannot describe the file that was replaced.
 - `pptx.spec.ts`: populating a template slide from workbook records into one
   deck, naming the output, downloading it, reporting a placeholder no column
   feeds, refusing a template that is not a presentation, and inspecting a
@@ -99,13 +100,15 @@ the metric tiles `inspection-worksheets`, `inspection-data-rows`,
 `worksheet-list` with one `worksheet-item` per worksheet, each carrying a
 `worksheet-name`, a `worksheet-visibility` badge when it is not visible, a
 `worksheet-summary`, and a `column-list` of `column-item` entries holding a
-`column-header` and its `sample-value` chips. `excel-table-list` and
-`named-range-list` follow, with `no-excel-tables` and `no-named-ranges` in their
-place when the workbook declares none, and `inspection-warnings` holds one
-`inspection-warning` per condition the operation reported, or `inspection-error`
-when the workbook cannot be read. Like the PowerPoint inspect page it has no Run
-button and no Results panel: the operation creates nothing, so the report is the
-whole answer.
+`column-header` and its `sample-value` chips. A worksheet wider than the preview
+limit renders only the first hundred columns, with `column-preview-note` naming
+both counts and `column-toggle` revealing the rest and putting them away again.
+`excel-table-list` and `named-range-list` follow, with `no-excel-tables` and
+`no-named-ranges` in their place when the workbook declares none, and
+`inspection-warnings` holds one `inspection-warning` per condition the operation
+reported, or `inspection-error` when the workbook cannot be read. Like the
+PowerPoint inspect page it has no Run button and no Results panel: the operation
+creates nothing, so the report is the whole answer.
 
 The PowerPoint populate page takes two files, so it wraps each picker in its own
 section: `template-section` (with `template-summary`) and `records-section`

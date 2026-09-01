@@ -30,6 +30,19 @@ export type WorksheetSummary = Pick<
   "columnCount" | "dataRowCount" | "headerRow" | "rowCount"
 >;
 
+/**
+ * How many of a worksheet's columns the report lays out before it asks.
+ *
+ * The library bounds the samples per column but not the number of columns, and
+ * a worksheet may legitimately carry thousands: Excel allows 16,384. Rendering
+ * one row plus its sample chips for each of them is main-thread work that no
+ * worker can take away, so the list stops here and offers the rest on request.
+ * The limit sits well above the wide unions this toolkit was built for (a real
+ * fourteen-sheet consolidation produced sixty-nine columns), so an ordinary
+ * workbook is never truncated.
+ */
+export const COLUMN_PREVIEW_LIMIT = 100;
+
 function counted(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
@@ -112,6 +125,20 @@ export function worksheetSummary(sheet: WorksheetSummary): string {
       : `header row ${sheet.headerRow}`,
     counted(sheet.dataRowCount, "data row"),
   ].join(" · ");
+}
+
+/**
+ * The line above a shortened column list, or undefined when every column of
+ * the worksheet is already on the page. It names both counts, so a reader can
+ * see that the list was cut rather than that the worksheet is narrow.
+ */
+export function columnPreviewNote(
+  total: number,
+  shown: number,
+): string | undefined {
+  return shown >= total
+    ? undefined
+    : `Showing the first ${shown} of ${counted(total, "column")}`;
 }
 
 /**

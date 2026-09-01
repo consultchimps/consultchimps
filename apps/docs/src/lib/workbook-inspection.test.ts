@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  COLUMN_PREVIEW_LIMIT,
+  columnPreviewNote,
   hiddenWorksheetCallout,
   sampleValueText,
   visibilityBadge,
@@ -104,6 +106,28 @@ describe("worksheetSummary", () => {
         rowCount: 0,
       }),
     ).toBe("No cells with content");
+  });
+});
+
+describe("columnPreviewNote", () => {
+  it("says nothing while the whole worksheet is on the page", () => {
+    expect(columnPreviewNote(12, 12)).toBeUndefined();
+    // A shown count above the total cannot happen, but reporting "the first 12
+    // of 8" if it ever did would be worse than saying nothing.
+    expect(columnPreviewNote(8, 12)).toBeUndefined();
+  });
+
+  it("names both counts when the list was cut", () => {
+    expect(columnPreviewNote(312, COLUMN_PREVIEW_LIMIT)).toBe(
+      `Showing the first ${COLUMN_PREVIEW_LIMIT} of 312 columns`,
+    );
+  });
+
+  // The limit exists to bound main-thread layout on a worksheet that can carry
+  // thousands of columns, not to shorten the wide unions this toolkit is for:
+  // a real fourteen-sheet consolidation produced sixty-nine columns.
+  it("sits above the widths ordinary workbooks reach", () => {
+    expect(COLUMN_PREVIEW_LIMIT).toBeGreaterThan(69);
   });
 });
 

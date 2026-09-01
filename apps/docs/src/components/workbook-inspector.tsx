@@ -24,6 +24,7 @@
  */
 
 import {
+  compactButtonClass,
   describeFailure,
   noticeClass,
   PREVIEW_DEBOUNCE_MS,
@@ -33,6 +34,8 @@ import {
 import type { WorkbookInspectOptions } from "@/lib/operation-tasks";
 import { runOperation } from "@/lib/operation-worker";
 import {
+  COLUMN_PREVIEW_LIMIT,
+  columnPreviewNote,
   hiddenWorksheetCallout,
   sampleValueText,
   visibilityBadge,
@@ -40,7 +43,10 @@ import {
   type SampleValue,
 } from "@/lib/workbook-inspection";
 // Type-only: the runtime module is loaded inside the worker.
-import type { WorkbookDescriptionOutcome } from "@consultchimps/xlsx/bytes";
+import type {
+  WorkbookColumnDescription,
+  WorkbookDescriptionOutcome,
+} from "@consultchimps/xlsx/bytes";
 import { useEffect, useId, useState } from "react";
 
 /** What the hook below reports while, and after, an inspection runs. */
@@ -161,6 +167,85 @@ const badgeClass =
 /** A sample value's identity, which is its text and its type: 1 is not "1". */
 function sampleKey(value: SampleValue): string {
   return `${typeof value}:${String(value)}`;
+}
+
+/**
+ * One worksheet's header preview, shortened until asked.
+ *
+ * The library bounds the samples inside a column but not the number of
+ * columns, and a worksheet may carry thousands of them. Laying out a row and
+ * its sample chips for every one is main-thread work the worker cannot take
+ * away, so the list stops at `COLUMN_PREVIEW_LIMIT` and the rest are built
+ * only when someone asks for them. An ordinary workbook is well under the
+ * limit and never sees the control.
+ */
+function ColumnList({
+  columns,
+}: {
+  readonly columns: readonly WorkbookColumnDescription[];
+}) {
+  const [showEveryColumn, setShowEveryColumn] = useState(false);
+  const shown = showEveryColumn
+    ? columns
+    : columns.slice(0, COLUMN_PREVIEW_LIMIT);
+  const note = columnPreviewNote(columns.length, shown.length);
+
+  return (
+    <>
+      <ul className="mt-3 flex flex-col gap-1.5" data-testid="column-list">
+        {shown.map((column) => (
+          <li
+            className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm"
+            data-testid="column-item"
+            key={column.index}
+          >
+            <span className="font-mono font-medium" data-testid="column-header">
+              {column.header}
+            </span>
+            {column.sampleValues.length === 0 ? (
+              <span className="text-xs text-fd-muted-foreground">
+                No values below the header
+              </span>
+            ) : (
+              <span className="flex flex-wrap gap-1.5">
+                {column.sampleValues.map((value) => (
+                  <span
+                    className="rounded border bg-fd-card px-1.5 py-0.5 font-mono text-xs"
+                    data-testid="sample-value"
+                    key={sampleKey(value)}
+                  >
+                    {sampleValueText(value)}
+                  </span>
+                ))}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+      {columns.length > COLUMN_PREVIEW_LIMIT ? (
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          {note ? (
+            <span
+              className="text-xs text-fd-muted-foreground"
+              data-testid="column-preview-note"
+            >
+              {note}
+            </span>
+          ) : null}
+          <button
+            className={compactButtonClass}
+            data-testid="column-toggle"
+            onClick={() => setShowEveryColumn((shownAll) => !shownAll)}
+            type="button"
+          >
+            {showEveryColumn
+              ? `Show the first ${COLUMN_PREVIEW_LIMIT} columns`
+              : `Show all ${columns.length} columns`}
+          </button>
+        </div>
+      ) : null}
+    </>
+  );
 }
 
 export function WorkbookInspector({
@@ -299,42 +384,7 @@ export function WorkbookInspector({
                       {worksheetSummary(sheet)}
                     </p>
                     {sheet.columns.length > 0 ? (
-                      <ul
-                        className="mt-3 flex flex-col gap-1.5"
-                        data-testid="column-list"
-                      >
-                        {sheet.columns.map((column) => (
-                          <li
-                            className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm"
-                            data-testid="column-item"
-                            key={column.index}
-                          >
-                            <span
-                              className="font-mono font-medium"
-                              data-testid="column-header"
-                            >
-                              {column.header}
-                            </span>
-                            {column.sampleValues.length === 0 ? (
-                              <span className="text-xs text-fd-muted-foreground">
-                                No values below the header
-                              </span>
-                            ) : (
-                              <span className="flex flex-wrap gap-1.5">
-                                {column.sampleValues.map((value) => (
-                                  <span
-                                    className="rounded border bg-fd-card px-1.5 py-0.5 font-mono text-xs"
-                                    data-testid="sample-value"
-                                    key={sampleKey(value)}
-                                  >
-                                    {sampleValueText(value)}
-                                  </span>
-                                ))}
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
+                      <ColumnList columns={sheet.columns} />
                     ) : null}
                   </li>
                 );
