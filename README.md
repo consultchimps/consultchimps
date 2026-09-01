@@ -21,6 +21,7 @@ documentation site renders its cards and tabs from;
 
 | Operation                     | CLI   | Library | Browser |
 | ----------------------------- | ----- | ------- | ------- |
+| Unprotect Excel workbooks     | Works | Works   | Works   |
 | Consolidate spreadsheets      | Works | Works   | Works   |
 | Merge workbook tabs           | Works | Works   | Works   |
 | Split spreadsheets            | Works | Works   | Works   |
@@ -29,7 +30,6 @@ documentation site renders its cards and tabs from;
 | Merge PDF packs               | Works | Works   | Works   |
 | Inspect PowerPoint templates  | Works | Works   | Works   |
 | Inspect workbooks             | Works | Works   | Works   |
-| Unprotect Excel workbooks     | Works | Works   | Works   |
 
 ## Packages
 
