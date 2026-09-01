@@ -187,6 +187,17 @@ async function perform(
         ),
       );
     }
+    case "xlsx.unprotect": {
+      const { unprotectWorkbookBytes } =
+        await import("@consultchimps/xlsx/bytes");
+      return answerWithOutputs(
+        await unprotectWorkbookBytes({
+          ...controls,
+          input: task.input,
+          outputName: task.outputName,
+        }),
+      );
+    }
     case "pptx.inspect": {
       const { inspectPresentationOutcomeBytes } =
         await import("@consultchimps/pptx/bytes");

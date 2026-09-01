@@ -150,6 +150,11 @@ export type OperationTask =
       readonly options: WorkbookInspectOptions;
     }
   | {
+      readonly kind: "xlsx.unprotect";
+      readonly input: NamedBytes;
+      readonly outputName?: string | undefined;
+    }
+  | {
       readonly kind: "pptx.inspect";
       readonly template: NamedBytes;
       readonly templateSlide?: number | undefined;
@@ -180,7 +185,8 @@ export type ByteOperationTask = Extract<
       | "pptx.populate"
       | "xlsx.consolidate"
       | "xlsx.merge"
-      | "xlsx.split";
+      | "xlsx.split"
+      | "xlsx.unprotect";
   }
 >;
 
