@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -630,6 +630,32 @@ describe("consolidateWorkbooks with a column mapping", () => {
       ).rejects.toThrow();
       await expect(readFile(output)).rejects.toMatchObject({ code: "ENOENT" });
       expect(await readFile(blocker, "utf8")).toBe("not a folder");
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("refuses a draft destination that is a folder, even with overwrite", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
+
+    try {
+      const input = path.join(directory, "north.xlsx");
+      await createWorkbook(input, "Cases", [["Case ID"], ["R-1"]]);
+      const output = path.join(directory, "combined.xlsx");
+      // Overwrite replaces a file; it never turns a folder into one, and it
+      // skips the availability check that would otherwise notice.
+      const occupied = path.join(directory, "mapping.json");
+      await mkdir(occupied);
+
+      await expect(
+        consolidateWorkbooks({
+          inputs: [input],
+          output,
+          overwrite: true,
+          suggestMappingOutput: occupied,
+        }),
+      ).rejects.toMatchObject({ code: "XLSX_MAPPING_OUTPUT_NOT_FILE" });
+      await expect(readFile(output)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(directory, { force: true, recursive: true });
     }

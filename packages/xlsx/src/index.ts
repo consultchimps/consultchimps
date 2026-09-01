@@ -443,6 +443,28 @@ async function readColumnMappingFile(
   return validateColumnMapping(parsed);
 }
 
+/**
+ * Refuse a destination that already holds something other than a file, such as
+ * a folder. `ensureOutputAvailable` cannot answer this on its own: with
+ * overwrite enabled it returns before looking, and overwrite means replacing a
+ * file, never replacing a folder with one.
+ */
+async function refuseNonFileDestination(outputPath: string): Promise<void> {
+  try {
+    if ((await stat(outputPath)).isFile()) {
+      return;
+    }
+  } catch {
+    // Nothing is there, which is the ordinary case and no problem at all.
+    return;
+  }
+  throw new ConsultChimpsError(
+    XLSX_ERRORS.XLSX_MAPPING_OUTPUT_NOT_FILE,
+    `The drafted mapping cannot be written to ${outputPath}, because something that is not a file already stands there. Choose a filename for the draft, or move what is in the way.`,
+    { details: { outputPath } },
+  );
+}
+
 function resolveConsolidateWorkbooks(
   options: ConsolidateWorkbooksOptions,
 ): ResolvedConsolidate {
@@ -590,6 +612,11 @@ export async function consolidateWorkbooks(
       ? undefined
       : await readColumnMappingFile(options.mappingFile);
   if (absoluteSuggestOutput !== undefined) {
+    // Overwrite permits replacing a file, never turning a folder into one, and
+    // it skips the availability check that would otherwise have noticed. The
+    // check is made here so a folder standing at the draft's destination is
+    // reported before the workbook is written rather than as an EISDIR after.
+    await refuseNonFileDestination(absoluteSuggestOutput);
     await ensureOutputAvailable(absoluteSuggestOutput, {
       overwrite: options.overwrite,
     });
