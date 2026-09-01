@@ -137,8 +137,10 @@ than reduced to five, so the same request means the same thing at every layer.
 
 Input files are untrusted, and the report is written to a terminal, so a control
 character in a worksheet name, header, or value is printed as a visible `\uXXXX`
-escape instead of reaching the terminal as an instruction. The value itself is
-unchanged: `--json` reports what the workbook holds.
+escape instead of reaching the terminal as an instruction. A backslash is
+doubled, and a quote inside a sample value is escaped, so a value's boundaries
+stay unambiguous. The value itself is unchanged: `--json` reports what the
+workbook holds.
 
 ```bash
 consultchimps sheets inspect clients.xlsx --hidden --samples 2

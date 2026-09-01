@@ -622,8 +622,8 @@ describe("consultchimps CLI", () => {
       [
         "Sheet1",
         [
-          ["RegionMARKER", "Owner"],
-          ["NorthMARKER", "Ana"],
+          ["RegionMARKER", "Owner", "Notes"],
+          ["NorthMARKER", "Ana", String.raw`a "quoted" value \ backslash`],
         ],
       ],
     ]);
@@ -651,6 +651,12 @@ describe("consultchimps CLI", () => {
     expect(command.stdout).not.toContain(escapeCharacter);
     expect(command.stdout).toContain("1. Region\\u001B[31m:");
     expect(command.stdout).toContain('"North\\u001B[31m"');
+    // The quotes are the sample's boundary, so a quote inside the text is
+    // escaped and a backslash is doubled: the value must not read as two
+    // samples, and an escape must not read as text the workbook holds.
+    expect(command.stdout).toContain(
+      String.raw`3. Notes: "a \"quoted\" value \\ backslash"`,
+    );
 
     // The structured result is data rather than terminal output, and JSON's own
     // escaping already makes a control character inert, so it keeps the value
@@ -695,6 +701,20 @@ describe("consultchimps CLI", () => {
     expect(parseJsonError(missingSheet.stdout).code).toBe(
       "XLSX_WORKSHEET_NOT_FOUND",
     );
+
+    // A header row the library would reject must reach it rather than being
+    // rounded down here, which would describe a row nobody asked for.
+    for (const headerRow of ["1.5", "3junk", "0"]) {
+      const rejected = await runCli(
+        ["--json", "sheets", "inspect", input, "--header-row", headerRow],
+        1,
+      );
+      expect(parseJsonError(rejected.stdout)).toEqual({
+        code: "XLSX_INVALID_HEADER_ROW",
+        message:
+          "The header row must be a positive whole number counted from 1.",
+      });
+    }
 
     const missingFile = await runCli(
       ["sheets", "inspect", path.join(directory, "inputs", "absent.xlsx")],

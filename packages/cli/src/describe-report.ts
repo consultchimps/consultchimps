@@ -40,9 +40,11 @@ function quantity(value: number, singular: string): string {
  * this function with the real thing.
  *
  * Every control character is therefore shown as a visible `\\uXXXX` escape,
- * which also keeps a newline inside a cell from breaking the report's layout.
- * The value itself is untouched: `--json` reports the raw string, where JSON's
- * own escaping already makes a control character inert.
+ * which also keeps a newline inside a cell from breaking the report's layout. A
+ * backslash the workbook holds is doubled, so an escape in the report can never
+ * be confused with text that merely looks like one. The value itself is
+ * untouched: `--json` reports the raw string, where JSON's own escaping already
+ * makes a control character inert.
  */
 function printable(text: string): string {
   let rendered = "";
@@ -53,9 +55,13 @@ function printable(text: string): string {
     // regular expression carrying these characters is itself the thing lint
     // warns about, and the bounds say which ranges are meant.
     const isControl = code < 0x20 || (code >= 0x7f && code <= 0x9f);
-    rendered += isControl
-      ? `\\u${code.toString(16).toUpperCase().padStart(4, "0")}`
-      : character;
+    if (isControl) {
+      rendered += `\\u${code.toString(16).toUpperCase().padStart(4, "0")}`;
+    } else if (character === "\\") {
+      rendered += "\\\\";
+    } else {
+      rendered += character;
+    }
   }
   return rendered;
 }
@@ -65,9 +71,17 @@ function printable(text: string): string {
  * every other stored value is written bare, because the description keeps the
  * number 1 and the text "1" apart on purpose and a reader comparing two columns
  * needs to see which one a cell holds.
+ *
+ * The quotes are the sample's boundary, so a quote inside the text is escaped
+ * too: without that, the single stored string `North", 999` would read as the
+ * text "North" followed by the number 999, which is a wrong answer about both
+ * the values and their types.
  */
 function formatSampleValue(value: SampleValue): string {
-  return typeof value === "string" ? `"${printable(value)}"` : String(value);
+  if (typeof value !== "string") {
+    return String(value);
+  }
+  return `"${printable(value).replaceAll('"', '\\"')}"`;
 }
 
 function formatColumn(column: WorkbookColumnDescription): string {

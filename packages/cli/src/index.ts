@@ -115,17 +115,16 @@ function positiveInteger(value: string): number {
   return parsed;
 }
 
-// Parses a whole number without judging its range. The sample-count bound
-// belongs to the library, which refuses an out-of-range request with a stable
-// code rather than clamping it, so a second range check here would answer the
-// same mistake with a different, codeless message depending on which layer saw
-// it first.
-function wholeNumber(value: string): number {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed)) {
-    throw new Error("Expected a whole number.");
-  }
-  return parsed;
+// Reads a numeric option without judging it, for the options whose rule the
+// library owns. `describeWorkbook` validates both its numbers before it reads
+// anything and refuses a bad one with a stable code and a sentence naming the
+// rule, so the parsing here only has to convert. Converting leniently, the way
+// Number.parseInt does, would be worse than useless: it reads "1.5" as 1 and
+// "3junk" as 3, and the inspection would then describe a row the reader never
+// asked for. Number leaves those as NaN, which the library refuses like any
+// other invalid value, so one mistake produces one refusal.
+function numericOption(value: string): number {
+  return Number(value);
 }
 
 // The --json envelope is a stable machine-readable contract: exactly one JSON
@@ -574,13 +573,13 @@ sheets
   .option(
     "--header-row <number>",
     "row containing column names, counted from 1",
-    positiveInteger,
+    numericOption,
   )
   .option("--hidden", "describe hidden worksheets as well as visible ones")
   .option(
     "--samples <number>",
     "distinct sample values to report per column, from 0 to 5 (default: 5)",
-    wholeNumber,
+    numericOption,
   )
   .addHelpText(
     "after",
