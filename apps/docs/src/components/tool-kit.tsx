@@ -143,6 +143,20 @@ function saveBlob(blob: Blob, name: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+/**
+ * Offer a page-built text document as a download, the same way an operation's
+ * own outputs are offered. Used by the mapping draft on the consolidate page,
+ * which is assembled from what a visitor reviewed rather than handed over by
+ * the worker.
+ */
+export function saveTextFile(
+  text: string,
+  name: string,
+  mediaType: string,
+): void {
+  saveBlob(new Blob([text], { type: mediaType }), name);
+}
+
 function saveArtifact(artifact: ByteArtifact, fallbackMediaType: string): void {
   // Copy into a fresh buffer so the blob never aliases the operation's memory.
   const copy = new Uint8Array(artifact.bytes.byteLength);
@@ -287,6 +301,13 @@ const kickerClass =
   "font-mono text-xs font-semibold uppercase tracking-[0.18em] text-fd-primary";
 
 export interface FileSelection {
+  /**
+   * Put the selection back to nothing chosen, cancelling a read still in
+   * flight. For an optional input a visitor can change their mind about, such
+   * as the consolidate page's column mapping: without it the only way out of a
+   * document that will not do is another document.
+   */
+  readonly clear: () => void;
   /** The chosen file, or null while nothing usable is selected. */
   readonly file: UploadedFile | null;
   /** Set when the last pick was rejected; cleared by the next one. */
@@ -371,7 +392,16 @@ export function useFileSelection(
     [accepts, expected],
   );
 
-  return { choose, file, reading, rejected };
+  // The token moves so a read still in flight cannot land after the clear and
+  // put the document back.
+  const clear = useCallback(() => {
+    latest.current += 1;
+    setFile(null);
+    setRejected(null);
+    setReading(false);
+  }, []);
+
+  return { choose, clear, file, reading, rejected };
 }
 
 /**

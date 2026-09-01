@@ -160,10 +160,31 @@ async function perform(
           })),
           addSourceColumns: task.addSourceColumns,
           includeHiddenSheets: task.includeHiddenSheets,
+          mapping: task.mapping,
           normalizeHeaders: task.normalizeHeaders,
           outputName: task.outputName,
         }),
       );
+    }
+    case "xlsx.suggest-mapping": {
+      const { consolidateWorkbooksBytes } =
+        await import("@consultchimps/xlsx/bytes");
+      // The suggestion is drafted from the tables the consolidation read, so
+      // the page proposes exactly what the library proposes for these
+      // workbooks and these options. The consolidated workbook it also builds
+      // is not returned: the page asked what the headers look like, not for a
+      // file, and reading the tables through the operation is what keeps the
+      // browser's draft and the command line's draft the same document.
+      const { result } = await consolidateWorkbooksBytes({
+        ...controls,
+        inputs: task.inputs.map((input) => ({
+          bytes: input.bytes,
+          name: input.name,
+        })),
+        includeHiddenSheets: task.includeHiddenSheets,
+        suggestMapping: true,
+      });
+      return answerWithValue(result.suggestion);
     }
     case "xlsx.columns": {
       const { readWorksheetRecordsBytes } =

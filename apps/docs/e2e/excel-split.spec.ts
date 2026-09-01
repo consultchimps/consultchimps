@@ -51,7 +51,12 @@ const COLUMN_OPTIONS = [
  * about the tool rather than about the disclosure widget.
  */
 async function openAdvancedOptions(page: Page): Promise<void> {
-  for (const details of await page.locator("details").all()) {
+  // Scoped to the column section: the page's other disclosure holds the
+  // inspection report, which no test of the split options wants to run.
+  for (const details of await page
+    .getByTestId("column-section")
+    .locator("details")
+    .all()) {
     await details.evaluate((element: HTMLDetailsElement) => {
       element.open = true;
     });
@@ -319,6 +324,38 @@ test.describe("/tools/excel-split", () => {
     await expect(previewError).toContainText(
       "XLSX_SPLIT_PACKAGE_TYPE_MISMATCH",
     );
+  });
+
+  test("looks inside the chosen workbook without leaving the page", async ({
+    page,
+  }) => {
+    await page.goto("/tools/excel-split");
+    await fileInput(page).setInputFiles(
+      await createWorkbookUpload("clients.xlsx", [
+        ...CLIENTS,
+        { name: "Old", rows: [["Client"], ["Dyne"]], state: "hidden" },
+      ]),
+    );
+
+    // The report is folded away, and not mounted, until someone asks for it.
+    await expect(page.getByTestId("inspection-section")).toHaveCount(0);
+    await page.getByTestId("inspector-disclosure").locator("summary").click();
+
+    await expect(page.getByTestId("inspection-section")).toBeVisible();
+    await expect(page.getByTestId("worksheet-item")).toHaveCount(3);
+    await expect(page.getByTestId("worksheet-name")).toHaveText([
+      "Clients",
+      "Reference",
+      "Old",
+    ]);
+    // Hidden worksheets are described here, because the default split filters
+    // them too, and each one carries its visibility.
+    await expect(page.getByTestId("worksheet-visibility")).toHaveText([
+      "Hidden",
+    ]);
+    await expect(
+      page.getByTestId("worksheet-item").first().getByTestId("column-header"),
+    ).toHaveText(["Client", "Region", "Amount"]);
   });
 
   test("refuses a file that is not a workbook instead of failing", async ({

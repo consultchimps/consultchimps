@@ -55,6 +55,15 @@ reads them in the page, and renders the report. There is no Run button and no
 download, because the inspection produces no file: choosing a workbook is the
 whole interaction.
 
+The same report is embedded in the two operating pages that read a workbook
+before they write one, folded away under "Look inside this workbook" on the
+[split page](/tools/excel-split) and "Look inside a workbook" on the
+[consolidate page](/tools/excel-consolidate), which chooses among the workbooks
+you added. Nothing is inspected until you open the disclosure. The consolidate
+page's report follows that page's "Include hidden worksheets" choice, so it
+describes the worksheets that run would read; the split page's report always
+covers hidden worksheets, because the default split filters them too.
+
 One interface default differs from the library's. The browser tool describes
 hidden and very hidden worksheets by default, since a page whose job is to say
 what is in a file would otherwise leave out the worksheets people most often go

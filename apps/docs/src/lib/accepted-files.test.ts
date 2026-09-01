@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  MAPPING_FILES,
   PDF_FILES,
   PRESENTATION_FILES,
   WORKBOOK_FILES,
@@ -11,6 +12,7 @@ const KINDS: ReadonlyArray<readonly [string, AcceptedFileKind]> = [
   ["workbooks", WORKBOOK_FILES],
   ["presentations", PRESENTATION_FILES],
   ["PDFs", PDF_FILES],
+  ["column mappings", MAPPING_FILES],
 ];
 
 /**
