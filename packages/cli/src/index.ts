@@ -28,6 +28,7 @@ import { Command, CommanderError } from "commander";
 
 import { formatWorkbookDescription } from "./describe-report.js";
 import { createCliProgress, finishActiveProgress } from "./progress.js";
+import { withoutTerminalControls } from "./text.js";
 
 interface GlobalOptions {
   json?: boolean;
@@ -122,9 +123,11 @@ function positiveInteger(value: string): number {
 // Number.parseInt does, would be worse than useless: it reads "1.5" as 1 and
 // "3junk" as 3, and the inspection would then describe a row the reader never
 // asked for. Number leaves those as NaN, which the library refuses like any
-// other invalid value, so one mistake produces one refusal.
+// other invalid value, so one mistake produces one refusal. Blank text is the
+// one value Number reads as a number at all, and `--samples ""` meaning "no
+// samples" is a coincidence rather than a request, so it joins them.
 function numericOption(value: string): number {
-  return Number(value);
+  return value.trim() === "" ? Number.NaN : Number(value);
 }
 
 // The --json envelope is a stable machine-readable contract: exactly one JSON
@@ -156,8 +159,22 @@ function printResult<TMetric extends string>(
     return;
   }
 
+  // A warning quotes worksheet names and headers, and an artifact path quotes a
+  // filename: all of them input, and all of them about to be written to a
+  // terminal, where a control character is an instruction. The structured
+  // result above is untouched, so --json still reports the original text.
   process.stdout.write(
-    formatHumanResult(result, { vocabulary: CLI_VOCABULARY }),
+    formatHumanResult(
+      {
+        ...result,
+        artifacts: result.artifacts.map((artifact) => ({
+          ...artifact,
+          path: withoutTerminalControls(artifact.path),
+        })),
+        warnings: result.warnings.map(withoutTerminalControls),
+      },
+      { vocabulary: CLI_VOCABULARY },
+    ),
   );
 }
 
@@ -925,10 +942,15 @@ try {
     if (json) {
       printJsonFailure(message, code);
     } else {
+      // An error message names the worksheet, column, or file it failed on, so
+      // it carries input to a terminal exactly as a warning does. The JSON
+      // envelope above keeps the original text.
       process.stderr.write(
-        formatHumanError(message, expected ? error.code : undefined, {
-          vocabulary: CLI_VOCABULARY,
-        }),
+        formatHumanError(
+          withoutTerminalControls(message),
+          expected ? error.code : undefined,
+          { vocabulary: CLI_VOCABULARY },
+        ),
       );
     }
     process.exitCode = 1;

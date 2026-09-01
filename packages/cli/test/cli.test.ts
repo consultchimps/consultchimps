@@ -632,6 +632,9 @@ describe("consultchimps CLI", () => {
           ["NorthMARKER", "Ana", 'a "quoted" value \\ backslash'],
         ],
       ],
+      // An empty worksheet earns the "no header row" warning, which quotes the
+      // worksheet name back at the reader.
+      ["EmptyNAMEMARK", [[null]]],
     ]);
 
     // Excel's own writer stores a control character as the literal text
@@ -669,9 +672,14 @@ describe("consultchimps CLI", () => {
     expect(command.stderr).not.toContain(c1Character);
     expect(command.stdout).toContain("1. Sheet\\u009B[31m (visible)");
     expect(command.stderr).toContain(
-      "Describing worksheets 1/1: Sheet\\u009B[31m",
+      "Describing worksheets 1/2: Sheet\\u009B[31m",
     );
     expect(command.stdout).toContain("1. Region\\u001B[31m:");
+    // The library's warnings quote the worksheet name back at the reader, and
+    // the messages package writes them to stdout, so they are escaped as well.
+    expect(command.stdout).toContain(
+      'No header row was found in "Empty\\u009B[31m"',
+    );
     expect(command.stdout).toContain('"North\\u001B[31m"');
     // The quotes are the sample's boundary, so a quote inside the text is
     // escaped and a backslash is doubled: the value must not read as two
@@ -729,6 +737,16 @@ describe("consultchimps CLI", () => {
 
     // A header row the library would reject must reach it rather than being
     // rounded down here, which would describe a row nobody asked for.
+    // Blank text is the one value Number reads as a number, so it is refused
+    // rather than quietly meaning "no samples".
+    const blankSamples = await runCli(
+      ["--json", "sheets", "inspect", input, "--samples", ""],
+      1,
+    );
+    expect(parseJsonError(blankSamples.stdout).code).toBe(
+      "XLSX_INVALID_SAMPLE_LIMIT",
+    );
+
     for (const headerRow of ["1.5", "3junk", "0"]) {
       const rejected = await runCli(
         ["--json", "sheets", "inspect", input, "--header-row", headerRow],

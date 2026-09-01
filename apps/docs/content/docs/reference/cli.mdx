@@ -107,6 +107,14 @@ they work: the current stage with counts, such as
 terminal and printed as plain lines elsewhere. Progress never appears under
 `--json`, so piped output stays clean.
 
+Documents and filenames are untrusted input, and a control character written to
+a terminal is an instruction rather than a character. So wherever text from a
+document reaches the terminal, whether it is a worksheet name quoted in a
+warning, the path of a created file, a progress line, or the name in an error
+message, its control characters are printed as a visible `\uXXXX` escape. The
+values are unchanged: `--json` reports the original text, where JSON's own
+escaping already makes a control character inert.
+
 ## Spreadsheet inspection
 
 ```text
@@ -135,13 +143,10 @@ the number `1` and the text `"1"` stay apart. `--samples 0` reports headers with
 no values. A count above five is refused with `XLSX_INVALID_SAMPLE_LIMIT` rather
 than reduced to five, so the same request means the same thing at every layer.
 
-Input files are untrusted, and both the report and the progress lines are
-written to a terminal, so a control character in a worksheet name, header, or
-value is printed as a visible `\uXXXX` escape instead of reaching the terminal
-as an instruction. Sample values and Excel Table column names are quoted, with a
-quote inside one escaped and a backslash doubled, so one value can never read as
-two. The values themselves are unchanged: `--json` reports what the workbook
-holds.
+Sample values and Excel Table column names are quoted, with a quote inside one
+escaped and a backslash doubled, so one value can never read as two. Worksheet
+names, headers, and values follow the control-character rule described under
+Human-readable output, in the report and in the progress lines alike.
 
 ```bash
 consultchimps sheets inspect clients.xlsx --hidden --samples 2
