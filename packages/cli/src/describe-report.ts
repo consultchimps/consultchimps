@@ -7,7 +7,7 @@ import type {
  * The human-readable half of `sheets inspect`.
  *
  * An inspection creates nothing, so its metrics are counts and everything a
- * reader actually came for - worksheet names, header spellings, sample values -
+ * reader actually came for (worksheet names, header spellings, sample values)
  * travels beside the result in the description. `@consultchimps/messages`
  * renders the result and points at "the description that accompanies this
  * result"; this module is that description, and printing it is what makes the
