@@ -115,14 +115,26 @@ export function worksheetSummary(sheet: WorksheetSummary): string {
 }
 
 /**
- * A sample value as the report prints it. The description already promises
- * stored values with nothing type-inferred, so this only turns a number or a
- * boolean into text; it never reformats, rounds, or relabels one.
+ * A sample value as the report prints it: text quoted, numbers and booleans
+ * bare, which is the spelling a column mapping's JSON uses for the same values.
+ *
+ * The quoting is the one thing this adds, and it is not decoration. The
+ * inspection keeps the number 1 and the text "1" apart deliberately, because a
+ * mapping review has to see which is which; printing both as `1` would throw
+ * that away at the last step. `JSON.stringify` also escapes a quote or a
+ * newline inside the text, so a value cannot fake the delimiter around it.
+ * Nothing is reformatted, rounded, or relabelled beyond that.
  *
  * The inspection drops empty values before it samples, so a `null` cannot
- * reach here. It still maps to an empty string rather than to the text "null"
- * that `String` would otherwise print into the report.
+ * reach here. It still prints as nothing rather than as the text "null" that
+ * `String` would otherwise put into the report.
  */
 export function sampleValueText(value: SampleValue): string {
-  return value === null ? "" : String(value);
+  if (value === null) {
+    return "";
+  }
+  // Numbers go through String rather than JSON.stringify, which writes a
+  // non-finite number as "null": there is no JSON literal for one, and the
+  // report must not print a stored value as though it were absent.
+  return typeof value === "string" ? JSON.stringify(value) : String(value);
 }

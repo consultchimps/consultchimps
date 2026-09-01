@@ -109,10 +109,29 @@ describe("worksheetSummary", () => {
 
 describe("sampleValueText", () => {
   it("prints a stored value without reformatting it", () => {
-    expect(sampleValueText("North")).toBe("North");
+    expect(sampleValueText("North")).toBe('"North"');
     expect(sampleValueText(0)).toBe("0");
     expect(sampleValueText(45_292)).toBe("45292");
     expect(sampleValueText(true)).toBe("true");
+  });
+
+  // The description keeps these two apart on purpose, because a mapping review
+  // has to see which is which. Printing both as 1 would discard that at the
+  // last step, so the report has to show the difference.
+  it("keeps the number 1 and the text 1 apart on the page", () => {
+    expect(sampleValueText(1)).not.toBe(sampleValueText("1"));
+    expect(sampleValueText("1")).toBe('"1"');
+    expect(sampleValueText("true")).toBe('"true"');
+  });
+
+  it("escapes a quote inside the text rather than closing it early", () => {
+    expect(sampleValueText('Region "North"')).toBe('"Region \\"North\\""');
+  });
+
+  // JSON has no literal for a non-finite number, so JSON.stringify would write
+  // one as "null" and the report would show a stored value as absent.
+  it("prints a non-finite number rather than reporting it as absent", () => {
+    expect(sampleValueText(Number.POSITIVE_INFINITY)).toBe("Infinity");
   });
 
   it("prints nothing for a value the inspection never samples", () => {
