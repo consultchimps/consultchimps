@@ -1,6 +1,6 @@
 {
   "name": "@consultchimps/messages",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Plain-language explanations of ConsultChimps results and errors for CLIs and user interfaces.",
   "license": "Apache-2.0",
   "repository": {

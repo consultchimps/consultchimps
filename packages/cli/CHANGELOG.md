@@ -1,5 +1,56 @@
 # consultchimps
 
+## 0.10.0
+
+### Minor Changes
+
+- 0797532: Add `consultchimps sheets inspect <workbook>`, which describes an
+  Excel workbook without creating or changing anything. The report lists each
+  described worksheet with its visibility, used range, resolved header row, and
+  data row count, every header with a few of the values stored beneath it, and
+  the Excel Tables and named ranges those worksheets contain, followed by the
+  usual plain-language explanation of the result. `--sheet`, `--header-row`, and
+  `--hidden` select what is described, and `--samples` sets how many sample
+  values each column reports, from 0 to 5. Under `--json` the envelope carries
+  the whole inspection outcome: the description beside the operation result.
+- 846a8bd: Consolidation can now fold columns that are named differently into
+  one column each, using the versioned JSON column mapping document.
+
+  `sheets consolidate` gains `--map <file>`, which applies a mapping before the
+  rows are stacked, and `--suggest-map <file>`, which writes a draft mapping
+  built from the headers that were read and still writes the consolidated
+  workbook. A draft is never applied for you, it goes through the same
+  never-overwrite rule as any other output, and the two options cannot be
+  combined in one run.
+
+  A column no mapping entry claims keeps its own name and is reported as a
+  warning. Two columns of one worksheet folding into one canonical column stop
+  the run before anything is written. A declared date coercion reads text: a
+  column holding a number, or a value Excel already stores as a date, is refused
+  by name rather than read as a date serial, because which day a serial counts
+  from belongs to the workbook rather than to the cell.
+
+  `@consultchimps/files` gains `isSameFilesystemPath` and `isPathWithin`, the
+  destination-collision checks an operation with more than one output needs: two
+  names that differ only in case are one file on Windows and the usual macOS
+  volume, and one output can never sit inside another.
+
+  `consolidateWorkbooks` takes `mappingFile` and `suggestMappingOutput`, and
+  `consolidateWorkbooksBytes` takes a parsed `mapping` and `suggestMapping`.
+  Both return the drafted mapping on the result, and both report two new
+  metrics, `unmappedColumns` and `suggestedColumns`. Result explanations name
+  the columns a mapping did not claim, point at a drafted mapping among the
+  created files, and give mapping failures their own recovery steps.
+
+### Patch Changes
+
+- Updated dependencies [846a8bd]
+  - @consultchimps/files@0.4.0
+  - @consultchimps/messages@0.5.0
+  - @consultchimps/xlsx@0.15.0
+  - @consultchimps/pdf@0.4.3
+  - @consultchimps/pptx@0.6.3
+
 ## 0.9.3
 
 ### Patch Changes
