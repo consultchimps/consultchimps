@@ -128,6 +128,13 @@ interface OperationExplanation {
 
 const numberFormatter = new Intl.NumberFormat("en-US");
 
+/**
+ * The media type a written column mapping carries. It is the only JSON
+ * document any operation produces, so it names both the artifact's type and
+ * the presence of a drafted mapping in a consolidation's explanation.
+ */
+const MAPPING_MEDIA_TYPE = "application/json";
+
 function metric(result: OperationResult, name: string): number {
   return result.metrics[name] ?? 0;
 }
@@ -183,6 +190,17 @@ function quantity(
   return `${formatNumber(value)} ${value === 1 ? singular : plural}`;
 }
 
+/**
+ * Whether this result wrote a drafted column mapping. The artifact answers
+ * that; the proposed-column count does not, because a run over headers that
+ * already agree writes a real file proposing nothing.
+ */
+function hasMappingDraft(result: OperationResult): boolean {
+  return result.artifacts.some(
+    (artifact) => artifact.mediaType === MAPPING_MEDIA_TYPE,
+  );
+}
+
 const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
   "sheets.merge": {
     title: "Your Excel workbook merge is complete.",
@@ -204,16 +222,22 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
         `The finished workbook contains ${quantity(metric(result, "outputRows"), "data row")} arranged across ${quantity(metric(result, "outputColumns"), "column")}.`,
       ];
       // A column mapping folds source headers into canonical columns, so the
-      // two counts below are reported only when one of those features ran; a
-      // plain consolidation says nothing about either.
+      // sentence below is reported only when one did; a plain consolidation
+      // says nothing about it.
       if (metric(result, "unmappedColumns") > 0) {
         lines.push(
           `${quantity(metric(result, "unmappedColumns"), "column")} did not match the column mapping and ${metric(result, "unmappedColumns") === 1 ? "kept its own name" : "kept their own names"}; the warnings name ${metric(result, "unmappedColumns") === 1 ? "it" : "them"}.`,
         );
       }
-      if (metric(result, "suggestedColumns") > 0) {
+      // Whether a draft was written is answered by the artifact, not by the
+      // count: a run over headers that already agree drafts an empty mapping,
+      // and a reader handed that file still needs to be told what it is and
+      // that nothing was applied.
+      if (hasMappingDraft(result)) {
         lines.push(
-          `It also drafted a column mapping proposing ${quantity(metric(result, "suggestedColumns"), "canonical column")}, and applied none of them.`,
+          metric(result, "suggestedColumns") === 0
+            ? "It also drafted a column mapping. Every header was already spelled the same way, so the draft proposes no canonical columns."
+            : `It also drafted a column mapping proposing ${quantity(metric(result, "suggestedColumns"), "canonical column")}, and applied none of them.`,
         );
       }
       lines.push("Your original Excel files were not changed.");
@@ -224,7 +248,7 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
         `Open the new Excel workbook ${vocabulary.artifactListReference} and review the consolidated worksheet.`,
         "Keep the source columns in the workbook if you need to trace a row back to its original file and worksheet.",
       ];
-      if (metric(result, "suggestedColumns") > 0) {
+      if (hasMappingDraft(result)) {
         steps.push(
           `Review and edit the drafted column mapping ${vocabulary.artifactListReference} before you use it: a draft groups headers that are spelled differently, which is evidence rather than a decision, and nothing was applied for you.`,
         );
@@ -408,7 +432,7 @@ function artifactType(artifact: Artifact): string {
   // produces, so the label names it rather than saying "JSON file", which
   // would tell a non-technical reader nothing. Revisit when a second one
   // appears.
-  if (artifact.mediaType === "application/json") {
+  if (artifact.mediaType === MAPPING_MEDIA_TYPE) {
     return "Column mapping file";
   }
   if (

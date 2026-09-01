@@ -1,4 +1,5 @@
 ---
+"@consultchimps/files": minor
 "@consultchimps/messages": minor
 "@consultchimps/xlsx": minor
 "consultchimps": minor
@@ -19,6 +20,11 @@ run before anything is written. A declared date coercion reads text: a column
 holding a number, or a value Excel already stores as a date, is refused by name
 rather than read as a date serial, because which day a serial counts from
 belongs to the workbook rather than to the cell.
+
+`@consultchimps/files` gains `isSameFilesystemPath` and `isPathWithin`, the
+destination-collision checks an operation with more than one output needs: two
+names that differ only in case are one file on Windows and the usual macOS
+volume, and one output can never sit inside another.
 
 `consolidateWorkbooks` takes `mappingFile` and `suggestMappingOutput`, and
 `consolidateWorkbooksBytes` takes a parsed `mapping` and `suggestMapping`. Both

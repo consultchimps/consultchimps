@@ -233,9 +233,17 @@ describe("human-readable CLI output", () => {
     expect(mapped).not.toContain("drafted a column mapping");
 
     const drafted = formatHumanResult(
-      result(
-        "sheets.consolidate",
-        {
+      {
+        operation: "sheets.consolidate",
+        artifacts: [
+          { kind: "file", path: "combined.xlsx" },
+          {
+            kind: "file",
+            mediaType: "application/json",
+            path: "mapping.json",
+          },
+        ],
+        metrics: {
           inputFiles: 2,
           inputTables: 2,
           outputColumns: 5,
@@ -243,8 +251,8 @@ describe("human-readable CLI output", () => {
           suggestedColumns: 3,
           unmappedColumns: 0,
         },
-        ["combined.xlsx", "mapping.json"],
-      ),
+        warnings: [],
+      },
       cli,
     );
     expect(drafted).toContain(
@@ -275,6 +283,37 @@ describe("human-readable CLI output", () => {
     expect(plain).not.toContain("did not match the column mapping and");
     expect(plain).not.toContain("drafted a column mapping");
     expect(plain).toContain("Columns that did not match the column mapping: 0");
+
+    // A draft over headers that already agree is a real file proposing
+    // nothing, so the reader is still told what it is and that it was not
+    // applied. The count cannot answer that; the artifact can.
+    const empty = formatHumanResult(
+      {
+        operation: "sheets.consolidate",
+        artifacts: [
+          { kind: "file", path: "combined.xlsx" },
+          {
+            kind: "file",
+            mediaType: "application/json",
+            path: "mapping.json",
+          },
+        ],
+        metrics: {
+          inputFiles: 2,
+          inputTables: 2,
+          outputColumns: 5,
+          outputRows: 10,
+          suggestedColumns: 0,
+          unmappedColumns: 0,
+        },
+        warnings: [],
+      },
+      cli,
+    );
+    expect(empty).toContain(
+      "It also drafted a column mapping. Every header was already spelled the same way, so the draft proposes no canonical columns.",
+    );
+    expect(empty).toContain("Review and edit the drafted column mapping");
   });
 
   it("names a written column mapping as its own kind of file", () => {

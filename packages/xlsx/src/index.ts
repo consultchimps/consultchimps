@@ -22,6 +22,8 @@ import {
   ensureDirectory,
   ensureOutputAvailable,
   ensureParentDirectory,
+  isPathWithin,
+  isSameFilesystemPath,
   pathExists,
   refuseInputOverwrite,
 } from "@consultchimps/files";
@@ -461,7 +463,15 @@ function resolveConsolidateWorkbooks(
     path.resolve(inputPath),
   );
   const absoluteOutput = path.resolve(options.output);
-  refuseInputOverwrite(absoluteOutput, absoluteInputs);
+  // The mapping document is an input of this run like any workbook, so an
+  // output aimed at it is refused before `overwrite` gets a chance to destroy
+  // the very file the run was told to read.
+  refuseInputOverwrite(
+    absoluteOutput,
+    options.mappingFile === undefined
+      ? absoluteInputs
+      : [...absoluteInputs, path.resolve(options.mappingFile)],
+  );
 
   if (options.suggestMappingOutput === undefined) {
     return { absoluteInputs, absoluteOutput };
@@ -469,14 +479,24 @@ function resolveConsolidateWorkbooks(
 
   const absoluteSuggestOutput = path.resolve(options.suggestMappingOutput);
   refuseInputOverwrite(absoluteSuggestOutput, absoluteInputs);
-  if (absoluteSuggestOutput === absoluteOutput) {
+  // Two destinations collide when they name one file - which on Windows and
+  // the usual macOS volume includes a difference of case alone - and also when
+  // one sits beneath the other, since no filesystem lets "report.xlsx" be a
+  // file and a directory at once. Either way the second write would destroy or
+  // fail over the first, so both are refused before anything is written.
+  if (
+    isSameFilesystemPath(absoluteSuggestOutput, absoluteOutput) ||
+    isPathWithin(absoluteSuggestOutput, absoluteOutput) ||
+    isPathWithin(absoluteOutput, absoluteSuggestOutput)
+  ) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_MAPPING_SUGGEST_CONFLICT,
-      `The drafted mapping and the consolidated workbook cannot share one destination: ${absoluteOutput}. Give the draft a filename of its own.`,
+      `The drafted mapping (${absoluteSuggestOutput}) and the consolidated workbook (${absoluteOutput}) cannot share one destination, and neither can sit inside the other. Give the draft a location of its own.`,
       {
         details: {
           outputPath: absoluteOutput,
           problem: "suggestion_shares_output",
+          suggestOutputPath: absoluteSuggestOutput,
         },
       },
     );

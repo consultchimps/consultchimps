@@ -485,6 +485,82 @@ describe("consolidateWorkbooks with a column mapping", () => {
     }
   });
 
+  it("refuses destinations that collide without being spelled alike", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
+
+    try {
+      const input = path.join(directory, "north.xlsx");
+      await createWorkbook(input, "Cases", [["Case ID"], ["R-1"]]);
+      const output = path.join(directory, "combined.xlsx");
+
+      // One path cannot be both a file and a directory, so a draft nested
+      // under the workbook destination is refused before either is written.
+      await expect(
+        consolidateWorkbooks({
+          inputs: [input],
+          output,
+          overwrite: true,
+          suggestMappingOutput: path.join(output, "mapping.json"),
+        }),
+      ).rejects.toMatchObject({
+        code: "XLSX_MAPPING_SUGGEST_CONFLICT",
+        details: { problem: "suggestion_shares_output" },
+      });
+      await expect(readFile(output)).rejects.toMatchObject({ code: "ENOENT" });
+
+      // On a case-folding filesystem these two names are one file. The check
+      // asks the platform's question, so the refusal happens there and the
+      // two genuinely distinct files are allowed through on Linux.
+      const caseVariant = consolidateWorkbooks({
+        inputs: [input],
+        output,
+        overwrite: true,
+        suggestMappingOutput: path.join(directory, "Combined.xlsx"),
+      });
+      if (process.platform === "win32" || process.platform === "darwin") {
+        await expect(caseVariant).rejects.toMatchObject({
+          code: "XLSX_MAPPING_SUGGEST_CONFLICT",
+          details: { problem: "suggestion_shares_output" },
+        });
+        await expect(readFile(output)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      } else {
+        expect((await caseVariant).artifacts).toHaveLength(2);
+      }
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("refuses an output aimed at the mapping file it was told to read", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
+
+    try {
+      const input = path.join(directory, "north.xlsx");
+      await createWorkbook(input, "Cases", [["Case ID"], ["R-1"]]);
+      const mappingFile = await writeMapping(path.join(directory, "map.json"), {
+        version: 1,
+        columns: [{ name: "Case_ID", aliases: ["Case ID"] }],
+      });
+
+      // The mapping is an input of this run, so overwrite must not reach it.
+      await expect(
+        consolidateWorkbooks({
+          inputs: [input],
+          output: mappingFile,
+          mappingFile,
+          overwrite: true,
+        }),
+      ).rejects.toMatchObject({ code: "FILES_INPUT_OVERWRITE" });
+      expect(JSON.parse(await readFile(mappingFile, "utf8"))).toMatchObject({
+        version: 1,
+      });
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
   it("plans the drafted mapping as a second output and checks the mapping first", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
 
