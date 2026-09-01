@@ -9,3 +9,6 @@ test-results
 out
 node_modules
 pnpm-lock.yaml
+# CLAUDE.md is a repository symlink to AGENTS.md; on Windows checkouts it is
+# materialized as the symlink target text, which Prettier cannot parse.
+CLAUDE.md

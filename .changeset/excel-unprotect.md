@@ -3,4 +3,5 @@
 "consultchimps": minor
 ---
 
-Add byte-preserving Excel worksheet and workbook-structure unprotection for `.xlsx` and `.xlsm` files.
+Add byte-preserving Excel worksheet and workbook-structure unprotection for
+`.xlsx` and `.xlsm` files.
