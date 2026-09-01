@@ -235,7 +235,7 @@ async function perform(
       );
     }
   }
-  throw new Error(`Unsupported operation task: ${task.kind}`);
+  throw new Error("Unsupported operation task");
 }
 
 async function execute(id: number, task: OperationTask): Promise<void> {
