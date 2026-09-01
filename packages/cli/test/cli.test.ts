@@ -479,7 +479,7 @@ describe("consultchimps CLI", () => {
     const before = await readFile(input);
 
     const help = await runCli(["sheets", "inspect", "--help"]);
-    expect(help.stdout).toContain("--sheet <names...>");
+    expect(help.stdout).toContain("--sheet <name>");
     expect(help.stdout).toContain("--header-row <number>");
     expect(help.stdout).toContain("--hidden");
     expect(help.stdout).toContain("--samples <number>");
@@ -515,17 +515,19 @@ describe("consultchimps CLI", () => {
     expect(command.stdout).toContain("No files were created.");
 
     // Naming the real header row moves every reported column, and nothing is
-    // written either way.
+    // written either way. The options come first here, as the usage line says
+    // they may: a repeatable --sheet takes one name each, so the workbook is
+    // still there to be read afterwards.
     const withHeaderRow = await runCli([
       "sheets",
       "inspect",
-      input,
       "--sheet",
       "Clients",
       "--header-row",
       "4",
       "--samples",
       "2",
+      input,
     ]);
     expect(withHeaderRow.stdout).toContain("Header row: 4");
     expect(withHeaderRow.stdout).toContain('2. Client: "A", "B"');

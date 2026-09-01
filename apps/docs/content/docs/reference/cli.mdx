@@ -121,7 +121,7 @@ text, where JSON's own escaping already makes a control character inert.
 consultchimps sheets inspect [options] <input>
 
 Options:
-  --sheet <names...>        describe only these worksheet names
+  --sheet <name>            describe only this worksheet; repeat for several
   --header-row <number>     one-based header row
   --hidden                  describe hidden worksheets as well
   --samples <number>        sample values per column, 0 to 5 (default: 5)
@@ -148,8 +148,12 @@ escaped and a backslash doubled, so one value can never read as two. Worksheet
 names, headers, and values follow the control-character rule described under
 Human-readable output, in the report and in the progress lines alike.
 
+`--sheet` takes one worksheet name and may be repeated, so the workbook can be
+named either before or after the options:
+
 ```bash
 consultchimps sheets inspect clients.xlsx --hidden --samples 2
+consultchimps sheets inspect --sheet North --sheet South clients.xlsx
 ```
 
 Under `--json` the envelope's `result` carries the whole inspection outcome: a

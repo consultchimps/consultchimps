@@ -133,6 +133,18 @@ function numericOption(value: string): number {
   return value.trim() === "" ? Number.NaN : Number(value);
 }
 
+// Collects one worksheet name per occurrence of an option.
+//
+// The variadic form (`--sheet <names...>`) reads every following word as a
+// name, including the positional workbook, so `--sheet North clients.xlsx`
+// would take the workbook as a second worksheet name and then report the
+// argument as missing. That is only safe where the positional is itself
+// variadic and last, as it is for consolidate. Repeating the option instead
+// binds exactly one name to each flag, so the workbook is always still there.
+function collectName(value: string, previous: string[] | undefined): string[] {
+  return previous ? [...previous, value] : [value];
+}
+
 // The --json envelope is a stable machine-readable contract: exactly one JSON
 // object on a single line, so a consumer can parse stdout without first
 // separating prose from data. "ok" discriminates the two shapes, which lets
@@ -598,8 +610,9 @@ sheets
   )
   .argument("<input>", "the .xlsx or .xlsm workbook to describe")
   .option(
-    "--sheet <names...>",
-    "describe only worksheets with these exact names",
+    "--sheet <name>",
+    "describe only the worksheet with this exact name; repeat for several",
+    collectName,
   )
   .option(
     "--header-row <number>",
@@ -618,7 +631,7 @@ sheets
 Examples:
   consultchimps sheets inspect clients.xlsx
   consultchimps sheets inspect clients.xlsx --hidden --samples 2
-  consultchimps sheets inspect clients.xlsx --sheet North South --header-row 3
+  consultchimps sheets inspect --sheet North --sheet South clients.xlsx
 
 What you get:
   1. Each described worksheet, with its visibility, the size of its used range,
