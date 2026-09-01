@@ -15,6 +15,7 @@ import {
 } from "@consultchimps/pptx";
 import {
   consolidateWorkbooks,
+  describeWorkbook,
   mergeWorkbooks,
   splitWorkbookByColumn,
 } from "@consultchimps/xlsx";
@@ -25,6 +26,7 @@ import {
 } from "@consultchimps/messages";
 import { Command, CommanderError } from "commander";
 
+import { formatWorkbookDescription } from "./describe-report.js";
 import { createCliProgress, finishActiveProgress } from "./progress.js";
 
 interface GlobalOptions {
@@ -54,6 +56,13 @@ interface SheetMergeOptions {
   index: boolean;
   output: string;
   values?: boolean;
+}
+
+interface SheetInspectOptions {
+  headerRow?: number;
+  hidden?: boolean;
+  samples?: number;
+  sheet?: string[];
 }
 
 interface SheetSplitOptions {
@@ -102,6 +111,19 @@ function positiveInteger(value: string): number {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed < 1) {
     throw new Error("Expected a positive integer.");
+  }
+  return parsed;
+}
+
+// Parses a whole number without judging its range. The sample-count bound
+// belongs to the library, which refuses an out-of-range request with a stable
+// code rather than clamping it, so a second range check here would answer the
+// same mistake with a different, codeless message depending on which layer saw
+// it first.
+function wholeNumber(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) {
+    throw new Error("Expected a whole number.");
   }
   return parsed;
 }
@@ -195,6 +217,7 @@ program
     "after",
     `
 Quick start:
+  consultchimps sheets inspect clients.xlsx
   consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
   consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx
   consultchimps sheets split clients.xlsx -c Region -o by-region
@@ -218,12 +241,13 @@ Run consultchimps help <command> or append --help to a command for all options.
 const sheets = program
   .command("sheets")
   .description(
-    "combine or divide Excel workbooks without changing the original files",
+    "inspect, combine, or divide Excel workbooks without changing the original files",
   )
   .addHelpText(
     "after",
     `
 Examples:
+  consultchimps sheets inspect clients.xlsx
   consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
   consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx
   consultchimps sheets split clients.xlsx -c Region -o by-region
@@ -535,6 +559,91 @@ Your original workbook is never changed.
     });
     progress.finish();
     printResult(result, program.opts<GlobalOptions>().json === true);
+  });
+
+sheets
+  .command("inspect")
+  .description(
+    "describe what is in an Excel workbook, creating and changing nothing",
+  )
+  .argument("<input>", "the .xlsx or .xlsm workbook to describe")
+  .option(
+    "--sheet <names...>",
+    "describe only worksheets with these exact names",
+  )
+  .option(
+    "--header-row <number>",
+    "row containing column names, counted from 1",
+    positiveInteger,
+  )
+  .option("--hidden", "describe hidden worksheets as well as visible ones")
+  .option(
+    "--samples <number>",
+    "distinct sample values to report per column, from 0 to 5 (default: 5)",
+    wholeNumber,
+  )
+  .addHelpText(
+    "after",
+    `
+Examples:
+  consultchimps sheets inspect clients.xlsx
+  consultchimps sheets inspect clients.xlsx --hidden --samples 2
+  consultchimps sheets inspect clients.xlsx --sheet North South --header-row 3
+
+What you get:
+  1. Each described worksheet, with its visibility, the size of its used range,
+     and how many data rows sit below its header row.
+  2. The header row an operation would actually use, and every column on it
+     with a few of the values stored beneath it.
+  3. The Excel Tables and named ranges the described worksheets contain.
+
+Sample values are the first few distinct non-empty values a column stores, at
+most five, reported exactly as the workbook holds them: text is quoted, so the
+number 1 and the text "1" stay apart. Use --samples 0 for headers only.
+
+No file is created and nothing in the workbook is changed. Run this before
+consolidating, merging, or splitting to confirm the worksheet names, header
+rows, and column spellings those commands will match on.
+`,
+  )
+  .action(async (input: string, options: SheetInspectOptions) => {
+    const inputPaths = await discoverFiles([input], {
+      extensions: [".xlsx", ".xlsm"],
+    });
+    if (inputPaths.length !== 1) {
+      throw new Error(
+        `Expected exactly one input workbook; found ${inputPaths.length}.`,
+      );
+    }
+
+    const inputPath = inputPaths[0];
+    if (!inputPath) {
+      throw new Error("No input workbook was found.");
+    }
+
+    const json = program.opts<GlobalOptions>().json === true;
+    const progress = createCliProgress(json);
+    const outcome = await describeWorkbook(inputPath, {
+      headerRow: options.headerRow,
+      includeHiddenSheets: options.hidden === true,
+      onProgress: progress.report,
+      sampleValues: options.samples,
+      sheets: options.sheet,
+    });
+    progress.finish();
+
+    if (json) {
+      // The whole outcome, exactly as the library returns it: the counts alone
+      // would drop the worksheet names, headers, and samples an inspection
+      // exists to report.
+      printJsonResult(outcome);
+      return;
+    }
+
+    // The description first, then the explanation of the result that closes
+    // every command's output with its warnings and next steps.
+    process.stdout.write(`${formatWorkbookDescription(outcome.description)}\n`);
+    printResult(outcome.result, false);
   });
 
 const pptx = program

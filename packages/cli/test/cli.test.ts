@@ -457,6 +457,204 @@ describe("consultchimps CLI", () => {
     expect(error.stderr).toContain("FILES_OUTPUT_EXISTS");
   });
 
+  it("describes a workbook without creating or changing anything", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "inputs", "clients.xlsx");
+    await copyFile(structuredTableFixture, input);
+    const before = await readFile(input);
+
+    const help = await runCli(["sheets", "inspect", "--help"]);
+    expect(help.stdout).toContain("--sheet <names...>");
+    expect(help.stdout).toContain("--header-row <number>");
+    expect(help.stdout).toContain("--hidden");
+    expect(help.stdout).toContain("--samples <number>");
+    expect(help.stdout).toContain("consultchimps sheets inspect clients.xlsx");
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "No file is created and nothing in the workbook is changed.",
+    );
+
+    const command = await runCli(["sheets", "inspect", input]);
+    expect(command.stdout).toContain("Excel workbook inspection: clients.xlsx");
+    // The header row this fixture resolves without help is its report title,
+    // which is exactly the mistake an inspection exists to expose before a
+    // consolidation matches columns on it.
+    expect(command.stdout).toContain("2. Clients (visible)");
+    expect(command.stdout).toContain("Used range: 8 rows by 7 columns");
+    expect(command.stdout).toContain("Header row: 1");
+    expect(command.stdout).toContain("Data rows below the header: 7");
+    expect(command.stdout).toContain(
+      "1. ClientData on worksheet Clients (B4:D8)",
+    );
+    expect(command.stdout).toContain("Columns: Client, Region, Amount");
+    expect(command.stdout).toContain("Named ranges:");
+    // The description is rendered beside the result the messages package
+    // explains, and an inspection reports no artifacts because it writes none.
+    expect(command.stdout).toContain(
+      "Your Excel workbook inspection is complete.",
+    );
+    expect(command.stdout).toContain(
+      "Nothing was created or changed. An inspection only reads the workbook.",
+    );
+    expect(command.stdout).toContain("No files were created.");
+
+    // Naming the real header row moves every reported column, and nothing is
+    // written either way.
+    const withHeaderRow = await runCli([
+      "sheets",
+      "inspect",
+      input,
+      "--sheet",
+      "Clients",
+      "--header-row",
+      "4",
+      "--samples",
+      "2",
+    ]);
+    expect(withHeaderRow.stdout).toContain("Header row: 4");
+    expect(withHeaderRow.stdout).toContain('2. Client: "A", "B"');
+    expect(withHeaderRow.stdout).toContain('3. Region: "North", "South"');
+    expect(withHeaderRow.stdout).toContain("4. Amount: 10, 20");
+
+    expect(await readdir(path.join(directory, "inputs"))).toEqual([
+      "clients.xlsx",
+    ]);
+    expect(await readdir(path.join(directory, "outputs"))).toEqual([]);
+    expect(await readFile(input)).toEqual(before);
+  });
+
+  it("returns the whole inspection outcome through the --json envelope", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "inputs", "review-log.xlsx");
+    await writeWorkbook(
+      input,
+      [
+        [
+          "Reviews",
+          [
+            ["Region", "Owner", "Score"],
+            ["North", "Ana", 10],
+            ["South", "Ben", 20],
+            ["North", "Ana", 10],
+          ],
+        ],
+        ["Archive", [["Note"], ["Archived"]]],
+      ],
+      ["Archive"],
+    );
+
+    const command = await runCli([
+      "--json",
+      "sheets",
+      "inspect",
+      input,
+      "--samples",
+      "2",
+    ]);
+    // --json carries the description as well as the result: the counts alone
+    // would drop the sheet names, headers, and samples an inspection is for.
+    expect(parseJsonSuccess(command.stdout)).toMatchObject({
+      description: {
+        excelTables: [],
+        namedRanges: [],
+        sheets: [
+          {
+            columnCount: 3,
+            columns: [
+              { header: "Region", index: 0, sampleValues: ["North", "South"] },
+              { header: "Owner", index: 1, sampleValues: ["Ana", "Ben"] },
+              // Stored values keep their type, so the number 10 is not "10".
+              { header: "Score", index: 2, sampleValues: [10, 20] },
+            ],
+            dataRowCount: 3,
+            headerRow: 1,
+            name: "Reviews",
+            rowCount: 4,
+            visibility: "visible",
+          },
+        ],
+        source: "review-log.xlsx",
+      },
+      result: {
+        artifacts: [],
+        metrics: {
+          dataRows: 3,
+          excelTables: 0,
+          headerColumns: 3,
+          hiddenWorksheets: 0,
+          namedRanges: 0,
+          worksheets: 1,
+        },
+        operation: "sheets.inspect",
+        warnings: [
+          "1 worksheet is hidden and was not described. Include hidden worksheets to describe it.",
+        ],
+      },
+    });
+    expect(command.stderr).toBe("");
+
+    const withHidden = await runCli([
+      "--json",
+      "sheets",
+      "inspect",
+      input,
+      "--hidden",
+    ]);
+    const outcome = parseJsonSuccess(withHidden.stdout) as {
+      description: { sheets: Array<{ name: string; visibility: string }> };
+      result: { metrics: Record<string, number>; warnings: string[] };
+    };
+    expect(outcome.description.sheets.map((sheet) => sheet.name)).toEqual([
+      "Reviews",
+      "Archive",
+    ]);
+    expect(outcome.description.sheets[1]?.visibility).toBe("hidden");
+    expect(outcome.result.metrics.hiddenWorksheets).toBe(1);
+    expect(outcome.result.warnings).toEqual([]);
+  });
+
+  it("surfaces the library's refusals when inspecting a workbook", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "inputs", "review-log.xlsx");
+    await writeWorkbook(input, [
+      [
+        "Reviews",
+        [
+          ["Region", "Owner"],
+          ["North", "Ana"],
+        ],
+      ],
+    ]);
+
+    // The sample bound belongs to the library, which refuses an out-of-range
+    // request with a stable code rather than quietly clamping it.
+    const tooManySamples = await runCli(
+      ["--json", "sheets", "inspect", input, "--samples", "50"],
+      1,
+    );
+    expect(parseJsonError(tooManySamples.stdout)).toEqual({
+      code: "XLSX_INVALID_SAMPLE_LIMIT",
+      message: "The sample value count must be a whole number from 0 to 5.",
+    });
+
+    const missingSheet = await runCli(
+      ["--json", "sheets", "inspect", input, "--sheet", "Nowhere"],
+      1,
+    );
+    expect(parseJsonError(missingSheet.stdout).code).toBe(
+      "XLSX_WORKSHEET_NOT_FOUND",
+    );
+
+    const missingFile = await runCli(
+      ["sheets", "inspect", path.join(directory, "inputs", "absent.xlsx")],
+      1,
+    );
+    expect(missingFile.stderr).toContain(
+      "ERROR: ConsultChimps could not finish your task.",
+    );
+    expect(missingFile.stderr).toContain("FILES_NOT_FOUND");
+    expect(missingFile.stdout).toBe("");
+  });
+
   it("consolidates workbook globs through the built command", async () => {
     const directory = await createTemporaryDirectory();
     const inputs = path.join(directory, "inputs");

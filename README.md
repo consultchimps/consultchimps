@@ -19,16 +19,16 @@ documentation site renders its cards and tabs from;
 `scripts/check-readme-operations.ts` fails `pnpm docs:check`, and therefore
 `pnpm check` and CI, when this table and that registry disagree.
 
-| Operation                     | CLI     | Library | Browser |
-| ----------------------------- | ------- | ------- | ------- |
-| Consolidate spreadsheets      | Works   | Works   | Works   |
-| Merge workbook tabs           | Works   | Works   | Works   |
-| Split spreadsheets            | Works   | Works   | Works   |
-| Populate PowerPoint templates | Works   | Works   | Works   |
-| Split PDF pages               | Works   | Works   | Works   |
-| Merge PDF packs               | Works   | Works   | Works   |
-| Inspect PowerPoint templates  | Works   | Works   | Works   |
-| Inspect workbooks             | Planned | Works   | Works   |
+| Operation                     | CLI   | Library | Browser |
+| ----------------------------- | ----- | ------- | ------- |
+| Consolidate spreadsheets      | Works | Works   | Works   |
+| Merge workbook tabs           | Works | Works   | Works   |
+| Split spreadsheets            | Works | Works   | Works   |
+| Populate PowerPoint templates | Works | Works   | Works   |
+| Split PDF pages               | Works | Works   | Works   |
+| Merge PDF packs               | Works | Works   | Works   |
+| Inspect PowerPoint templates  | Works | Works   | Works   |
+| Inspect workbooks             | Works | Works   | Works   |
 
 ## Packages
 

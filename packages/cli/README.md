@@ -28,6 +28,7 @@ the executable speaking for itself and is authoritative on both.
 
 | Command                 | What it does                                                 |
 | ----------------------- | ------------------------------------------------------------ |
+| `sheets inspect`        | Describe a workbook's sheets, headers, and samples           |
 | `sheets consolidate`    | Stack rows from many workbooks into one auditable table      |
 | `sheets merge`          | Copy every source worksheet into one workbook as its own tab |
 | `sheets split`          | Write one workbook per distinct value in a chosen column     |
@@ -39,6 +40,8 @@ the executable speaking for itself and is authoritative on both.
 A few representative invocations:
 
 ```bash
+consultchimps sheets inspect clients.xlsx --hidden --samples 2
+
 consultchimps sheets consolidate "inputs/**/*.xlsx" \
   --output outputs/consolidated.xlsx
 
@@ -67,9 +70,11 @@ consultchimps pdf merge "inputs/**/*.pdf" \
 ```
 
 Inputs are never modified. Existing outputs require the explicit `--force`
-option. Every spreadsheet command accepts `--values`; formulas are replaced by
-their stored results without removing cell formatting. Consolidation and compact
-data-only splits already write values, so the flag makes that intent explicit.
+option. `sheets inspect` creates no output at all: it describes the workbook and
+stops. Consolidation, worksheet merging, and splitting accept `--values`;
+formulas are replaced by their stored results without removing cell formatting.
+Consolidation and compact data-only splits already write values, so the flag
+makes that intent explicit.
 
 By default, every command gives a detailed, plain-language explanation of what
 happened. It translates result counts, lists every created file, reports
