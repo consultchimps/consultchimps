@@ -32,6 +32,7 @@ import type {
   SplitWorkbookByColumnPlanMetric,
   SplitWorkbookBytesOutcome,
   WorkbookDescriptionOutcome,
+  UnprotectWorkbookMetric,
 } from "@consultchimps/xlsx/bytes";
 
 /** One in-memory input, in the shape every byte-level operation accepts. */
@@ -211,14 +212,20 @@ interface OperationTaskResults {
   // The description travels beside the operation's structured result, so the
   // page can render both the structure and the counts the library derived.
   "xlsx.inspect": WorkbookDescriptionOutcome;
+  "xlsx.unprotect": ByteOperationOutcome<UnprotectWorkbookMetric>;
   "pptx.inspect": PresentationInspectionOutcome;
   "pptx.plan-populate": OperationPlan<PopulatePowerPointTemplatePlanMetric>;
   "pptx.populate": ByteOperationOutcome<PopulatePowerPointTemplateMetric>;
 }
 
 /** What a given task resolves to once the worker has run it. */
-export type OperationTaskResult<TTask extends OperationTask> =
-  OperationTaskResults[TTask["kind"]];
+export type OperationTaskResult<TTask extends OperationTask> = TTask extends {
+  kind: infer TKind;
+}
+  ? TKind extends keyof OperationTaskResults
+    ? OperationTaskResults[TKind]
+    : never
+  : never;
 
 export interface RunCommand {
   readonly type: "run";

@@ -194,7 +194,9 @@ async function perform(
         await unprotectWorkbookBytes({
           ...controls,
           input: task.input,
-          outputName: task.outputName,
+          ...(task.outputName === undefined
+            ? {}
+            : { outputName: task.outputName }),
         }),
       );
     }
