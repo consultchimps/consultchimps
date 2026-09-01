@@ -117,18 +117,27 @@ test.describe("/shortcuts", () => {
     await expect(page.getByTestId("entered-sequence")).toContainText("Ctrl");
   });
 
-  test("takes the modifiers in whatever order they were pressed", async ({
-    page,
-  }) => {
+  test("follows the order the keys are pressed in", async ({ page }) => {
     await page.goto("/shortcuts");
     await page.getByTestId("key-capture").click();
 
-    // Shift first, against a chord the database stores as Alt+Shift+Right.
+    // Shift before Alt is a different gesture from the stored Alt+Shift, so
+    // it must not find the chord the database stores as Alt+Shift+Right.
     await page.keyboard.down("Shift");
     await page.keyboard.down("Alt");
-    await page.keyboard.press("ArrowRight");
+    await expect(
+      page.getByText("Group the selected PivotTable items"),
+    ).toHaveCount(0);
     await page.keyboard.up("Alt");
     await page.keyboard.up("Shift");
+    await page.keyboard.press("Escape");
+
+    // Pressed in the stored order, the chord matches.
+    await page.keyboard.down("Alt");
+    await page.keyboard.down("Shift");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.up("Shift");
+    await page.keyboard.up("Alt");
 
     await expect(rows(page)).toHaveCount(1);
     await expect(
