@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 import JSZip from "jszip";
+import { readFile } from "node:fs/promises";
 import {
   createWorkbookUpload,
-  expectWorkbookDownload,
   fileInput,
   resultArtifacts,
   resultsPanel,
@@ -70,10 +70,24 @@ test.describe("/tools/excel-unprotect", () => {
       "protected-unprotected.xlsm",
     );
     await expect(page.getByTestId("result-message")).toContainText("finished");
-    await expectWorkbookDownload(
-      page,
-      () => resultArtifacts(page).getByTestId("artifact-download").click(),
-      "protected-unprotected.xlsm",
+    const downloadPromise = page.waitForEvent("download");
+    await resultArtifacts(page).getByTestId("artifact-download").click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe("protected-unprotected.xlsm");
+    const outputArchive = await JSZip.loadAsync(
+      await readFile(await download.path()),
     );
+    expect(
+      await outputArchive.file("xl/workbook.xml")!.async("text"),
+    ).not.toContain("workbookProtection");
+    expect(
+      await outputArchive.file("xl/worksheets/sheet1.xml")!.async("text"),
+    ).not.toContain("sheetProtection");
+    expect(
+      await outputArchive.file("xl/worksheets/sheet2.xml")!.async("text"),
+    ).not.toContain("sheetProtection");
+    expect(
+      await outputArchive.file("xl/vbaProject.bin")!.async("uint8array"),
+    ).toEqual(new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
   });
 });

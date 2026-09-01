@@ -130,10 +130,15 @@ describe("Excel workbook unprotection", () => {
       .async("text");
     archive.file(
       "[Content_Types].xml",
-      contentTypes.replace(
-        "</Types>",
-        '<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.ms-excel.sheet.macroEnabled.main+xml"/></Types>',
-      ),
+      contentTypes
+        .replace(
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+          "application/vnd.ms-excel.sheet.macroEnabled.main+xml",
+        )
+        .replace(
+          "</Types>",
+          '<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/></Types>',
+        ),
     );
     const input = await archive.generateAsync({
       compression: "DEFLATE",
