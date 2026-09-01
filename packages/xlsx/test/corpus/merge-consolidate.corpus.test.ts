@@ -699,6 +699,12 @@ describe("corpus: consolidate", () => {
       // The table shape contributes its totals row and footer block; the range
       // shape contributes only its footer block.
       outputRows: 15,
+      // This pin runs without a column mapping, so both mapping counts are
+      // zero. The contract's consolidate column is unaffected: a mapping
+      // renames and folds columns of the values-only table this operation
+      // already writes, and touches no tracked workbook structure.
+      suggestedColumns: 0,
+      unmappedColumns: 0,
     });
     const consolidated = XLSX.read(await readFile(output), { type: "buffer" });
     expect(consolidated.SheetNames).toEqual(["Consolidated"]);

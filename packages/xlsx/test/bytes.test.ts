@@ -1442,6 +1442,11 @@ describe("byte-level workbook consolidation", () => {
       inputTables: 2,
       outputColumns: 6,
       outputRows: 2,
+      // No mapping ran, so both mapping counts report zero rather than being
+      // absent: a caller reads a metric without first asking which options
+      // produced the result.
+      suggestedColumns: 0,
+      unmappedColumns: 0,
     });
     expect(result.warnings).toEqual([]);
     expect(result.artifacts).toEqual([
@@ -1515,6 +1520,8 @@ describe("byte-level workbook consolidation", () => {
       inputTables: 4,
       outputColumns: 8,
       outputRows: 4,
+      suggestedColumns: 0,
+      unmappedColumns: 0,
     });
     expect(readSheetGrid(normalized.outputs[0]!.bytes, "Consolidated")).toEqual(
       [
@@ -1663,6 +1670,176 @@ describe("byte-level workbook consolidation", () => {
         sheets: ["Missing"],
       }),
     ).rejects.toMatchObject({ code: "XLSX_NO_TABLES" });
+  });
+
+  it("applies a parsed mapping and reports the columns it did not claim", async () => {
+    const inputs = [
+      {
+        name: "north.xlsx",
+        bytes: workbookBytes([
+          [
+            "Cases",
+            [
+              ["Case ID", "Total", "Region"],
+              ["R-1", "1.234,50", "north"],
+            ],
+          ],
+        ]),
+      },
+      {
+        name: "south.xlsx",
+        bytes: workbookBytes([
+          [
+            "Cases",
+            [
+              ["reference", "Total", "Region"],
+              ["R-2", "7,25", "south"],
+            ],
+          ],
+        ]),
+      },
+    ];
+
+    const { result, outputs } = await consolidateWorkbooksBytes({
+      inputs,
+      addSourceColumns: false,
+      mapping: {
+        version: 1,
+        columns: [
+          { name: "Case_ID", aliases: ["Reference"] },
+          {
+            name: "Amount",
+            aliases: ["Total"],
+            coercion: {
+              type: "number",
+              decimalSeparator: ",",
+              thousandsSeparator: ".",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(result.metrics).toMatchObject({
+      outputColumns: 3,
+      outputRows: 2,
+      suggestedColumns: 0,
+      unmappedColumns: 1,
+    });
+    expect(result.warnings).toEqual([
+      '1 column did not match the column mapping and kept its own name: "Region". Add it to the mapping if it belongs in a canonical column.',
+    ]);
+    expect(readSheetGrid(outputs[0]!.bytes, "Consolidated")).toEqual([
+      ["Case_ID", "Amount", "Region"],
+      ["R-1", 1234.5, "north"],
+      ["R-2", 7.25, "south"],
+    ]);
+
+    // The byte surface validates the document before a workbook is parsed, as
+    // the file surface validates the file it read.
+    await expect(
+      consolidateWorkbooksBytes({
+        inputs,
+        mapping: {
+          version: 1,
+          columns: [
+            { name: "Case_ID", aliases: ["Reference"] },
+            { name: "Other", aliases: ["reference"] },
+          ],
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "TABLE_MAPPING_INVALID",
+      details: { problem: "duplicate_alias" },
+    });
+  });
+
+  it("offers a drafted mapping as a second output and refuses to draft one while applying another", async () => {
+    const inputs = [
+      {
+        name: "north.xlsx",
+        bytes: workbookBytes([
+          [
+            "Cases",
+            [
+              ["Failed Checks", "Case ID"],
+              [5, "R-1"],
+            ],
+          ],
+        ]),
+      },
+      {
+        name: "south.xlsx",
+        bytes: workbookBytes([
+          [
+            "Cases",
+            [
+              ["Failed_Checks", "Case ID"],
+              [7, "R-2"],
+            ],
+          ],
+        ]),
+      },
+    ];
+
+    const { result, outputs } = await consolidateWorkbooksBytes({
+      inputs,
+      suggestMapping: true,
+    });
+
+    expect(result.metrics.suggestedColumns).toBe(1);
+    expect(result.suggestion?.mapping).toEqual({
+      version: 1,
+      columns: [{ name: "Failed Checks", aliases: [] }],
+    });
+    expect(outputs.map((output) => output.name)).toEqual([
+      "consolidated.xlsx",
+      "mapping-draft.json",
+    ]);
+    expect(outputs[1]!.mediaType).toBe("application/json");
+    expect(JSON.parse(new TextDecoder().decode(outputs[1]!.bytes))).toEqual({
+      version: 1,
+      columns: [{ name: "Failed Checks", aliases: [] }],
+    });
+    // The consolidation still runs beside the draft.
+    expect(result.metrics.outputRows).toBe(2);
+
+    await expect(
+      consolidateWorkbooksBytes({
+        inputs,
+        mapping: { version: 1, columns: [] },
+        suggestMapping: true,
+      }),
+    ).rejects.toMatchObject({
+      code: "XLSX_MAPPING_SUGGEST_CONFLICT",
+      details: { problem: "mapping_and_suggestion" },
+    });
+  });
+
+  it("refuses a date coercion the worksheet cannot answer with text", async () => {
+    await expect(
+      consolidateWorkbooksBytes({
+        inputs: [
+          {
+            name: "north.xlsx",
+            bytes: workbookBytes([["Cases", [["Run Date"], [45360]]]]),
+          },
+        ],
+        mapping: {
+          version: 1,
+          columns: [
+            {
+              name: "Opened_On",
+              aliases: ["Run Date"],
+              coercion: { type: "date", format: "DD/MM/YYYY" },
+            },
+          ],
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "XLSX_MAPPING_DATE_NOT_TEXT",
+      details: { column: "Run Date", row: 2, valueType: "number" },
+    });
   });
 });
 

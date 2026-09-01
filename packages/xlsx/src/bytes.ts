@@ -7,6 +7,7 @@
 import {
   ConsultChimpsError,
   throwIfAborted,
+  type Artifact,
   type ByteArtifact,
   type ByteOperationOutcome,
   type OperationControlOptions,
@@ -14,7 +15,12 @@ import {
   type OperationResult,
 } from "@consultchimps/core";
 
-import type { Table } from "@consultchimps/tabular";
+import {
+  validateColumnMapping,
+  type ColumnMapping,
+  type ColumnMappingSuggestion,
+  type Table,
+} from "@consultchimps/tabular";
 
 import { XLSX_ERRORS } from "./errors.js";
 import {
@@ -57,15 +63,21 @@ import {
   isMacroWorkbookName,
   MACRO_WORKBOOK_EXTENSION,
   MACRO_WORKBOOK_MEDIA_TYPE,
+  MAPPING_MEDIA_TYPE,
   MERGE_OPERATION,
   parseExcelTableDefinitions,
   parseWorkbookBytes,
   preservedSplitTemplateBytes,
+  refuseMappingWithSuggestion,
   resolveSplitSource,
   safeNameFragment,
+  serializeColumnMapping,
   skippedRowsWarning,
   splitOutputFileNames,
   SPLIT_OPERATION,
+  SUGGESTED_MAPPING_FILE_NAME,
+  suggestMappingForTables,
+  unmappedColumnsWarning,
   WORKBOOK_EXTENSION,
   WORKBOOK_MEDIA_TYPE,
   withoutWorkbookExtension,
@@ -132,13 +144,40 @@ export interface ConsolidateWorkbooksBytesOptions
   inputs: WorkbookInputBytes[];
   addSourceColumns?: boolean | undefined;
   /**
+   * A parsed version 1 column mapping, applied to each worksheet table before
+   * the union. This surface has no filesystem, so the caller parses the
+   * document; it is validated here before any workbook is read. Cannot be
+   * combined with `suggestMapping`.
+   */
+  mapping?: ColumnMapping | undefined;
+  /**
    * Match columns whose headers differ only in case, spacing, or punctuation
    * (for example "Failed Checks" and "Failed_Checks") instead of requiring
-   * the exact same header in every worksheet.
+   * the exact same header in every worksheet. A mapping matches by normalized
+   * column key whatever this option says; the flag governs only the columns
+   * the mapping did not claim.
    */
   normalizeHeaders?: boolean | undefined;
   outputName?: string | undefined;
   outputSheetName?: string | undefined;
+  /**
+   * Draft a mapping from the headers that were read and offer it beside the
+   * consolidated workbook, as `mapping-draft.json`. The draft is for review,
+   * never applied. Cannot be combined with `mapping`.
+   */
+  suggestMapping?: boolean | undefined;
+}
+
+export interface ConsolidateWorkbooksBytesResult extends OperationResult<ConsolidateWorkbooksMetric> {
+  /**
+   * The drafted mapping and the evidence behind it, present only when
+   * `suggestMapping` asked for one. Nothing applies it for the caller.
+   */
+  suggestion?: ColumnMappingSuggestion | undefined;
+}
+
+export interface ConsolidateWorkbooksBytesOutcome extends ByteOperationOutcome<ConsolidateWorkbooksMetric> {
+  result: ConsolidateWorkbooksBytesResult;
 }
 
 export interface MergeWorkbooksBytesOptions extends OperationControlOptions {
@@ -507,7 +546,7 @@ async function splitAllWorksheetsBytes(
  */
 export async function consolidateWorkbooksBytes(
   options: ConsolidateWorkbooksBytesOptions,
-): Promise<ByteOperationOutcome<ConsolidateWorkbooksMetric>> {
+): Promise<ConsolidateWorkbooksBytesOutcome> {
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
   if (options.inputs.length === 0) {
     throw new ConsultChimpsError(
@@ -515,6 +554,15 @@ export async function consolidateWorkbooksBytes(
       "At least one workbook is required.",
     );
   }
+  if (options.mapping !== undefined && options.suggestMapping === true) {
+    refuseMappingWithSuggestion();
+  }
+  // Validated before a single workbook is parsed, so an unusable mapping
+  // never costs the caller a read.
+  const mapping =
+    options.mapping === undefined
+      ? undefined
+      : validateColumnMapping(options.mapping);
 
   const outputName = `${safeNameFragment(
     withoutWorkbookExtension(options.outputName ?? "consolidated"),
@@ -548,7 +596,14 @@ export async function consolidateWorkbooksBytes(
   }
 
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
-  const table = consolidateTables(tables, options);
+  const { table, unmappedColumns } = consolidateTables(tables, {
+    ...options,
+    mapping,
+  });
+  const suggestion =
+    options.suggestMapping === true
+      ? suggestMappingForTables(tables)
+      : undefined;
   await yieldToEventLoop();
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
   const output: ByteArtifact = {
@@ -567,26 +622,57 @@ export async function consolidateWorkbooksBytes(
     detail: outputName,
   });
 
-  return {
-    result: {
-      operation: CONSOLIDATE_OPERATION,
-      artifacts: [
-        {
-          kind: "file",
-          mediaType: WORKBOOK_MEDIA_TYPE,
-          path: outputName,
-        },
-      ],
-      warnings: [],
-      metrics: {
-        inputFiles: options.inputs.length,
-        inputTables: tables.length,
-        outputColumns: table.columns.length,
-        outputRows: table.rows.length,
-      },
+  const artifacts: Artifact[] = [
+    {
+      kind: "file",
+      mediaType: WORKBOOK_MEDIA_TYPE,
+      path: outputName,
     },
-    outputs: [output],
+  ];
+  const outputs: ByteArtifact[] = [output];
+  if (suggestion) {
+    outputs.push({
+      name: SUGGESTED_MAPPING_FILE_NAME,
+      bytes: new TextEncoder().encode(
+        serializeColumnMapping(suggestion.mapping),
+      ),
+      mediaType: MAPPING_MEDIA_TYPE,
+    });
+    artifacts.push({
+      kind: "file",
+      mediaType: MAPPING_MEDIA_TYPE,
+      path: SUGGESTED_MAPPING_FILE_NAME,
+    });
+    options.onProgress?.({
+      operation: CONSOLIDATE_OPERATION,
+      stage: "writing-mapping-draft",
+      completed: 1,
+      total: 1,
+      detail: SUGGESTED_MAPPING_FILE_NAME,
+    });
+  }
+
+  const result: ConsolidateWorkbooksBytesResult = {
+    operation: CONSOLIDATE_OPERATION,
+    artifacts,
+    warnings:
+      unmappedColumns.length > 0
+        ? [unmappedColumnsWarning(unmappedColumns)]
+        : [],
+    metrics: {
+      inputFiles: options.inputs.length,
+      inputTables: tables.length,
+      outputColumns: table.columns.length,
+      outputRows: table.rows.length,
+      suggestedColumns: suggestion?.mapping.columns.length ?? 0,
+      unmappedColumns: unmappedColumns.length,
+    },
   };
+  if (suggestion) {
+    result.suggestion = suggestion;
+  }
+
+  return { result, outputs };
 }
 
 /**

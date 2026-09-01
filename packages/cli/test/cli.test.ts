@@ -214,6 +214,8 @@ describe("consultchimps CLI", () => {
     const consolidateHelp = await runCli(["sheets", "consolidate", "--help"]);
     expect(consolidateHelp.stdout).toContain("-o, --output <path>");
     expect(consolidateHelp.stdout).toContain("--values");
+    expect(consolidateHelp.stdout).toContain("--map <file>");
+    expect(consolidateHelp.stdout).toContain("--suggest-map <file>");
     expect(consolidateHelp.stdout).toContain(
       "where to save the new consolidated .xlsx workbook",
     );
@@ -556,6 +558,154 @@ describe("consultchimps CLI", () => {
     expect(force.stderr).toContain("Reading workbooks 1/2: north.xlsx");
     expect(force.stderr).toContain("Reading workbooks 2/2: south.xlsx");
     expect(force.stderr).toContain("Writing output 1/1: consolidated.xlsx");
+  });
+
+  it("applies a column mapping and drafts one through the built command", async () => {
+    const directory = await createTemporaryDirectory();
+    const inputs = path.join(directory, "inputs");
+    await writeWorkbook(path.join(inputs, "north.xlsx"), [
+      [
+        "Cases",
+        [
+          ["Case ID", "Failed Checks", "Region"],
+          ["R-1", 5, "north"],
+        ],
+      ],
+    ]);
+    await writeWorkbook(path.join(inputs, "south.xlsx"), [
+      [
+        "Cases",
+        [
+          ["Reference", "Failed_Checks", "Region"],
+          ["R-2", 7, "south"],
+        ],
+      ],
+    ]);
+
+    // --suggest-map drafts the equivalence groups and still consolidates; the
+    // draft is evidence for a second run, never applied for the user.
+    const draft = path.join(directory, "drafts", "mapping.json");
+    const suggested = await runCli([
+      "sheets",
+      "consolidate",
+      path.join(inputs, "*.xlsx"),
+      "--output",
+      path.join(directory, "suggested.xlsx"),
+      "--suggest-map",
+      draft,
+    ]);
+    expect(suggested.stdout).toContain(
+      "drafted a column mapping proposing 1 canonical column",
+    );
+    expect(suggested.stdout).toContain("Type: Column mapping file");
+    expect(suggested.stdout).toContain(
+      "Review and edit the drafted column mapping",
+    );
+    expect(suggested.stderr).toContain(
+      "Writing mapping draft 1/1: mapping.json",
+    );
+    expect(JSON.parse(await readFile(draft, "utf8"))).toEqual({
+      version: 1,
+      columns: [{ name: "Failed Checks", aliases: [] }],
+    });
+
+    // The never-overwrite rule covers the draft exactly as it covers a
+    // workbook: a second run refuses rather than replacing it.
+    const refused = await runCli(
+      [
+        "--json",
+        "sheets",
+        "consolidate",
+        path.join(inputs, "*.xlsx"),
+        "--output",
+        path.join(directory, "again.xlsx"),
+        "--suggest-map",
+        draft,
+      ],
+      1,
+    );
+    expect(parseJsonError(refused.stdout).code).toBe("FILES_OUTPUT_EXISTS");
+
+    const mapping = path.join(directory, "mapping.json");
+    await writeFile(
+      mapping,
+      JSON.stringify({
+        version: 1,
+        columns: [
+          { name: "Case_ID", aliases: ["Case ID", "Reference"] },
+          { name: "Failed Checks", aliases: [] },
+        ],
+      }),
+      "utf8",
+    );
+    const output = path.join(directory, "mapped.xlsx");
+    const mapped = await runCli([
+      "sheets",
+      "consolidate",
+      path.join(inputs, "*.xlsx"),
+      "--output",
+      output,
+      "--map",
+      mapping,
+      "--no-source",
+    ]);
+    expect(mapped.stdout).toContain(
+      "1 column did not match the column mapping and kept its own name",
+    );
+    expect(mapped.stdout).toContain('"Region"');
+
+    const workbook = XLSX.read(await readFile(output), { type: "buffer" });
+    expect(
+      XLSX.utils.sheet_to_json(workbook.Sheets.Consolidated!, {
+        defval: null,
+        header: 1,
+        raw: true,
+      }),
+    ).toEqual([
+      ["Case_ID", "Failed Checks", "Region"],
+      ["R-1", 5, "north"],
+      ["R-2", 7, "south"],
+    ]);
+
+    // The two options describe different reviews of the same headers, and
+    // ADR 0002 fixed no meaning for combining them, so the run refuses.
+    const combined = await runCli(
+      [
+        "--json",
+        "sheets",
+        "consolidate",
+        path.join(inputs, "*.xlsx"),
+        "--output",
+        path.join(directory, "both.xlsx"),
+        "--map",
+        mapping,
+        "--suggest-map",
+        path.join(directory, "second-draft.json"),
+      ],
+      1,
+    );
+    expect(parseJsonError(combined.stdout).code).toBe(
+      "XLSX_MAPPING_SUGGEST_CONFLICT",
+    );
+
+    const badMapping = path.join(directory, "broken.json");
+    await writeFile(badMapping, "{ not JSON", "utf8");
+    const broken = await runCli(
+      [
+        "sheets",
+        "consolidate",
+        path.join(inputs, "*.xlsx"),
+        "--output",
+        path.join(directory, "broken.xlsx"),
+        "--map",
+        badMapping,
+      ],
+      1,
+    );
+    expect(broken.stderr).toContain("XLSX_MAPPING_FILE_INVALID");
+    expect(broken.stderr).toContain(
+      "Nothing was created or changed: a column mapping is checked and applied before any output is written.",
+    );
   });
 
   it("merges worksheets through the built command", async () => {
