@@ -316,6 +316,11 @@ export interface FileSelection {
  *   succession leaves two reads in flight, and a big file picked first can
  *   finish after a small one picked second; without the token the older read
  *   would win.
+ *
+ * Exactly one file is read, however many arrive. A drag-and-drop carries the
+ * whole drop even onto a picker whose input is single-file, and reading the
+ * rest would pull documents nobody asked for into memory only to discard them,
+ * which on a large batch of workbooks is enough to slow or exhaust the tab.
  */
 export function useFileSelection(
   accepts: (file: File) => boolean,
@@ -334,7 +339,12 @@ export function useFileSelection(
       setReading(true);
       onChange?.();
 
-      void readUploads(files, accepts)
+      // Filtering before reading keeps the selection rule exactly as it was,
+      // the first file this tool accepts, while the read itself touches that
+      // one file alone.
+      const chosen = files.filter(accepts).slice(0, 1);
+
+      void readUploads(chosen, accepts)
         .then((read) => {
           if (token !== latest.current) {
             return;
