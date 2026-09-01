@@ -9,12 +9,12 @@
  * The prefix rule, stated once:
  *
  * - A query is a list of steps, the same shape a shortcut's keys have.
- * - Every step before the last must match the shortcut's step at that index
- *   exactly, as a set: the order the modifiers were pressed in does not
- *   matter, but a step the visitor has moved on from is finished.
- * - The last step is a partial chord, so it only has to be a subset of the
- *   shortcut's step at that index. Holding Shift therefore keeps Ctrl+Shift+L,
- *   and adding Alt to the same chord keeps Ctrl+Shift+Alt+... instead.
+ * - Keys count in the order they were pressed: a step matches the shortcut's
+ *   step at its index token by token, so Alt then Shift finds Alt+Shift+F1
+ *   and Shift then Alt does not. Each shortcut displays the order to press.
+ * - Every step before the last must match its shortcut step completely; the
+ *   last step only has to be the beginning of its shortcut step, so holding
+ *   Ctrl keeps Ctrl+Shift+L, and adding Shift to the hold keeps it still.
  * - A shortcut with fewer steps than the query cannot match, so committing a
  *   second step drops the chords and leaves the ribbon routes.
  */
@@ -186,17 +186,20 @@ export function removeLastKeyEntry(query: KeyQuery): KeyQuery {
   return { steps: [...query.steps.slice(0, -1), shortened] };
 }
 
-function isSameTokenSet(left: ShortcutStep, right: ShortcutStep): boolean {
+function isSameTokenSequence(left: ShortcutStep, right: ShortcutStep): boolean {
   return (
-    left.length === right.length && left.every((token) => right.includes(token))
+    left.length === right.length && left.every((token, i) => right[i] === token)
   );
 }
 
-function isTokenSubset(subset: ShortcutStep, step: ShortcutStep): boolean {
-  return subset.every((token) => step.includes(token));
+function isTokenSequencePrefix(
+  prefix: ShortcutStep,
+  step: ShortcutStep,
+): boolean {
+  return prefix.every((token, i) => step[i] === token);
 }
 
-/** Whether a shortcut's key sequence starts with the query. */
+/** Whether a shortcut's key sequence starts with the query, order included. */
 export function matchesKeyQuery(keys: ShortcutKeys, query: KeyQuery): boolean {
   if (query.steps.length > keys.length) {
     return false;
@@ -205,8 +208,8 @@ export function matchesKeyQuery(keys: ShortcutKeys, query: KeyQuery): boolean {
   return query.steps.every((queryStep, index) => {
     const shortcutStep = keys[index] ?? [];
     return index === lastIndex
-      ? isTokenSubset(queryStep, shortcutStep)
-      : isSameTokenSet(queryStep, shortcutStep);
+      ? isTokenSequencePrefix(queryStep, shortcutStep)
+      : isSameTokenSequence(queryStep, shortcutStep);
   });
 }
 
@@ -315,15 +318,16 @@ export function nextKeyOptions(
     if (step === undefined) {
       continue;
     }
-    for (const token of step) {
-      if (!current.includes(token)) {
-        available.add(token);
-      }
+    // The entered keys are an ordered prefix of every match, so the only key
+    // worth offering from this shortcut is the one that comes next.
+    const next = step[current.length];
+    if (next !== undefined) {
+      available.add(next);
     }
     if (
       current.length > 0 &&
       shortcut.keys.length > stepIndex + 1 &&
-      isSameTokenSet(current, step)
+      isSameTokenSequence(current, step)
     ) {
       canBeginNextStep = true;
     }
