@@ -127,7 +127,8 @@ export async function unprotectWorkbookBytes(
   options: UnprotectWorkbookBytesOptions,
 ): Promise<ByteOperationOutcome<UnprotectWorkbookMetric>> {
   throwIfAborted(options.signal, UNPROTECT_OPERATION, "memory");
-  if (!/\.xlsm?$/iu.test(options.input.name))
+  const inputName = options.input.name.trim();
+  if (!/\.(?:xlsx|xlsm)$/iu.test(inputName))
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_UNPROTECT_UNSUPPORTED_FILE,
       "Excel Unprotect accepts only .xlsx and .xlsm files.",
@@ -165,7 +166,7 @@ export async function unprotectWorkbookBytes(
     sheetProtectionsRemoved += result.matches;
     if (result.matches) replacePackagePart(archive, entry.name, result.xml);
   }
-  const outputName = options.outputName ?? options.input.name;
+  const outputName = options.outputName ?? inputName;
   options.onProgress?.({
     operation: UNPROTECT_OPERATION,
     stage: "writing-output",
