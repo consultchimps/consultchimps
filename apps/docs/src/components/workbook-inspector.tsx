@@ -133,6 +133,13 @@ export function useWorkbookDescription(
       active = false;
       window.clearTimeout(timer);
       controller.abort();
+      // The stored answer is dropped, not merely hidden by the key test above.
+      // It holds worksheet names, headers, and sampled cell values from
+      // someone's workbook, and every path that reaches this cleanup has
+      // invalidated it: a new workbook, a changed option, a selection cleared
+      // by a replacement the picker refused, or the page going away. A page
+      // that no longer shows a document should not still be holding it.
+      setInspected(null);
     };
   }, [file, headerRow, includeHiddenSheets, key]);
 
