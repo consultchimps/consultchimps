@@ -151,6 +151,38 @@ describe("Excel workbook unprotection", () => {
     );
   });
 
+  it("strips only the protection element, not a longer custom name", async () => {
+    // A hyphenated or dotted custom element that merely starts with the same
+    // letters is not sheetProtection and must survive.
+    const archive = await JSZip.loadAsync(workbookBytes());
+    const sheetXml = await archive
+      .file("xl/worksheets/sheet1.xml")!
+      .async("text");
+    archive.file(
+      "xl/worksheets/sheet1.xml",
+      sheetXml.replace(
+        "</worksheet>",
+        '<x:sheetProtection-extension keep="1"/><sheetProtection sheet="1"/></worksheet>',
+      ),
+    );
+    const input = await archive.generateAsync({
+      compression: "DEFLATE",
+      type: "uint8array",
+    });
+
+    const outcome = await unprotectWorkbookBytes({
+      input: { name: "custom.xlsx", bytes: input },
+    });
+
+    expect(outcome.result.metrics.sheetProtectionsRemoved).toBe(1);
+    const output = await packageText(
+      outcome.outputs[0]!.bytes,
+      "xl/worksheets/sheet1.xml",
+    );
+    expect(output).toContain("sheetProtection-extension");
+    expect(output).not.toContain("<sheetProtection ");
+  });
+
   it("reports an already-unprotected workbook without changing its contents", async () => {
     const input = workbookBytes();
     const outcome = await unprotectWorkbookBytes({

@@ -169,8 +169,13 @@ export class WorkbookPackage implements WorkbookPackageContract {
       return 0;
     }
     const namePrefix = "(?:[A-Za-z_][\\w.-]*:)?";
+    // The name must end exactly here: the next character has to open the tag's
+    // attributes, self-close it, or close it. A bare `\b` would let a longer
+    // custom name such as `sheetProtection-extension` match and be deleted,
+    // because the boundary falls before the hyphen.
+    const nameEnds = "(?=[\\s/>])";
     const pattern = new RegExp(
-      `<${namePrefix}${localName}\\b[^>]*?(?:/\\s*>|>\\s*</${namePrefix}${localName}\\s*>)`,
+      `<${namePrefix}${localName}${nameEnds}[^>]*?(?:/\\s*>|>\\s*</${namePrefix}${localName}\\s*>)`,
       "gu",
     );
     let removed = 0;
