@@ -1,5 +1,12 @@
 # @consultchimps/pptx
 
+## 0.6.5
+
+### Patch Changes
+
+- Updated dependencies [1eec990]
+  - @consultchimps/xlsx@0.17.0
+
 ## 0.6.4
 
 ### Patch Changes
