@@ -1,5 +1,23 @@
 # consultchimps
 
+## 0.12.0
+
+### Minor Changes
+
+- 1eec990: The `sheets unprotect` command now reads its own plain-language
+  result summary and refuses an output name whose extension contradicts the
+  workbook's type (an ordinary workbook named `.xlsm`, or a macro-enabled
+  workbook named `.xlsx`) before writing anything, reporting the stable
+  `XLSX_UNPROTECT_PACKAGE_TYPE_MISMATCH` reference.
+
+### Patch Changes
+
+- Updated dependencies [1eec990]
+- Updated dependencies [1eec990]
+  - @consultchimps/messages@0.6.0
+  - @consultchimps/xlsx@0.17.0
+  - @consultchimps/pptx@0.6.5
+
 ## 0.11.0
 
 ### Minor Changes
