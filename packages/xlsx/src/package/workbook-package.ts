@@ -154,6 +154,29 @@ export class WorkbookPackage implements WorkbookPackageContract {
   }
 
   /**
+   * Remove every empty, self-closing element named `localName` from a part and
+   * report how many were removed. Matches the element whatever namespace prefix
+   * it carries, so both `<sheetProtection/>` and `<x:sheetProtection/>` count.
+   * This is the L0 seam an operation reaches for instead of editing XML itself:
+   * the whole workbook/worksheet protection strip becomes one named call.
+   */
+  removeEmptyElements(partPath: string, localName: string): number {
+    const xml = this.readText(partPath);
+    if (xml === undefined) {
+      return 0;
+    }
+    let removed = 0;
+    const kept = removeElementsWhere(xml, localName, () => {
+      removed += 1;
+      return true;
+    });
+    if (removed > 0) {
+      this.setPartText(partPath, kept);
+    }
+    return removed;
+  }
+
+  /**
    * Relationships are cached under the part that declares them, not under the
    * `.rels` part that stores them, so writing a `.rels` part has to drop the
    * cache rather than one entry keyed by its own path.

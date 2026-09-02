@@ -138,6 +138,7 @@ export {
   UNDECIDED_DESCRIBE_STRUCTURES,
   UNDECIDED_MERGE_STRUCTURES,
   UNDECIDED_SPLIT_STRUCTURES,
+  UNDECIDED_UNPROTECT_STRUCTURES,
   type ContractBehavior,
   type Operation as ContractOperation,
   type Structure as ContractStructure,

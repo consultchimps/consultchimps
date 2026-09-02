@@ -112,18 +112,49 @@ export interface UnprotectWorkbookBytesOptions extends OperationControlOptions {
   outputName?: string;
 }
 
-function removeProtection(
-  xml: string,
-  tag: "sheetProtection" | "workbookProtection",
-) {
-  const expression = new RegExp(
-    `<(?:[A-Za-z_][\\w.-]*:)?${tag}\\b[^>]*(?:\\/>|>[\\s\\S]*?<\\/${tag}\\s*>)`,
-    "gu",
+/**
+ * Refuse an output name whose extension contradicts the package's declared
+ * workbook content type, before anything is written.
+ *
+ * Unprotect preserves the source package and never adds or removes a VBA
+ * project, so its outputs are whatever the input already was: a macro-enabled
+ * package or an ordinary one. Naming an ordinary package `.xlsm`, or a macro
+ * package `.xlsx`, would write a file whose contents and name disagree, which
+ * Excel opens with a corruption warning. The default output name equals the
+ * input name, so this catches an explicit rename and a mislabelled input alike.
+ * A name ending in neither extension is left to the caller: this refuses only
+ * the two forms that make a definite, contradictory claim.
+ */
+function refuseUnprotectPackageTypeMismatch(
+  declaresMacroWorkbook: boolean,
+  outputName: string,
+): void {
+  const nameExtension = /\.xlsm$/iu.test(outputName)
+    ? ".xlsm"
+    : /\.xlsx$/iu.test(outputName)
+      ? ".xlsx"
+      : undefined;
+  if (nameExtension === undefined) {
+    return;
+  }
+  const declaredExtension = declaresMacroWorkbook ? ".xlsm" : ".xlsx";
+  if (declaredExtension === nameExtension) {
+    return;
+  }
+  throw new ConsultChimpsError(
+    XLSX_ERRORS.XLSX_UNPROTECT_PACKAGE_TYPE_MISMATCH,
+    declaresMacroWorkbook
+      ? `The output name "${outputName}" ends in ".xlsx" but the workbook is macro-enabled. Name the output with an .xlsm extension, or save the workbook as an ordinary .xlsx workbook in Excel first. Writing it as it is would produce a file whose contents and name disagree.`
+      : `The output name "${outputName}" ends in ".xlsm" but the workbook is an ordinary Excel workbook with no macro project. Name the output with an .xlsx extension, or save the workbook as a macro-enabled workbook in Excel first. Writing it as it is would produce a file whose contents and name disagree.`,
+    {
+      details: {
+        declaredExtension,
+        macroEnabled: declaresMacroWorkbook,
+        nameExtension,
+        outputName,
+      },
+    },
   );
-  return {
-    xml: xml.replace(expression, ""),
-    matches: xml.match(expression)?.length ?? 0,
-  };
 }
 
 export async function unprotectWorkbookBytes(
@@ -156,11 +187,12 @@ export async function unprotectWorkbookBytes(
     );
   // The media type describes the bytes, so it follows the package's own
   // workbook content type rather than the output name: unprotect never adds or
-  // removes a VBA project, so a name cannot make an ordinary package
-  // macro-enabled or the reverse. contentTypeOverride parses
-  // [Content_Types].xml on demand, so a malformed or DOCTYPE-bearing
-  // declaration must surface as the operation's own read failure here rather
-  // than leaking a raw parser error, the same reason the split wraps it.
+  // removes a VBA project, so the bytes stay whatever the input already was.
+  // The output name has to agree with that type rather than override it, which
+  // is what `refuseUnprotectPackageTypeMismatch` enforces below.
+  // contentTypeOverride parses [Content_Types].xml on demand, so a malformed or
+  // DOCTYPE-bearing declaration must surface as the operation's own read failure
+  // here rather than leaking a raw parser error, the same reason the split wraps it.
   let declaresMacroWorkbook: boolean;
   try {
     declaresMacroWorkbook =
@@ -173,23 +205,26 @@ export async function unprotectWorkbookBytes(
       { cause: error },
     );
   }
-  const workbookResult = removeProtection(
-    await workbook.text(),
+  const outputName = options.outputName ?? inputName;
+  // The name is checked against the package before any part is rewritten, so a
+  // contradicting name costs nothing and leaves the input untouched.
+  refuseUnprotectPackageTypeMismatch(declaresMacroWorkbook, outputName);
+  // The XML edits are the package layer's to make: unprotect asks for the
+  // protection elements to be dropped by name and never touches the markup
+  // itself. Protection elements in OOXML are always empty attribute-only
+  // elements, and the seam matches a namespace prefix such as <x:sheetProtection/>.
+  const workbookProtectionsRemoved = archive.removeEmptyElements(
+    "xl/workbook.xml",
     "workbookProtection",
   );
-  if (workbookResult.matches)
-    archive.setPartText("xl/workbook.xml", workbookResult.xml);
   let sheetProtectionsRemoved = 0;
   for (const partPath of archive.partPaths()) {
     if (!/^xl\/worksheets\/[^/]+\.xml$/iu.test(partPath)) continue;
-    const result = removeProtection(
-      await archive.part(partPath)!.text(),
+    sheetProtectionsRemoved += archive.removeEmptyElements(
+      partPath,
       "sheetProtection",
     );
-    sheetProtectionsRemoved += result.matches;
-    if (result.matches) archive.setPartText(partPath, result.xml);
   }
-  const outputName = options.outputName ?? inputName;
   const mediaType = declaresMacroWorkbook
     ? MACRO_WORKBOOK_MEDIA_TYPE
     : WORKBOOK_MEDIA_TYPE;
@@ -207,7 +242,7 @@ export async function unprotectWorkbookBytes(
       warnings: [],
       metrics: {
         sheetProtectionsRemoved,
-        workbookProtectionsRemoved: workbookResult.matches,
+        workbookProtectionsRemoved,
       },
     },
     outputs: [

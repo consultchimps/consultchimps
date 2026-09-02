@@ -31,6 +31,16 @@ export interface WorkbookPackage {
   setPartText(path: string, xml: string): void;
   setPartBytes(path: string, bytes: Uint8Array): void;
   removePart(path: string): void;
+  /**
+   * Remove every empty, self-closing element with the given local name from a
+   * part, and report how many were removed. The local name matches whatever
+   * namespace prefix an element carries, so `<sheetProtection/>` and
+   * `<x:sheetProtection/>` are both removed. Editing the markup is L0 work: an
+   * operation asks for the change by name and never touches the XML itself.
+   * Returns 0 when the part does not exist or holds no matching element, and
+   * rewrites the part only when at least one was removed.
+   */
+  removeEmptyElements(partPath: string, localName: string): number;
   /** Read the relationships part for a given part path (or the package root). */
   relationships(forPartPath?: string): Promise<readonly RelationshipEntry[]>;
   removeRelationship(forPartPath: string | undefined, id: string): void;

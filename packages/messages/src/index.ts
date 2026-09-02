@@ -376,6 +376,35 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
       vocabulary.spreadsheetOptionsReference,
     ],
   },
+  // Unprotect rewrites a copy of the workbook with the protection removed and
+  // changes nothing else. Its two metrics carry the whole story, including the
+  // case where there was nothing to remove: the workbook was already open.
+  "sheets.unprotect": {
+    title: "Your Excel workbook is unprotected.",
+    summary: (result) => {
+      const sheets = metric(result, "sheetProtectionsRemoved");
+      const workbook = metric(result, "workbookProtectionsRemoved");
+      const lines: string[] = [];
+      if (sheets === 0 && workbook === 0) {
+        lines.push(
+          "ConsultChimps found no worksheet or workbook-structure protection to remove, so the new workbook is a copy of your file with nothing to unlock.",
+        );
+      } else {
+        lines.push(
+          `ConsultChimps removed protection from ${quantity(sheets, "worksheet")} and ${quantity(workbook, "workbook-structure lock")}.`,
+        );
+      }
+      lines.push(
+        "Formulas, formatting, hidden worksheets, and any macros were carried across unchanged.",
+        "Your original Excel workbook was not changed.",
+      );
+      return lines;
+    },
+    nextSteps: (vocabulary) => [
+      `Open the new Excel workbook ${vocabulary.artifactListReference} and confirm that you can edit the worksheets and workbook structure.`,
+      "This removes ordinary worksheet and workbook-structure protection only; a workbook encrypted to require a password to open is not affected.",
+    ],
+  },
 };
 
 const metricLabels: Readonly<Record<string, string>> = {
@@ -401,6 +430,7 @@ const metricLabels: Readonly<Record<string, string>> = {
   replacements: "Placeholder replacements made",
   skippedRows: "Rows skipped",
   rowsDeleted: "Rows deleted across output workbooks",
+  sheetProtectionsRemoved: "Worksheet protections removed",
   sheetsCopiedUnchanged: "Worksheets copied without filtering",
   sheetsFiltered: "Worksheets filtered",
   suggestedColumns: "Canonical columns proposed in the drafted mapping",
@@ -412,6 +442,7 @@ const metricLabels: Readonly<Record<string, string>> = {
   formulaCellsWithoutCachedValues: "Formula cells missing cached values",
   valuesOnly: "Values-only mode (1 enabled, 0 disabled)",
   warnings: "Warnings reported",
+  workbookProtectionsRemoved: "Workbook-structure protections removed",
   worksheets: "Worksheets described",
 };
 
@@ -421,7 +452,10 @@ function artifactType(artifact: Artifact): string {
   }
   if (
     artifact.mediaType ===
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    // A macro-enabled .xlsm output, which the unprotect and merge operations
+    // can produce, is still an Excel workbook to a reader.
+    artifact.mediaType === "application/vnd.ms-excel.sheet.macroEnabled.12"
   ) {
     return "Excel workbook";
   }

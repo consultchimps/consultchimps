@@ -16,6 +16,7 @@ import {
   UNDECIDED_DESCRIBE_STRUCTURES,
   UNDECIDED_MERGE_STRUCTURES,
   UNDECIDED_SPLIT_STRUCTURES,
+  UNDECIDED_UNPROTECT_STRUCTURES,
   type Operation,
   type Structure,
 } from "../src/contract.js";
@@ -53,6 +54,13 @@ const EXPECTED_MISSING_FOR_MERGE: readonly Structure[] = ["external-links"];
  * explained in UNDECIDED_DESCRIBE_STRUCTURES.
  */
 const EXPECTED_MISSING_FOR_DESCRIBE: readonly Structure[] = ["external-links"];
+
+/**
+ * The unprotect cells still owed a decision. Unprotect preserves everything the
+ * corpus can exercise; the only absence is the structure the generator cannot
+ * build, explained in UNDECIDED_UNPROTECT_STRUCTURES.
+ */
+const EXPECTED_MISSING_FOR_UNPROTECT: readonly Structure[] = ["external-links"];
 
 /** Operations with no column yet; each is wholly undeclared. */
 const UNDECLARED_OPERATIONS: readonly Operation[] = ["consolidate", "values"];
@@ -158,6 +166,37 @@ describe("contract: completeness", () => {
         continue;
       }
       expect(declared[structure], `describe.${structure}`).toBe("preserve");
+    }
+  });
+
+  it("owes unprotect exactly the structures recorded as undecided", () => {
+    expect([...undeclaredStructures("unprotect")].sort()).toEqual(
+      [...EXPECTED_MISSING_FOR_UNPROTECT].sort(),
+    );
+  });
+
+  it("explains every missing unprotect cell", () => {
+    expect(Object.keys(UNDECIDED_UNPROTECT_STRUCTURES).sort()).toEqual(
+      [...EXPECTED_MISSING_FOR_UNPROTECT].sort(),
+    );
+    for (const reason of Object.values(UNDECIDED_UNPROTECT_STRUCTURES)) {
+      expect(reason.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("declares unprotect as preserve for every structure it can exercise", () => {
+    const declared = CONTRACT.unprotect;
+    expect(Object.keys(declared)).toHaveLength(
+      TRACKED_STRUCTURES.length - EXPECTED_MISSING_FOR_UNPROTECT.length,
+    );
+    // Unprotect removes only the two protection elements, neither of which is a
+    // tracked structure, so every declared cell is preserve and no other
+    // behavior is representable here.
+    for (const structure of TRACKED_STRUCTURES) {
+      if (EXPECTED_MISSING_FOR_UNPROTECT.includes(structure)) {
+        continue;
+      }
+      expect(declared[structure], `unprotect.${structure}`).toBe("preserve");
     }
   });
 

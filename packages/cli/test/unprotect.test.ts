@@ -47,6 +47,25 @@ async function protectedWorkbook(): Promise<Uint8Array> {
   return archive.generateAsync({ compression: "DEFLATE", type: "uint8array" });
 }
 
+async function macroProtectedWorkbook(): Promise<Uint8Array> {
+  const archive = await JSZip.loadAsync(await protectedWorkbook());
+  archive.file("xl/vbaProject.bin", new Uint8Array([0xd0, 0xcf, 0x11, 0xe0]));
+  const contentTypes = await archive.file("[Content_Types].xml")!.async("text");
+  archive.file(
+    "[Content_Types].xml",
+    contentTypes
+      .replace(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+        "application/vnd.ms-excel.sheet.macroEnabled.main+xml",
+      )
+      .replace(
+        "</Types>",
+        '<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/></Types>',
+      ),
+  );
+  return archive.generateAsync({ compression: "DEFLATE", type: "uint8array" });
+}
+
 async function runCli(args: string[]): Promise<{
   stderr: string;
   stdout: string;
@@ -101,6 +120,42 @@ describe("built Excel unprotect command", () => {
     expect(
       await outputArchive.file("xl/worksheets/sheet1.xml")!.async("text"),
     ).not.toContain("sheetProtection");
+  });
+
+  it("refuses an .xlsm output name for an ordinary package", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-cli-"));
+    temporaryDirectories.push(directory);
+    const input = path.join(directory, "protected.xlsx");
+    const output = path.join(directory, "protected.xlsm");
+    const source = await protectedWorkbook();
+    await writeFile(input, source);
+
+    await expect(
+      runCli(["--json", "sheets", "unprotect", input, "-o", output]),
+    ).rejects.toMatchObject({
+      code: 1,
+      stdout: expect.stringContaining("XLSX_UNPROTECT_PACKAGE_TYPE_MISMATCH"),
+    });
+    // The refusal lands before writing, so the source is untouched and no
+    // mislabelled output is left behind.
+    expect(new Uint8Array(await readFile(input))).toEqual(source);
+    await expect(readFile(output)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses an .xlsx output name for a macro-enabled package", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-cli-"));
+    temporaryDirectories.push(directory);
+    const input = path.join(directory, "macros.xlsm");
+    const output = path.join(directory, "macros.xlsx");
+    await writeFile(input, await macroProtectedWorkbook());
+
+    await expect(
+      runCli(["--json", "sheets", "unprotect", input, "-o", output]),
+    ).rejects.toMatchObject({
+      code: 1,
+      stdout: expect.stringContaining("XLSX_UNPROTECT_PACKAGE_TYPE_MISMATCH"),
+    });
+    await expect(readFile(output)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("returns a stable error for a non-OOXML input", async () => {
