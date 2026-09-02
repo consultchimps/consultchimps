@@ -154,6 +154,25 @@ export async function unprotectWorkbookBytes(
       XLSX_ERRORS.XLSX_UNPROTECT_UNSUPPORTED_FILE,
       "This file is not a valid OOXML Excel workbook. Encrypted or password-required Office files are not supported.",
     );
+  // The media type describes the bytes, so it follows the package's own
+  // workbook content type rather than the output name: unprotect never adds or
+  // removes a VBA project, so a name cannot make an ordinary package
+  // macro-enabled or the reverse. contentTypeOverride parses
+  // [Content_Types].xml on demand, so a malformed or DOCTYPE-bearing
+  // declaration must surface as the operation's own read failure here rather
+  // than leaking a raw parser error, the same reason the split wraps it.
+  let declaresMacroWorkbook: boolean;
+  try {
+    declaresMacroWorkbook =
+      archive.contentTypeOverride(WORKBOOK_MAIN_PART)?.trim() ===
+      MACRO_WORKBOOK_MAIN_CONTENT_TYPE;
+  } catch (error) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_UNPROTECT_UNSUPPORTED_FILE,
+      "This file is not a valid OOXML Excel workbook. Encrypted or password-required Office files are not supported.",
+      { cause: error },
+    );
+  }
   const workbookResult = removeProtection(
     await workbook.text(),
     "workbookProtection",
@@ -171,15 +190,9 @@ export async function unprotectWorkbookBytes(
     if (result.matches) archive.setPartText(partPath, result.xml);
   }
   const outputName = options.outputName ?? inputName;
-  // The media type describes the bytes, so it follows the package's own
-  // workbook content type rather than the output name: unprotect never adds or
-  // removes a VBA project, so a name cannot make an ordinary package
-  // macro-enabled or the reverse.
-  const mediaType =
-    archive.contentTypeOverride(WORKBOOK_MAIN_PART)?.trim() ===
-    MACRO_WORKBOOK_MAIN_CONTENT_TYPE
-      ? MACRO_WORKBOOK_MEDIA_TYPE
-      : WORKBOOK_MEDIA_TYPE;
+  const mediaType = declaresMacroWorkbook
+    ? MACRO_WORKBOOK_MEDIA_TYPE
+    : WORKBOOK_MEDIA_TYPE;
   options.onProgress?.({
     operation: UNPROTECT_OPERATION,
     stage: "writing-output",

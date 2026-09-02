@@ -221,4 +221,20 @@ describe("unprotect output media types", () => {
     expect(outcome.outputs[0]!.mediaType).toBe(MACRO_MEDIA_TYPE);
     expect(outcome.result.artifacts[0]!.mediaType).toBe(MACRO_MEDIA_TYPE);
   });
+
+  it("surfaces a malformed content-type declaration as a read failure", async () => {
+    // The content-type lookup parses [Content_Types].xml on demand, so a
+    // broken declaration must fail as the operation's own error, not a raw
+    // parser throw.
+    const archive = await JSZip.loadAsync(await protectedWorkbook());
+    archive.file("[Content_Types].xml", "<Types><not-closed>");
+    const bytes = await archive.generateAsync({ type: "uint8array" });
+    await expect(
+      unprotectWorkbookBytes({ input: { name: "broken.xlsx", bytes } }),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        isConsultChimpsError(error) &&
+        error.code === "XLSX_UNPROTECT_UNSUPPORTED_FILE",
+    );
+  });
 });
