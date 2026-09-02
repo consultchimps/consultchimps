@@ -1147,13 +1147,17 @@ export function ExcelConsolidateTool() {
     () => readMappingSelection(mappingFile),
     [mappingFile],
   );
-  // A mapping the run may not quietly ignore: a document that was added and
-  // cannot be read, and equally one still being read. The selection is cleared
-  // the instant a pick starts, so without the reading test a large or
-  // cloud-backed mapping leaves Run enabled over an empty mapping for as long
-  // as the read takes, and the visitor gets an unmapped table.
+  // A mapping the run may not quietly ignore: one still being read, one whose
+  // pick was rejected (a wrong file type, or a cloud-backed document whose read
+  // failed, which leaves a message but no file), and one that was read but did
+  // not validate. The selection is cleared the instant a pick starts, so
+  // without these tests a slow, unreadable, or invalid mapping leaves Run
+  // enabled over an empty mapping and the visitor gets an unmapped table. The
+  // visitor clears the attempt to proceed with no mapping.
   const mappingUnusable =
-    mappingSelection.reading || (mappingFile !== null && mapping === null);
+    mappingSelection.reading ||
+    mappingSelection.rejected !== null ||
+    (mappingFile !== null && mapping === null);
 
   // A draft is evidence about one list of workbooks read one way. Adding,
   // removing, or reordering them, or changing whether hidden worksheets are

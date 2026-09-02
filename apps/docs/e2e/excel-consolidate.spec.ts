@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
   createMappingUpload,
+  createTextUpload,
   createWorkbookUpload,
   expectWorkbookDownload,
   readTextDownload,
@@ -278,6 +279,31 @@ test.describe("/tools/excel-consolidate", () => {
 
     await page.getByTestId("mapping-remove").click();
     await expect(page.getByTestId("mapping-error")).toHaveCount(0);
+    await expect(page.getByTestId("run-button")).toBeEnabled();
+  });
+
+  test("holds Run when a chosen mapping is rejected, leaving no file", async ({
+    page,
+  }) => {
+    await page.goto("/tools/excel-consolidate");
+    await workbookInput(page).setInputFiles(await driftedReviewLogs());
+    await expect(page.getByTestId("run-button")).toBeEnabled();
+
+    // A rejected pick (here a wrong file type; a cloud-backed read failure
+    // ends the same way) leaves a message but no file. Run must not fall back
+    // to consolidating without the mapping the visitor tried to apply.
+    await mappingInput(page).setInputFiles(createTextUpload("mapping.txt"));
+    await expect(page.getByTestId("mapping-rejected")).toBeVisible();
+    await expect(page.getByTestId("run-button")).toBeDisabled();
+
+    // A valid mapping clears the rejection and frees the run.
+    await mappingInput(page).setInputFiles(
+      createMappingUpload("mapping.json", {
+        version: 1,
+        columns: [{ name: "Failed Checks", aliases: ["Failed_Checks"] }],
+      }),
+    );
+    await expect(page.getByTestId("mapping-rejected")).toHaveCount(0);
     await expect(page.getByTestId("run-button")).toBeEnabled();
   });
 
