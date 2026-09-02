@@ -264,6 +264,36 @@ other reader here; naming a worksheet the workbook does not have is refused with
 `describeWorkbookBytes` is the byte-level twin and produces a structurally
 identical description for the same workbook.
 
+## Remove worksheet and workbook protection
+
+`unprotectWorkbook` removes ordinary worksheet (`sheetProtection`) and
+workbook-structure (`workbookProtection`) protection from an `.xlsx` or `.xlsm`
+workbook without needing the protection password, writing a new file and leaving
+the source untouched. It edits a copy of the package, so formulas, formatting,
+hidden worksheets, tables, and any macro project travel across unchanged. It is
+not password cracking: a workbook encrypted to require a password to open is not
+supported and is reported with `XLSX_UNPROTECT_UNSUPPORTED_FILE`.
+
+```ts
+import { unprotectWorkbook } from "@consultchimps/xlsx";
+
+const result = await unprotectWorkbook({
+  input: "protected.xlsx",
+  output: "unprotected.xlsx",
+});
+
+console.log(result.metrics.sheetProtectionsRemoved); // e.g. 3
+console.log(result.metrics.workbookProtectionsRemoved); // e.g. 1
+```
+
+The output name has to agree with the workbook's declared type: an ordinary
+workbook keeps `.xlsx` and a macro-enabled workbook keeps `.xlsm`. Naming the
+output the other way is refused with `XLSX_UNPROTECT_PACKAGE_TYPE_MISMATCH`
+before anything is written, because a package whose contents and name disagree
+is one Excel opens with a corruption warning. `unprotectWorkbookBytes` is the
+byte-level twin, taking and returning in-memory bytes for callers with no
+filesystem.
+
 ## Read what an Excel operation promises
 
 `@consultchimps/xlsx` exports its conformance contract: for every workbook

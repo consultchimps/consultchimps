@@ -50,6 +50,12 @@ const BROWSER_TOOLS = [
     heading: "Inspect an Excel workbook",
     card: "Inspect workbooks",
   },
+  {
+    tab: "Unprotect Excel",
+    route: "/tools/excel-unprotect",
+    heading: "Unprotect an Excel workbook",
+    card: "Unprotect Excel workbooks",
+  },
 ] as const;
 
 test.describe("/tools", () => {
@@ -172,6 +178,11 @@ test.describe("tool guides", () => {
       url: "/docs/tools/workbook-inspect",
       tool: "/tools/excel-inspect",
       label: "Inspect workbook",
+    },
+    {
+      url: "/docs/tools/excel-unprotect",
+      tool: "/tools/excel-unprotect",
+      label: "Unprotect Excel",
     },
   ] as const;
 
