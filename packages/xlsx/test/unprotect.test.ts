@@ -151,6 +151,49 @@ describe("Excel workbook unprotection", () => {
     );
   });
 
+  it("strips an expanded protection element that holds only a comment", async () => {
+    // Whitespace, comments, and processing instructions are not content, so an
+    // otherwise empty protection element serialized with one inside is removed.
+    const archive = await JSZip.loadAsync(workbookBytes());
+    const workbookXml = await archive.file("xl/workbook.xml")!.async("text");
+    archive.file(
+      "xl/workbook.xml",
+      workbookXml.replace(
+        "</workbook>",
+        '<workbookProtection lockStructure="1"><!-- locked --></workbookProtection></workbook>',
+      ),
+    );
+    const sheetXml = await archive
+      .file("xl/worksheets/sheet1.xml")!
+      .async("text");
+    archive.file(
+      "xl/worksheets/sheet1.xml",
+      sheetXml.replace(
+        "</worksheet>",
+        '<sheetProtection sheet="1">\n  <!-- protected --></sheetProtection></worksheet>',
+      ),
+    );
+    const input = await archive.generateAsync({
+      compression: "DEFLATE",
+      type: "uint8array",
+    });
+
+    const outcome = await unprotectWorkbookBytes({
+      input: { name: "commented.xlsx", bytes: input },
+    });
+
+    expect(outcome.result.metrics).toEqual({
+      sheetProtectionsRemoved: 1,
+      workbookProtectionsRemoved: 1,
+    });
+    expect(
+      await packageText(outcome.outputs[0]!.bytes, "xl/workbook.xml"),
+    ).not.toContain("workbookProtection");
+    expect(
+      await packageText(outcome.outputs[0]!.bytes, "xl/worksheets/sheet1.xml"),
+    ).not.toContain("sheetProtection");
+  });
+
   it("strips only the protection element, not a longer custom name", async () => {
     // A hyphenated or dotted custom element that merely starts with the same
     // letters is not sheetProtection and must survive.

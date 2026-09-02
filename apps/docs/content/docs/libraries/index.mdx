@@ -324,8 +324,11 @@ these cells at a caller who chose one:
   way this table's `fix` cell describes.
 
 A structure with no entry for an operation is one the package has not decided
-yet; `UNDECIDED_SPLIT_STRUCTURES`, `UNDECIDED_MERGE_STRUCTURES`, and
-`UNDECIDED_DESCRIBE_STRUCTURES` record why each one is still open.
+yet; `UNDECIDED_SPLIT_STRUCTURES`, `UNDECIDED_MERGE_STRUCTURES`,
+`UNDECIDED_DESCRIBE_STRUCTURES`, and `UNDECIDED_UNPROTECT_STRUCTURES` record why
+each one is still open. `CONTRACT.unprotect`, for example, declares every
+tracked structure `preserve` except `external-links`, which stays open because
+no corpus fixture can exercise it yet.
 
 A cell states what an operation ordinarily does, not what a particular run will
 do: it carries no options, no input ordering, and no mode, so a behavior that
