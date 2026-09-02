@@ -175,3 +175,28 @@ describe("Excel workbook unprotection", () => {
     });
   });
 });
+
+describe("unprotect output media types", () => {
+  it("labels an .xlsm output with the macro-enabled media type", async () => {
+    const outcome = await unprotectWorkbookBytes({
+      input: { name: "macros.xlsm", bytes: await protectedWorkbook() },
+    });
+    expect(outcome.outputs[0]!.mediaType).toBe(
+      "application/vnd.ms-excel.sheet.macroEnabled.12",
+    );
+    expect(outcome.result.artifacts[0]!.mediaType).toBe(
+      "application/vnd.ms-excel.sheet.macroEnabled.12",
+    );
+  });
+
+  it("follows a requested output name rather than the input name", async () => {
+    const outcome = await unprotectWorkbookBytes({
+      input: { name: "macros.xlsm", bytes: await protectedWorkbook() },
+      outputName: "macros-open.xlsx",
+    });
+    expect(outcome.outputs[0]!.name).toBe("macros-open.xlsx");
+    expect(outcome.outputs[0]!.mediaType).toBe(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+  });
+});

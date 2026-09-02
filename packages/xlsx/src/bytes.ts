@@ -167,6 +167,11 @@ export async function unprotectWorkbookBytes(
     if (result.matches) archive.setPartText(partPath, result.xml);
   }
   const outputName = options.outputName ?? inputName;
+  // The output keeps the macro-enabled media type when its name asks for it,
+  // the same rule the split's preserved outputs follow.
+  const mediaType = isMacroWorkbookName(outputName)
+    ? MACRO_WORKBOOK_MEDIA_TYPE
+    : WORKBOOK_MEDIA_TYPE;
   options.onProgress?.({
     operation: UNPROTECT_OPERATION,
     stage: "writing-output",
@@ -177,9 +182,7 @@ export async function unprotectWorkbookBytes(
   return {
     result: {
       operation: UNPROTECT_OPERATION,
-      artifacts: [
-        { kind: "file", mediaType: WORKBOOK_MEDIA_TYPE, path: outputName },
-      ],
+      artifacts: [{ kind: "file", mediaType, path: outputName }],
       warnings: [],
       metrics: {
         sheetProtectionsRemoved,
@@ -190,7 +193,7 @@ export async function unprotectWorkbookBytes(
       {
         name: outputName,
         bytes: await archive.save(),
-        mediaType: WORKBOOK_MEDIA_TYPE,
+        mediaType,
       },
     ],
   };

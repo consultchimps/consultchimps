@@ -64,21 +64,6 @@ export function isBrowserTool(tool: ConsultTool): tool is BrowserTool {
 
 export const TOOLS: readonly ConsultTool[] = [
   {
-    slug: "excel-unprotect",
-    category: "Excel",
-    title: "Unprotect Excel workbooks",
-    tabLabel: "Unprotect Excel",
-    description:
-      "Remove ordinary worksheet and workbook-structure protection locally, without uploading or changing the original file.",
-    docHref: "/docs/tools/excel-unprotect",
-    surfaces: {
-      cli: "works",
-      library: "works",
-      browser: { status: "works", href: "/tools/excel-unprotect" },
-    },
-    icon: ShieldOff,
-  },
-  {
     slug: "spreadsheet-consolidate",
     category: "Excel",
     title: "Consolidate spreadsheets",
@@ -197,6 +182,21 @@ export const TOOLS: readonly ConsultTool[] = [
       browser: { status: "works", href: "/tools/excel-inspect" },
     },
     icon: ScanSearch,
+  },
+  {
+    slug: "excel-unprotect",
+    category: "Excel",
+    title: "Unprotect Excel workbooks",
+    tabLabel: "Unprotect Excel",
+    description:
+      "Remove ordinary worksheet and workbook-structure protection locally, without uploading or changing the original file",
+    docHref: "/docs/tools/excel-unprotect",
+    surfaces: {
+      cli: "works",
+      library: "works",
+      browser: { status: "works", href: "/tools/excel-unprotect" },
+    },
+    icon: ShieldOff,
   },
 ] as const;
 
