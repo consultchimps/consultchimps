@@ -1,4 +1,4 @@
-import { BROWSER_TOOLS, isBrowserTool, TOOLS } from "@/lib/tools";
+import { BROWSER_TOOL_GROUPS, isBrowserTool, TOOLS } from "@/lib/tools";
 import { ArrowRight, BookOpen } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -29,28 +29,56 @@ export default function Page() {
           tool differs
         </p>
 
-        <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {BROWSER_TOOLS.map(
-            ({ slug, title, description, surfaces, icon: Icon }) => (
-              <Link
-                className="tool-card"
-                href={surfaces.browser.href}
-                key={slug}
-              >
+        <div className="mt-10 space-y-14">
+          {BROWSER_TOOL_GROUPS.map(({ category, tools }) => (
+            <section
+              aria-labelledby={`${category}-tools-heading`}
+              key={category}
+            >
+              <div className="mb-5 flex items-end justify-between gap-4">
                 <div>
-                  <span className="tool-card__icon">
-                    <Icon className="size-5" />
-                  </span>
-                  <h2>{title}</h2>
-                  <p>{description}</p>
-                  <span className="tool-card__link">
-                    Open the tool
-                    <ArrowRight className="size-3.5" />
-                  </span>
+                  <p className="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-fd-primary">
+                    Document type
+                  </p>
+                  <h2
+                    className="mt-2 text-2xl font-bold tracking-[-0.03em]"
+                    id={`${category}-tools-heading`}
+                  >
+                    {category} tools
+                  </h2>
                 </div>
-              </Link>
-            ),
-          )}
+                <p className="text-sm text-fd-muted-foreground">
+                  {tools.length} {tools.length === 1 ? "tool" : "tools"}
+                </p>
+              </div>
+              <div
+                className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3"
+                data-testid={`${category.toLowerCase()}-tool-group`}
+              >
+                {tools.map(
+                  ({ slug, title, description, surfaces, icon: Icon }) => (
+                    <Link
+                      className="tool-card"
+                      href={surfaces.browser.href}
+                      key={slug}
+                    >
+                      <div>
+                        <span className="tool-card__icon">
+                          <Icon className="size-5" />
+                        </span>
+                        <h3>{title}</h3>
+                        <p>{description}</p>
+                        <span className="tool-card__link">
+                          Open the tool
+                          <ArrowRight className="size-3.5" />
+                        </span>
+                      </div>
+                    </Link>
+                  ),
+                )}
+              </div>
+            </section>
+          ))}
         </div>
 
         {/*

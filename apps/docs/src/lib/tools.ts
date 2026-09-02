@@ -7,6 +7,7 @@ import {
   ScanSearch,
   SplitSquareVertical,
   TableProperties,
+  ShieldOff,
   type LucideIcon,
 } from "lucide-react";
 
@@ -21,6 +22,8 @@ import {
  */
 
 export type SurfaceStatus = "works" | "planned" | "none";
+
+export type ToolCategory = "Excel" | "PDF" | "PowerPoint";
 
 /**
  * The browser surface carries its route only when it works, so a card, tab,
@@ -38,6 +41,7 @@ export interface ToolSurfaces {
 
 export interface ConsultTool {
   readonly slug: string;
+  readonly category: ToolCategory;
   readonly title: string;
   /** Short name shown in the online-tools sub-bar and "Try … online" buttons. */
   readonly tabLabel: string;
@@ -61,6 +65,7 @@ export function isBrowserTool(tool: ConsultTool): tool is BrowserTool {
 export const TOOLS: readonly ConsultTool[] = [
   {
     slug: "spreadsheet-consolidate",
+    category: "Excel",
     title: "Consolidate spreadsheets",
     tabLabel: "Consolidate",
     description:
@@ -75,6 +80,7 @@ export const TOOLS: readonly ConsultTool[] = [
   },
   {
     slug: "workbook-merge",
+    category: "Excel",
     title: "Merge workbook tabs",
     tabLabel: "Merge tabs",
     description:
@@ -89,6 +95,7 @@ export const TOOLS: readonly ConsultTool[] = [
   },
   {
     slug: "spreadsheet-split",
+    category: "Excel",
     title: "Split spreadsheets",
     tabLabel: "Split Excel",
     description:
@@ -103,6 +110,7 @@ export const TOOLS: readonly ConsultTool[] = [
   },
   {
     slug: "powerpoint-populate",
+    category: "PowerPoint",
     title: "Populate PowerPoint templates",
     tabLabel: "PowerPoint",
     description:
@@ -117,6 +125,7 @@ export const TOOLS: readonly ConsultTool[] = [
   },
   {
     slug: "pdf-split",
+    category: "PDF",
     title: "Split PDF pages",
     tabLabel: "Split PDF",
     description:
@@ -131,6 +140,7 @@ export const TOOLS: readonly ConsultTool[] = [
   },
   {
     slug: "pdf-merge",
+    category: "PDF",
     title: "Merge PDF packs",
     tabLabel: "Merge PDFs",
     description:
@@ -145,6 +155,7 @@ export const TOOLS: readonly ConsultTool[] = [
   },
   {
     slug: "powerpoint-inspect-template",
+    category: "PowerPoint",
     title: "Inspect PowerPoint templates",
     tabLabel: "Inspect template",
     description:
@@ -159,6 +170,7 @@ export const TOOLS: readonly ConsultTool[] = [
   },
   {
     slug: "workbook-inspect",
+    category: "Excel",
     title: "Inspect workbooks",
     tabLabel: "Inspect workbook",
     description:
@@ -171,10 +183,47 @@ export const TOOLS: readonly ConsultTool[] = [
     },
     icon: ScanSearch,
   },
+  {
+    slug: "excel-unprotect",
+    category: "Excel",
+    title: "Unprotect Excel workbooks",
+    tabLabel: "Unprotect Excel",
+    description:
+      "Remove ordinary worksheet and workbook-structure protection locally, without uploading or changing the original file",
+    docHref: "/docs/tools/excel-unprotect",
+    surfaces: {
+      cli: "works",
+      library: "works",
+      browser: { status: "works", href: "/tools/excel-unprotect" },
+    },
+    icon: ShieldOff,
+  },
 ] as const;
 
 export const BROWSER_TOOLS: readonly BrowserTool[] =
   TOOLS.filter(isBrowserTool);
+
+export interface BrowserToolGroup {
+  readonly category: ToolCategory;
+  readonly tools: readonly BrowserTool[];
+}
+
+const TOOL_CATEGORY_ORDER: readonly ToolCategory[] = [
+  "Excel",
+  "PDF",
+  "PowerPoint",
+];
+
+/**
+ * Groups the working browser surfaces without maintaining a second list of
+ * tools. The explicit order keeps the catalog predictable as registry entries
+ * are added in release order.
+ */
+export const BROWSER_TOOL_GROUPS: readonly BrowserToolGroup[] =
+  TOOL_CATEGORY_ORDER.map((category) => ({
+    category,
+    tools: BROWSER_TOOLS.filter((tool) => tool.category === category),
+  })).filter(({ tools }) => tools.length > 0);
 
 /**
  * Find the tool whose working browser surface a docs page should offer.

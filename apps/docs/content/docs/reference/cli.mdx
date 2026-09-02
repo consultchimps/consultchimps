@@ -253,6 +253,22 @@ result becomes a formatted blank cell and produces a warning. Consolidation and
 compact data-only split outputs already contain values, so the option is
 explicit but does not otherwise change those files.
 
+## Excel unprotection
+
+```text
+consultchimps sheets unprotect [options] <input>
+
+Required:
+  -o, --output <path>       output .xlsx or .xlsm workbook
+
+Options:
+  -f, --force               replace an existing output workbook
+```
+
+The command removes ordinary worksheet and workbook-structure protection without
+needing the protection password. It never changes the source file. Office files
+encrypted or password-required to open are not supported.
+
 ## PDF splitting
 
 ```text

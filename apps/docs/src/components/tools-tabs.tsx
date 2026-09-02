@@ -1,6 +1,6 @@
 "use client";
 
-import { BROWSER_TOOLS } from "@/lib/tools";
+import { BROWSER_TOOL_GROUPS } from "@/lib/tools";
 import { LayoutGrid } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -31,20 +31,32 @@ export function ToolsTabs() {
           <LayoutGrid className="size-4" aria-hidden="true" />
           All tools
         </Link>
-        {BROWSER_TOOLS.map(({ slug, tabLabel, surfaces, icon: Icon }) => (
-          <Link
-            className={
-              baseTabClass +
-              (pathname === surfaces.browser.href
-                ? " border-fd-primary text-fd-foreground"
-                : " border-transparent text-fd-muted-foreground hover:text-fd-foreground")
-            }
-            href={surfaces.browser.href}
-            key={slug}
+        {BROWSER_TOOL_GROUPS.map(({ category, tools }) => (
+          <div
+            aria-label={`${category} tools`}
+            className="flex shrink-0 items-center gap-1 border-l pl-2 first:border-l-0 first:pl-0"
+            key={category}
+            role="group"
           >
-            <Icon className="size-4" aria-hidden="true" />
-            {tabLabel}
-          </Link>
+            <span className="px-2 text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-fd-muted-foreground">
+              {category}
+            </span>
+            {tools.map(({ slug, tabLabel, surfaces, icon: Icon }) => (
+              <Link
+                className={
+                  baseTabClass +
+                  (pathname === surfaces.browser.href
+                    ? " border-fd-primary text-fd-foreground"
+                    : " border-transparent text-fd-muted-foreground hover:text-fd-foreground")
+                }
+                href={surfaces.browser.href}
+                key={slug}
+              >
+                <Icon className="size-4" aria-hidden="true" />
+                {tabLabel}
+              </Link>
+            ))}
+          </div>
         ))}
       </div>
     </nav>

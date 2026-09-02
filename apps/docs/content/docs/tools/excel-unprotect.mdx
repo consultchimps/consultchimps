@@ -1,0 +1,24 @@
+---
+title: Unprotect an Excel workbook
+description:
+  Remove ordinary worksheet and workbook-structure protection locally from an
+  Excel workbook.
+icon: ShieldOff
+---
+
+# Excel unprotect
+
+[Use this tool in your browser](/tools/excel-unprotect). Processing stays on
+your machine; nothing is uploaded and the original workbook is not changed.
+
+The tool removes ordinary worksheet (`sheetProtection`) and workbook-structure
+(`workbookProtection`) protection from `.xlsx` and `.xlsm` OOXML workbooks
+without needing the protection password. Formulas, formatting, hidden sheets,
+metadata, relationships, and VBA content are preserved as package parts.
+
+Office files encrypted or password-required to open are not supported. This is
+not password cracking or encryption bypass.
+
+```bash
+consultchimps sheets unprotect protected.xlsx --output unprotected.xlsx
+```

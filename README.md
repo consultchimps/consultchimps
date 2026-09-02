@@ -29,6 +29,7 @@ documentation site renders its cards and tabs from;
 | Merge PDF packs               | Works | Works   | Works   |
 | Inspect PowerPoint templates  | Works | Works   | Works   |
 | Inspect workbooks             | Works | Works   | Works   |
+| Unprotect Excel workbooks     | Works | Works   | Works   |
 
 ## Packages
 

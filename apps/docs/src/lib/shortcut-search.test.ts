@@ -53,7 +53,11 @@ const NEW_LINE = shortcut("new-line", [["Alt", "Enter"]], {
   action: "Start a new line inside the same cell",
   category: "data entry",
 });
-const DATABASE = [TOGGLE_FILTERS, GROUP_ITEMS, AUTOFIT, NEW_LINE];
+const SELECT_ROW = shortcut("select-row", [["Shift", "Space"]], {
+  action: "Select the whole row",
+  category: "selection",
+});
+const DATABASE = [TOGGLE_FILTERS, GROUP_ITEMS, AUTOFIT, NEW_LINE, SELECT_ROW];
 
 describe("matchesKeyQuery", () => {
   it("matches everything while the query is empty", () => {
@@ -62,24 +66,28 @@ describe("matchesKeyQuery", () => {
     }
   });
 
-  it("keeps a chord whose step merely starts with the keys held", () => {
-    // The core of the page: one modifier narrows to the chords that contain
-    // it, rather than to the chords that are only that modifier.
-    expect(matchesKeyQuery(TOGGLE_FILTERS.keys, query(["Shift"]))).toBe(true);
-    expect(matchesKeyQuery(GROUP_ITEMS.keys, query(["Shift"]))).toBe(true);
-    expect(matchesKeyQuery(AUTOFIT.keys, query(["Shift"]))).toBe(false);
+  it("keeps a chord whose step starts with the keys held, in order", () => {
+    // The core of the page: the first key held narrows to the chords that
+    // begin with it, rather than to every chord that contains it somewhere.
+    expect(matchesKeyQuery(TOGGLE_FILTERS.keys, query(["Ctrl"]))).toBe(true);
+    expect(matchesKeyQuery(GROUP_ITEMS.keys, query(["Alt"]))).toBe(true);
+    expect(matchesKeyQuery(SELECT_ROW.keys, query(["Shift"]))).toBe(true);
+    // Ctrl+Shift+L contains Shift, but it does not begin with it.
+    expect(matchesKeyQuery(TOGGLE_FILTERS.keys, query(["Shift"]))).toBe(false);
+    expect(matchesKeyQuery(GROUP_ITEMS.keys, query(["Shift"]))).toBe(false);
   });
 
-  it("ignores the order the keys of a chord were pressed in", () => {
-    // Shift then Alt, against a chord stored as Alt+Shift+ArrowRight.
-    expect(matchesKeyQuery(GROUP_ITEMS.keys, query(["Shift", "Alt"]))).toBe(
-      true,
-    );
+  it("follows the order the keys of a chord were pressed in", () => {
+    // Alt then Shift, the order the chord is stored and displayed in.
     expect(matchesKeyQuery(GROUP_ITEMS.keys, query(["Alt", "Shift"]))).toBe(
       true,
     );
-    // A key the chord does not hold still rules it out, whatever the order.
-    expect(matchesKeyQuery(GROUP_ITEMS.keys, query(["Shift", "Ctrl"]))).toBe(
+    // Shift then Alt is a different gesture and finds different chords.
+    expect(matchesKeyQuery(GROUP_ITEMS.keys, query(["Shift", "Alt"]))).toBe(
+      false,
+    );
+    // A key the chord does not hold rules it out as well.
+    expect(matchesKeyQuery(GROUP_ITEMS.keys, query(["Alt", "Ctrl"]))).toBe(
       false,
     );
   });
@@ -119,8 +127,8 @@ describe("matchesKeyQuery", () => {
   });
 
   it("requires a finished step to match as a whole", () => {
-    // Alt+Shift is a subset of the first step of nothing here, and as a
-    // finished step it must equal the step it sits against.
+    // Alt+Shift begins the first step of nothing here, and as a finished
+    // step it must equal the step it sits against.
     expect(matchesKeyQuery(AUTOFIT.keys, query(["Alt", "Shift"], ["H"]))).toBe(
       false,
     );
@@ -254,13 +262,14 @@ describe("groupShortcutsByCategory", () => {
   it("groups in the declared category order and drops empty categories", () => {
     const groups = groupShortcutsByCategory(DATABASE);
     expect(groups.map((group) => group.category)).toEqual([
+      "selection",
       "data entry",
       "formatting",
       "tables and filtering",
       "pivot tables",
     ]);
     expect(groups.at(0)?.shortcuts.map((entry) => entry.id)).toEqual([
-      "new-line",
+      "select-row",
     ]);
   });
 
@@ -285,21 +294,26 @@ describe("isMatchedKeyToken", () => {
 });
 
 describe("nextKeyOptions", () => {
-  it("offers the first keys of the database, modifiers in their usual order", () => {
+  it("offers the first key of each shortcut, modifiers in their usual order", () => {
     const options = nextKeyOptions(DATABASE, EMPTY_KEY_QUERY);
     expect(options.modifiers).toEqual(["Ctrl", "Shift", "Alt"]);
-    expect(options.keys).toEqual(["ArrowRight", "Enter", "L"]);
+    expect(options.keys).toEqual([]);
     expect(options.canBeginNextStep).toBe(false);
   });
 
-  it("offers only the keys that keep a result", () => {
+  it("offers only the key that comes next in a matching chord", () => {
     const matches = filterShortcuts(DATABASE, {
       keys: query(["Ctrl"]),
       words: "",
     });
     const options = nextKeyOptions(matches, query(["Ctrl"]));
     expect(options.modifiers).toEqual(["Shift"]);
-    expect(options.keys).toEqual(["L"]);
+    expect(options.keys).toEqual([]);
+    const held = filterShortcuts(DATABASE, {
+      keys: query(["Ctrl", "Shift"]),
+      words: "",
+    });
+    expect(nextKeyOptions(held, query(["Ctrl", "Shift"])).keys).toEqual(["L"]);
   });
 
   it("reports when a finished step could be followed by another", () => {

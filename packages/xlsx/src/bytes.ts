@@ -24,6 +24,11 @@ import {
 
 import { XLSX_ERRORS } from "./errors.js";
 import {
+  MACRO_WORKBOOK_MAIN_CONTENT_TYPE,
+  WORKBOOK_MAIN_PART,
+  WorkbookPackage,
+} from "./package/index.js";
+import {
   describeWorkbookModel,
   loadWorkbookModelForDescribe,
   MAX_COLUMN_SAMPLE_VALUES,
@@ -98,6 +103,122 @@ import {
   type WorkbookNamedRange,
   type WorksheetRecords,
 } from "./shared.js";
+
+export const UNPROTECT_OPERATION = "sheets.unprotect";
+export type UnprotectWorkbookMetric =
+  "sheetProtectionsRemoved" | "workbookProtectionsRemoved";
+export interface UnprotectWorkbookBytesOptions extends OperationControlOptions {
+  input: WorkbookInputBytes;
+  outputName?: string;
+}
+
+function removeProtection(
+  xml: string,
+  tag: "sheetProtection" | "workbookProtection",
+) {
+  const expression = new RegExp(
+    `<(?:[A-Za-z_][\\w.-]*:)?${tag}\\b[^>]*(?:\\/>|>[\\s\\S]*?<\\/${tag}\\s*>)`,
+    "gu",
+  );
+  return {
+    xml: xml.replace(expression, ""),
+    matches: xml.match(expression)?.length ?? 0,
+  };
+}
+
+export async function unprotectWorkbookBytes(
+  options: UnprotectWorkbookBytesOptions,
+): Promise<ByteOperationOutcome<UnprotectWorkbookMetric>> {
+  throwIfAborted(options.signal, UNPROTECT_OPERATION, "memory");
+  const inputName = options.input.name.trim();
+  if (!/\.(?:xlsx|xlsm)$/iu.test(inputName))
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_UNPROTECT_UNSUPPORTED_FILE,
+      "Excel Unprotect accepts only .xlsx and .xlsm files.",
+    );
+  let archive: WorkbookPackage;
+  try {
+    archive = await WorkbookPackage.load(options.input.bytes, {
+      sourceLabel: options.input.name,
+    });
+  } catch (error) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_UNPROTECT_UNSUPPORTED_FILE,
+      "This file is not a readable OOXML Excel workbook. Encrypted or password-required Office files are not supported.",
+      { cause: error },
+    );
+  }
+  const workbook = archive.part("xl/workbook.xml");
+  if (!workbook || !archive.part("[Content_Types].xml"))
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_UNPROTECT_UNSUPPORTED_FILE,
+      "This file is not a valid OOXML Excel workbook. Encrypted or password-required Office files are not supported.",
+    );
+  // The media type describes the bytes, so it follows the package's own
+  // workbook content type rather than the output name: unprotect never adds or
+  // removes a VBA project, so a name cannot make an ordinary package
+  // macro-enabled or the reverse. contentTypeOverride parses
+  // [Content_Types].xml on demand, so a malformed or DOCTYPE-bearing
+  // declaration must surface as the operation's own read failure here rather
+  // than leaking a raw parser error, the same reason the split wraps it.
+  let declaresMacroWorkbook: boolean;
+  try {
+    declaresMacroWorkbook =
+      archive.contentTypeOverride(WORKBOOK_MAIN_PART)?.trim() ===
+      MACRO_WORKBOOK_MAIN_CONTENT_TYPE;
+  } catch (error) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_UNPROTECT_UNSUPPORTED_FILE,
+      "This file is not a valid OOXML Excel workbook. Encrypted or password-required Office files are not supported.",
+      { cause: error },
+    );
+  }
+  const workbookResult = removeProtection(
+    await workbook.text(),
+    "workbookProtection",
+  );
+  if (workbookResult.matches)
+    archive.setPartText("xl/workbook.xml", workbookResult.xml);
+  let sheetProtectionsRemoved = 0;
+  for (const partPath of archive.partPaths()) {
+    if (!/^xl\/worksheets\/[^/]+\.xml$/iu.test(partPath)) continue;
+    const result = removeProtection(
+      await archive.part(partPath)!.text(),
+      "sheetProtection",
+    );
+    sheetProtectionsRemoved += result.matches;
+    if (result.matches) archive.setPartText(partPath, result.xml);
+  }
+  const outputName = options.outputName ?? inputName;
+  const mediaType = declaresMacroWorkbook
+    ? MACRO_WORKBOOK_MEDIA_TYPE
+    : WORKBOOK_MEDIA_TYPE;
+  options.onProgress?.({
+    operation: UNPROTECT_OPERATION,
+    stage: "writing-output",
+    completed: 1,
+    total: 1,
+    detail: outputName,
+  });
+  return {
+    result: {
+      operation: UNPROTECT_OPERATION,
+      artifacts: [{ kind: "file", mediaType, path: outputName }],
+      warnings: [],
+      metrics: {
+        sheetProtectionsRemoved,
+        workbookProtectionsRemoved: workbookResult.matches,
+      },
+    },
+    outputs: [
+      {
+        name: outputName,
+        bytes: await archive.save(),
+        mediaType,
+      },
+    ],
+  };
+}
 
 export interface WorkbookInputBytes {
   name: string;

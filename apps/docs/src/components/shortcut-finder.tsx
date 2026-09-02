@@ -361,6 +361,7 @@ export function ShortcutFinder() {
           className="mt-3 text-xs leading-5 text-fd-muted-foreground"
           id={hintId}
         >
+          Keys count in the order you press them, the order each shortcut shows.
           Backspace removes the last key, Escape clears the sequence, and Tab
           moves on to the buttons below, so search for those three keys with the
           buttons. A few combinations belong to the browser or to Windows and

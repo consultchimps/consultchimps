@@ -18,6 +18,7 @@ import {
   describeWorkbook,
   mergeWorkbooks,
   splitWorkbookByColumn,
+  unprotectWorkbook,
 } from "@consultchimps/xlsx";
 import {
   CLI_VOCABULARY,
@@ -300,6 +301,33 @@ Safety:
 
 Run consultchimps sheets help <command> for all command options.
 `,
+  );
+
+sheets
+  .command("unprotect")
+  .description("remove ordinary worksheet and workbook-structure protection")
+  .argument("<input>", "the source .xlsx or .xlsm workbook")
+  .requiredOption(
+    "-o, --output <path>",
+    "where to save the unprotected workbook",
+  )
+  .option("-f, --force", "replace the output file if it already exists")
+  .addHelpText(
+    "after",
+    `\nExamples:\n  consultchimps sheets unprotect protected.xlsx -o unprotected.xlsx\n\nThis removes worksheet and workbook-structure protection without changing the source file. Office files encrypted to require a password to open are not supported.\n`,
+  )
+  .action(
+    async (input: string, options: { output: string; force?: boolean }) => {
+      const [inputPath] = await discoverFiles([input], {
+        extensions: [".xlsx", ".xlsm"],
+      });
+      const result = await unprotectWorkbook({
+        input: inputPath!,
+        output: options.output,
+        overwrite: options.force === true,
+      });
+      printResult(result, program.opts<GlobalOptions>().json === true);
+    },
   );
 
 sheets
