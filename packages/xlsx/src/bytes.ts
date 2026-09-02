@@ -23,7 +23,11 @@ import {
 } from "@consultchimps/tabular";
 
 import { XLSX_ERRORS } from "./errors.js";
-import { WorkbookPackage } from "./package/index.js";
+import {
+  MACRO_WORKBOOK_MAIN_CONTENT_TYPE,
+  WORKBOOK_MAIN_PART,
+  WorkbookPackage,
+} from "./package/index.js";
 import {
   describeWorkbookModel,
   loadWorkbookModelForDescribe,
@@ -167,11 +171,15 @@ export async function unprotectWorkbookBytes(
     if (result.matches) archive.setPartText(partPath, result.xml);
   }
   const outputName = options.outputName ?? inputName;
-  // The output keeps the macro-enabled media type when its name asks for it,
-  // the same rule the split's preserved outputs follow.
-  const mediaType = isMacroWorkbookName(outputName)
-    ? MACRO_WORKBOOK_MEDIA_TYPE
-    : WORKBOOK_MEDIA_TYPE;
+  // The media type describes the bytes, so it follows the package's own
+  // workbook content type rather than the output name: unprotect never adds or
+  // removes a VBA project, so a name cannot make an ordinary package
+  // macro-enabled or the reverse.
+  const mediaType =
+    archive.contentTypeOverride(WORKBOOK_MAIN_PART)?.trim() ===
+    MACRO_WORKBOOK_MAIN_CONTENT_TYPE
+      ? MACRO_WORKBOOK_MEDIA_TYPE
+      : WORKBOOK_MEDIA_TYPE;
   options.onProgress?.({
     operation: UNPROTECT_OPERATION,
     stage: "writing-output",

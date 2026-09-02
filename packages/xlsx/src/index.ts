@@ -177,7 +177,9 @@ export async function unprotectWorkbook(
   await writeFile(output, outcome.outputs[0]!.bytes);
   return {
     ...outcome.result,
-    artifacts: [{ kind: "file", mediaType: WORKBOOK_MEDIA_TYPE, path: output }],
+    // Keep the media type the bytes surface derived from the package, replacing
+    // only the portable output name with the real destination path.
+    artifacts: [{ ...outcome.result.artifacts[0]!, path: output }],
   };
 }
 export { MAX_COLUMN_SAMPLE_VALUES };
