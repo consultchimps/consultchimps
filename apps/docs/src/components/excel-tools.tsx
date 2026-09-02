@@ -1575,7 +1575,11 @@ export function ExcelConsolidateTool() {
         </p>
         <RunControls
           busyLabel="Consolidating…"
-          disabled={files.length === 0 || mappingUnusable}
+          // Suggesting runs a full consolidation in the shared worker to derive
+          // its draft, so Run waits for it to finish rather than launching a
+          // second parse of the same workbooks alongside it. Suggest is already
+          // held while a run is in flight, so the two never overlap.
+          disabled={files.length === 0 || mappingUnusable || suggesting}
           onCancel={runState.cancel}
           onRun={start}
           readingLabel="Reading the workbooks…"
