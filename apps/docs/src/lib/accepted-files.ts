@@ -114,6 +114,18 @@ export const PRESENTATION_FILES = createAcceptedFileKind({
   pluralDescription: "PowerPoint .pptx presentations",
 });
 
+/**
+ * Column mapping documents. The mapping is a versioned JSON file rather than a
+ * package, and this surface has no filesystem, so the page reads the text and
+ * validates the parsed document before any workbook is opened.
+ */
+export const MAPPING_FILES = createAcceptedFileKind({
+  description: "a .json column mapping",
+  extensions: [".json"],
+  mediaTypes: ["application/json"],
+  pluralDescription: ".json column mappings",
+});
+
 /** PDF documents. */
 export const PDF_FILES = createAcceptedFileKind({
   description: "a .pdf document",

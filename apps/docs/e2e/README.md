@@ -28,13 +28,18 @@ command when `out/` is missing.
   of them into a workbook per distinct value, downloading one of them, reading a
   downloaded workbook back to confirm it keeps every source worksheet and
   removes only the other values' rows, reporting a column the workbook does not
-  have, and refusing a file that is not a workbook.
+  have, inspecting the chosen workbook from the page, and refusing a file that
+  is not a workbook.
 - `excel-merge.spec.ts`: merging two workbooks into one, reordering and removing
   sources, and downloading the result.
 - `excel-consolidate.spec.ts`: stacking two workbooks whose headers drifted
-  apart into one table, downloading the result, and checking that the "Normalize
+  apart into one table, downloading the result, checking that the "Normalize
   headers" and "Add source columns" checkboxes change the columns the finished
-  workbook holds.
+  workbook holds, inspecting one of the added workbooks, applying a column
+  mapping end to end and reading the consolidated headers back, refusing an
+  ambiguous mapping on selection with its stable error reference, and drafting a
+  mapping: the proposed groups, the reviewed draft as valid version 1 JSON, and
+  the round trip that applies a draft only after it is added back.
 - `excel-inspect.spec.ts`: describing a workbook's worksheets, hidden tabs,
   header rows, Excel Table, named range, and sample column values, turning the
   hidden-worksheet option off to get the description an operation would see,
@@ -56,8 +61,10 @@ workbook or presentation for the `PK` ZIP header (both `.xlsx` and `.pptx` are
 ZIP packages), so a tool that "finishes" while producing empty or corrupt bytes
 fails the suite. `readWorkbookDownload` goes further and opens a downloaded
 workbook with jszip, resolving each worksheet through the workbook's own
-relationships, so a test can assert which worksheets and which rows reached the
-user.
+relationships and its shared-string table, so a test can assert which
+worksheets, which headers, and which rows reached the user. `readTextDownload`
+does the same for the documents the pages build themselves, such as the
+consolidate page's reviewed mapping draft.
 
 ## Selectors
 
@@ -90,6 +97,25 @@ consolidate page adds `output-name-input`, `normalize-headers-checkbox`,
 `source-columns-checkbox`, and `include-hidden-checkbox`. Both arrange their
 inputs through the "Move X earlier", "Move X later", and "Remove X" buttons on
 each `source-item`.
+
+The consolidate page takes a second kind of file, so it renders two
+`file-input`s: address them through `sectionFileInput(page, "source-section")`
+and `sectionFileInput(page, "mapping-section")` rather than the bare helper. The
+mapping section reports into `mapping-reading`, `mapping-summary`,
+`mapping-columns`, `mapping-rejected`, `mapping-error` (the engine's refusal,
+stable error reference included), and `mapping-remove`. Below them,
+`suggest-button` drafts a mapping into `suggestion-list`, one `suggestion-group`
+per proposal carrying `suggestion-spellings`, `suggestion-evidence`, and the
+editable `suggestion-canonical`; `suggestion-download` hands back the reviewed
+document and reports a review the engine refuses in `suggestion-error`,
+`suggest-error` holds a failed drafting, and `suggestion-empty` stands in when
+no headers need folding together.
+
+Both the split and consolidate pages fold the shared `WorkbookInspector` into
+`inspector-disclosure`, whose `summary` opens it; the consolidate page chooses
+which workbook to describe through `inspect-select`. The report is mounted only
+while the disclosure is open, so `inspection-section` and everything under it
+exist only after that click.
 
 The Excel inspect page has a single `source-section` (with `source-summary`,
 `source-reading`, `source-rejected`, and `include-hidden-checkbox`) and reports
@@ -163,4 +189,6 @@ relationships, and defined names in the workbook part.
 `createPresentationUpload` takes one array of run strings per slide, so a
 fixture spells out how a paragraph is split across text runs, the detail the
 populate engine has to stitch back together before it can see a `{{field}}`.
-Nothing binary is checked in and no temporary files are written.
+`createMappingUpload` writes a column mapping document verbatim, so a test can
+hand the consolidate page one the engine accepts or one it refuses. Nothing
+binary is checked in and no temporary files are written.

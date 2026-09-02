@@ -394,6 +394,22 @@ export async function createPresentationUpload(
 }
 
 /**
+ * A column mapping document, in the shape the consolidate page's mapping
+ * picker takes one. The value is written verbatim, so a test can hand the page
+ * a document the engine will refuse as easily as one it accepts.
+ */
+export function createMappingUpload(
+  name: string,
+  mapping: unknown,
+): UploadFile {
+  return {
+    name,
+    mimeType: "application/json",
+    buffer: Buffer.from(`${JSON.stringify(mapping, null, 2)}\n`, "utf8"),
+  };
+}
+
+/**
  * A file a workbook picker accepts and the operation then cannot read: an
  * accepted name and media type over bytes that are not an OOXML package, which
  * is what a renamed, truncated, or half-synced file looks like to a picker.
@@ -420,6 +436,14 @@ export function createTextUpload(name: string): UploadFile {
 /** The file input a tool page renders, whichever tool it is. */
 export function fileInput(page: Page): Locator {
   return page.getByTestId("file-input");
+}
+
+/**
+ * The file input inside one named section. A page that takes two kinds of file
+ * renders two of them, so the bare helper above would be ambiguous there.
+ */
+export function sectionFileInput(page: Page, section: string): Locator {
+  return page.getByTestId(section).getByTestId("file-input");
 }
 
 /**
@@ -487,6 +511,21 @@ async function expectOfficePackageDownload(
 /** Asserts a downloaded `.xlsx` workbook is a non-empty ZIP package. */
 export const expectWorkbookDownload = expectOfficePackageDownload;
 
+/**
+ * Clicks a download control and hands back the saved text, for the outputs
+ * that are documents rather than packages: the consolidate page's reviewed
+ * mapping draft, which the page assembles itself.
+ */
+export async function readTextDownload(
+  page: Page,
+  trigger: () => Promise<void>,
+  expectedFileName: string,
+): Promise<string> {
+  return (await downloadedBytes(page, trigger, expectedFileName)).toString(
+    "utf8",
+  );
+}
+
 /** Asserts a downloaded `.pptx` presentation is a non-empty ZIP package. */
 export const expectPresentationDownload = expectOfficePackageDownload;
 
@@ -494,6 +533,13 @@ export const expectPresentationDownload = expectOfficePackageDownload;
 export interface DownloadedWorksheet {
   /** The worksheet's tab name. */
   readonly name: string;
+  /**
+   * The text of the first row's cells, in column order: the headers of a table
+   * this toolkit wrote. Shared strings are resolved, because the table writer
+   * deduplicates repeated text through the workbook's shared-strings table the
+   * way Excel does, so a header is rarely stored in the worksheet part itself.
+   */
+  readonly headers: readonly string[];
   /** The part's raw XML, for assertions this helper does not cover. */
   readonly xml: string;
   /** The Excel row numbers the part still declares, in document order. */
@@ -559,6 +605,38 @@ function numbersOf(xml: string): number[] {
   });
 }
 
+/** The concatenated runs of each entry in a workbook's shared-string table. */
+function sharedStringsOf(xml: string): string[] {
+  return [...xml.matchAll(/<si\b[^>]*>(.*?)<\/si>/gsu)].map((entry) =>
+    textRunsOf(entry[1]!),
+  );
+}
+
+function textRunsOf(xml: string): string {
+  return [...xml.matchAll(/<t\b[^>]*>(.*?)<\/t>/gsu)]
+    .map((run) => unescapeXml(run[1]!))
+    .join("");
+}
+
+/**
+ * The text of the first row's cells, however the writer chose to store it: a
+ * shared-string index, an inline string, or a plain value.
+ */
+function headersOf(xml: string, strings: readonly string[]): string[] {
+  const firstRow = /<row\b[^>]*>(.*?)<\/row>/su.exec(xml)?.[1];
+  if (firstRow === undefined) {
+    return [];
+  }
+  return [...firstRow.matchAll(/<c\b([^>]*)>(.*?)<\/c>/gsu)].map((cell) => {
+    const type = attribute(cell[1]!, "t");
+    if (type === "inlineStr") {
+      return textRunsOf(cell[2]!);
+    }
+    const value = /<v>([^<]*)<\/v>/u.exec(cell[2]!)?.[1] ?? "";
+    return type === "s" ? (strings[Number(value)] ?? "") : unescapeXml(value);
+  });
+}
+
 async function readPart(archive: JSZip, path: string): Promise<string> {
   const part = archive.file(path);
   expect(part, `the workbook is missing ${path}`).not.toBeNull();
@@ -591,6 +669,9 @@ export async function readWorkbookDownload(
     }
   }
 
+  const sharedStrings = archive.file("xl/sharedStrings.xml")
+    ? sharedStringsOf(await readPart(archive, "xl/sharedStrings.xml"))
+    : [];
   const worksheets = new Map<string, DownloadedWorksheet>();
   const sheetNames: string[] = [];
   for (const match of (await readPart(archive, "xl/workbook.xml")).matchAll(
@@ -605,6 +686,7 @@ export async function readWorkbookDownload(
     const xml = await readPart(archive, path);
     sheetNames.push(name);
     worksheets.set(name, {
+      headers: headersOf(xml, sharedStrings),
       name,
       numbers: numbersOf(xml),
       rowNumbers: rowNumbersOf(xml),

@@ -31,6 +31,8 @@ import {
   readUploads,
   ResultsPanel,
   RunControls,
+  saveTextFile,
+  secondaryButtonClass,
   sectionClass,
   ToolShell,
   useFileSelection,
@@ -38,7 +40,15 @@ import {
   type UploadedFile,
 } from "@/components/tool-kit";
 import { WorkbookInspector } from "@/components/workbook-inspector";
-import { WORKBOOK_FILES } from "@/lib/accepted-files";
+import { MAPPING_FILES, WORKBOOK_FILES } from "@/lib/accepted-files";
+import {
+  DRAFT_MAPPING_FILE_NAME,
+  groupEvidence,
+  MAPPING_MEDIA_TYPE,
+  mappingSummary,
+  parseColumnMapping,
+  reviewedColumnMappingText,
+} from "@/lib/column-mapping";
 import type {
   WorkbookSplitOptions,
   WorksheetColumns,
@@ -46,11 +56,22 @@ import type {
 import { runOperation } from "@/lib/operation-worker";
 import { BROWSER_TOOLS } from "@/lib/tools";
 import type { OperationPlan } from "@consultchimps/core";
+import type {
+  ColumnMapping,
+  ColumnMappingSuggestion,
+} from "@consultchimps/tabular";
 // Type-only: the runtime module is loaded inside the worker.
 import type { SplitWorkbookByColumnPlanMetric } from "@consultchimps/xlsx/bytes";
-import { ArrowDown, ArrowUp, FileText, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Download, FileText, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 
 /** The dropdown entry that hands column naming back to the text field. */
 const MANUAL_COLUMN = "\u0000manual";
@@ -147,6 +168,68 @@ function CheckboxField({
         </span>
       </span>
     </label>
+  );
+}
+
+interface InspectorDisclosureProps {
+  /** A chooser the host page renders above the report, when it has several. */
+  readonly children?: ReactNode;
+  /** Shown by the report while the host has nothing chosen for it. */
+  readonly emptyMessage: string;
+  readonly file: UploadedFile | null;
+  readonly headerRow?: number | undefined;
+  /** The sentence under the summary, saying what the report is good for. */
+  readonly hint: string;
+  readonly includeHiddenSheets?: boolean | undefined;
+  /** The disclosure's own label. */
+  readonly label: string;
+}
+
+/**
+ * The workbook inspection report, folded away until someone asks for it.
+ *
+ * Both operating pages already run to three or four numbered steps, and the
+ * report is the longest thing either would show: every worksheet, its header
+ * row, its columns, and a sample of each column's values. Left open it would
+ * push the controls a visitor came for off the screen, so it earns a
+ * disclosure rather than a permanent panel.
+ *
+ * The report is mounted only while the disclosure is open, not merely hidden
+ * by it. Inspecting reopens the package and scans every worksheet, and a
+ * visitor who never opens this has not asked for that work.
+ */
+function WorkbookInspectorDisclosure({
+  children,
+  emptyMessage,
+  file,
+  headerRow,
+  hint,
+  includeHiddenSheets,
+  label,
+}: InspectorDisclosureProps) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <details
+      className={sectionClass}
+      data-testid="inspector-disclosure"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="cursor-pointer text-xl font-bold tracking-[-0.03em]">
+        {label}
+      </summary>
+      <p className="mt-3 text-sm text-fd-muted-foreground">{hint}</p>
+      {children}
+      {open ? (
+        <WorkbookInspector
+          className="mt-4"
+          emptyMessage={emptyMessage}
+          file={file}
+          headerRow={headerRow}
+          includeHiddenSheets={includeHiddenSheets}
+        />
+      ) : null}
+    </details>
   );
 }
 
@@ -481,6 +564,21 @@ export function ExcelSplitTool() {
           </p>
         ) : null}
       </section>
+
+      {/*
+        The report answers the question the next section asks: which headers
+        does this workbook actually carry, and on which worksheets. It takes
+        the header row the split is using, so the two views agree, and it
+        describes hidden worksheets as well, because the default split filters
+        them too.
+      */}
+      <WorkbookInspectorDisclosure
+        emptyMessage="Choose a workbook above to see the worksheets, header rows, and structures it holds"
+        file={input}
+        headerRow={options.headerRow}
+        hint="See the worksheets, header rows, columns, and sample values this workbook holds, including hidden worksheets, which the default split filters too"
+        label="Look inside this workbook"
+      />
 
       <section className={sectionClass} data-testid="column-section">
         <h2 className="text-xl font-bold tracking-[-0.03em]">
@@ -975,7 +1073,49 @@ export function ExcelInspectTool() {
   );
 }
 
+/** A parsed mapping, or the plain-language reason the document is unusable. */
+interface ReadMapping {
+  readonly error: string | null;
+  readonly mapping: ColumnMapping | null;
+}
+
+/**
+ * Read the chosen mapping document. Reading and validating a small JSON file
+ * is fast enough to stay on the main thread, and doing it here rather than in
+ * the worker is what lets the answer arrive with the selection instead of a
+ * frame later.
+ */
+function readMappingSelection(file: UploadedFile | null): ReadMapping {
+  if (!file) {
+    return { error: null, mapping: null };
+  }
+  try {
+    return {
+      error: null,
+      mapping: parseColumnMapping(new TextDecoder().decode(file.bytes)),
+    };
+  } catch (error) {
+    return { error: describeFailure(error), mapping: null };
+  }
+}
+
+/**
+ * One drafted mapping, held with the key of the run it was drafted for, plus
+ * the canonical names a reviewer has since typed over the proposals.
+ */
+interface DraftedMapping {
+  readonly canonicalNames: Record<string, string>;
+  /** Set when the reviewed draft could not be turned into a document. */
+  readonly downloadError: string | null;
+  /** Set when the drafting itself failed. */
+  readonly error: string | null;
+  readonly key: string;
+  readonly suggestion: ColumnMappingSuggestion | null;
+}
+
 export function ExcelConsolidateTool() {
+  const inspectSelectId = useId();
+  const canonicalFieldId = useId();
   const uploads = useOrderedUploads();
   const { add, files } = uploads;
   const [outputName, setOutputName] = useState("");
@@ -984,12 +1124,125 @@ export function ExcelConsolidateTool() {
   // starts on and the page never has to restate that default elsewhere.
   const [addSourceColumns, setAddSourceColumns] = useState(true);
   const [includeHiddenSheets, setIncludeHiddenSheets] = useState(false);
+  const [inspectedId, setInspectedId] = useState("");
+  const mappingSelection = useFileSelection(
+    MAPPING_FILES.accepts,
+    MAPPING_FILES.description,
+  );
+  const mappingFile = mappingSelection.file;
+  const [drafted, setDrafted] = useState<DraftedMapping | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
   const runState = useOperationRun();
   const isRunning = runState.status === "running";
   const mergeHref = browserToolHref("workbook-merge");
+  // The report follows the list: a workbook removed from it stops being a
+  // thing this page can show, whatever the chooser still remembers.
+  const inspected = files.find((file) => file.id === inspectedId) ?? null;
+
+  // The mapping is read and validated the moment it is chosen, before any
+  // workbook is opened, so an unusable document is reported while it can still
+  // be swapped rather than at the end of a run. Derived rather than stored:
+  // the answer is a function of the chosen document alone.
+  const { error: mappingError, mapping } = useMemo(
+    () => readMappingSelection(mappingFile),
+    [mappingFile],
+  );
+  // A mapping the run may not quietly ignore: one still being read, one whose
+  // pick was rejected (a wrong file type, or a cloud-backed document whose read
+  // failed, which leaves a message but no file), and one that was read but did
+  // not validate. The selection is cleared the instant a pick starts, so
+  // without these tests a slow, unreadable, or invalid mapping leaves Run
+  // enabled over an empty mapping and the visitor gets an unmapped table. The
+  // visitor clears the attempt to proceed with no mapping.
+  const mappingUnusable =
+    mappingSelection.reading ||
+    mappingSelection.rejected !== null ||
+    (mappingFile !== null && mapping === null);
+
+  // A draft is evidence about one list of workbooks read one way. Adding,
+  // removing, or reordering them, or changing whether hidden worksheets are
+  // read, makes it evidence about a run that no longer exists, so the draft is
+  // held under the key it was drafted for and shown only while that key still
+  // describes the page.
+  const draftKey = `${files.map((file) => file.id).join(",")}:${includeHiddenSheets}`;
+  const currentDraft = drafted?.key === draftKey ? drafted : null;
+  const suggestion = currentDraft?.suggestion ?? null;
+
+  const suggest = useCallback(() => {
+    if (files.length === 0) {
+      return;
+    }
+    setSuggesting(true);
+    setDrafted(null);
+    void (async () => {
+      try {
+        const suggested = await runOperation({
+          kind: "xlsx.suggest-mapping",
+          inputs: files.map((file) => ({ bytes: file.bytes, name: file.name })),
+          includeHiddenSheets,
+        });
+        setDrafted({
+          canonicalNames: Object.fromEntries(
+            suggested.groups.map((group) => [group.key, group.canonical]),
+          ),
+          downloadError: null,
+          error: null,
+          key: draftKey,
+          suggestion: suggested,
+        });
+      } catch (error) {
+        setDrafted({
+          canonicalNames: {},
+          downloadError: null,
+          error: describeFailure(error),
+          key: draftKey,
+          suggestion: null,
+        });
+      } finally {
+        setSuggesting(false);
+      }
+    })();
+  }, [draftKey, files, includeHiddenSheets]);
+
+  const renameCanonicalColumn = useCallback((key: string, name: string) => {
+    setDrafted((previous) =>
+      previous === null
+        ? previous
+        : {
+            ...previous,
+            canonicalNames: { ...previous.canonicalNames, [key]: name },
+            downloadError: null,
+          },
+    );
+  }, []);
+
+  // The draft is checked the way the run that applies it would check it, so a
+  // rename that made two entries collide is reported here rather than after a
+  // visitor has downloaded the file and added it again.
+  const downloadDraft = useCallback(() => {
+    if (!currentDraft?.suggestion) {
+      return;
+    }
+    let downloadError: string | null = null;
+    try {
+      saveTextFile(
+        reviewedColumnMappingText(
+          currentDraft.suggestion.groups,
+          currentDraft.canonicalNames,
+        ),
+        DRAFT_MAPPING_FILE_NAME,
+        MAPPING_MEDIA_TYPE,
+      );
+    } catch (error) {
+      downloadError = describeFailure(error);
+    }
+    setDrafted((previous) =>
+      previous === null ? previous : { ...previous, downloadError },
+    );
+  }, [currentDraft]);
 
   const start = useCallback(() => {
-    if (files.length === 0) {
+    if (files.length === 0 || mappingUnusable) {
       return;
     }
     void runState.run({
@@ -997,6 +1250,7 @@ export function ExcelConsolidateTool() {
       inputs: files.map((file) => ({ bytes: file.bytes, name: file.name })),
       addSourceColumns,
       includeHiddenSheets,
+      mapping: mapping ?? undefined,
       normalizeHeaders,
       outputName: outputName.trim() || undefined,
     });
@@ -1004,6 +1258,8 @@ export function ExcelConsolidateTool() {
     addSourceColumns,
     files,
     includeHiddenSheets,
+    mapping,
+    mappingUnusable,
     normalizeHeaders,
     outputName,
     runState,
@@ -1093,20 +1349,237 @@ export function ExcelConsolidateTool() {
         </div>
       </section>
 
+      {/*
+        One report over a list of inputs needs a chooser, which the split page
+        does not: the workbooks are read together but described one at a time.
+        The report follows the page's hidden-worksheet choice so it shows the
+        worksheets this run would actually read.
+      */}
+      <WorkbookInspectorDisclosure
+        emptyMessage="Choose one of the workbooks above to see the worksheets, header rows, and structures it holds"
+        file={inspected}
+        hint="See the worksheets, header rows, columns, and sample values one of these workbooks holds, and which spellings its headers carry before you map them"
+        includeHiddenSheets={includeHiddenSheets}
+        label="Look inside a workbook"
+      >
+        <div className="mt-4">
+          <label className={fieldLabelClass} htmlFor={inspectSelectId}>
+            Workbook to inspect
+          </label>
+          <select
+            className={`${inputClass} mt-2`}
+            data-testid="inspect-select"
+            id={inspectSelectId}
+            onChange={(event) => setInspectedId(event.target.value)}
+            value={inspected ? inspectedId : ""}
+          >
+            <option value="">Choose a workbook…</option>
+            {files.map((file, index) => (
+              <option key={file.id} value={file.id}>
+                {`${String(index + 1).padStart(2, "0")} ${file.name}`}
+              </option>
+            ))}
+          </select>
+        </div>
+      </WorkbookInspectorDisclosure>
+
+      <section className={sectionClass} data-testid="mapping-section">
+        <h2 className="text-xl font-bold tracking-[-0.03em]">
+          2. Map columns onto one schema
+        </h2>
+        <p className="mt-3 text-sm text-fd-muted-foreground">
+          Optional. A column mapping is a versioned JSON document that folds
+          headers meaning the same thing into one canonical column, so “Case ID”
+          from one system and “Reference” from another stack into a single
+          column instead of two. Without one, columns are matched by header name
+        </p>
+        <div className="mt-4">
+          <FilePicker
+            accept={MAPPING_FILES.accept}
+            description={`Drag ${MAPPING_FILES.description} here, or pick one with the button below. It is read and checked as soon as you add it, before any workbook`}
+            disabled={isRunning}
+            label="Column mapping"
+            multiple={false}
+            onFiles={(chosen) => {
+              mappingSelection.choose(chosen, () => runState.reset());
+            }}
+          />
+        </div>
+        {mappingSelection.reading ? (
+          <ReadingFile testId="mapping-reading" />
+        ) : null}
+        {mappingFile ? (
+          <>
+            <ChosenFile file={mappingFile} testId="mapping-summary" />
+            {mapping ? (
+              <p
+                className="mt-2 text-sm text-fd-muted-foreground"
+                data-testid="mapping-columns"
+              >
+                {mappingSummary(mapping)}
+              </p>
+            ) : null}
+            <div className="mt-3">
+              <button
+                className={compactButtonClass}
+                data-testid="mapping-remove"
+                disabled={isRunning}
+                onClick={mappingSelection.clear}
+                type="button"
+              >
+                <Trash2 className="size-3.5" aria-hidden="true" />
+                Remove the mapping
+              </button>
+            </div>
+          </>
+        ) : null}
+        {mappingError ? (
+          <pre className={noticeClass} data-testid="mapping-error" role="alert">
+            {mappingError}
+          </pre>
+        ) : null}
+        {mappingSelection.rejected ? (
+          <p
+            className={noticeClass}
+            data-testid="mapping-rejected"
+            role="alert"
+          >
+            {mappingSelection.rejected}
+          </p>
+        ) : null}
+
+        <p className="mt-8 text-sm font-semibold">Suggest a mapping</p>
+        <p className={fieldHintClass}>
+          The suggestion groups the headers that already match once case,
+          spacing, and punctuation are set aside, and applies none of them.
+          Review the groups, rename a canonical column where you want a
+          different output name, then download the draft and add it above to use
+          it
+        </p>
+        <div className="mt-4">
+          <button
+            className={secondaryButtonClass}
+            data-testid="suggest-button"
+            disabled={files.length === 0 || suggesting || isRunning}
+            onClick={suggest}
+            type="button"
+          >
+            {suggesting ? "Reading the workbooks…" : "Suggest a mapping"}
+          </button>
+        </div>
+        {currentDraft?.error ? (
+          <pre className={noticeClass} data-testid="suggest-error" role="alert">
+            {currentDraft.error}
+          </pre>
+        ) : null}
+        {suggestion ? (
+          suggestion.groups.length === 0 ? (
+            <p
+              className="mt-4 text-sm text-fd-muted-foreground"
+              data-testid="suggestion-empty"
+            >
+              Each header is spelled the same way wherever it appears in these
+              workbooks, so there is nothing to fold together. Headers that
+              differ in their words, such as “Reference” and “Case ID”, are a
+              mapping entry you write by hand
+            </p>
+          ) : (
+            <>
+              <ul
+                className="mt-4 flex flex-col gap-3"
+                data-testid="suggestion-list"
+              >
+                {suggestion.groups.map((group) => (
+                  <li
+                    className="rounded-lg border bg-fd-background/60 px-3 py-2"
+                    data-testid="suggestion-group"
+                    key={group.key}
+                  >
+                    <p
+                      className="font-mono text-sm font-medium"
+                      data-testid="suggestion-spellings"
+                    >
+                      {group.spellings.join(", ")}
+                    </p>
+                    <p
+                      className="mt-1 text-xs text-fd-muted-foreground"
+                      data-testid="suggestion-evidence"
+                    >
+                      {groupEvidence(group)}
+                    </p>
+                    <label
+                      className="mt-3 block text-xs font-semibold"
+                      htmlFor={`${canonicalFieldId}-${group.key}`}
+                    >
+                      Canonical column name
+                    </label>
+                    <input
+                      className={`${inputClass} mt-1`}
+                      data-testid="suggestion-canonical"
+                      id={`${canonicalFieldId}-${group.key}`}
+                      onChange={(event) =>
+                        renameCanonicalColumn(group.key, event.target.value)
+                      }
+                      type="text"
+                      value={
+                        currentDraft?.canonicalNames[group.key] ??
+                        group.canonical
+                      }
+                    />
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-4">
+                <button
+                  className={secondaryButtonClass}
+                  data-testid="suggestion-download"
+                  onClick={downloadDraft}
+                  type="button"
+                >
+                  <Download className="size-4" aria-hidden="true" />
+                  Download the draft (.json)
+                </button>
+              </div>
+              {currentDraft?.downloadError ? (
+                <pre
+                  className={noticeClass}
+                  data-testid="suggestion-error"
+                  role="alert"
+                >
+                  {currentDraft.downloadError}
+                </pre>
+              ) : null}
+            </>
+          )
+        ) : null}
+      </section>
+
       <section className={sectionClass} data-testid="run-section">
-        <h2 className="text-xl font-bold tracking-[-0.03em]">2. Run</h2>
+        <h2 className="text-xl font-bold tracking-[-0.03em]">3. Run</h2>
         <p className="mt-3 text-sm text-fd-muted-foreground">
           {files.length === 0
             ? "Add at least one workbook to consolidate"
-            : `Rows from every ${
-                includeHiddenSheets ? "" : "visible "
-              }worksheet that holds data in ${files.length} ${
-                files.length === 1 ? "workbook" : "workbooks"
-              } will be stacked into one table, in the order listed above`}
+            : mappingSelection.reading
+              ? "The column mapping you added is still being read, so Run waits until it is ready"
+              : mappingUnusable
+                ? "The column mapping you added could not be read, so nothing will run until you replace it or remove it"
+                : `Rows from every ${
+                    includeHiddenSheets ? "" : "visible "
+                  }worksheet that holds data in ${files.length} ${
+                    files.length === 1 ? "workbook" : "workbooks"
+                  } will be stacked into one table, in the order listed above${
+                    mapping
+                      ? ", with your column mapping applied and any column it does not claim kept under its own name and named in a warning"
+                      : ""
+                  }`}
         </p>
         <RunControls
           busyLabel="Consolidating…"
-          disabled={files.length === 0}
+          // Suggesting runs a full consolidation in the shared worker to derive
+          // its draft, so Run waits for it to finish rather than launching a
+          // second parse of the same workbooks alongside it. Suggest is already
+          // held while a run is in flight, so the two never overlap.
+          disabled={files.length === 0 || mappingUnusable || suggesting}
           onCancel={runState.cancel}
           onRun={start}
           readingLabel="Reading the workbooks…"

@@ -151,6 +151,14 @@ export function useWorkbookDescription(
 }
 
 export interface WorkbookInspectorProps {
+  /**
+   * The report's own container styling. It defaults to the page's section
+   * card, which is what a standalone page wants. A host that has already
+   * opened a card of its own, such as the disclosure the split and consolidate
+   * pages put the report inside, passes plain spacing instead so the reader
+   * does not get a card within a card.
+   */
+  readonly className?: string;
   /** Shown in place of the report while no workbook is chosen. */
   readonly emptyMessage?: string;
   /** The workbook to describe, or null while nothing is chosen. */
@@ -256,6 +264,7 @@ function ColumnList({
 }
 
 export function WorkbookInspector({
+  className = sectionClass,
   emptyMessage = "Choose a workbook to see the worksheets, header rows, and structures it holds",
   file,
   headerRow,
@@ -277,7 +286,7 @@ export function WorkbookInspector({
       aria-label={heading === undefined ? "Workbook inspection" : undefined}
       aria-labelledby={heading === undefined ? undefined : headingId}
       aria-live="polite"
-      className={sectionClass}
+      className={className}
       data-testid="inspection-section"
     >
       {heading === undefined ? null : (

@@ -27,6 +27,10 @@ import type {
   PresentationInspectionOutcome,
 } from "@consultchimps/pptx/bytes";
 import type {
+  ColumnMapping,
+  ColumnMappingSuggestion,
+} from "@consultchimps/tabular";
+import type {
   ConsolidateWorkbooksMetric,
   MergeWorkbooksMetric,
   SplitWorkbookByColumnPlanMetric,
@@ -133,8 +137,22 @@ export type OperationTask =
       readonly inputs: readonly NamedBytes[];
       readonly addSourceColumns?: boolean | undefined;
       readonly includeHiddenSheets?: boolean | undefined;
+      // A parsed and validated version 1 mapping. This surface has no
+      // filesystem, so the page reads the document and the operation validates
+      // it again before a workbook is opened.
+      readonly mapping?: ColumnMapping | undefined;
       readonly normalizeHeaders?: boolean | undefined;
       readonly outputName?: string | undefined;
+    }
+  | {
+      // Draft a mapping from the headers of the tables a consolidation would
+      // read, and answer with the draft alone. The operation behind it is the
+      // consolidation itself in suggest mode, so the browser's proposal is the
+      // library's proposal over the same tables, never a second grouping rule
+      // living in the page. Nothing it returns is applied to anything.
+      readonly kind: "xlsx.suggest-mapping";
+      readonly inputs: readonly NamedBytes[];
+      readonly includeHiddenSheets?: boolean | undefined;
     }
   | {
       readonly kind: "xlsx.columns";
@@ -208,6 +226,10 @@ interface OperationTaskResults {
   "xlsx.split": SplitWorkbookBytesOutcome;
   "xlsx.merge": ByteOperationOutcome<MergeWorkbooksMetric>;
   "xlsx.consolidate": ByteOperationOutcome<ConsolidateWorkbooksMetric>;
+  // The drafted mapping and the evidence behind each of its entries. The
+  // consolidated workbook the suggesting run also builds is dropped in the
+  // worker: this task exists to answer a question, not to produce a file.
+  "xlsx.suggest-mapping": ColumnMappingSuggestion;
   "xlsx.columns": WorksheetColumns;
   // The description travels beside the operation's structured result, so the
   // page can render both the structure and the counts the library derived.

@@ -43,9 +43,14 @@ beside the structures a split and a merge do keep.
   "Include hidden worksheets" (off by default). Choosing worksheets by name and
   setting a header row remain command-line options. Both `.xlsx` and `.xlsm`
   workbooks can be added; the result is a new table workbook either way, so the
-  output is always an `.xlsx`. The work happens in a Web Worker inside the page,
-  so your workbooks never leave your machine; progress is reported while a run
-  is in flight, and a long run can be cancelled.
+  output is always an `.xlsx`. Column mapping runs there too, both applying a
+  mapping and drafting one for review: see [In the browser](#in-the-browser)
+  below. "Look inside a workbook" opens the [workbook
+  inspection](/docs/tools/workbook-inspect) report for any workbook on the list,
+  so you can read the header spellings your sources actually carry before you
+  decide how to map them. The work happens in a Web Worker inside the page, so
+  your workbooks never leave your machine; progress is reported while a run is
+  in flight, and a long run can be cancelled.
 </Callout>
 
 ## Basic usage
@@ -216,11 +221,34 @@ be combined: applying a mapping and drafting one describe two different reviews
 of the same headers, and ConsultChimps declines to choose between them. Run the
 consolidation twice if you want both.
 
-<Callout title="Mapping is a command-line feature today">
-  The [in-browser consolidator](/tools/excel-consolidate) does not offer column
-  mapping or mapping suggestions. Both are available through the command line
-  and the TypeScript API.
-</Callout>
+### In the browser
+
+The [in-browser consolidator](/tools/excel-consolidate) both applies a mapping
+and drafts one, under "Map columns onto one schema".
+
+- **Apply one.** Add the mapping document with the picker. It is read and
+  validated the moment you add it, before any workbook is opened, so an unusable
+  document is reported while you can still swap it, and Run stays disabled until
+  you replace or remove it. The run reports the columns no entry claimed the way
+  the other surfaces do: they keep their own names, and the warning beside the
+  result lists them.
+- **Draft one.** "Suggest a mapping" reads the workbooks on the list and
+  proposes the normalization-equivalence groups described above. Assist means
+  exactly that and nothing more: it groups the header spellings whose normalized
+  keys already match, and applies none of them. Review the groups, rename a
+  canonical column where you want a different output name, download the draft,
+  then add it with the picker to use it. That round trip is the point, because
+  nothing on the page applies a draft on your behalf.
+
+A proposed entry carries no aliases, since each group's spellings already
+normalize to the proposed name's own key. Renaming the canonical column changes
+that: a name that normalizes differently takes one of the group's spellings with
+it as an alias, which is what keeps the group reachable. The reviewed draft is
+validated before it downloads, so a rename that makes two entries claim the same
+headers is reported there rather than on the run that would apply it.
+
+Coercions and constant columns are applied from a mapping you add. The review
+panel drafts neither, exactly as `--suggest-map` drafts neither.
 
 ## Keep provenance
 
