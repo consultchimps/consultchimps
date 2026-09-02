@@ -286,13 +286,13 @@ console.log(result.metrics.sheetProtectionsRemoved); // e.g. 3
 console.log(result.metrics.workbookProtectionsRemoved); // e.g. 1
 ```
 
-The output name has to agree with the workbook's declared type: an ordinary
-workbook keeps `.xlsx` and a macro-enabled workbook keeps `.xlsm`. Naming the
-output the other way is refused with `XLSX_UNPROTECT_PACKAGE_TYPE_MISMATCH`
-before anything is written, because a package whose contents and name disagree
-is one Excel opens with a corruption warning. `unprotectWorkbookBytes` is the
-byte-level twin, taking and returning in-memory bytes for callers with no
-filesystem.
+An output named `.xlsx` or `.xlsm` has to match the workbook's declared type: an
+ordinary workbook stays `.xlsx` and a macro-enabled workbook stays `.xlsm`. A
+name that claims the wrong one of the two is refused with
+`XLSX_UNPROTECT_PACKAGE_TYPE_MISMATCH` before anything is written, because a
+package whose contents and name disagree is one Excel opens with a corruption
+warning. `unprotectWorkbookBytes` is the byte-level twin, taking and returning
+in-memory bytes for callers with no filesystem.
 
 ## Read what an Excel operation promises
 

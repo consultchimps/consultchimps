@@ -106,6 +106,51 @@ describe("Excel workbook unprotection", () => {
     ]);
   });
 
+  it("removes protection written in the expanded empty form", async () => {
+    // A producer may serialize an empty protection node as
+    // <sheetProtection ...></sheetProtection> rather than self-closing. Both
+    // spellings must be stripped.
+    const archive = await JSZip.loadAsync(workbookBytes());
+    const workbookXml = await archive.file("xl/workbook.xml")!.async("text");
+    archive.file(
+      "xl/workbook.xml",
+      workbookXml.replace(
+        "</workbook>",
+        '<workbookProtection lockStructure="1"></workbookProtection></workbook>',
+      ),
+    );
+    const sheetXml = await archive
+      .file("xl/worksheets/sheet1.xml")!
+      .async("text");
+    archive.file(
+      "xl/worksheets/sheet1.xml",
+      sheetXml.replace(
+        "</worksheet>",
+        '<sheetProtection sheet="1"> </sheetProtection></worksheet>',
+      ),
+    );
+    const input = await archive.generateAsync({
+      compression: "DEFLATE",
+      type: "uint8array",
+    });
+
+    const outcome = await unprotectWorkbookBytes({
+      input: { name: "expanded.xlsx", bytes: input },
+    });
+
+    expect(outcome.result.metrics).toEqual({
+      sheetProtectionsRemoved: 1,
+      workbookProtectionsRemoved: 1,
+    });
+    const output = outcome.outputs[0]!.bytes;
+    expect(await packageText(output, "xl/workbook.xml")).not.toContain(
+      "workbookProtection",
+    );
+    expect(await packageText(output, "xl/worksheets/sheet1.xml")).not.toContain(
+      "sheetProtection",
+    );
+  });
+
   it("reports an already-unprotected workbook without changing its contents", async () => {
     const input = workbookBytes();
     const outcome = await unprotectWorkbookBytes({

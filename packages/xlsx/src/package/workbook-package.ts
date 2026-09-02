@@ -154,9 +154,12 @@ export class WorkbookPackage implements WorkbookPackageContract {
   }
 
   /**
-   * Remove every empty, self-closing element named `localName` from a part and
-   * report how many were removed. Matches the element whatever namespace prefix
-   * it carries, so both `<sheetProtection/>` and `<x:sheetProtection/>` count.
+   * Remove every empty element named `localName` from a part and report how many
+   * were removed. Both spellings of an empty element are matched, whatever
+   * namespace prefix it carries: the self-closing `<sheetProtection/>` and the
+   * expanded but empty `<sheetProtection></sheetProtection>`, along with their
+   * `<x:sheetProtection/>` prefixed forms. Only whitespace may sit between the
+   * open and close tags, so this never removes an element that carries content.
    * This is the L0 seam an operation reaches for instead of editing XML itself:
    * the whole workbook/worksheet protection strip becomes one named call.
    */
@@ -165,10 +168,15 @@ export class WorkbookPackage implements WorkbookPackageContract {
     if (xml === undefined) {
       return 0;
     }
+    const namePrefix = "(?:[A-Za-z_][\\w.-]*:)?";
+    const pattern = new RegExp(
+      `<${namePrefix}${localName}\\b[^>]*?(?:/\\s*>|>\\s*</${namePrefix}${localName}\\s*>)`,
+      "gu",
+    );
     let removed = 0;
-    const kept = removeElementsWhere(xml, localName, () => {
+    const kept = xml.replace(pattern, () => {
       removed += 1;
-      return true;
+      return "";
     });
     if (removed > 0) {
       this.setPartText(partPath, kept);
