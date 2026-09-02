@@ -154,6 +154,48 @@ export class WorkbookPackage implements WorkbookPackageContract {
   }
 
   /**
+   * Remove every empty element named `localName` from a part and report how many
+   * were removed. Both spellings of an empty element are matched, whatever
+   * namespace prefix it carries: the self-closing `<sheetProtection/>` and the
+   * expanded but empty `<sheetProtection></sheetProtection>`, along with their
+   * `<x:sheetProtection/>` prefixed forms. Only ignorable nodes may sit between
+   * the open and close tags, whitespace, XML comments, and processing
+   * instructions, so this never removes an element that carries child elements
+   * or text. This is the L0 seam an operation reaches for instead of editing XML
+   * itself: the whole workbook/worksheet protection strip becomes one named call.
+   */
+  removeEmptyElements(partPath: string, localName: string): number {
+    const xml = this.readText(partPath);
+    if (xml === undefined) {
+      return 0;
+    }
+    const namePrefix = "(?:[A-Za-z_][\\w.-]*:)?";
+    // The name must end exactly here: the next character has to open the tag's
+    // attributes, self-close it, or close it. A bare `\b` would let a longer
+    // custom name such as `sheetProtection-extension` match and be deleted,
+    // because the boundary falls before the hyphen.
+    const nameEnds = "(?=[\\s/>])";
+    // What may sit inside an otherwise empty expanded element: whitespace, XML
+    // comments, and processing instructions. None of these is content, so an
+    // empty element serialized with a comment inside is still removed, while an
+    // element carrying child elements or text is not.
+    const ignorableContent = "(?:\\s|<!--[\\s\\S]*?-->|<\\?[\\s\\S]*?\\?>)*";
+    const pattern = new RegExp(
+      `<${namePrefix}${localName}${nameEnds}[^>]*?(?:/\\s*>|>${ignorableContent}</${namePrefix}${localName}\\s*>)`,
+      "gu",
+    );
+    let removed = 0;
+    const kept = xml.replace(pattern, () => {
+      removed += 1;
+      return "";
+    });
+    if (removed > 0) {
+      this.setPartText(partPath, kept);
+    }
+    return removed;
+  }
+
+  /**
    * Relationships are cached under the part that declares them, not under the
    * `.rels` part that stores them, so writing a `.rels` part has to drop the
    * cache rather than one entry keyed by its own path.

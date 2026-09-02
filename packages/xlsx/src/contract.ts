@@ -67,6 +67,7 @@ export const OPERATIONS = [
   "consolidate",
   "values",
   "describe",
+  "unprotect",
 ] as const;
 
 export type Operation = (typeof OPERATIONS)[number];
@@ -277,6 +278,65 @@ export const CONTRACT: Record<
 
     // ABSENT, deliberately - see UNDECIDED_DESCRIBE_STRUCTURES below.
   },
+  /**
+   * Unprotect removes only the worksheet (`sheetProtection`) and workbook
+   * (`workbookProtection`) protection elements. Neither is a tracked structure,
+   * and both are empty attribute-only elements the package layer drops by name,
+   * so every tracked structure is carried through untouched: `preserve`.
+   *
+   * The evidence is `unprotect.corpus.test.ts`, which builds a workbook holding
+   * every structure the generator can emit, protects it, unprotects it, and
+   * asserts that each output part equals its input part with only the protection
+   * element removed. That is a per-cell proof, not an argument: a structure that
+   * changed would fail the part comparison. The one absence is external links,
+   * left undeclared for the same corpus reason as merge and describe (see
+   * UNDECIDED_UNPROTECT_STRUCTURES).
+   */
+  unprotect: {
+    // pins: every output part equals its input with only the protection removed
+    "merged-cells": "preserve",
+    // pins: every output part equals its input with only the protection removed
+    "conditional-formatting": "preserve",
+    // pins: every output part equals its input with only the protection removed
+    "data-validation": "preserve",
+    // pins: every output part equals its input with only the protection removed
+    hyperlinks: "preserve",
+    // pins: every output part equals its input with only the protection removed
+    // (the comment part and its legacy VML drawing travel byte-identical)
+    comments: "preserve",
+    // pins: every output part equals its input with only the protection removed
+    "drawings-charts": "preserve",
+    // pins: the workbook part keeps its defined names; only workbookProtection goes
+    "defined-names": "preserve",
+    // pins: the worksheet keeps its tableParts and the table part is byte-identical
+    "excel-tables": "preserve",
+    // pins: the totals row is worksheet content and is carried through untouched
+    "excel-table-totals-row": "preserve",
+    // pins: the pivot table and its cache parts travel byte-identical
+    "pivot-tables": "preserve",
+    // pins: the calculation chain part is carried through byte-identical
+    "calc-chain": "preserve",
+    // pins: the shared string store is carried through byte-identical
+    "shared-strings": "preserve",
+    // pins: the styles part is carried through byte-identical
+    "styles-number-formats": "preserve",
+    // pins: a macro package keeps its vbaProject.bin and its macro content type
+    "vba-project": "preserve",
+    // pins: every formula cell is carried through with its cached value untouched
+    "formulas-cached": "preserve",
+    // pins: an uncached formula is carried through untouched
+    "formulas-uncached": "preserve",
+    // pins: a shared formula's ref and si are carried through untouched
+    "formulas-shared": "preserve",
+    // pins: an array formula's ref and text are carried through untouched
+    "formulas-array": "preserve",
+    // pins: an A1 formula is carried through untouched
+    "formulas-a1": "preserve",
+    // pins: a structured-reference formula is carried through untouched
+    "formulas-structured-ref": "preserve",
+
+    // ABSENT, deliberately - see UNDECIDED_UNPROTECT_STRUCTURES below.
+  },
 };
 
 /**
@@ -321,3 +381,20 @@ export const UNDECIDED_DESCRIBE_STRUCTURES: Readonly<Record<string, string>> = {
   "external-links":
     "No corpus fixture yet; the generator has no external-link part. The answer is certainly `preserve` - describing writes nothing - but an undeclarable cell is left absent rather than asserted from reasoning alone.",
 };
+
+/**
+ * Why unprotect's one cell is absent.
+ *
+ * Unprotect changes only the protection elements, so an external link is
+ * carried through untouched - its part is byte-identical and its
+ * `externalReferences` list, which is not an empty element, is never matched by
+ * the strip. The cell stays absent on the corpus rule rather than the decision
+ * rule: "a cell the corpus cannot exercise is not a contract", and the
+ * generator still has no external-link part to build the fixture from. It lands
+ * with that fixture, alongside merge's and describe's.
+ */
+export const UNDECIDED_UNPROTECT_STRUCTURES: Readonly<Record<string, string>> =
+  {
+    "external-links":
+      "No corpus fixture yet; the generator has no external-link part. Unprotect touches only the protection elements, so a link is certainly carried through untouched, but an undeclarable cell is left absent rather than asserted from reasoning alone.",
+  };

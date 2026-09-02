@@ -446,6 +446,78 @@ describe("human-readable CLI output", () => {
     expect(output).toContain("1. 1 worksheet is hidden and was not described.");
   });
 
+  it("explains an unprotect that removed protection", () => {
+    const output = formatHumanResult(
+      result(
+        "sheets.unprotect",
+        {
+          sheetProtectionsRemoved: 3,
+          workbookProtectionsRemoved: 1,
+        },
+        ["unprotected.xlsx"],
+      ),
+      cli,
+    );
+
+    expect(output).toContain("Your Excel workbook is unprotected.");
+    expect(output).toContain(
+      "ConsultChimps removed protection from 3 worksheets and 1 workbook-structure lock.",
+    );
+    expect(output).toContain(
+      "Formulas, formatting, hidden worksheets, and any macros were carried across unchanged.",
+    );
+    expect(output).toContain("Your original Excel workbook was not changed.");
+
+    // Metrics read as plain language, never as their internal names.
+    expect(output).toContain("Worksheet protections removed: 3");
+    expect(output).toContain("Workbook-structure protections removed: 1");
+    expect(output).not.toContain("sheetProtectionsRemoved:");
+    expect(output).not.toContain("workbookProtectionsRemoved:");
+
+    expect(output).toContain(
+      "Open the new Excel workbook listed below and confirm that you can edit the worksheets and workbook structure.",
+    );
+  });
+
+  it("explains an unprotect that found nothing to remove", () => {
+    const output = formatHumanResult(
+      result(
+        "sheets.unprotect",
+        {
+          sheetProtectionsRemoved: 0,
+          workbookProtectionsRemoved: 0,
+        },
+        ["plain-unprotected.xlsx"],
+      ),
+      cli,
+    );
+
+    expect(output).toContain(
+      "ConsultChimps found no worksheet or workbook-structure protection to remove, so the new workbook is a copy of your file with nothing to unlock.",
+    );
+    expect(output).toContain("Worksheet protections removed: 0");
+    expect(output).toContain("Workbook-structure protections removed: 0");
+  });
+
+  it("names a macro-enabled workbook output as an Excel workbook", () => {
+    const output = formatHumanResult(
+      {
+        operation: "sheets.unprotect",
+        artifacts: [
+          {
+            kind: "file",
+            mediaType: "application/vnd.ms-excel.sheet.macroEnabled.12",
+            path: "macros-unprotected.xlsm",
+          },
+        ],
+        metrics: { sheetProtectionsRemoved: 1, workbookProtectionsRemoved: 0 },
+        warnings: [],
+      },
+      cli,
+    );
+    expect(output).toContain("Type: Excel workbook");
+  });
+
   it("labels artifact types and falls back for unknown operations", () => {
     const output = formatHumanResult(
       {

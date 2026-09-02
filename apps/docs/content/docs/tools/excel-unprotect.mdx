@@ -22,3 +22,9 @@ not password cracking or encryption bypass.
 ```bash
 consultchimps sheets unprotect protected.xlsx --output unprotected.xlsx
 ```
+
+If you name the output `.xlsx` or `.xlsm`, the extension has to match the
+workbook's type: an ordinary workbook stays `.xlsx` and a macro-enabled workbook
+stays `.xlsm`. A name that claims the wrong one of the two is refused before
+anything is written, because a package whose contents and name disagree is one
+Excel opens with a corruption warning.

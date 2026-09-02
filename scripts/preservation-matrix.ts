@@ -29,6 +29,7 @@ import {
   UNDECIDED_DESCRIBE_STRUCTURES,
   UNDECIDED_MERGE_STRUCTURES,
   UNDECIDED_SPLIT_STRUCTURES,
+  UNDECIDED_UNPROTECT_STRUCTURES,
   type ContractBehavior,
   type ContractOperation as Operation,
   type ContractStructure as Structure,
@@ -191,6 +192,11 @@ export const OPERATION_DOCUMENTATION: Record<
     undeclaredNote:
       "The workbook inspection makes no checked promise about any structure yet.",
   },
+  unprotect: {
+    label: "Unprotect",
+    undeclaredNote:
+      "The workbook unprotect makes no checked promise about any structure yet.",
+  },
 };
 
 /**
@@ -294,6 +300,13 @@ export const CELL_QUALIFIERS: Partial<
     "external-links":
       "the merge removes them and says so; the contract cannot pin that until a fixture exists",
   },
+  unprotect: {
+    // The cell is absent for the same corpus reason, but unprotect touches only
+    // the protection elements, so a link is carried through untouched; the bare
+    // "Needs review" would read as less preservation than unprotect offers.
+    "external-links":
+      "unprotect changes only the protection, so a link travels unchanged; no fixture pins that yet",
+  },
 };
 
 /**
@@ -307,6 +320,7 @@ const UNDECIDED_STRUCTURES_BY_OPERATION: Partial<
   split: UNDECIDED_SPLIT_STRUCTURES,
   merge: UNDECIDED_MERGE_STRUCTURES,
   describe: UNDECIDED_DESCRIBE_STRUCTURES,
+  unprotect: UNDECIDED_UNPROTECT_STRUCTURES,
 };
 
 /** Legend order: declared behaviors first, then the undeclared status. */

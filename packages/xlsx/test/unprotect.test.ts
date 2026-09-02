@@ -106,6 +106,126 @@ describe("Excel workbook unprotection", () => {
     ]);
   });
 
+  it("removes protection written in the expanded empty form", async () => {
+    // A producer may serialize an empty protection node as
+    // <sheetProtection ...></sheetProtection> rather than self-closing. Both
+    // spellings must be stripped.
+    const archive = await JSZip.loadAsync(workbookBytes());
+    const workbookXml = await archive.file("xl/workbook.xml")!.async("text");
+    archive.file(
+      "xl/workbook.xml",
+      workbookXml.replace(
+        "</workbook>",
+        '<workbookProtection lockStructure="1"></workbookProtection></workbook>',
+      ),
+    );
+    const sheetXml = await archive
+      .file("xl/worksheets/sheet1.xml")!
+      .async("text");
+    archive.file(
+      "xl/worksheets/sheet1.xml",
+      sheetXml.replace(
+        "</worksheet>",
+        '<sheetProtection sheet="1"> </sheetProtection></worksheet>',
+      ),
+    );
+    const input = await archive.generateAsync({
+      compression: "DEFLATE",
+      type: "uint8array",
+    });
+
+    const outcome = await unprotectWorkbookBytes({
+      input: { name: "expanded.xlsx", bytes: input },
+    });
+
+    expect(outcome.result.metrics).toEqual({
+      sheetProtectionsRemoved: 1,
+      workbookProtectionsRemoved: 1,
+    });
+    const output = outcome.outputs[0]!.bytes;
+    expect(await packageText(output, "xl/workbook.xml")).not.toContain(
+      "workbookProtection",
+    );
+    expect(await packageText(output, "xl/worksheets/sheet1.xml")).not.toContain(
+      "sheetProtection",
+    );
+  });
+
+  it("strips an expanded protection element that holds only a comment", async () => {
+    // Whitespace, comments, and processing instructions are not content, so an
+    // otherwise empty protection element serialized with one inside is removed.
+    const archive = await JSZip.loadAsync(workbookBytes());
+    const workbookXml = await archive.file("xl/workbook.xml")!.async("text");
+    archive.file(
+      "xl/workbook.xml",
+      workbookXml.replace(
+        "</workbook>",
+        '<workbookProtection lockStructure="1"><!-- locked --></workbookProtection></workbook>',
+      ),
+    );
+    const sheetXml = await archive
+      .file("xl/worksheets/sheet1.xml")!
+      .async("text");
+    archive.file(
+      "xl/worksheets/sheet1.xml",
+      sheetXml.replace(
+        "</worksheet>",
+        '<sheetProtection sheet="1">\n  <!-- protected --></sheetProtection></worksheet>',
+      ),
+    );
+    const input = await archive.generateAsync({
+      compression: "DEFLATE",
+      type: "uint8array",
+    });
+
+    const outcome = await unprotectWorkbookBytes({
+      input: { name: "commented.xlsx", bytes: input },
+    });
+
+    expect(outcome.result.metrics).toEqual({
+      sheetProtectionsRemoved: 1,
+      workbookProtectionsRemoved: 1,
+    });
+    expect(
+      await packageText(outcome.outputs[0]!.bytes, "xl/workbook.xml"),
+    ).not.toContain("workbookProtection");
+    expect(
+      await packageText(outcome.outputs[0]!.bytes, "xl/worksheets/sheet1.xml"),
+    ).not.toContain("sheetProtection");
+  });
+
+  it("strips only the protection element, not a longer custom name", async () => {
+    // A hyphenated or dotted custom element that merely starts with the same
+    // letters is not sheetProtection and must survive.
+    const archive = await JSZip.loadAsync(workbookBytes());
+    const sheetXml = await archive
+      .file("xl/worksheets/sheet1.xml")!
+      .async("text");
+    archive.file(
+      "xl/worksheets/sheet1.xml",
+      sheetXml.replace(
+        "</worksheet>",
+        '<x:sheetProtection-extension keep="1"/><sheetProtection sheet="1"/></worksheet>',
+      ),
+    );
+    const input = await archive.generateAsync({
+      compression: "DEFLATE",
+      type: "uint8array",
+    });
+
+    const outcome = await unprotectWorkbookBytes({
+      input: { name: "custom.xlsx", bytes: input },
+    });
+
+    expect(outcome.result.metrics.sheetProtectionsRemoved).toBe(1);
+    const output = await packageText(
+      outcome.outputs[0]!.bytes,
+      "xl/worksheets/sheet1.xml",
+    );
+    expect(output).toContain("sheetProtection-extension");
+    expect(output).not.toContain("<sheetProtection ");
+  });
+
   it("reports an already-unprotected workbook without changing its contents", async () => {
     const input = workbookBytes();
     const outcome = await unprotectWorkbookBytes({
@@ -200,26 +320,69 @@ const ORDINARY_MEDIA_TYPE =
 const MACRO_MEDIA_TYPE = "application/vnd.ms-excel.sheet.macroEnabled.12";
 
 describe("unprotect output media types", () => {
-  it("derives the media type from the package, not the output name", async () => {
-    // An ordinary package named .xlsm is still ordinary: unprotect adds no
-    // VBA project, so the name must not make the bytes claim to be macro-enabled.
+  it("keeps the ordinary media type for a matching .xlsx name", async () => {
     const outcome = await unprotectWorkbookBytes({
       input: { name: "book.xlsx", bytes: await protectedWorkbook() },
-      outputName: "book.xlsm",
+      outputName: "book.xlsx",
     });
-    expect(outcome.outputs[0]!.name).toBe("book.xlsm");
+    expect(outcome.outputs[0]!.name).toBe("book.xlsx");
     expect(outcome.outputs[0]!.mediaType).toBe(ORDINARY_MEDIA_TYPE);
     expect(outcome.result.artifacts[0]!.mediaType).toBe(ORDINARY_MEDIA_TYPE);
   });
 
-  it("reports a macro-enabled package with the macro media type", async () => {
-    // A macro package keeps the macro media type even under an .xlsx name.
+  it("keeps the macro media type for a matching .xlsm name", async () => {
     const outcome = await unprotectWorkbookBytes({
       input: { name: "macros.xlsm", bytes: await macroProtectedWorkbook() },
-      outputName: "macros.xlsx",
+      outputName: "macros.xlsm",
     });
     expect(outcome.outputs[0]!.mediaType).toBe(MACRO_MEDIA_TYPE);
     expect(outcome.result.artifacts[0]!.mediaType).toBe(MACRO_MEDIA_TYPE);
+  });
+
+  it("refuses an .xlsm output name for an ordinary package", async () => {
+    // Naming an ordinary package .xlsm would write bytes whose contents and
+    // name disagree, which Excel opens with a corruption warning. The refusal
+    // lands before anything is written and leaves the input untouched.
+    const source = await protectedWorkbook();
+    const input = new Uint8Array(source);
+    await expect(
+      unprotectWorkbookBytes({
+        input: { name: "book.xlsx", bytes: input },
+        outputName: "book.xlsm",
+      }),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        isConsultChimpsError(error) &&
+        error.code === "XLSX_UNPROTECT_PACKAGE_TYPE_MISMATCH",
+    );
+    expect(input).toEqual(source);
+  });
+
+  it("refuses an .xlsx output name for a macro-enabled package", async () => {
+    await expect(
+      unprotectWorkbookBytes({
+        input: { name: "macros.xlsm", bytes: await macroProtectedWorkbook() },
+        outputName: "macros.xlsx",
+      }),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        isConsultChimpsError(error) &&
+        error.code === "XLSX_UNPROTECT_PACKAGE_TYPE_MISMATCH",
+    );
+  });
+
+  it("refuses a macro package whose own name is mislabelled .xlsx", async () => {
+    // The default output name equals the input name, so a mislabelled input is
+    // caught on the common path with no explicit rename.
+    await expect(
+      unprotectWorkbookBytes({
+        input: { name: "macros.xlsx", bytes: await macroProtectedWorkbook() },
+      }),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        isConsultChimpsError(error) &&
+        error.code === "XLSX_UNPROTECT_PACKAGE_TYPE_MISMATCH",
+    );
   });
 
   it("surfaces a malformed content-type declaration as a read failure", async () => {
