@@ -1,5 +1,12 @@
 # @consultchimps/xlsx
 
+## 0.16.0
+
+### Minor Changes
+
+- 9444c7f: Add byte-preserving Excel worksheet and workbook-structure
+  unprotection for `.xlsx` and `.xlsm` files.
+
 ## 0.15.0
 
 ### Minor Changes
