@@ -35,7 +35,7 @@ export function XlsxUnprotectTool() {
   }, [runState, selection.file]);
   return (
     <ToolShell
-      description="Remove ordinary worksheet and workbook-structure protection locally. Nothing is uploaded, and your original workbook is untouched."
+      description="Remove ordinary worksheet and workbook-structure protection locally. Nothing is uploaded, and your original workbook is untouched"
       guideHref="/docs/tools/excel-unprotect"
       guideLabel="Read the unprotect guide"
       kicker="Online tool · Excel unprotect"
@@ -47,12 +47,12 @@ export function XlsxUnprotectTool() {
         </h2>
         <p className="mt-3 text-sm text-fd-muted-foreground">
           Supported: .xlsx and .xlsm. Encrypted files that require a password to
-          open are not supported.
+          open are not supported
         </p>
         <div className="mt-4">
           <FilePicker
             accept={WORKBOOK_FILES.accept}
-            description="Drag an Excel workbook here, or choose one with the button below."
+            description="Drag an Excel workbook here, or choose one with the button below"
             disabled={runState.status === "running" || selection.reading}
             label="Source workbook"
             multiple={false}

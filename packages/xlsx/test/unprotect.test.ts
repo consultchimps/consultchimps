@@ -175,3 +175,66 @@ describe("Excel workbook unprotection", () => {
     });
   });
 });
+
+async function macroProtectedWorkbook(): Promise<Uint8Array> {
+  const archive = await JSZip.loadAsync(await protectedWorkbook());
+  archive.file("xl/vbaProject.bin", new Uint8Array([0xd0, 0xcf, 0x11, 0xe0]));
+  const contentTypes = await archive.file("[Content_Types].xml")!.async("text");
+  archive.file(
+    "[Content_Types].xml",
+    contentTypes
+      .replace(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+        "application/vnd.ms-excel.sheet.macroEnabled.main+xml",
+      )
+      .replace(
+        "</Types>",
+        '<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/></Types>',
+      ),
+  );
+  return archive.generateAsync({ compression: "DEFLATE", type: "uint8array" });
+}
+
+const ORDINARY_MEDIA_TYPE =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const MACRO_MEDIA_TYPE = "application/vnd.ms-excel.sheet.macroEnabled.12";
+
+describe("unprotect output media types", () => {
+  it("derives the media type from the package, not the output name", async () => {
+    // An ordinary package named .xlsm is still ordinary: unprotect adds no
+    // VBA project, so the name must not make the bytes claim to be macro-enabled.
+    const outcome = await unprotectWorkbookBytes({
+      input: { name: "book.xlsx", bytes: await protectedWorkbook() },
+      outputName: "book.xlsm",
+    });
+    expect(outcome.outputs[0]!.name).toBe("book.xlsm");
+    expect(outcome.outputs[0]!.mediaType).toBe(ORDINARY_MEDIA_TYPE);
+    expect(outcome.result.artifacts[0]!.mediaType).toBe(ORDINARY_MEDIA_TYPE);
+  });
+
+  it("reports a macro-enabled package with the macro media type", async () => {
+    // A macro package keeps the macro media type even under an .xlsx name.
+    const outcome = await unprotectWorkbookBytes({
+      input: { name: "macros.xlsm", bytes: await macroProtectedWorkbook() },
+      outputName: "macros.xlsx",
+    });
+    expect(outcome.outputs[0]!.mediaType).toBe(MACRO_MEDIA_TYPE);
+    expect(outcome.result.artifacts[0]!.mediaType).toBe(MACRO_MEDIA_TYPE);
+  });
+
+  it("surfaces a malformed content-type declaration as a read failure", async () => {
+    // The content-type lookup parses [Content_Types].xml on demand, so a
+    // broken declaration must fail as the operation's own error, not a raw
+    // parser throw.
+    const archive = await JSZip.loadAsync(await protectedWorkbook());
+    archive.file("[Content_Types].xml", "<Types><not-closed>");
+    const bytes = await archive.generateAsync({ type: "uint8array" });
+    await expect(
+      unprotectWorkbookBytes({ input: { name: "broken.xlsx", bytes } }),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        isConsultChimpsError(error) &&
+        error.code === "XLSX_UNPROTECT_UNSUPPORTED_FILE",
+    );
+  });
+});
