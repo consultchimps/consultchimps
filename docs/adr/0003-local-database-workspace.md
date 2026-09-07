@@ -287,14 +287,13 @@ carries, if any, is noted.
   filesystem-free; only the workspace page uses the File System Access API, and
   it is not an operation.
 - New dependencies, all Apache-2.0 compatible: sql.js (MIT); `tabulator-tables`
-  and `react-tabulator` (MIT) for the grid; `@tanstack/charts` (MIT, pre-1.0 at
-  0.16 and self-described as alpha, pinned to an exact version and isolated
-  behind one adapter, reassessed at 1.0); `@xyflow/react` and `@dagrejs/dagre`
-  (MIT) for the diagram, in-app only. A new first-party package
-  `@consultchimps/theme` (zero dependency). The grid license floor was widened
-  to MPL, GPL, and commercial and the permissive choice still won, so nothing on
-  `apps/docs` relicenses; copyleft grids and elkjs (dual EPL-2.0 or GPL-3.0) are
-  excluded.
+  (MIT) for the grid, used directly; `@tanstack/charts` (MIT, pre-1.0 at 0.16
+  and self-described as alpha, pinned to an exact version and isolated behind
+  one adapter, reassessed at 1.0); `@xyflow/react` and `@dagrejs/dagre` (MIT)
+  for the diagram, in-app only. A new first-party package `@consultchimps/theme`
+  (zero dependency). The grid license floor was widened to MPL, GPL, and
+  commercial and the permissive choice still won, so nothing on `apps/docs`
+  relicenses; copyleft grids and elkjs (dual EPL-2.0 or GPL-3.0) are excluded.
 - Because `@tanstack/charts` is framework-agnostic with SVG server-side
   rendering, the dashboard-export generator produces static SVG without bundling
   React into the exported file, so the charts add no JavaScript runtime. Whether
