@@ -117,8 +117,22 @@ and disjoint (ctrl-click) range selection, keyboard range extension, a
 corner-drag fill, and Excel-compatible TSV clipboard, DOM-rendered so tool-kit
 CSS and light or dark style the cells, and actively maintained. It satisfies
 both the Excel-UX requirement and the batteries-included goal with no license
-cost and no GPL split on `apps/docs`. One item to spike before building on it:
-confirm the corner-drag fill produces Excel-style series fill, not only a copy.
+cost and no GPL split on `apps/docs`.
+
+A spike (2026-09-07, Tabulator 6.5.2, verified in a real browser) corrected one
+assumption: Tabulator has no fill handle at all, not even copy, so the earlier
+"verify series vs copy" note was wrong. Everything else the grid needs is
+native: rectangular and disjoint range selection, shift-arrow extension, TSV
+clipboard copy and paste that round-trips with Excel, tab and enter editing, and
+a searchable `list` editor that serves the foreign-key picker (label shown,
+Record ID stored). Three items are therefore ours to build on top of Tabulator's
+public Range API (`getBounds`, `setBounds`, `getCells`, `cell.setValue`), no
+fork required: the whole fill handle, including series inference (which no grid
+provides) as well as plain copy; a custom `clipboardPasteParser` that normalizes
+line endings, because the built-in `range` parser does not strip `\r` and
+corrupts the last column of a multi-row paste on Windows; and a thin layer that
+maps our CSS variables onto Tabulator's selectors, since it ships hardcoded hex
+rather than variables. All three are moderate, additive work.
 
 ## Decision 5: theme package
 
@@ -158,6 +172,18 @@ export this feature needs. To bound the alpha risk: pin the exact version
 patch), and put all chart construction behind one thin adapter module so a
 breaking minor bump touches a single file rather than every dashboard. Reassess
 at 1.0. KPI stat tiles are plain JSX, not a chart type.
+
+A spike (2026-09-07, verified in a real browser) confirmed the load-bearing bet
+at 0.16.0: `createChartScene` then `renderChartSvg` render bar, line, and pie to
+a DOM-free static SVG string in Node, which embeds into a self-contained HTML
+that renders offline with no JavaScript, and colours emit as SVG presentation
+attributes so `var(--chart-N)` and `currentColor` theme it through CSS with no
+re-render (light and dark flip with scripting disabled). The same definitions
+mount live in React. Build guidance from the spike: pass scale factories
+uncalled (an invoked `scaleLinear()` silently breaks the domain), give a pie
+placeholder reserved x and y scales, wrap the scale idiom and the three-part pie
+composition in helpers, and keep a headless smoke test in CI so an alpha upgrade
+that breaks the export is caught.
 
 ## Decision 7: relationship-diagram rendering
 
@@ -226,9 +252,12 @@ carries, if any, is noted.
 4. **Workspace shell.** The browser page that opens or creates a database
    through the File System Access API, autosaves to OPFS, and falls back to
    download, outside the registry. Adds the workspace completion checklist.
-5. **Record grid.** Excel-like editing (range and disjoint selection, fill,
-   clipboard), foreign-key pickers, validation, and undo, on Tabulator through
-   `react-tabulator`. Spike the series-fill behaviour first.
+5. **Record grid.** Excel-like editing on Tabulator (`tabulator-tables`
+   directly; the React wrapper is not needed): native range and disjoint
+   selection, clipboard, and the `list` editor for foreign-key pickers, plus the
+   three custom pieces from Decision 4 (a fill-handle module with series
+   inference, a line-ending-normalizing paste parser, and a CSS-variable
+   override layer), with validation and undo.
 6. **Relationship diagram.** A pan-and-zoom view of tables and foreign keys, on
    React Flow and dagre.
 7. **Computed columns.** The formula language that compiles to a SQLite
