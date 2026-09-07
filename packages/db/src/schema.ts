@@ -220,10 +220,13 @@ function booleanToSqlValue(value: Exclude<CellValue, null>): SqlValueType {
   if (FALSE_TEXT.has(normalized)) {
     return 0;
   }
+  // The offending value is deliberately left out of the message and details:
+  // it is imported cell content and may be confidential. The caller adds the
+  // table and column context.
   throw new ConsultChimpsError(
     "DB_INVALID_BOOLEAN",
-    `The value "${value}" cannot be read as a boolean. Use one of true, false, yes, no, 1, or 0.`,
-    { details: { value } },
+    "A boolean column received a value that is not one of true, false, yes, no, 1, or 0.",
+    { details: { type: "boolean" } },
   );
 }
 
@@ -246,20 +249,25 @@ function numberToSqlValue(
     }
     numeric = Number(trimmed);
   }
+  // The offending value is left out of the error (it is imported cell content
+  // and may be confidential); the caller adds the table and column context.
   if (!Number.isFinite(numeric)) {
     throw new ConsultChimpsError(
       "DB_INVALID_NUMBER",
-      `The value "${value}" cannot be read as ${integer ? "an integer" : "a number"}.`,
-      { details: { value, integer } },
+      `${integer ? "An integer" : "A number"} column received a value that is not a finite number.`,
+      { details: { type: integer ? "integer" : "real" } },
     );
   }
-  // An integer column rejects a fractional value rather than truncating it, so
-  // an imported 1.9 is reported instead of silently becoming 1.
-  if (integer && !Number.isInteger(numeric)) {
+  // An integer column rejects a fractional value, and one outside the range
+  // JavaScript represents exactly (so a large 64-bit id is not silently
+  // rounded), rather than storing a corrupted number.
+  if (integer && !Number.isSafeInteger(numeric)) {
     throw new ConsultChimpsError(
       "DB_INVALID_NUMBER",
-      `The value "${value}" is not a whole number, which the integer column requires.`,
-      { details: { value, integer: true } },
+      Number.isInteger(numeric)
+        ? "An integer column received a whole number outside the range that can be represented exactly."
+        : "An integer column received a value that is not a whole number.",
+      { details: { type: "integer" } },
     );
   }
   return numeric;

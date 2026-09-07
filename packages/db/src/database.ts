@@ -1,4 +1,4 @@
-import { ConsultChimpsError } from "@consultchimps/core";
+import { ConsultChimpsError, isConsultChimpsError } from "@consultchimps/core";
 import type { CellValue, TableRow } from "@consultchimps/tabular";
 
 import {
@@ -347,7 +347,7 @@ export class Database {
         );
       }
       insertColumns.push(name);
-      insertValues.push(sqlValueFromCell(column.type, value));
+      insertValues.push(this.#convertCell(column.type, value, tableName, name));
     }
 
     const placeholders = insertColumns.map(() => "?").join(", ");
@@ -362,7 +362,7 @@ export class Database {
     }
 
     this.#sql.run(
-      `UPDATE ${quoteIdentifier(TABLE_REGISTRY_TABLE)} SET next_counter = ? WHERE name = ?;`,
+      `UPDATE ${quoteIdentifier(TABLE_REGISTRY_TABLE)} SET next_counter = ? WHERE name = ? COLLATE NOCASE;`,
       [counter + 1, tableName],
     );
 
@@ -373,9 +373,39 @@ export class Database {
     };
   }
 
+  // Convert one cell for storage, adding table and column context to a
+  // conversion error while keeping the offending value (imported cell content)
+  // out of it.
+  #convertCell(
+    type: ColumnDefinition["type"],
+    value: CellValue,
+    tableName: string,
+    columnName: string,
+  ): SqlValueType {
+    try {
+      return sqlValueFromCell(type, value);
+    } catch (error) {
+      if (
+        isConsultChimpsError(error) &&
+        (error.code === "DB_INVALID_BOOLEAN" ||
+          error.code === "DB_INVALID_NUMBER")
+      ) {
+        throw new ConsultChimpsError(
+          error.code,
+          `${error.message} (table "${tableName}", column "${columnName}")`,
+          {
+            cause: error,
+            details: { ...error.details, table: tableName, column: columnName },
+          },
+        );
+      }
+      throw error;
+    }
+  }
+
   #nextCounter(tableName: string): number {
     const value = this.#sql.selectValue(
-      `SELECT next_counter FROM ${quoteIdentifier(TABLE_REGISTRY_TABLE)} WHERE name = ?;`,
+      `SELECT next_counter FROM ${quoteIdentifier(TABLE_REGISTRY_TABLE)} WHERE name = ? COLLATE NOCASE;`,
       [tableName],
     );
     return typeof value === "number" ? value : Number(value);
@@ -463,9 +493,12 @@ export class Database {
     return this.#sql;
   }
 
+  // SQLite table names are case-insensitive, so the registry is queried the
+  // same way: creating "customer" when "Customer" exists is a duplicate, and a
+  // lookup finds a table whatever casing the caller passes.
   #tableExists(tableName: string): boolean {
     const found = this.#sql.selectValue(
-      `SELECT count(*) FROM ${quoteIdentifier(TABLE_REGISTRY_TABLE)} WHERE name = ?;`,
+      `SELECT count(*) FROM ${quoteIdentifier(TABLE_REGISTRY_TABLE)} WHERE name = ? COLLATE NOCASE;`,
       [tableName],
     );
     return found === 1;
@@ -483,7 +516,7 @@ export class Database {
 
   #requireDefinition(tableName: string): StoredDefinition {
     const value = this.#sql.selectValue(
-      `SELECT definition FROM ${quoteIdentifier(TABLE_REGISTRY_TABLE)} WHERE name = ?;`,
+      `SELECT definition FROM ${quoteIdentifier(TABLE_REGISTRY_TABLE)} WHERE name = ? COLLATE NOCASE;`,
       [tableName],
     );
     if (typeof value !== "string") {

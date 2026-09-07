@@ -141,6 +141,48 @@ describe("schema round trip through save and load", () => {
     database.close();
   });
 
+  it("rejects an integer outside the range representable exactly", async () => {
+    const database = await Database.create();
+    database.createTable({
+      name: "Big",
+      columns: [{ name: "n", type: "integer" }],
+      foreignKeys: [],
+      recordId: { prefix: "B", padding: 2 },
+    });
+    expect(() =>
+      database.insertRecord("Big", { n: "9007199254740993" }),
+    ).toThrow(expect.objectContaining({ code: "DB_INVALID_NUMBER" }));
+    database.close();
+  });
+
+  it("keeps the offending value out of a conversion error but adds context", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    let caught:
+      | { code: string; message: string; details: Record<string, unknown> }
+      | undefined;
+    try {
+      database.insertRecord("Customer", { name: "X", active: "secret-value" });
+    } catch (error) {
+      caught = error as typeof caught;
+    }
+    expect(caught?.code).toBe("DB_INVALID_BOOLEAN");
+    expect(caught?.message).not.toContain("secret-value");
+    expect(caught?.details).not.toHaveProperty("value");
+    expect(caught?.details["table"]).toBe("Customer");
+    expect(caught?.details["column"]).toBe("active");
+    database.close();
+  });
+
+  it("detects a duplicate table name case-insensitively", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    expect(() =>
+      database.createTable({ ...customer, name: "customer" }),
+    ).toThrow(expect.objectContaining({ code: "DB_TABLE_EXISTS" }));
+    database.close();
+  });
+
   it("reserves the Record ID column case-insensitively", async () => {
     const database = await Database.create();
     expect(() =>
