@@ -111,13 +111,14 @@ with no usable GPL path; the only genuine dual GPL and commercial grids (DHTMLX,
 Webix) are not materially better and fight a custom design system with their own
 skins. So GPL earns nothing here.
 
-**Decision: Tabulator (MIT), used through `react-tabulator`.** Within permissive
-licensing it is the most complete Excel range and clipboard package: rectangular
-and disjoint (ctrl-click) range selection, keyboard range extension, a
-corner-drag fill, and Excel-compatible TSV clipboard, DOM-rendered so tool-kit
-CSS and light or dark style the cells, and actively maintained. It satisfies
-both the Excel-UX requirement and the batteries-included goal with no license
-cost and no GPL split on `apps/docs`.
+**Decision: Tabulator (MIT), used through `tabulator-tables` directly.** Within
+permissive licensing it is the most complete Excel range and clipboard package:
+rectangular and disjoint (ctrl-click) range selection, keyboard range extension,
+and Excel-compatible TSV clipboard, DOM-rendered so tool-kit CSS and light or
+dark style the cells, and actively maintained. It satisfies the Excel-UX
+requirement and the batteries-included goal with no license cost and no GPL
+split on `apps/docs`, and the pieces it lacks are additive work we own rather
+than a reason to change the choice.
 
 A spike (2026-09-07, Tabulator 6.5.2, verified in a real browser) corrected one
 assumption: Tabulator has no fill handle at all, not even copy, so the earlier
