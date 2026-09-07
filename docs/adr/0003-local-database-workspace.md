@@ -20,9 +20,11 @@ hosted service, and data never leaves the machine. Import reuses
 mapping); the `Table` model is the exchange format in both directions, so the
 database can also feed the existing PowerPoint populate and split operations.
 The formula-preserving Excel export is a new L3 operation on the xlsx package's
-OOXML model, per `packages/xlsx/ARCHITECTURE.md`. Dependencies stay Apache-2.0
-compatible: HyperFormula and ExcelJS are excluded, and so is any GPL, LGPL, or
-EPL package (elkjs among them).
+OOXML model, per `packages/xlsx/ARCHITECTURE.md`. Every dependency adopted here
+is Apache-2.0 compatible (HyperFormula and ExcelJS are excluded). A copyleft or
+paid license was weighed only for the grid (Decision 4), where a GPL option was
+genuinely considered and then rejected on merit, so no copyleft dependency
+(elkjs among them) enters the project.
 
 ## Decision 1: save model
 
