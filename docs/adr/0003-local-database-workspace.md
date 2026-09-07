@@ -128,12 +128,13 @@ clipboard copy and paste that round-trips with Excel, tab and enter editing, and
 a searchable `list` editor that serves the foreign-key picker (label shown,
 Record ID stored). Three items are therefore ours to build on top of Tabulator's
 public Range API (`getBounds`, `setBounds`, `getCells`, `cell.setValue`), no
-fork required: the whole fill handle, including series inference (which no grid
-provides) as well as plain copy; a custom `clipboardPasteParser` that normalizes
-line endings, because the built-in `range` parser does not strip `\r` and
-corrupts the last column of a multi-row paste on Windows; and a thin layer that
-maps our CSS variables onto Tabulator's selectors, since it ships hardcoded hex
-rather than variables. All three are moderate, additive work.
+fork required: the whole fill handle, including series inference (which none of
+the permissive grids we evaluated provide, though some commercial grids such as
+AG Grid Enterprise do) as well as plain copy; a custom `clipboardPasteParser`
+that normalizes line endings, because the built-in `range` parser does not strip
+`\r` and corrupts the last column of a multi-row paste on Windows; and a thin
+layer that maps our CSS variables onto Tabulator's selectors, since it ships
+hardcoded hex rather than variables. All three are moderate, additive work.
 
 ## Decision 5: theme package
 
