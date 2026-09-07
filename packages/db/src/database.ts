@@ -515,10 +515,13 @@ export class Database {
         [RECORD_ID_COLUMN]: String(row[RECORD_ID_COLUMN]),
       };
       for (const column of definition.columns) {
-        output[column.name] = cellFromSqlValue(
-          column.type,
-          (row[column.name] ?? null) as SqlValueType,
-        );
+        // Own-property read so a column named like an Object.prototype member
+        // never picks up an inherited value; "__proto__" is refused as a column
+        // name, so assigning declared names to this plain object is safe.
+        const stored = Object.prototype.hasOwnProperty.call(row, column.name)
+          ? (row[column.name] as SqlValueType)
+          : null;
+        output[column.name] = cellFromSqlValue(column.type, stored);
       }
       return output;
     });

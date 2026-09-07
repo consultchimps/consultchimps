@@ -262,6 +262,37 @@ describe("schema round trip through save and load", () => {
     database.close();
   });
 
+  it("refuses the __proto__ identifier that cannot be stored as a data key", async () => {
+    const database = await Database.create();
+    expect(() =>
+      database.createTable({
+        name: "Thing",
+        columns: [{ name: "__proto__", type: "text" }],
+        foreignKeys: [],
+        recordId: { prefix: "T", padding: 2 },
+      }),
+    ).toThrow(expect.objectContaining({ code: "DB_RESERVED_IDENTIFIER" }));
+    database.close();
+  });
+
+  it("handles a column named like an Object.prototype member safely", async () => {
+    const database = await Database.create();
+    database.createTable({
+      name: "Thing",
+      columns: [{ name: "constructor", type: "text" }],
+      foreignKeys: [],
+      recordId: { prefix: "T", padding: 2 },
+    });
+    database.insertRecord("Thing", { constructor: "value" });
+    // A record whose row object lacks its own "constructor" value stores null,
+    // not the inherited Object constructor.
+    database.insertRecord("Thing", {});
+    expect(
+      database.readRecords("Thing").map((row) => row["constructor"]),
+    ).toEqual(["value", null]);
+    database.close();
+  });
+
   it("rejects the SQLite-reserved table name prefix", async () => {
     const database = await Database.create();
     expect(() =>

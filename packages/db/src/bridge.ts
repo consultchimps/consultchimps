@@ -64,9 +64,14 @@ export function addRecordsFromTable(
   return database.sql.transaction(() => {
     const inserted: InsertedRecord[] = [];
     for (const row of table.rows) {
-      const values: Record<string, CellValue> = {};
+      // A prototype-free destination, and own-property reads, so a column named
+      // like an Object.prototype member ("constructor") reads the row's own
+      // value or null, never an inherited function.
+      const values: Record<string, CellValue> = Object.create(null);
       for (const column of mappedColumns) {
-        values[column] = row[column] ?? null;
+        values[column] = Object.prototype.hasOwnProperty.call(row, column)
+          ? (row[column] ?? null)
+          : null;
       }
       inserted.push(database.insertRecord(tableName, values));
     }

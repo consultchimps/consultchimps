@@ -132,6 +132,18 @@ export function assertSafeIdentifier(
       { details: { role, name } },
     );
   }
+  // "__proto__" cannot be carried as a plain-object data key: an object literal
+  // treats it as the prototype setter and sql.js's getAsObject drops it, so it
+  // could never round-trip. Reject it rather than lose data silently. Other
+  // prototype names such as "constructor" are fine, because reads are guarded
+  // with own-property checks where identifiers become object keys.
+  if (name === "__proto__") {
+    throw new ConsultChimpsError(
+      "DB_RESERVED_IDENTIFIER",
+      `The ${role} name "__proto__" is reserved and cannot be used, because it cannot be stored safely as a data key.`,
+      { details: { role, name } },
+    );
+  }
 }
 
 /**
