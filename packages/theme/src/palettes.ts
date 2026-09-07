@@ -68,8 +68,12 @@ export const NEUTRAL_PALETTE: Palette = {
       "#cde2fb",
     ],
   },
-  // Status is a fixed scale with reserved meaning; the same steps clear the
-  // 3:1 mark on both surfaces, so light and dark share them.
+  // Status is a fixed scale with reserved meaning, shared across light and dark.
+  // Following the data-viz standard, a status colour is always paired with an
+  // icon and label, so on the light surface warning (about 1.79:1) and serious
+  // (about 2.57:1) sit below the 3:1 categorical mark by design: the pairing,
+  // not contrast alone, carries the meaning. `validatePalette` therefore checks
+  // categorical distinctness and does not gate these status steps.
   semantic: {
     good: { light: "#0ca30c", dark: "#0ca30c" },
     warning: { light: "#fab219", dark: "#fab219" },

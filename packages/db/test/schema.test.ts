@@ -72,6 +72,54 @@ describe("schema round trip through save and load", () => {
     reopened.close();
   });
 
+  it("keeps foreign keys enforced after serializing", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    database.createTable(invoice);
+    const north = database.insertRecord("Customer", {
+      name: "North",
+      active: true,
+    });
+    // sql.js export() resets connection PRAGMAs; enforcement must survive it.
+    database.serialize();
+    database.insertRecord("Invoice", { customer: north.recordId, amount: 1 });
+    expect(() =>
+      database.insertRecord("Invoice", { customer: "CUST-9999", amount: 2 }),
+    ).toThrow(expect.objectContaining({ code: "DB_FOREIGN_KEY_VIOLATION" }));
+    database.close();
+  });
+
+  it("reports invalid database bytes with a structured error", async () => {
+    const notADatabase = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    await expect(Database.open(notADatabase)).rejects.toThrow(
+      expect.objectContaining({ code: "DB_INVALID_DATABASE_FILE" }),
+    );
+  });
+
+  it("rejects a registry with case-equivalent duplicate table names", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    // A binary-collated primary key lets an external edit insert "customer"
+    // beside "Customer".
+    database.sql.run(
+      `INSERT INTO ${quoteIdentifier(TABLE_REGISTRY_TABLE)} (name, definition, next_counter) VALUES (?, ?, ?);`,
+      [
+        "customer",
+        JSON.stringify({
+          columns: [{ name: "name", type: "text" }],
+          foreignKeys: [],
+          recordId: { prefix: "C", padding: 2 },
+        }),
+        1,
+      ],
+    );
+    const bytes = database.serialize();
+    database.close();
+    await expect(Database.open(bytes)).rejects.toThrow(
+      expect.objectContaining({ code: "DB_CORRUPT_WORKSPACE" }),
+    );
+  });
+
   it("enforces a foreign key with a structured error", async () => {
     const database = await Database.create();
     database.createTable(customer);

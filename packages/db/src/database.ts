@@ -169,6 +169,26 @@ function parseDefinition(json: string, tableName: string): StoredDefinition {
   return parsed as StoredDefinition;
 }
 
+// Translate a failure while opening bytes: a ConsultChimpsError (this package's
+// own validation) passes through, an sql.js "not a database / malformed" error
+// (a wrong file or a damaged save, an expected failure) becomes a stable error,
+// and anything else (a wasm-loading or programming error) is left as itself so
+// it stays distinguishable.
+function translateOpenError(error: unknown): unknown {
+  if (isConsultChimpsError(error)) {
+    return error;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (/not a database|malformed|encrypted|file is not/i.test(message)) {
+    return new ConsultChimpsError(
+      "DB_INVALID_DATABASE_FILE",
+      "These bytes are not a readable database file; the file may be the wrong one or damaged.",
+      { cause: error },
+    );
+  }
+  return error;
+}
+
 // Turn sql.js's generic constraint exception into a stable ConsultChimpsError so
 // callers and future adapters can identify an expected input failure by code.
 // The engine message carries only identifiers (table and column names), never
@@ -230,12 +250,22 @@ export class Database {
     bytes: Uint8Array,
     config?: SqlEngineConfig,
   ): Promise<Database> {
-    const sql = await loadSqlDatabase(bytes, config);
+    let sql: SqlDatabase;
+    try {
+      sql = await loadSqlDatabase(bytes, config);
+    } catch (error) {
+      // Invalid bytes can fail either here or at the first query below.
+      throw translateOpenError(error);
+    }
     const database = new Database(sql);
     try {
       sql.run("PRAGMA foreign_keys = ON;");
       database.#assertMetadataPresent();
       database.#assertSupportedSchemaVersion();
+      // Reject a registry that holds two table names differing only by case,
+      // which a binary-collated primary key permits in an externally edited file
+      // but this package's case-insensitive lookups cannot resolve.
+      database.#assertRegistryDistinct();
       // Force every stored definition to parse now, so a damaged registry is
       // reported as a corruption error while the handle can still be closed,
       // rather than throwing later from getSchema or a record operation.
@@ -244,9 +274,27 @@ export class Database {
       // A rejected open must not leak the sql.js allocation the load created,
       // since the caller never receives a handle to close.
       sql.close();
-      throw error;
+      throw translateOpenError(error);
     }
     return database;
+  }
+
+  #assertRegistryDistinct(): void {
+    const rows = this.#sql.select(
+      `SELECT name FROM ${quoteIdentifier(TABLE_REGISTRY_TABLE)};`,
+    );
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const key = identifierKey(String(row["name"]));
+      if (seen.has(key)) {
+        throw new ConsultChimpsError(
+          "DB_CORRUPT_WORKSPACE",
+          "The database holds two tables whose names differ only by case, so it may be damaged.",
+          { details: {} },
+        );
+      }
+      seen.add(key);
+    }
   }
 
   #initializeMetadata(): void {
@@ -658,7 +706,12 @@ export class Database {
 
   /** Serialize the whole database back to bytes for saving. */
   serialize(): Uint8Array {
-    return this.#sql.serialize();
+    const bytes = this.#sql.serialize();
+    // sql.js export() closes and reopens the underlying connection, which resets
+    // connection-local PRAGMAs, so re-enable foreign key enforcement for editing
+    // that continues after a save or autosave.
+    this.#sql.run("PRAGMA foreign_keys = ON;");
+    return bytes;
   }
 
   /** Release the database and its memory. */
