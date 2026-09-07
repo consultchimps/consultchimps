@@ -48,9 +48,13 @@ still matches that recorded base, restoring is safe, and if the shared file has
 changed since (another editor saved in the meantime), the workspace surfaces the
 conflict and keeps the recovered copy under a new name rather than clobber the
 other edits. Recovery is compared against the recorded base, never gated on a
-plain newer-than check, which would suppress exactly the divergence case. Safari
-and Firefox, which lack the API, fall back to download-and-replace. It serves
-the shared-folder, one-editor model directly and degrades rather than blocking.
+plain newer-than check, which would suppress exactly the divergence case. The
+mirror has a bounded lifecycle so no hidden second copy of client data lingers:
+it is deleted on a successful save back to the shared file and on a clean close,
+a crash-left mirror is offered once on the next open and then removed, and any
+mirror past a bounded age is purged. Safari and Firefox, which lack the API,
+fall back to download-and-replace. It serves the shared-folder, one-editor model
+directly and degrades rather than blocking.
 
 ## Decision 2: SQLite engine
 
