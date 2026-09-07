@@ -122,6 +122,16 @@ export function assertSafeIdentifier(
       { details: { role, name } },
     );
   }
+  // SQLite reserves the "sqlite_" table-name prefix for its own objects and
+  // refuses CREATE TABLE on it; reject it here so the caller gets this stable
+  // error rather than an unclassified engine exception.
+  if (role === "table" && name.toLowerCase().startsWith("sqlite_")) {
+    throw new ConsultChimpsError(
+      "DB_RESERVED_IDENTIFIER",
+      `The table name "${name}" uses the "sqlite_" prefix, which SQLite reserves for internal use.`,
+      { details: { role, name } },
+    );
+  }
 }
 
 /**
@@ -217,6 +227,35 @@ function booleanToSqlValue(value: Exclude<CellValue, null>): SqlValueType {
   );
 }
 
+// Parse a numeric column value. A blank string is an intentionally empty cell
+// (null); any other value that is not a finite number is rejected rather than
+// silently discarded, so a stray "not available" cannot masquerade as blank.
+function numberToSqlValue(
+  value: Exclude<CellValue, null>,
+  integer: boolean,
+): SqlValueType {
+  let numeric: number;
+  if (typeof value === "number") {
+    numeric = value;
+  } else if (typeof value === "boolean") {
+    numeric = value ? 1 : 0;
+  } else {
+    const trimmed = value.trim();
+    if (trimmed === "") {
+      return null;
+    }
+    numeric = Number(trimmed);
+  }
+  if (!Number.isFinite(numeric)) {
+    throw new ConsultChimpsError(
+      "DB_INVALID_NUMBER",
+      `The value "${value}" cannot be read as ${integer ? "an integer" : "a number"}.`,
+      { details: { value, integer } },
+    );
+  }
+  return integer ? Math.trunc(numeric) : numeric;
+}
+
 /**
  * Convert a tabular cell value to a value SQLite can store, interpreting the
  * column's declared type (booleans store as 0/1 integers).
@@ -231,14 +270,10 @@ export function sqlValueFromCell(
   switch (type) {
     case "boolean":
       return booleanToSqlValue(value);
-    case "integer": {
-      const numeric = typeof value === "number" ? value : Number(value);
-      return Number.isFinite(numeric) ? Math.trunc(numeric) : null;
-    }
-    case "real": {
-      const numeric = typeof value === "number" ? value : Number(value);
-      return Number.isFinite(numeric) ? numeric : null;
-    }
+    case "integer":
+      return numberToSqlValue(value, true);
+    case "real":
+      return numberToSqlValue(value, false);
     case "text":
     case "date":
       return typeof value === "string" ? value : String(value);

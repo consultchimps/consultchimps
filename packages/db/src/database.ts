@@ -36,6 +36,40 @@ interface StoredDefinition {
   recordId: RecordIdConfig;
 }
 
+// Turn sql.js's generic constraint exception into a stable ConsultChimpsError so
+// callers and future adapters can identify an expected input failure by code.
+// The engine message carries only identifiers (table and column names), never
+// the attempted values, so nothing confidential is surfaced.
+function translateConstraintError(error: unknown, tableName: string): unknown {
+  const message = error instanceof Error ? error.message : String(error);
+  const target = message.includes(":")
+    ? message.slice(message.indexOf(":") + 1).trim()
+    : undefined;
+
+  if (/FOREIGN KEY constraint failed/i.test(message)) {
+    return new ConsultChimpsError(
+      "DB_FOREIGN_KEY_VIOLATION",
+      `A record in "${tableName}" references a Record ID that does not exist in the related table.`,
+      { cause: error, details: { table: tableName } },
+    );
+  }
+  if (/NOT NULL constraint failed/i.test(message)) {
+    return new ConsultChimpsError(
+      "DB_NOT_NULL_VIOLATION",
+      `A required column on "${tableName}" was left empty${target ? ` (${target})` : ""}.`,
+      { cause: error, details: { table: tableName, constraint: target } },
+    );
+  }
+  if (/UNIQUE constraint failed/i.test(message)) {
+    return new ConsultChimpsError(
+      "DB_UNIQUE_VIOLATION",
+      `A value on "${tableName}" must be unique${target ? ` (${target})` : ""}.`,
+      { cause: error, details: { table: tableName, constraint: target } },
+    );
+  }
+  return error;
+}
+
 /**
  * A local relational database held in memory. It owns a schema, generates a
  * stable Record ID for every inserted record, and persists both the schema and
@@ -101,6 +135,21 @@ export class Database {
 
   #assertSupportedSchemaVersion(): void {
     const version = this.schemaFormatVersion();
+    // A missing row, malformed text, or a non-positive value all mean this is
+    // not a schema state this version can safely assume, so reject them rather
+    // than let a NaN comparison quietly fall through to version-1 handling.
+    if (!Number.isInteger(version) || version < 1) {
+      throw new ConsultChimpsError(
+        "DB_UNSUPPORTED_SCHEMA_VERSION",
+        "This database is missing a recognizable schema format version, so it may be corrupt or was not created by ConsultChimps.",
+        {
+          details: {
+            fileVersion: version,
+            supportedVersion: SCHEMA_FORMAT_VERSION,
+          },
+        },
+      );
+    }
     if (version > SCHEMA_FORMAT_VERSION) {
       throw new ConsultChimpsError(
         "DB_UNSUPPORTED_SCHEMA_VERSION",
@@ -115,13 +164,17 @@ export class Database {
     }
   }
 
-  /** The metadata-format version stored in this database file. */
+  /**
+   * The metadata-format version stored in this database file. Returns `NaN`
+   * when the value is absent or malformed; a database opened through `open`
+   * has already been rejected in that case.
+   */
   schemaFormatVersion(): number {
     const value = this.#sql.selectValue(
       `SELECT value FROM ${quoteIdentifier(METADATA_TABLE)} WHERE key = ?;`,
       ["schema_format_version"],
     );
-    return typeof value === "string" ? Number(value) : SCHEMA_FORMAT_VERSION;
+    return typeof value === "string" ? Number(value) : NaN;
   }
 
   /**
@@ -289,10 +342,14 @@ export class Database {
 
     const placeholders = insertColumns.map(() => "?").join(", ");
     const quotedColumns = insertColumns.map(quoteIdentifier).join(", ");
-    this.#sql.run(
-      `INSERT INTO ${quoteIdentifier(tableName)} (${quotedColumns}) VALUES (${placeholders});`,
-      insertValues,
-    );
+    try {
+      this.#sql.run(
+        `INSERT INTO ${quoteIdentifier(tableName)} (${quotedColumns}) VALUES (${placeholders});`,
+        insertValues,
+      );
+    } catch (error) {
+      throw translateConstraintError(error, tableName);
+    }
 
     this.#sql.run(
       `UPDATE ${quoteIdentifier(TABLE_REGISTRY_TABLE)} SET next_counter = ? WHERE name = ?;`,

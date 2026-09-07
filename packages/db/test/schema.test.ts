@@ -70,7 +70,7 @@ describe("schema round trip through save and load", () => {
     reopened.close();
   });
 
-  it("enforces a foreign key against the referenced Record ID", async () => {
+  it("enforces a foreign key with a structured error", async () => {
     const database = await Database.create();
     database.createTable(customer);
     database.createTable(invoice);
@@ -80,7 +80,56 @@ describe("schema round trip through save and load", () => {
         customer: "CUST-0404",
         amount: 10,
       }),
-    ).toThrow();
+    ).toThrow(expect.objectContaining({ code: "DB_FOREIGN_KEY_VIOLATION" }));
+    database.close();
+  });
+
+  it("reports a missing required column with a structured error", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    // "name" is nullable: false and is not supplied.
+    expect(() => database.insertRecord("Customer", { active: true })).toThrow(
+      expect.objectContaining({ code: "DB_NOT_NULL_VIOLATION" }),
+    );
+    database.close();
+  });
+
+  it("rejects non-numeric text for a numeric column and keeps blanks null", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    database.createTable(invoice);
+    const north = database.insertRecord("Customer", {
+      name: "North",
+      active: true,
+    });
+
+    expect(() =>
+      database.insertRecord("Invoice", {
+        customer: north.recordId,
+        amount: "not available",
+      }),
+    ).toThrow(expect.objectContaining({ code: "DB_INVALID_NUMBER" }));
+
+    database.insertRecord("Invoice", {
+      customer: north.recordId,
+      amount: "",
+    });
+    expect(database.readRecords("Invoice")).toEqual([
+      { record_id: "INV-00001", customer: north.recordId, amount: null },
+    ]);
+    database.close();
+  });
+
+  it("rejects the SQLite-reserved table name prefix", async () => {
+    const database = await Database.create();
+    expect(() =>
+      database.createTable({
+        name: "sqlite_stat1",
+        columns: [{ name: "a", type: "text" }],
+        foreignKeys: [],
+        recordId: { prefix: "S", padding: 2 },
+      }),
+    ).toThrow(/sqlite_/i);
     database.close();
   });
 
@@ -141,6 +190,21 @@ describe("schema round trip through save and load", () => {
     database.close();
 
     await expect(Database.open(bytes)).rejects.toThrow(/newer/i);
+  });
+
+  it("rejects a database whose schema version row is missing or malformed", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    database.sql.run(
+      `DELETE FROM ${quoteIdentifier(METADATA_TABLE)} WHERE key = ?;`,
+      ["schema_format_version"],
+    );
+    const bytes = database.serialize();
+    database.close();
+
+    await expect(Database.open(bytes)).rejects.toThrow(
+      expect.objectContaining({ code: "DB_UNSUPPORTED_SCHEMA_VERSION" }),
+    );
   });
 
   it("refuses to open bytes that are not a ConsultChimps database", async () => {

@@ -188,6 +188,111 @@ hand. A drafted entry carries no aliases on purpose: every spelling in a group
 shares one normalized key, which the canonical name already matches. Review the
 draft and apply it yourself; nothing is applied for you.
 
+## Resolve and validate a palette
+
+`@consultchimps/theme` holds a runtime-neutral palette model: categorical,
+sequential, and semantic colours, each with a light and a dark value, plus a
+resolve API and a validation pass. It has no dependencies. A client's real
+colours are supplied at runtime; the package ships neutral placeholder palettes
+only.
+
+```ts
+import {
+  NEUTRAL_PALETTE,
+  resolveCategorical,
+  resolveSemantic,
+  validatePalette,
+  contrastRatio,
+} from "@consultchimps/theme";
+
+// Resolve a colour role to a value for a mode.
+const seriesOne = resolveCategorical(NEUTRAL_PALETTE, 0, "light"); // "#2a78d6"
+const critical = resolveSemantic(NEUTRAL_PALETTE, "critical", "dark");
+
+// Validate contrast and categorical distinctness. The pass returns a report
+// rather than throwing, so a caller can surface each issue.
+const report = validatePalette(NEUTRAL_PALETTE, "light");
+if (!report.valid) {
+  for (const issue of report.issues) {
+    console.warn(`${issue.check}: ${issue.message}`);
+  }
+}
+
+// The WCAG contrast ratio between two colours, for a one-off check.
+console.log(contrastRatio("#0b0b0b", "#fcfcfb"));
+```
+
+A report is `{ valid, issues[] }`. `valid` is true when no issue has error
+severity; a contrast shortfall against the surface is reported as a warning, so
+a palette that leans on visible labels still validates. `resolveCategorical`
+throws when a slot is past the palette's range, since categorical slots are
+assigned in order rather than cycled.
+
+## Build a local database
+
+`@consultchimps/db` holds a small relational database in memory on sql.js, with
+a schema model and a generated stable identifier for each record. It loads a
+database from bytes, runs the schema operations, and serializes back to bytes,
+so a workspace can save the database as one file.
+
+```ts
+import { Database } from "@consultchimps/db";
+
+const database = await Database.create();
+
+database.createTable({
+  name: "Customer",
+  columns: [
+    { name: "name", type: "text", nullable: false },
+    { name: "active", type: "boolean" },
+  ],
+  foreignKeys: [],
+  recordId: { prefix: "CUST", padding: 4 },
+});
+
+const inserted = database.insertRecord("Customer", {
+  name: "North",
+  active: true,
+});
+console.log(inserted.recordId); // "CUST-0001"
+
+const bytes = database.serialize();
+const reopened = await Database.open(bytes); // schema and next id restored
+```
+
+Each table carries a **Record ID**: a human-readable, generated, immutable
+identifier (`CUST-0001`) stored in a unique text column that foreign keys
+reference. The prefix and zero-padding are configured per table, and the schema,
+that configuration, and the next-id counter are stored inside the database file,
+so reopening the bytes restores them.
+
+### Bridge to the table model
+
+The database exchanges rows with `@consultchimps/tabular` in both directions, so
+it can feed the existing table operations and be fed rows in return:
+
+```ts
+import { databaseTableToTable, addRecordsFromTable } from "@consultchimps/db";
+
+// A database table out as a Table (Record ID column first).
+const table = databaseTableToTable(database, "Customer");
+
+// A Table in as records, generating a fresh Record ID for each row.
+addRecordsFromTable(database, "Customer", table);
+```
+
+### Configure sql.js in a browser worker
+
+In Node the WebAssembly binary resolves beside the installed package, so no
+configuration is needed. In a browser worker, pass `locateFile` (or
+`wasmBinary`) so sql.js fetches the wasm from wherever the app serves it:
+
+```ts
+const database = await Database.create({
+  locateFile: (file) => `/sql-wasm/${file}`,
+});
+```
+
 ## Read workbooks without writing anything
 
 The xlsx package also exposes the readers the operations are built on, for
