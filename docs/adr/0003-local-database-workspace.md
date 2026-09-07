@@ -40,15 +40,17 @@ Access only with no fallback.
 mirror and a download fallback.** On Chromium the workspace writes directly back
 to the shared-folder file the user opened, holding the file handle for the
 session. The OPFS copy autosaves for crash recovery and is a mirror, not a
-source of truth, so nobody reconciles two locations. The mirror is tagged with
-the identity of the shared file it belongs to and the moment it was taken. On
-reopen, recovery is offered only when the mirror belongs to the file being
-opened and is newer than it, and it never silently overwrites: if the shared
-file has moved on under another editor since the mirror was taken, the workspace
-surfaces the conflict and lets the person keep the recovered copy under a new
-name rather than clobber someone else's edits. Safari and Firefox, which lack
-the API, fall back to download-and-replace. It serves the shared-folder,
-one-editor model directly and degrades rather than blocking.
+source of truth, so nobody reconciles two locations. The mirror records which
+shared file it belongs to and the base version of that file it was derived from
+(a content hash), alongside the pending edits. On reopen, recovery is offered
+whenever the mirror holds edits the shared file does not; if the shared file
+still matches that recorded base, restoring is safe, and if the shared file has
+changed since (another editor saved in the meantime), the workspace surfaces the
+conflict and keeps the recovered copy under a new name rather than clobber the
+other edits. Recovery is compared against the recorded base, never gated on a
+plain newer-than check, which would suppress exactly the divergence case. Safari
+and Firefox, which lack the API, fall back to download-and-replace. It serves
+the shared-folder, one-editor model directly and degrades rather than blocking.
 
 ## Decision 2: SQLite engine
 
