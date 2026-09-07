@@ -270,6 +270,10 @@ export class Database {
       // reported as a corruption error while the handle can still be closed,
       // rather than throwing later from getSchema or a record operation.
       database.getSchema();
+      // Every registered table must have a physical table, so a registry entry
+      // whose table was dropped or renamed is reported here rather than as a raw
+      // "no such table" error on the first read or insert.
+      database.#assertRegistryTablesExist();
     } catch (error) {
       // A rejected open must not leak the sql.js allocation the load created,
       // since the caller never receives a handle to close.
@@ -277,6 +281,20 @@ export class Database {
       throw translateOpenError(error);
     }
     return database;
+  }
+
+  #assertRegistryTablesExist(): void {
+    const orphaned = this.#sql.select(
+      `SELECT r.name AS name FROM ${quoteIdentifier(TABLE_REGISTRY_TABLE)} r ` +
+        `WHERE NOT EXISTS (SELECT 1 FROM sqlite_schema s WHERE s.type = 'table' AND s.name = r.name COLLATE NOCASE);`,
+    );
+    if (orphaned.length > 0) {
+      throw new ConsultChimpsError(
+        "DB_CORRUPT_WORKSPACE",
+        "The database registers a table that no longer exists, so it may be damaged.",
+        { details: {} },
+      );
+    }
   }
 
   #assertRegistryDistinct(): void {

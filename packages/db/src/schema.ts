@@ -251,7 +251,17 @@ export function cellFromSqlValue(
       );
     case "text":
     case "date":
-      return typeof value === "string" ? value : String(value);
+      // A raw write or external edit could leave a BLOB here, which sql.js
+      // returns as a Uint8Array; converting it to "65,66" would corrupt the
+      // value, so reject a non-string stored value instead.
+      if (typeof value === "string") {
+        return value;
+      }
+      throw new ConsultChimpsError(
+        "DB_CORRUPT_STORED_VALUE",
+        "A text column holds a stored value that is not text, so the database may be damaged.",
+        { details: { type } },
+      );
     default: {
       const unexpected: never = type;
       throw new ConsultChimpsError(

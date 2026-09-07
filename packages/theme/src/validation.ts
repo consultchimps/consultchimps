@@ -11,6 +11,7 @@ import { type ColorMode, type ModeColor, type Palette } from "./palette.js";
  * Which check produced an issue.
  */
 export type ValidationCheck =
+  | "invalid-shape"
   | "invalid-color"
   | "lightness-band"
   | "chroma-floor"
@@ -209,8 +210,22 @@ export function validatePalette(
     const value = color?.[mode];
     return typeof value === "string" ? value : "";
   };
-  const entries = Array.isArray(palette.categorical) ? palette.categorical : [];
-  const colors = entries.map((entry) => readMode(entry));
+  // A runtime palette that omits its categorical colours (or gives a non-array)
+  // is a shape error, not an empty-and-therefore-valid palette.
+  if (!Array.isArray(palette.categorical)) {
+    return {
+      valid: false,
+      issues: [
+        {
+          check: "invalid-shape",
+          severity: "error",
+          message: "The palette has no categorical colours to validate.",
+          details: {},
+        },
+      ],
+    };
+  }
+  const colors = palette.categorical.map((entry) => readMode(entry));
   return validateCategorical(colors, mode, {
     surface: readMode(palette.surface),
   });

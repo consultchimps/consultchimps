@@ -490,6 +490,32 @@ describe("schema round trip through save and load", () => {
     );
   });
 
+  it("rejects a binary value stored in a text column when reading", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    database.insertRecord("Customer", { name: "North", active: true });
+    // A BLOB written through the raw handle comes back as a Uint8Array.
+    database.sql.run(
+      `UPDATE ${quoteIdentifier("Customer")} SET ${quoteIdentifier("name")} = x'4142';`,
+    );
+    expect(() => database.readRecords("Customer")).toThrow(
+      expect.objectContaining({ code: "DB_CORRUPT_STORED_VALUE" }),
+    );
+    database.close();
+  });
+
+  it("rejects opening a database whose registered table is gone", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    // Drop the physical table but leave its registry entry.
+    database.sql.run(`DROP TABLE ${quoteIdentifier("Customer")};`);
+    const bytes = database.serialize();
+    database.close();
+    await expect(Database.open(bytes)).rejects.toThrow(
+      expect.objectContaining({ code: "DB_CORRUPT_WORKSPACE" }),
+    );
+  });
+
   it("rejects a fractional stored value in an integer column when reading", async () => {
     const database = await Database.create();
     database.createTable({
