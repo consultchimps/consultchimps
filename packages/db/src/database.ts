@@ -99,9 +99,16 @@ export class Database {
   ): Promise<Database> {
     const sql = await loadSqlDatabase(bytes, config);
     const database = new Database(sql);
-    sql.run("PRAGMA foreign_keys = ON;");
-    database.#assertMetadataPresent();
-    database.#assertSupportedSchemaVersion();
+    try {
+      sql.run("PRAGMA foreign_keys = ON;");
+      database.#assertMetadataPresent();
+      database.#assertSupportedSchemaVersion();
+    } catch (error) {
+      // A rejected open must not leak the sql.js allocation the load created,
+      // since the caller never receives a handle to close.
+      sql.close();
+      throw error;
+    }
     return database;
   }
 
@@ -191,14 +198,17 @@ export class Database {
     const seenColumns = new Set<string>();
     for (const column of schema.columns) {
       assertSafeIdentifier(column.name, "column");
-      if (column.name === RECORD_ID_COLUMN) {
+      const key = column.name.toLowerCase();
+      // SQLite column names are case-insensitive, so any casing of the reserved
+      // Record ID column would collide with the generated one; reject it here
+      // with the stable error rather than let CREATE TABLE fail generically.
+      if (key === RECORD_ID_COLUMN) {
         throw new ConsultChimpsError(
           "DB_RESERVED_COLUMN",
-          `The column name "${RECORD_ID_COLUMN}" is reserved for the generated Record ID.`,
-          { details: { table: schema.name } },
+          `The column name "${column.name}" is reserved for the generated Record ID.`,
+          { details: { table: schema.name, column: column.name } },
         );
       }
-      const key = column.name.toLowerCase();
       if (seenColumns.has(key)) {
         throw new ConsultChimpsError(
           "DB_DUPLICATE_COLUMN",

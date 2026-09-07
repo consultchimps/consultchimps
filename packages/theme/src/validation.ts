@@ -1,6 +1,7 @@
 import {
   contrastRatio,
   deltaE,
+  isHexColor,
   oklchLightnessChroma,
   type CvdKind,
 } from "./color.js";
@@ -15,6 +16,7 @@ import {
  * Which check produced an issue.
  */
 export type ValidationCheck =
+  | "invalid-color"
   | "lightness-band"
   | "chroma-floor"
   | "categorical-distinctness"
@@ -82,8 +84,9 @@ export interface ValidateCategoricalOptions {
  * mode, against the computable checks: the lightness band and chroma floor per
  * colour, adjacent-pair distinctness under colour-vision deficiency and under
  * normal vision, and contrast against the surface. Returns a structured report
- * and never throws for a colour that fails a check; a malformed hex value is a
- * caller mistake and still throws.
+ * and never throws: a malformed hex value (a colour or the surface) is reported
+ * as an error issue and left out of the numeric checks, so a runtime-supplied
+ * client palette with a typo is reported rather than crashing the pass.
  */
 export function validateCategorical(
   colors: string[],
@@ -93,7 +96,33 @@ export function validateCategorical(
   const issues: ValidationIssue[] = [];
   const [low, high] = LIGHTNESS_BAND[mode];
 
+  // Malformed colours cannot be measured, so report each as an error and run
+  // the numeric checks over the well-formed ones only.
+  const validColors: string[] = [];
   for (const color of colors) {
+    if (isHexColor(color)) {
+      validColors.push(color);
+    } else {
+      issues.push({
+        check: "invalid-color",
+        severity: "error",
+        message: `Colour "${color}" is not a six-digit hex value such as "#2a78d6".`,
+        details: { color },
+      });
+    }
+  }
+
+  const surfaceValid = isHexColor(options.surface);
+  if (!surfaceValid) {
+    issues.push({
+      check: "invalid-color",
+      severity: "error",
+      message: `Surface "${options.surface}" is not a six-digit hex value such as "#fcfcfb".`,
+      details: { surface: options.surface },
+    });
+  }
+
+  for (const color of validColors) {
     const { lightness, chroma } = oklchLightnessChroma(color);
     if (lightness < low || lightness > high) {
       issues.push({
@@ -113,9 +142,9 @@ export function validateCategorical(
     }
   }
 
-  for (let i = 0; i + 1 < colors.length; i += 1) {
-    const a = colors[i]!;
-    const b = colors[i + 1]!;
+  for (let i = 0; i + 1 < validColors.length; i += 1) {
+    const a = validColors[i]!;
+    const b = validColors[i + 1]!;
 
     const cvdKinds: CvdKind[] = ["protan", "deutan"];
     let worstCvd = Infinity;
@@ -154,15 +183,17 @@ export function validateCategorical(
     }
   }
 
-  for (const color of colors) {
-    const ratio = contrastRatio(color, options.surface);
-    if (ratio < SURFACE_CONTRAST_MINIMUM) {
-      issues.push({
-        check: "surface-contrast",
-        severity: "warning",
-        message: `Colour ${color} sits at ${ratio.toFixed(2)}:1 against the surface ${options.surface}, below ${SURFACE_CONTRAST_MINIMUM}:1; visible labels or a table view are required.`,
-        details: { color, surface: options.surface, ratio },
-      });
+  if (surfaceValid) {
+    for (const color of validColors) {
+      const ratio = contrastRatio(color, options.surface);
+      if (ratio < SURFACE_CONTRAST_MINIMUM) {
+        issues.push({
+          check: "surface-contrast",
+          severity: "warning",
+          message: `Colour ${color} sits at ${ratio.toFixed(2)}:1 against the surface ${options.surface}, below ${SURFACE_CONTRAST_MINIMUM}:1; visible labels or a table view are required.`,
+          details: { color, surface: options.surface, ratio },
+        });
+      }
     }
   }
 

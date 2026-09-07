@@ -66,6 +66,35 @@ describe("validateCategorical", () => {
     ).toBe(true);
   });
 
+  it("reports a malformed colour as a structured issue instead of throwing", () => {
+    const report = validateCategorical(
+      ["#2a78d6", "#fff", "not-a-colour"],
+      "light",
+      {
+        surface: "#fcfcfb",
+      },
+    );
+    expect(report.valid).toBe(false);
+    const invalid = report.issues.filter(
+      (issue) => issue.check === "invalid-color",
+    );
+    expect(invalid).toHaveLength(2);
+    expect(invalid.every((issue) => issue.severity === "error")).toBe(true);
+  });
+
+  it("reports a malformed surface without throwing", () => {
+    const report = validateCategorical(["#2a78d6"], "light", {
+      surface: "#zzz",
+    });
+    expect(report.valid).toBe(false);
+    expect(
+      report.issues.some(
+        (issue) =>
+          issue.check === "invalid-color" && "surface" in issue.details,
+      ),
+    ).toBe(true);
+  });
+
   it("flags a washed-out hue as below the chroma floor", () => {
     const report = validateCategorical(["#8a8a88"], "light", {
       surface: "#fcfcfb",

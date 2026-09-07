@@ -42,6 +42,15 @@ const MACHADO: Record<CvdKind, readonly RgbTriple[]> = {
 };
 
 /**
+ * Whether a string is a six-digit hex colour (`#rrggbb` or `rrggbb`). The
+ * validation pass uses this to report a malformed colour as a structured issue
+ * rather than letting `parseHexColor` throw.
+ */
+export function isHexColor(value: string): boolean {
+  return /^#?[0-9a-fA-F]{6}$/.test(value.trim());
+}
+
+/**
  * Parse `#rrggbb` (or `rrggbb`) to sRGB components in the 0 to 1 range. Throws a
  * `ThemeError` on anything else so a typo never propagates a silent `NaN`
  * through the checks, which would let a run pass by accident.

@@ -120,6 +120,40 @@ describe("schema round trip through save and load", () => {
     database.close();
   });
 
+  it("rejects a fractional value for an integer column", async () => {
+    const database = await Database.create();
+    database.createTable({
+      name: "Ticket",
+      columns: [{ name: "priority", type: "integer" }],
+      foreignKeys: [],
+      recordId: { prefix: "TK", padding: 3 },
+    });
+    expect(() => database.insertRecord("Ticket", { priority: 1.9 })).toThrow(
+      expect.objectContaining({ code: "DB_INVALID_NUMBER" }),
+    );
+    expect(() => database.insertRecord("Ticket", { priority: "2.5" })).toThrow(
+      expect.objectContaining({ code: "DB_INVALID_NUMBER" }),
+    );
+    // A whole number, including whole-valued text, is accepted.
+    expect(database.insertRecord("Ticket", { priority: "3" }).recordId).toBe(
+      "TK-001",
+    );
+    database.close();
+  });
+
+  it("reserves the Record ID column case-insensitively", async () => {
+    const database = await Database.create();
+    expect(() =>
+      database.createTable({
+        name: "Thing",
+        columns: [{ name: "RECORD_ID", type: "text" }],
+        foreignKeys: [],
+        recordId: { prefix: "T", padding: 2 },
+      }),
+    ).toThrow(expect.objectContaining({ code: "DB_RESERVED_COLUMN" }));
+    database.close();
+  });
+
   it("rejects the SQLite-reserved table name prefix", async () => {
     const database = await Database.create();
     expect(() =>

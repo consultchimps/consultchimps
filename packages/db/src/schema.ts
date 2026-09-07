@@ -253,7 +253,16 @@ function numberToSqlValue(
       { details: { value, integer } },
     );
   }
-  return integer ? Math.trunc(numeric) : numeric;
+  // An integer column rejects a fractional value rather than truncating it, so
+  // an imported 1.9 is reported instead of silently becoming 1.
+  if (integer && !Number.isInteger(numeric)) {
+    throw new ConsultChimpsError(
+      "DB_INVALID_NUMBER",
+      `The value "${value}" is not a whole number, which the integer column requires.`,
+      { details: { value, integer: true } },
+    );
+  }
+  return numeric;
 }
 
 /**

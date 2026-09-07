@@ -2,6 +2,7 @@ export { ThemeError, isThemeError } from "./errors.js";
 export {
   contrastRatio,
   deltaE,
+  isHexColor,
   oklchLightnessChroma,
   parseHexColor,
   relativeLuminance,
