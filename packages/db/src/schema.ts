@@ -229,13 +229,24 @@ export function cellFromSqlValue(
         { details: { type: "boolean" } },
       );
     case "integer":
+      // Match the write side: an integer column must hold a whole number within
+      // the range representable exactly, not a fractional or rounded value a raw
+      // write or external edit could leave behind.
+      if (typeof value === "number" && Number.isSafeInteger(value)) {
+        return value;
+      }
+      throw new ConsultChimpsError(
+        "DB_CORRUPT_STORED_VALUE",
+        "An integer column holds a stored value that is not a whole number within the range that can be represented exactly, so the database may be damaged.",
+        { details: { type } },
+      );
     case "real":
       if (typeof value === "number" && Number.isFinite(value)) {
         return value;
       }
       throw new ConsultChimpsError(
         "DB_CORRUPT_STORED_VALUE",
-        `${type === "integer" ? "An integer" : "A number"} column holds a stored value that is not a finite number, so the database may be damaged.`,
+        "A number column holds a stored value that is not a finite number, so the database may be damaged.",
         { details: { type } },
       );
     case "text":

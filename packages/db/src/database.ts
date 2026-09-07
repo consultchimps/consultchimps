@@ -31,6 +31,10 @@ export interface InsertedRecord {
   rowId: number;
 }
 
+// A generous but bounded cap on Record ID zero-padding, so a mistaken
+// configuration cannot drive String.padStart into an enormous allocation.
+const MAX_RECORD_ID_PADDING = 64;
+
 /** The stored shape of a table definition in the registry. */
 interface StoredDefinition {
   columns: ColumnDefinition[];
@@ -38,12 +42,22 @@ interface StoredDefinition {
   recordId: RecordIdConfig;
 }
 
-// Parse one registry definition. A damaged or externally edited file can hold
-// malformed JSON here, so a parse failure becomes a stable corruption error
-// rather than a raw SyntaxError leaking from JSON.parse.
+const VALID_COLUMN_TYPES: ReadonlySet<string> = new Set([
+  "text",
+  "integer",
+  "real",
+  "boolean",
+  "date",
+]);
+
+// Parse and validate one registry definition. A damaged or externally edited
+// file can hold malformed JSON or valid JSON of the wrong shape, so both become
+// a stable corruption error here rather than a raw SyntaxError or a later
+// TypeError from, say, definition.columns.map.
 function parseDefinition(json: string, tableName: string): StoredDefinition {
+  let parsed: unknown;
   try {
-    return JSON.parse(json) as StoredDefinition;
+    parsed = JSON.parse(json);
   } catch (error) {
     throw new ConsultChimpsError(
       "DB_CORRUPT_WORKSPACE",
@@ -51,6 +65,74 @@ function parseDefinition(json: string, tableName: string): StoredDefinition {
       { cause: error, details: { table: tableName } },
     );
   }
+
+  const fail = (detail: string): never => {
+    throw new ConsultChimpsError(
+      "DB_CORRUPT_WORKSPACE",
+      `The stored definition for "${tableName}" is not valid (${detail}), so the database may be damaged.`,
+      { details: { table: tableName } },
+    );
+  };
+  const asObject = (candidate: unknown): Record<string, unknown> => {
+    if (typeof candidate !== "object" || candidate === null) {
+      fail("it is not an object");
+    }
+    return candidate as Record<string, unknown>;
+  };
+
+  const definition = asObject(parsed);
+  if (!Array.isArray(definition["columns"])) {
+    fail("its columns are missing");
+  }
+  for (const rawColumn of definition["columns"] as unknown[]) {
+    const column = asObject(rawColumn);
+    if (typeof column["name"] !== "string" || column["name"].trim() === "") {
+      fail("a column name is missing");
+    }
+    const columnType = column["type"];
+    if (typeof columnType !== "string" || !VALID_COLUMN_TYPES.has(columnType)) {
+      fail("a column type is unknown");
+    }
+    if (
+      column["nullable"] !== undefined &&
+      typeof column["nullable"] !== "boolean"
+    ) {
+      fail("a column nullable flag is not a boolean");
+    }
+  }
+  if (!Array.isArray(definition["foreignKeys"])) {
+    fail("its foreign keys are missing");
+  }
+  for (const rawForeignKey of definition["foreignKeys"] as unknown[]) {
+    const foreignKey = asObject(rawForeignKey);
+    if (
+      typeof foreignKey["column"] !== "string" ||
+      typeof foreignKey["referencesTable"] !== "string"
+    ) {
+      fail("a foreign key is malformed");
+    }
+  }
+  const recordId = asObject(definition["recordId"]);
+  if (typeof recordId["prefix"] !== "string") {
+    fail("its Record ID prefix is missing");
+  }
+  const padding = recordId["padding"];
+  if (
+    typeof padding !== "number" ||
+    !Number.isInteger(padding) ||
+    padding < 0 ||
+    padding > MAX_RECORD_ID_PADDING
+  ) {
+    fail("its Record ID padding is out of range");
+  }
+  if (
+    recordId["separator"] !== undefined &&
+    typeof recordId["separator"] !== "string"
+  ) {
+    fail("its Record ID separator is not text");
+  }
+
+  return parsed as StoredDefinition;
 }
 
 // Turn sql.js's generic constraint exception into a stable ConsultChimpsError so
@@ -327,10 +409,14 @@ export class Database {
         { details: { table } },
       );
     }
-    if (!Number.isInteger(config.padding) || config.padding < 0) {
+    if (
+      !Number.isInteger(config.padding) ||
+      config.padding < 0 ||
+      config.padding > MAX_RECORD_ID_PADDING
+    ) {
       throw new ConsultChimpsError(
         "DB_INVALID_RECORD_ID_CONFIG",
-        `The Record ID padding for "${table}" must be a non-negative whole number.`,
+        `The Record ID padding for "${table}" must be a whole number from 0 to ${MAX_RECORD_ID_PADDING}.`,
         { details: { table, padding: config.padding } },
       );
     }

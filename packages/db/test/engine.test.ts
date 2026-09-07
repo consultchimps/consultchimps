@@ -32,6 +32,19 @@ describe("SqlDatabase", () => {
     reloaded.close();
   });
 
+  it("refuses an asynchronous transaction callback and rolls back", async () => {
+    const database = await loadSqlDatabase();
+    database.run("CREATE TABLE t (a INTEGER);");
+    expect(() =>
+      database.transaction(async () => {
+        database.run("INSERT INTO t (a) VALUES (1);");
+      }),
+    ).toThrow(expect.objectContaining({ code: "DB_ASYNC_TRANSACTION" }));
+    // The statement the callback ran before its first await was rolled back.
+    expect(database.selectValue("SELECT count(*) FROM t;")).toBe(0);
+    database.close();
+  });
+
   it("supports named parameters", async () => {
     const database = await loadSqlDatabase();
     database.run("CREATE TABLE t (a INTEGER);");

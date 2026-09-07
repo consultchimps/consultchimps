@@ -1,3 +1,4 @@
+import { ConsultChimpsError } from "@consultchimps/core";
 import initSqlJs from "sql.js";
 import type {
   BindParams,
@@ -141,6 +142,21 @@ export class SqlDatabase {
     this.#db.run("BEGIN;");
     try {
       const result = work();
+      // sql.js is synchronous, so the transaction must complete before this
+      // returns. An async callback would resolve after COMMIT, and a later
+      // rejection would bypass the rollback below, so it is refused outright.
+      if (
+        result !== null &&
+        typeof result === "object" &&
+        typeof (result as { then?: unknown }).then === "function"
+      ) {
+        // Thrown here so the single rollback in catch reverts any statements the
+        // callback ran before its first await.
+        throw new ConsultChimpsError(
+          "DB_ASYNC_TRANSACTION",
+          "A transaction callback must be synchronous, because the database engine runs synchronously.",
+        );
+      }
       this.#db.run("COMMIT;");
       return result;
     } catch (error) {

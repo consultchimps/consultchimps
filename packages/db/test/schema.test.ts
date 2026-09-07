@@ -409,6 +409,51 @@ describe("schema round trip through save and load", () => {
     );
   });
 
+  it("rejects opening a database with a wrongly-shaped stored definition", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    database.sql.run(
+      `UPDATE ${quoteIdentifier(TABLE_REGISTRY_TABLE)} SET definition = ? WHERE name = ?;`,
+      ["{}", "Customer"],
+    );
+    const bytes = database.serialize();
+    database.close();
+    await expect(Database.open(bytes)).rejects.toThrow(
+      expect.objectContaining({ code: "DB_CORRUPT_WORKSPACE" }),
+    );
+  });
+
+  it("rejects a fractional stored value in an integer column when reading", async () => {
+    const database = await Database.create();
+    database.createTable({
+      name: "Ticket",
+      columns: [{ name: "priority", type: "integer" }],
+      foreignKeys: [],
+      recordId: { prefix: "TK", padding: 3 },
+    });
+    database.insertRecord("Ticket", { priority: 1 });
+    database.sql.run(
+      `UPDATE ${quoteIdentifier("Ticket")} SET ${quoteIdentifier("priority")} = 1.5;`,
+    );
+    expect(() => database.readRecords("Ticket")).toThrow(
+      expect.objectContaining({ code: "DB_CORRUPT_STORED_VALUE" }),
+    );
+    database.close();
+  });
+
+  it("rejects an unbounded Record ID padding at table creation", async () => {
+    const database = await Database.create();
+    expect(() =>
+      database.createTable({
+        name: "Huge",
+        columns: [{ name: "a", type: "text" }],
+        foreignKeys: [],
+        recordId: { prefix: "H", padding: 1_000_000_000 },
+      }),
+    ).toThrow(expect.objectContaining({ code: "DB_INVALID_RECORD_ID_CONFIG" }));
+    database.close();
+  });
+
   it("returns the declared table name even when looked up in another case", async () => {
     const database = await Database.create();
     database.createTable(customer);
