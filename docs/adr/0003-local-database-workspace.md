@@ -1,7 +1,10 @@
 # Local database workspace
 
-Status: Proposed (draft for agreement). Decisions 1 to 3 below are settled;
-decisions 4 to 7 are deferred to the build item that needs them.
+Status: Proposed (draft for agreement). The stack and framing decisions below
+were each agreed on their own before being written here. Two decisions stay
+deferred to the build item that needs them: the computed-column formula
+language, and what the dashboard HTML export carries (static data or an inlined
+query engine).
 
 Every ConsultChimps tool so far is a stateless operation: immutable inputs in,
 artifacts out, nothing kept between runs. This feature is different. It is a
@@ -18,7 +21,8 @@ mapping); the `Table` model is the exchange format in both directions, so the
 database can also feed the existing PowerPoint populate and split operations.
 The formula-preserving Excel export is a new L3 operation on the xlsx package's
 OOXML model, per `packages/xlsx/ARCHITECTURE.md`. Dependencies stay Apache-2.0
-compatible: HyperFormula and ExcelJS are excluded.
+compatible: HyperFormula and ExcelJS are excluded, and so is any GPL, LGPL, or
+EPL package (elkjs among them).
 
 ## Decision 1: save model
 
@@ -26,69 +30,48 @@ The file lives in a shared folder and one person edits at a time. The save model
 has to make "open the shared file, edit, put it back" the natural path, not an
 error-prone ritual.
 
-Options considered:
-
-- **In-place through the File System Access API, with a download fallback.** On
-  Chromium the workspace writes directly back to the shared-folder file the user
-  opened. Safari and Firefox, which lack the API, fall back to
-  download-and-replace. An OPFS mirror autosaves for crash recovery regardless.
-- **OPFS autosave plus explicit download.** Always autosave to origin-private
-  storage; the user downloads to return the file to the shared folder each
-  session. Identical in every browser, but the shared file is never edited in
-  place, so every session is open, download, replace, which is easy to get wrong
-  when people take turns.
-- **File System Access only, no fallback.** One save path, true in-place save,
-  but Safari and Firefox users cannot use the editor at all.
+Options considered: in-place through the File System Access API with a download
+fallback; OPFS autosave plus an explicit download every session; File System
+Access only with no fallback.
 
 **Decision: in-place through the File System Access API, with an OPFS autosave
-mirror and a download fallback.** It serves the shared-folder, one-editor model
-directly and degrades rather than blocking. The workspace holds a file handle
-for the session and writes back on save; the OPFS copy is a crash-recovery
-mirror, not the source of truth, so nobody has to reconcile two locations.
+mirror and a download fallback.** On Chromium the workspace writes directly back
+to the shared-folder file the user opened, holding the file handle for the
+session. The OPFS copy autosaves for crash recovery and is a mirror, not a
+source of truth, so nobody reconciles two locations. Safari and Firefox, which
+lack the API, fall back to download-and-replace. It serves the shared-folder,
+one-editor model directly and degrades rather than blocking.
 
-Engine sub-decision, following from the above: **use sql.js (MIT, SQLite
-compiled to WebAssembly, in memory)**. The workspace loads the whole file into
-memory, edits it, and serializes it back to bytes to save, which fits the load,
-edit, save-back shape exactly and keeps the save path simple. An OPFS or File
-System Access VFS engine (official sqlite-wasm, wa-sqlite) persists
-incrementally, but writing back to the shared folder still needs an explicit
-serialize step, so the extra machinery buys little for a small database. Revisit
-if databases outgrow comfortable in-memory size.
+## Decision 2: SQLite engine
 
-A consequence for decision 2: the File System Access API is filesystem access,
-which the browser-surface rules forbid for operations. That is allowed here
-because the workspace page is not an operation (see decision 2); the stateless
-operations stay bytes-level and never touch the filesystem.
+**Decision: sql.js (MIT, SQLite compiled to WebAssembly, in memory).** The
+workspace loads the whole file into memory, edits it, and serializes it back to
+bytes to save, which fits the load, edit, save-back shape of decision 1 exactly
+and keeps the OPFS copy a genuine serialized mirror. An OPFS or File System
+Access VFS engine (official sqlite-wasm, wa-sqlite) persists incrementally, but
+it turns OPFS into a second live database and still needs an explicit serialize
+to write back to the shared folder, so the extra machinery buys little for a
+small database. Revisit if databases outgrow a comfortable in-memory size.
 
-## Decision 2: how the workspace fits the registry
+## Decision 3: how the workspace fits the registry
 
-Options considered:
-
-- **A workspace page outside the operation registry, plus stateless operations
-  inside it.** The interactive editor is a top-level page that is not a registry
-  operation, the way `/shortcuts` and the inspect chrome already are. Import,
-  Excel export, and dashboard export are real registry operations with library,
-  CLI, and browser surfaces. ADR 0003 names "workspace" as a category distinct
-  from "operation"; ADR 0001 and its drift checks are untouched.
-- **Extend the registry with a workspace surface.** Make the workspace a
-  first-class registry entry with a new surface or status kind. More uniform,
-  but it changes ADR 0001, the `ToolSurfaces` type, `check-registry-site`, and
-  needs a workspace variant of the completion checklist.
-- **One operation umbrella.** Model the whole feature as a single operation with
-  sub-modes. Fewest entries, but it stretches the operation definition and the
-  completion checklist past what they mean today.
+Options considered: a workspace page outside the operation registry with
+stateless operations inside it; extending the registry with a new workspace
+surface kind; folding the whole feature into one operation with sub-modes.
 
 **Decision: a workspace page outside the registry, with stateless operations
-inside it.** The registry keeps describing stateless operations, each still
+inside it**, the way `/shortcuts` and the inspect chrome already sit beside the
+operations. The registry keeps describing stateless operations, each still
 obeying the browser-surface rules (bytes-level, no filesystem, run in the
 worker). The editor is a new "workspace" category defined here: a stateful,
 browser-only page that opens a file, mutates it in place, and saves it back, and
-is therefore exempt from the no-filesystem rule precisely because it is not an
-operation. This keeps the one rule that matters, that a card or button never
-offers a capability that does not exist, and avoids reworking ADR 0001 to model
-statefulness the rest of the toolkit does not have.
+is exempt from the no-filesystem rule precisely because it is not an operation.
+This keeps the rule that matters, that a card or button never offers a
+capability that does not exist, and it avoids reworking ADR 0001 to model
+statefulness the rest of the toolkit does not have. The File System Access API
+of decision 1 lives only on this page, never in an operation.
 
-The operations the database feature contributes to the registry:
+The operations the feature contributes to the registry:
 
 - **`db.import`**: Excel or CSV to a SQLite database (library, CLI, browser).
 - **`db.export-excel`**: database to a formula-preserving workbook (library,
@@ -99,73 +82,112 @@ The operations the database feature contributes to the registry:
 The editor, relationship diagram, and dashboard builder are the workspace page
 and are browser-only.
 
-## Decision 3: how the grid is built
+## Decision 4: editing grid
 
-Options considered:
+**Decision: a headless table library, rendered by us: TanStack Table and
+TanStack Virtual (MIT).** They supply the table, editing, sort and filter state,
+and virtualization; every cell is rendered with tool-kit components so the look
+stays ours and nothing reads as embedded third-party chrome. Foreign-key
+pickers, validation, and undo are built on top either way; the library removes
+the virtualization and state bookkeeping so that effort goes to the editing
+experience instead.
 
-- **A headless table library, rendered by us.** TanStack Table and TanStack
-  Virtual (MIT, Apache-2.0 compatible) supply the table, editing, and
-  virtualization logic; every cell is rendered with tool-kit components so the
-  look stays ours. Avoids rebuilding the hard parts while keeping the site's
-  aesthetic and no third-party chrome.
-- **Hand-rolled.** Build the grid from tool-kit primitives with no new
-  dependency: maximum control, Apache concerns moot, but foreign-key pickers,
-  keyboard navigation, virtualization, and undo are a large amount of careful
-  work.
-- **A full grid component.** A batteries-included grid such as Glide Data Grid
-  (MIT): fastest to a rich editor, but risks looking like an embedded
-  third-party tool and adds a heavier bundle to a static page.
+## Decision 5: theme package
 
-**Decision: a headless library, rendered by us.** TanStack Table plus Virtual
-give the grid logic; tool-kit components give the look. This is the balance the
-brief asks for, an editor that does not look like a third-party tool, without
-rebuilding virtualization and edit-state management by hand.
+Exports carry a client's brand colours, which is a real consulting need, but the
+exports are library and CLI operations, so the theme model cannot live in
+`apps/docs`.
+
+**Decision: a new runtime-neutral package `@consultchimps/theme`.** It holds the
+palette (categorical, sequential, and semantic colours), light and dark, and
+validation (contrast and categorical distinctness, reusing the `dataviz` skill's
+method), with zero dependencies. The dashboard HTML export consumes it now, and
+the Excel export and the site can consume it later without a wrong dependency
+direction. Neutral placeholder palettes only are committed; a client's colours
+are supplied at runtime and never enter the repo, per the repository's
+no-client-references rule.
+
+## Decision 6: charts
+
+The dominant constraint is the self-contained offline HTML export, which must
+ship as a single file that renders without a network. The decision-maker ruled
+out hand-rolled SVG (error-prone) and asked for a library, with
+`@tanstack/charts` explicitly in scope despite its maturity.
+
+Verified facts (September 2026): the mature, lower-risk choice is Recharts (MIT,
+React, a documented static-SVG export path via `renderToStaticMarkup`).
+`@tanstack/charts` is MIT and architecturally the best fit (framework-agnostic,
+SVG server-side rendering as a headline feature, so the export generator emits
+static SVG with no React runtime, and CSS-variable theming), but it is pre-1.0
+(0.16, self-described as alpha) with structural breaking changes between minor
+releases.
+
+**Decision: `@tanstack/charts`, adopted now despite its pre-1.0 status, with the
+risk contained.** Its architecture removes the React-in-the-generator cost that
+every other library carries, and its SVG SSR produces the runtime-free offline
+export this feature needs. To bound the alpha risk: pin an exact `0.16.x`, and
+put all chart construction behind one thin adapter module so a breaking minor
+bump touches a single file rather than every dashboard. Reassess at 1.0. KPI
+stat tiles are plain JSX, not a chart type.
+
+## Decision 7: relationship-diagram rendering
+
+The diagram is an in-app view only, not an exported artifact, so there is no
+offline or static-SVG constraint here, and per the no-hand-rolled-SVG preference
+it is library-based.
+
+**Decision: React Flow (`@xyflow/react`, MIT) for the node and edge rendering,
+with `@dagrejs/dagre` (MIT) for layout.** React Flow gives a themeable,
+pan-and-zoom diagram of tables and foreign-key edges; `@dagrejs/dagre` computes
+a non-overlapping layout. `@dagrejs/dagre` is the maintained fork; the original
+`dagre` has been unmaintained since 2019, so it is not used. Both are in-app
+only and never enter an export. elkjs, the other common layout engine, is
+dual-licensed EPL-2.0 or GPL-3.0, both copyleft, and therefore excluded.
 
 ## Deferred decisions
 
-These are settled when the build item that needs them is designed, so each can
-be discussed with its real constraints in front of us:
+Settled when the build item that needs them is designed, so each can be
+discussed with its real constraints in front of us:
 
-- **4. Computed-column DSL** (build item 7): a small formula language that
+- **Computed-column formula language** (build item 7): a small language that
   compiles to both a SQLite expression and an Excel formula, and its initial
   function set.
-- **5. Charts and dashboard export** (build items 9 and 10): hand-rolled SVG or
-  a dependency, and whether the exported HTML ships static data or an inlined
-  SQLite engine for in-page filtering.
-- **6. Package name and glossary** (build item 1): proposed `@consultchimps/db`;
-  the workspace and record-editing verbs for CONTEXT.md to be agreed.
-- **7. Surface split** (per item): the editor is browser-only; import, Excel
-  export, and dashboard export are library, CLI, and browser operations.
+- **Dashboard export payload** (build item 10): whether the self-contained HTML
+  ships static rendered data or an inlined sql.js engine for in-page filtering.
+- **Glossary verbs for `CONTEXT.md`** (build item 1): the package names are
+  `@consultchimps/db` and `@consultchimps/theme`; the workspace and
+  record-editing verbs are still to agree.
 
 ## Build list
 
 Each item is independently designable and buildable, in order. The decision it
 carries, if any, is noted.
 
-1. **Package scaffold and glossary.** Create `@consultchimps/db` with the schema
-   model types, the sql.js engine wrapper, and the `Table` bridge to
-   `@consultchimps/tabular`. Add the workspace and record-editing terms to
-   `CONTEXT.md`. (Decision 6.)
+1. **Package scaffolds and glossary.** Create `@consultchimps/db` (schema model
+   types, the sql.js wrapper, the `Table` bridge to `@consultchimps/tabular`)
+   and `@consultchimps/theme` (palette model and validation, neutral placeholder
+   palettes). Add the workspace and record-editing terms to `CONTEXT.md`.
 2. **Import operation.** `db.import`: Excel or CSV to SQLite, reusing xlsx,
    tabular, and column mapping, on library, CLI, and browser. Registry entry.
 3. **Schema and relationships model.** Tables, columns, types, and foreign keys,
    persisted in the database file, in the library.
 4. **Workspace shell.** The browser page that opens or creates a database
    through the File System Access API, autosaves to OPFS, and falls back to
-   download, outside the registry. (Decision 1 mechanics.)
+   download, outside the registry. Adds the workspace completion checklist.
 5. **Record grid.** Editing with foreign-key pickers, validation, and undo, on
-   the headless library. (Decision 3.)
-6. **Relationship diagram.** A read-only view of the tables and their foreign
-   keys.
-7. **Computed columns.** The formula DSL that compiles to a SQLite expression
-   and an Excel formula. (Decision 4.)
+   TanStack Table and Virtual.
+6. **Relationship diagram.** A pan-and-zoom view of tables and foreign keys, on
+   React Flow and dagre.
+7. **Computed columns.** The formula language that compiles to a SQLite
+   expression and an Excel formula. (Deferred decision.)
 8. **Formula-preserving Excel export.** `db.export-excel`, a new xlsx L3
    operation that emits live formulas with no hardcoded results, on library,
    CLI, and browser.
-9. **Dashboards.** A KPI, bar, line, and pie builder in the workspace. (Decision
-   5, charts.)
+9. **Dashboards.** A KPI, bar, line, and pie builder in the workspace, on
+   `@tanstack/charts` behind a thin adapter, themed from `@consultchimps/theme`.
 10. **Dashboard HTML export.** `db.export-dashboard`, a self-contained HTML file
-    per dashboard, on library, CLI, and browser. (Decision 5, export.)
+    per dashboard, static SVG with no runtime, on library, CLI, and browser.
+    (Deferred decision on the payload.)
 11. **Bridge to existing operations.** A database table through `Table` into
     PowerPoint populate and split, so the workspace feeds the tools that already
     exist.
@@ -178,9 +200,20 @@ carries, if any, is noted.
 - The browser-surface rules keep their meaning: operations stay bytes-level and
   filesystem-free; only the workspace page uses the File System Access API, and
   it is not an operation.
-- A new runtime dependency enters the browser bundle: sql.js (SQLite in
-  WebAssembly), plus TanStack Table and Virtual for the grid. All are Apache-2.0
-  compatible.
+- New dependencies, all Apache-2.0 compatible: sql.js (MIT);
+  `@tanstack/react-table` (core `@tanstack/table-core`) and
+  `@tanstack/react-virtual` (MIT) for the grid; `@tanstack/charts` (MIT, pre-1.0
+  at 0.16 and self-described as alpha, pinned to an exact version and isolated
+  behind one adapter, reassessed at 1.0); `@xyflow/react` and `@dagrejs/dagre`
+  (MIT) for the diagram, in-app only. A new first-party package
+  `@consultchimps/theme` (zero dependency). elkjs (dual EPL-2.0 or GPL-3.0) is
+  excluded.
+- Because `@tanstack/charts` is framework-agnostic with SVG server-side
+  rendering, the dashboard-export generator produces static SVG without bundling
+  React into the exported file, so the offline dashboard carries no JavaScript
+  runtime.
+- Theming ships neutral placeholder palettes only; client colours are runtime
+  input and never committed.
 - The feature-completion checklist applies to the three operations as written.
   The workspace page needs its own short checklist, added when build item 4
   lands, covering save, autosave, and the download fallback rather than
