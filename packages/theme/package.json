@@ -1,0 +1,37 @@
+{
+  "name": "@consultchimps/theme",
+  "version": "0.1.0",
+  "description": "Runtime-neutral palette model and colour validation for ConsultChimps.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/consultchimps/consultchimps.git",
+    "directory": "packages/theme"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "prepack": "tsup src/index.ts --format esm --dts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

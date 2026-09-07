@@ -1,0 +1,118 @@
+import { describe, expect, it } from "vitest";
+
+import { Database, loadSqlDatabase, type TableSchema } from "../src/index.js";
+
+const customer: TableSchema = {
+  name: "Customer",
+  columns: [
+    { name: "name", type: "text", nullable: false },
+    { name: "active", type: "boolean" },
+  ],
+  foreignKeys: [],
+  recordId: { prefix: "CUST", padding: 4 },
+};
+
+const invoice: TableSchema = {
+  name: "Invoice",
+  columns: [
+    { name: "customer", type: "text" },
+    { name: "amount", type: "real" },
+  ],
+  foreignKeys: [{ column: "customer", referencesTable: "Customer" }],
+  recordId: { prefix: "INV", padding: 5 },
+};
+
+describe("schema round trip through save and load", () => {
+  it("restores the schema, id counters, and rows from serialized bytes", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    database.createTable(invoice);
+
+    const north = database.insertRecord("Customer", {
+      name: "North",
+      active: true,
+    });
+    database.insertRecord("Invoice", {
+      customer: north.recordId,
+      amount: 1250.5,
+    });
+
+    const bytes = database.serialize();
+    database.close();
+
+    const reopened = await Database.open(bytes);
+
+    expect(reopened.schemaFormatVersion()).toBe(1);
+    expect(reopened.getSchema()).toEqual([customer, invoice]);
+    expect(reopened.getTableSchema("Invoice").recordId).toEqual({
+      prefix: "INV",
+      padding: 5,
+    });
+
+    // The counter survives the round trip: the next id continues the sequence.
+    const next = reopened.insertRecord("Customer", {
+      name: "South",
+      active: false,
+    });
+    expect(next.recordId).toBe("CUST-0002");
+
+    const rows = reopened.readRecords("Customer");
+    expect(rows).toEqual([
+      { record_id: "CUST-0001", name: "North", active: true },
+      { record_id: "CUST-0002", name: "South", active: false },
+    ]);
+    reopened.close();
+  });
+
+  it("enforces a foreign key against the referenced Record ID", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    database.createTable(invoice);
+
+    expect(() =>
+      database.insertRecord("Invoice", {
+        customer: "CUST-0404",
+        amount: 10,
+      }),
+    ).toThrow();
+    database.close();
+  });
+
+  it("rejects a duplicate table and a reserved column name", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    expect(() => database.createTable(customer)).toThrow(/already exists/i);
+    expect(() =>
+      database.createTable({
+        name: "Bad",
+        columns: [{ name: "record_id", type: "text" }],
+        foreignKeys: [],
+        recordId: { prefix: "B", padding: 2 },
+      }),
+    ).toThrow(/reserved/i);
+    database.close();
+  });
+
+  it("rejects a foreign key to a missing table", async () => {
+    const database = await Database.create();
+    expect(() =>
+      database.createTable({
+        name: "Orphan",
+        columns: [{ name: "parent", type: "text" }],
+        foreignKeys: [{ column: "parent", referencesTable: "Nowhere" }],
+        recordId: { prefix: "O", padding: 3 },
+      }),
+    ).toThrow(/does not exist/i);
+    database.close();
+  });
+
+  it("refuses to open bytes that are not a ConsultChimps database", async () => {
+    // A raw sql.js database with no metadata tables.
+    const raw = await loadSqlDatabase();
+    raw.run("CREATE TABLE loose (a INTEGER);");
+    const bytes = raw.serialize();
+    raw.close();
+
+    await expect(Database.open(bytes)).rejects.toThrow(/ConsultChimps/i);
+  });
+});
