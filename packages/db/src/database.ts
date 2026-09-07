@@ -38,6 +38,21 @@ interface StoredDefinition {
   recordId: RecordIdConfig;
 }
 
+// Parse one registry definition. A damaged or externally edited file can hold
+// malformed JSON here, so a parse failure becomes a stable corruption error
+// rather than a raw SyntaxError leaking from JSON.parse.
+function parseDefinition(json: string, tableName: string): StoredDefinition {
+  try {
+    return JSON.parse(json) as StoredDefinition;
+  } catch (error) {
+    throw new ConsultChimpsError(
+      "DB_CORRUPT_WORKSPACE",
+      `The stored definition for "${tableName}" is not valid JSON, so the database may be damaged.`,
+      { cause: error, details: { table: tableName } },
+    );
+  }
+}
+
 // Turn sql.js's generic constraint exception into a stable ConsultChimpsError so
 // callers and future adapters can identify an expected input failure by code.
 // The engine message carries only identifiers (table and column names), never
@@ -105,6 +120,10 @@ export class Database {
       sql.run("PRAGMA foreign_keys = ON;");
       database.#assertMetadataPresent();
       database.#assertSupportedSchemaVersion();
+      // Force every stored definition to parse now, so a damaged registry is
+      // reported as a corruption error while the handle can still be closed,
+      // rather than throwing later from getSchema or a record operation.
+      database.getSchema();
     } catch (error) {
       // A rejected open must not leak the sql.js allocation the load created,
       // since the caller never receives a handle to close.
@@ -326,7 +345,7 @@ export class Database {
     tableName: string,
     values: Readonly<Record<string, CellValue>>,
   ): InsertedRecord {
-    const definition = this.#requireDefinition(tableName);
+    const { definition } = this.#requireDefinition(tableName);
     // Columns are matched case-insensitively, like SQLite identifiers.
     const columnByName = new Map(
       definition.columns.map((column) => [identifierKey(column.name), column]),
@@ -449,9 +468,10 @@ export class Database {
 
   /** The schema of a single table, read from the stored metadata. */
   getTableSchema(tableName: string): TableSchema {
-    const definition = this.#requireDefinition(tableName);
+    const { name, definition } = this.#requireDefinition(tableName);
     return {
-      name: tableName,
+      // The declared spelling, not the caller's casing.
+      name,
       columns: definition.columns,
       foreignKeys: definition.foreignKeys,
       recordId: definition.recordId,
@@ -464,11 +484,10 @@ export class Database {
       `SELECT name, definition FROM ${quoteIdentifier(TABLE_REGISTRY_TABLE)} ORDER BY name;`,
     );
     return rows.map((row) => {
-      const definition = JSON.parse(
-        String(row["definition"]),
-      ) as StoredDefinition;
+      const name = String(row["name"]);
+      const definition = parseDefinition(String(row["definition"]), name);
       return {
-        name: String(row["name"]),
+        name,
         columns: definition.columns,
         foreignKeys: definition.foreignKeys,
         recordId: definition.recordId,
@@ -482,7 +501,7 @@ export class Database {
    * by internal rowid, which is insertion order.
    */
   readRecords(tableName: string): TableRow[] {
-    const definition = this.#requireDefinition(tableName);
+    const { definition } = this.#requireDefinition(tableName);
     const columnNames = [
       RECORD_ID_COLUMN,
       ...definition.columns.map((column) => column.name),
@@ -507,7 +526,7 @@ export class Database {
 
   /** The ordered column names of a table, Record ID first. */
   columnNames(tableName: string): string[] {
-    const definition = this.#requireDefinition(tableName);
+    const { definition } = this.#requireDefinition(tableName);
     return [
       RECORD_ID_COLUMN,
       ...definition.columns.map((column) => column.name),
@@ -550,18 +569,29 @@ export class Database {
     }
   }
 
-  #requireDefinition(tableName: string): StoredDefinition {
-    const value = this.#sql.selectValue(
-      `SELECT definition FROM ${quoteIdentifier(TABLE_REGISTRY_TABLE)} WHERE name = ? COLLATE NOCASE;`,
+  // Returns the stored declaration name (its original case) alongside the parsed
+  // definition, so callers can report the declared spelling even when looked up
+  // through the case-insensitive API.
+  #requireDefinition(tableName: string): {
+    name: string;
+    definition: StoredDefinition;
+  } {
+    const rows = this.#sql.select(
+      `SELECT name, definition FROM ${quoteIdentifier(TABLE_REGISTRY_TABLE)} WHERE name = ? COLLATE NOCASE;`,
       [tableName],
     );
-    if (typeof value !== "string") {
+    const row = rows[0];
+    if (row === undefined) {
       throw new ConsultChimpsError(
         "DB_TABLE_NOT_FOUND",
         `The table "${tableName}" does not exist.`,
         { details: { table: tableName } },
       );
     }
-    return JSON.parse(value) as StoredDefinition;
+    const storedName = String(row["name"]);
+    return {
+      name: storedName,
+      definition: parseDefinition(String(row["definition"]), storedName),
+    };
   }
 }

@@ -148,12 +148,13 @@ export function quoteIdentifier(name: string): string {
  * names case-insensitively, so every identifier comparison in this package goes
  * through this one normalization (and its SQL twin, `... COLLATE NOCASE`), and
  * identifiers are stored and displayed with their original case. The fold is
- * `toLowerCase`, which also folds non-ASCII case that SQLite's ASCII-only
- * `NOCASE` would not; identifiers here are ordinary table and column names, so
- * that wider fold only ever makes the guard stricter.
+ * ASCII A to Z only, exactly matching SQLite's `NOCASE` collation, so the
+ * JavaScript comparisons here agree with the SQL lookups for every identifier:
+ * a non-ASCII pair such as "Ä" and "ä" is the same distinct-name decision on
+ * both sides rather than one deciding same and the other different.
  */
 export function identifierKey(name: string): string {
-  return name.toLowerCase();
+  return name.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
 }
 
 /**
@@ -188,7 +189,12 @@ export function sqlStorageClass(type: ColumnType): string {
 
 /**
  * Convert a stored SQLite value to a tabular cell value, interpreting the
- * column's declared type (booleans come back from 0/1 integers).
+ * column's declared type (booleans come back from 0/1 integers). SQLite's type
+ * affinity does not stop a value that disagrees with the column type from being
+ * stored (through the public `sql` handle or an externally edited file), so this
+ * validates the stored representation and raises a structured error rather than
+ * feed a corrupted value (a stray boolean 2, or a `NaN`) into a table
+ * operation. It is the read-side twin of the strict write-side coercion.
  */
 export function cellFromSqlValue(
   type: ColumnType,
@@ -199,10 +205,27 @@ export function cellFromSqlValue(
   }
   switch (type) {
     case "boolean":
-      return value !== 0 && value !== "0";
+      if (value === 0) {
+        return false;
+      }
+      if (value === 1) {
+        return true;
+      }
+      throw new ConsultChimpsError(
+        "DB_CORRUPT_STORED_VALUE",
+        "A boolean column holds a stored value that is not 0 or 1, so the database may be damaged.",
+        { details: { type: "boolean" } },
+      );
     case "integer":
     case "real":
-      return typeof value === "number" ? value : Number(value);
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return value;
+      }
+      throw new ConsultChimpsError(
+        "DB_CORRUPT_STORED_VALUE",
+        `${type === "integer" ? "An integer" : "A number"} column holds a stored value that is not a finite number, so the database may be damaged.`,
+        { details: { type } },
+      );
     case "text":
     case "date":
       return typeof value === "string" ? value : String(value);

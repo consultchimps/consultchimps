@@ -4,6 +4,7 @@ import {
   Database,
   loadSqlDatabase,
   quoteIdentifier,
+  sameIdentifier,
   METADATA_TABLE,
   TABLE_REGISTRY_TABLE,
   type TableSchema,
@@ -346,6 +347,49 @@ describe("schema round trip through save and load", () => {
     await expect(Database.open(bytes)).rejects.toThrow(
       expect.objectContaining({ code: "DB_UNSUPPORTED_SCHEMA_VERSION" }),
     );
+  });
+
+  it("rejects a corrupt stored value when reading records", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    database.insertRecord("Customer", { name: "North", active: true });
+    // Corrupt the stored boolean through the raw handle, as an external edit
+    // could.
+    database.sql.run(
+      `UPDATE ${quoteIdentifier("Customer")} SET ${quoteIdentifier("active")} = 2;`,
+    );
+    expect(() => database.readRecords("Customer")).toThrow(
+      expect.objectContaining({ code: "DB_CORRUPT_STORED_VALUE" }),
+    );
+    database.close();
+  });
+
+  it("rejects opening a database with a malformed stored definition", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    database.sql.run(
+      `UPDATE ${quoteIdentifier(TABLE_REGISTRY_TABLE)} SET definition = ? WHERE name = ?;`,
+      ["{not json", "Customer"],
+    );
+    const bytes = database.serialize();
+    database.close();
+    await expect(Database.open(bytes)).rejects.toThrow(
+      expect.objectContaining({ code: "DB_CORRUPT_WORKSPACE" }),
+    );
+  });
+
+  it("returns the declared table name even when looked up in another case", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    expect(database.getTableSchema("customer").name).toBe("Customer");
+    database.close();
+  });
+
+  it("folds identifiers like SQLite NOCASE: ASCII case only", () => {
+    expect(sameIdentifier("Customer", "customer")).toBe(true);
+    expect(sameIdentifier("ABC", "abc")).toBe(true);
+    // Non-ASCII case is not folded, matching SQLite's NOCASE.
+    expect(sameIdentifier("Ä", "ä")).toBe(false);
   });
 
   it("refuses to open bytes that are not a ConsultChimps database", async () => {
