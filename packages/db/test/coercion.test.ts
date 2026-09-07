@@ -49,6 +49,8 @@ const rejected: Array<[ColumnType, CellValue, string]> = [
   ["integer", 1.9, "DB_INVALID_NUMBER"],
   ["integer", "2.5", "DB_INVALID_NUMBER"],
   ["integer", "9007199254740993", "DB_INVALID_NUMBER"],
+  ["integer", "1.00000000000000001", "DB_INVALID_NUMBER"],
+  ["integer", "9007199254740990.5", "DB_INVALID_NUMBER"],
   ["integer", "x", "DB_INVALID_NUMBER"],
   ["integer", Number.NaN, "DB_INVALID_NUMBER"],
   ["integer", Number.POSITIVE_INFINITY, "DB_INVALID_NUMBER"],

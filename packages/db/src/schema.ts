@@ -309,47 +309,84 @@ function booleanToSqlValue(value: Exclude<CellValue, null>): SqlValueType {
   );
 }
 
+// The offending value is always left out of these errors: it is imported cell
+// content and may be confidential; the caller adds table and column context.
+function invalidNumber(message: string, integer: boolean): ConsultChimpsError {
+  return new ConsultChimpsError("DB_INVALID_NUMBER", message, {
+    details: { type: integer ? "integer" : "real" },
+  });
+}
+
 // Parse a numeric column value. A blank string is an intentionally empty cell
-// (null); any other value that is not a finite number is rejected rather than
-// silently discarded, so a stray "not available" cannot masquerade as blank.
+// (null); any other value that is not a valid number for the column type is
+// rejected rather than silently discarded or rounded.
 function numberToSqlValue(
   value: Exclude<CellValue, null>,
   integer: boolean,
 ): SqlValueType {
-  let numeric: number;
-  if (typeof value === "number") {
-    numeric = value;
-  } else if (typeof value === "boolean") {
-    numeric = value ? 1 : 0;
-  } else {
+  if (typeof value === "boolean") {
+    return value ? 1 : 0;
+  }
+
+  if (typeof value === "string") {
     const trimmed = value.trim();
     if (trimmed === "") {
       return null;
     }
-    numeric = Number(trimmed);
+    if (integer) {
+      // Validate the text itself before any numeric conversion: Number() would
+      // round "1.00000000000000001" or "9007199254740993" to a safe integer and
+      // hide the change. A digit string plus a range check on the exact value
+      // (via BigInt) keeps the original meaning.
+      if (!/^[+-]?\d+$/.test(trimmed)) {
+        throw invalidNumber(
+          "An integer column received a value that is not a whole number.",
+          true,
+        );
+      }
+      const exact = BigInt(trimmed);
+      if (
+        exact < BigInt(Number.MIN_SAFE_INTEGER) ||
+        exact > BigInt(Number.MAX_SAFE_INTEGER)
+      ) {
+        throw invalidNumber(
+          "An integer column received a whole number outside the range that can be represented exactly.",
+          true,
+        );
+      }
+      return Number(exact);
+    }
+    const numeric = Number(trimmed);
+    if (!Number.isFinite(numeric)) {
+      throw invalidNumber(
+        "A number column received a value that is not a finite number.",
+        false,
+      );
+    }
+    return numeric;
   }
-  // The offending value is left out of the error (it is imported cell content
-  // and may be confidential); the caller adds the table and column context.
-  if (!Number.isFinite(numeric)) {
-    throw new ConsultChimpsError(
-      "DB_INVALID_NUMBER",
-      `${integer ? "An integer" : "A number"} column received a value that is not a finite number.`,
-      { details: { type: integer ? "integer" : "real" } },
+
+  // A numeric value. JavaScript has already rounded any literal beyond its safe
+  // range before this point, so a safe-integer / finite check is the best the
+  // number type allows.
+  if (integer) {
+    if (!Number.isSafeInteger(value)) {
+      throw invalidNumber(
+        Number.isFinite(value)
+          ? "An integer column received a value that is not a whole number within the range that can be represented exactly."
+          : "An integer column received a value that is not a finite number.",
+        true,
+      );
+    }
+    return value;
+  }
+  if (!Number.isFinite(value)) {
+    throw invalidNumber(
+      "A number column received a value that is not a finite number.",
+      false,
     );
   }
-  // An integer column rejects a fractional value, and one outside the range
-  // JavaScript represents exactly (so a large 64-bit id is not silently
-  // rounded), rather than storing a corrupted number.
-  if (integer && !Number.isSafeInteger(numeric)) {
-    throw new ConsultChimpsError(
-      "DB_INVALID_NUMBER",
-      Number.isInteger(numeric)
-        ? "An integer column received a whole number outside the range that can be represented exactly."
-        : "An integer column received a value that is not a whole number.",
-      { details: { type: "integer" } },
-    );
-  }
-  return numeric;
+  return value;
 }
 
 /**

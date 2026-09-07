@@ -139,19 +139,30 @@ export class SqlDatabase {
    * back if it throws, so a batch of statements is all-or-nothing.
    */
   transaction<T>(work: () => T): T {
+    // sql.js is synchronous, so the transaction must finish before this returns.
+    // An async callback is refused before it runs at all: invoking it would
+    // schedule a continuation that mutates the database after COMMIT, outside any
+    // transaction, and rejecting its promise afterward cannot cancel that.
+    if (
+      (work as { constructor?: { name?: string } }).constructor?.name ===
+      "AsyncFunction"
+    ) {
+      throw new ConsultChimpsError(
+        "DB_ASYNC_TRANSACTION",
+        "A transaction callback must be synchronous, because the database engine runs synchronously.",
+      );
+    }
     this.#db.run("BEGIN;");
     try {
       const result = work();
-      // sql.js is synchronous, so the transaction must complete before this
-      // returns. An async callback would resolve after COMMIT, and a later
-      // rejection would bypass the rollback below, so it is refused outright.
+      // A plain function that returns a promise is caught here and rolled back;
+      // its body already ran synchronously inside the transaction, so nothing
+      // continues to touch the database afterward.
       if (
         result !== null &&
         typeof result === "object" &&
         typeof (result as { then?: unknown }).then === "function"
       ) {
-        // Thrown here so the single rollback in catch reverts any statements the
-        // callback ran before its first await.
         throw new ConsultChimpsError(
           "DB_ASYNC_TRANSACTION",
           "A transaction callback must be synchronous, because the database engine runs synchronously.",
