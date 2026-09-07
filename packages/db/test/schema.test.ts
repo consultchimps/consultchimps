@@ -423,6 +423,25 @@ describe("schema round trip through save and load", () => {
     );
   });
 
+  it("rejects opening a database whose stored column name is unsafe", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    const badDefinition = JSON.stringify({
+      columns: [{ name: 'bad"name', type: "text" }],
+      foreignKeys: [],
+      recordId: { prefix: "C", padding: 2 },
+    });
+    database.sql.run(
+      `UPDATE ${quoteIdentifier(TABLE_REGISTRY_TABLE)} SET definition = ? WHERE name = ?;`,
+      [badDefinition, "Customer"],
+    );
+    const bytes = database.serialize();
+    database.close();
+    await expect(Database.open(bytes)).rejects.toThrow(
+      expect.objectContaining({ code: "DB_CORRUPT_WORKSPACE" }),
+    );
+  });
+
   it("rejects a fractional stored value in an integer column when reading", async () => {
     const database = await Database.create();
     database.createTable({

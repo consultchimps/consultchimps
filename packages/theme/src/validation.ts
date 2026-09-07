@@ -5,12 +5,7 @@ import {
   oklchLightnessChroma,
   type CvdKind,
 } from "./color.js";
-import {
-  resolveCategorical,
-  resolveSurface,
-  type ColorMode,
-  type Palette,
-} from "./palette.js";
+import { type ColorMode, type ModeColor, type Palette } from "./palette.js";
 
 /**
  * Which check produced an issue.
@@ -201,16 +196,22 @@ export function validateCategorical(
 }
 
 /**
- * Validate a palette's categorical slots for one mode against its own surface.
+ * Validate a palette's categorical slots for one mode against its own surface. A
+ * runtime-supplied palette may be incomplete, so each value is read defensively:
+ * a missing or non-string entry becomes an invalid-color issue rather than a
+ * thrown error, keeping the never-throws contract of the validation pass.
  */
 export function validatePalette(
   palette: Palette,
   mode: ColorMode,
 ): ValidationReport {
-  const colors = palette.categorical.map((_, index) =>
-    resolveCategorical(palette, index, mode),
-  );
+  const readMode = (color: ModeColor | undefined): string => {
+    const value = color?.[mode];
+    return typeof value === "string" ? value : "";
+  };
+  const entries = Array.isArray(palette.categorical) ? palette.categorical : [];
+  const colors = entries.map((entry) => readMode(entry));
   return validateCategorical(colors, mode, {
-    surface: resolveSurface(palette, mode),
+    surface: readMode(palette.surface),
   });
 }

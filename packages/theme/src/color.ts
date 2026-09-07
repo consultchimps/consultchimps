@@ -45,12 +45,13 @@ const MACHADO: Record<CvdKind, readonly RgbTriple[]> = {
 };
 
 /**
- * Whether a string is a six-digit hex colour (`#rrggbb` or `rrggbb`). The
- * validation pass uses this to report a malformed colour as a structured issue
- * rather than letting `parseHexColor` throw.
+ * Whether a value is a six-digit hex colour (`#rrggbb` or `rrggbb`). Accepts
+ * `unknown` and returns false for anything that is not such a string, so the
+ * validation pass can report a malformed, missing, or non-string colour from a
+ * runtime-supplied palette as a structured issue rather than throwing.
  */
-export function isHexColor(value: string): boolean {
-  return /^#?[0-9a-fA-F]{6}$/.test(value.trim());
+export function isHexColor(value: unknown): boolean {
+  return typeof value === "string" && /^#?[0-9a-fA-F]{6}$/.test(value.trim());
 }
 
 /**

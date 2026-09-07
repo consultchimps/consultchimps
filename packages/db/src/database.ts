@@ -132,6 +132,40 @@ function parseDefinition(json: string, tableName: string): StoredDefinition {
     fail("its Record ID separator is not text");
   }
 
+  // Reapply the identifier rules that table creation enforces, so an externally
+  // edited definition with an unsafe, reserved, or duplicate name is reported as
+  // corruption here rather than surfacing a raw SQLite syntax error when the
+  // name later reaches quoteIdentifier.
+  const checkIdentifier = (name: string, role: "table" | "column"): void => {
+    try {
+      assertSafeIdentifier(name, role);
+    } catch {
+      fail(`its ${role} name "${name}" is not a valid identifier`);
+    }
+  };
+  checkIdentifier(tableName, "table");
+  const seenColumns = new Set<string>();
+  for (const rawColumn of definition["columns"] as Array<
+    Record<string, unknown>
+  >) {
+    const columnName = rawColumn["name"] as string;
+    checkIdentifier(columnName, "column");
+    if (identifierKey(columnName) === identifierKey(RECORD_ID_COLUMN)) {
+      fail("a column uses the reserved Record ID name");
+    }
+    const key = identifierKey(columnName);
+    if (seenColumns.has(key)) {
+      fail("a column name is duplicated");
+    }
+    seenColumns.add(key);
+  }
+  for (const rawForeignKey of definition["foreignKeys"] as Array<
+    Record<string, unknown>
+  >) {
+    checkIdentifier(rawForeignKey["column"] as string, "column");
+    checkIdentifier(rawForeignKey["referencesTable"] as string, "table");
+  }
+
   return parsed as StoredDefinition;
 }
 

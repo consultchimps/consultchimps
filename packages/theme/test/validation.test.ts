@@ -7,6 +7,7 @@ import {
   ThemeError,
   validateCategorical,
   validatePalette,
+  type Palette,
 } from "../src/index.js";
 
 describe("contrastRatio", () => {
@@ -37,6 +38,23 @@ describe("validatePalette", () => {
   it("passes the neutral palette in both modes", () => {
     expect(validatePalette(NEUTRAL_PALETTE, "light").valid).toBe(true);
     expect(validatePalette(NEUTRAL_PALETTE, "dark").valid).toBe(true);
+  });
+
+  it("reports an incomplete runtime palette instead of throwing", () => {
+    const malformed = {
+      name: "partial",
+      // Missing the dark value a runtime palette might omit.
+      surface: { light: "#fcfcfb" },
+      ink: NEUTRAL_PALETTE.ink,
+      categorical: [{ light: "#2a78d6" }],
+      sequential: NEUTRAL_PALETTE.sequential,
+      semantic: NEUTRAL_PALETTE.semantic,
+    } as unknown as Palette;
+    const report = validatePalette(malformed, "dark");
+    expect(report.valid).toBe(false);
+    expect(report.issues.some((issue) => issue.check === "invalid-color")).toBe(
+      true,
+    );
   });
 
   it("reports light-mode contrast shortfalls as warnings, not errors", () => {
