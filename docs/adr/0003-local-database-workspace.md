@@ -84,13 +84,27 @@ and are browser-only.
 
 ## Decision 4: editing grid
 
-**Decision: a headless table library, rendered by us: TanStack Table and
-TanStack Virtual (MIT).** They supply the table, editing, sort and filter state,
-and virtualization; every cell is rendered with tool-kit components so the look
-stays ours and nothing reads as embedded third-party chrome. Foreign-key
-pickers, validation, and undo are built on top either way; the library removes
-the virtualization and state bookkeeping so that effort goes to the editing
-experience instead.
+The grid has to feel as close to Excel as possible: rectangular and disjoint
+range selection, a drag fill handle, and clipboard copy and paste of ranges as
+TSV that round-trips with Excel. A headless table library (TanStack Table)
+supplies none of that, so it would mean building a selection and clipboard
+engine by hand, which is exactly the fiddly, error-prone work to avoid.
+
+The license floor was deliberately widened to weigh this, first to MPL, then to
+GPL, then to paid commercial. The finding: the batteries-rich grids
+(Handsontable, AG Grid Enterprise, Kendo React, Bryntum) are pure commercial
+with no usable GPL path; the only genuine dual GPL and commercial grids (DHTMLX,
+Webix) are not materially better and fight a custom design system with their own
+skins. So GPL earns nothing here.
+
+**Decision: Tabulator (MIT), used through `react-tabulator`.** Within permissive
+licensing it is the most complete Excel range and clipboard package: rectangular
+and disjoint (ctrl-click) range selection, keyboard range extension, a
+corner-drag fill, and Excel-compatible TSV clipboard, DOM-rendered so tool-kit
+CSS and light or dark style the cells, and actively maintained. It satisfies
+both the Excel-UX requirement and the batteries-included goal with no license
+cost and no GPL split on `apps/docs`. One item to spike before building on it:
+confirm the corner-drag fill produces Excel-style series fill, not only a copy.
 
 ## Decision 5: theme package
 
@@ -144,6 +158,24 @@ a non-overlapping layout. `@dagrejs/dagre` is the maintained fork; the original
 only and never enter an export. elkjs, the other common layout engine, is
 dual-licensed EPL-2.0 or GPL-3.0, both copyleft, and therefore excluded.
 
+## Decision 8: stable record identifiers
+
+Relationships hang off record identity, so a record needs an identifier that is
+human-readable (so it means something to a consultant and can be read in a
+foreign-key cell), stable (so a relationship never breaks when other fields are
+edited), and usable as a foreign-key target.
+
+**Decision: a per-table prefixed sequential identifier, always generated, for
+example `CUST-0001` or `INV-0042`.** The prefix and zero-padding are
+configurable per table. The identifier is assigned once at record creation and
+is immutable thereafter; foreign keys reference it, and in SQLite it is a
+`UNIQUE` text column (a stable key beside the internal rowid), never an editable
+display field. Single-writer editing means no counter contention, and gaps after
+a delete are acceptable because the identifier is stable, not dense. Tables
+always use the generated identifier; existing domain codes live in ordinary
+columns and are not made the key, which keeps one identity mechanism to reason
+about.
+
 ## Deferred decisions
 
 Settled when the build item that needs them is designed, so each can be
@@ -169,13 +201,15 @@ carries, if any, is noted.
    palettes). Add the workspace and record-editing terms to `CONTEXT.md`.
 2. **Import operation.** `db.import`: Excel or CSV to SQLite, reusing xlsx,
    tabular, and column mapping, on library, CLI, and browser. Registry entry.
-3. **Schema and relationships model.** Tables, columns, types, and foreign keys,
-   persisted in the database file, in the library.
+3. **Schema and relationships model.** Tables, columns, types, foreign keys, and
+   the per-table prefixed stable identifier (Decision 8), persisted in the
+   database file, in the library.
 4. **Workspace shell.** The browser page that opens or creates a database
    through the File System Access API, autosaves to OPFS, and falls back to
    download, outside the registry. Adds the workspace completion checklist.
-5. **Record grid.** Editing with foreign-key pickers, validation, and undo, on
-   TanStack Table and Virtual.
+5. **Record grid.** Excel-like editing (range and disjoint selection, fill,
+   clipboard), foreign-key pickers, validation, and undo, on Tabulator through
+   `react-tabulator`. Spike the series-fill behaviour first.
 6. **Relationship diagram.** A pan-and-zoom view of tables and foreign keys, on
    React Flow and dagre.
 7. **Computed columns.** The formula language that compiles to a SQLite
@@ -200,13 +234,14 @@ carries, if any, is noted.
 - The browser-surface rules keep their meaning: operations stay bytes-level and
   filesystem-free; only the workspace page uses the File System Access API, and
   it is not an operation.
-- New dependencies, all Apache-2.0 compatible: sql.js (MIT);
-  `@tanstack/react-table` (core `@tanstack/table-core`) and
-  `@tanstack/react-virtual` (MIT) for the grid; `@tanstack/charts` (MIT, pre-1.0
-  at 0.16 and self-described as alpha, pinned to an exact version and isolated
+- New dependencies, all Apache-2.0 compatible: sql.js (MIT); `tabulator-tables`
+  and `react-tabulator` (MIT) for the grid; `@tanstack/charts` (MIT, pre-1.0 at
+  0.16 and self-described as alpha, pinned to an exact version and isolated
   behind one adapter, reassessed at 1.0); `@xyflow/react` and `@dagrejs/dagre`
   (MIT) for the diagram, in-app only. A new first-party package
-  `@consultchimps/theme` (zero dependency). elkjs (dual EPL-2.0 or GPL-3.0) is
+  `@consultchimps/theme` (zero dependency). The grid license floor was widened
+  to MPL, GPL, and commercial and the permissive choice still won, so nothing on
+  `apps/docs` relicenses; copyleft grids and elkjs (dual EPL-2.0 or GPL-3.0) are
   excluded.
 - Because `@tanstack/charts` is framework-agnostic with SVG server-side
   rendering, the dashboard-export generator produces static SVG without bundling
