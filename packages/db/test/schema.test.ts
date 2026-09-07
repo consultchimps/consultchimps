@@ -520,6 +520,52 @@ describe("schema round trip through save and load", () => {
     );
   });
 
+  it("rejects opening when a physical column dropped its NOT NULL constraint", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    database.sql.run(`DROP TABLE ${quoteIdentifier("Customer")};`);
+    database.sql.run(
+      `CREATE TABLE ${quoteIdentifier("Customer")} (${quoteIdentifier("record_id")} TEXT NOT NULL UNIQUE, ${quoteIdentifier("name")} TEXT, ${quoteIdentifier("active")} INTEGER);`,
+    );
+    const bytes = database.serialize();
+    database.close();
+    await expect(Database.open(bytes)).rejects.toThrow(
+      expect.objectContaining({ code: "DB_CORRUPT_WORKSPACE" }),
+    );
+  });
+
+  it("rejects opening when a stored Record ID prefix is empty", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    database.sql.run(
+      `UPDATE ${quoteIdentifier(TABLE_REGISTRY_TABLE)} SET definition = ? WHERE name = ?;`,
+      [
+        JSON.stringify({
+          columns: [{ name: "name", type: "text" }],
+          foreignKeys: [],
+          recordId: { prefix: "", padding: 2 },
+        }),
+        "Customer",
+      ],
+    );
+    const bytes = database.serialize();
+    database.close();
+    await expect(Database.open(bytes)).rejects.toThrow(
+      expect.objectContaining({ code: "DB_CORRUPT_WORKSPACE" }),
+    );
+  });
+
+  it("rejects opening a file whose metadata tables have the wrong columns", async () => {
+    const raw = await loadSqlDatabase();
+    raw.run("CREATE TABLE _consultchimps_meta (a TEXT);");
+    raw.run("CREATE TABLE _consultchimps_tables (b TEXT);");
+    const bytes = raw.serialize();
+    raw.close();
+    await expect(Database.open(bytes)).rejects.toThrow(
+      expect.objectContaining({ code: "DB_NOT_A_WORKSPACE" }),
+    );
+  });
+
   it("rejects a non-text stored Record ID when reading", async () => {
     const database = await Database.create();
     database.createTable(customer);

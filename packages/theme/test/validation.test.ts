@@ -72,6 +72,14 @@ describe("validatePalette", () => {
     );
   });
 
+  it("reports a null runtime palette without throwing", () => {
+    const report = validatePalette(null as unknown as Palette, "light");
+    expect(report.valid).toBe(false);
+    expect(report.issues.some((issue) => issue.check === "invalid-shape")).toBe(
+      true,
+    );
+  });
+
   it("reports an explicitly empty categorical palette as a shape issue", () => {
     const empty = {
       name: "empty",

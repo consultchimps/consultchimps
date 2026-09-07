@@ -206,6 +206,21 @@ export function validatePalette(
   palette: Palette,
   mode: ColorMode,
 ): ValidationReport {
+  // A runtime palette parsed from JSON could be null or not an object at all.
+  const candidate: unknown = palette;
+  if (typeof candidate !== "object" || candidate === null) {
+    return {
+      valid: false,
+      issues: [
+        {
+          check: "invalid-shape",
+          severity: "error",
+          message: "The palette is not an object.",
+          details: {},
+        },
+      ],
+    };
+  }
   const readMode = (color: ModeColor | undefined): string => {
     const value = color?.[mode];
     return typeof value === "string" ? value : "";

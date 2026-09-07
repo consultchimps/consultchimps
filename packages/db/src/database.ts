@@ -113,8 +113,9 @@ function parseDefinition(json: string, tableName: string): StoredDefinition {
     }
   }
   const recordId = asObject(definition["recordId"]);
-  if (typeof recordId["prefix"] !== "string") {
-    fail("its Record ID prefix is missing");
+  const prefix = recordId["prefix"];
+  if (typeof prefix !== "string" || prefix.trim() === "") {
+    fail("its Record ID prefix is missing or empty");
   }
   const padding = recordId["padding"];
   if (
@@ -260,18 +261,7 @@ export class Database {
     const database = new Database(sql);
     try {
       sql.run("PRAGMA foreign_keys = ON;");
-      database.#assertMetadataPresent();
-      database.#assertSupportedSchemaVersion();
-      // Reject a registry that holds two table names differing only by case,
-      // which a binary-collated primary key permits in an externally edited file
-      // but this package's case-insensitive lookups cannot resolve.
-      database.#assertRegistryDistinct();
-      // Parse every stored definition (reporting a damaged registry while the
-      // handle can still be closed) and check each against its physical table,
-      // so a table dropped, recreated with different columns, or recreated
-      // without its foreign keys is reported here rather than as a raw engine
-      // error or a silently dangling relationship on first use.
-      database.#assertPhysicalSchemaMatches();
+      database.#validateLoadedWorkspace();
     } catch (error) {
       // A rejected open must not leak the sql.js allocation the load created,
       // since the caller never receives a handle to close.
@@ -279,6 +269,32 @@ export class Database {
       throw translateOpenError(error);
     }
     return database;
+  }
+
+  /**
+   * The single open-time validation routine. The create path enforces the
+   * schema invariants when a workspace is built; opening a file cannot trust the
+   * stored registry or physical schema, so this re-applies the same invariants
+   * to the loaded state and cross-checks the stored definitions against the real
+   * tables. It deliberately validates schema-level invariants only (shape,
+   * identifiers, types, constraints), not a full row scan: the threat model is a
+   * trusted single writer and a wrong or damaged file, not adversarial data.
+   */
+  #validateLoadedWorkspace(): void {
+    // 1. The file is a ConsultChimps workspace with the expected metadata tables
+    //    and layout, at a schema version this build understands.
+    this.#assertMetadataPresent();
+    this.#assertSupportedSchemaVersion();
+    // 2. The registry has no two table names differing only by case, which a
+    //    binary-collated key permits but the case-insensitive lookups cannot
+    //    resolve.
+    this.#assertRegistryDistinct();
+    // 3. Every stored definition parses and satisfies the create-path invariants
+    //    (identifiers, Record ID prefix and padding, column types), and matches
+    //    its physical table (columns, types, NOT NULL, and declared foreign
+    //    keys). getSchema() performs the parse-and-invariant pass; the physical
+    //    cross-check follows.
+    this.#assertPhysicalSchemaMatches();
   }
 
   #assertPhysicalSchemaMatches(): void {
@@ -291,30 +307,41 @@ export class Database {
     };
 
     for (const schema of this.getSchema()) {
-      const columnType = new Map<string, string>();
+      const physicalColumns = new Map<
+        string,
+        { type: string; notNull: boolean }
+      >();
       for (const row of this.#sql.select(
         `PRAGMA table_info(${quoteIdentifier(schema.name)});`,
       )) {
-        columnType.set(
-          identifierKey(String(row["name"])),
-          String(row["type"]).toUpperCase(),
-        );
+        physicalColumns.set(identifierKey(String(row["name"])), {
+          type: String(row["type"]).toUpperCase(),
+          notNull: Number(row["notnull"]) === 1,
+        });
       }
-      if (columnType.size === 0) {
+      if (physicalColumns.size === 0) {
         corrupt(`table "${schema.name}" is missing`);
       }
-      if (!columnType.has(identifierKey(RECORD_ID_COLUMN))) {
+      if (!physicalColumns.has(identifierKey(RECORD_ID_COLUMN))) {
         corrupt(`table "${schema.name}" has no Record ID column`);
       }
       for (const column of schema.columns) {
-        const physical = columnType.get(identifierKey(column.name));
+        const physical = physicalColumns.get(identifierKey(column.name));
         if (physical === undefined) {
           corrupt(`table "${schema.name}" is missing column "${column.name}"`);
-        }
-        if (physical !== sqlStorageClass(column.type)) {
-          corrupt(
-            `column "${column.name}" on "${schema.name}" has the wrong type`,
-          );
+        } else {
+          if (physical.type !== sqlStorageClass(column.type)) {
+            corrupt(
+              `column "${column.name}" on "${schema.name}" has the wrong type`,
+            );
+          }
+          // A column declared non-nullable must carry the physical NOT NULL, or
+          // an insert that omits it would silently store NULL against the schema.
+          if (column.nullable === false && !physical.notNull) {
+            corrupt(
+              `column "${column.name}" on "${schema.name}" is not marked NOT NULL as declared`,
+            );
+          }
         }
       }
       const foreignKeyList = this.#sql.select(
@@ -369,16 +396,36 @@ export class Database {
   }
 
   #assertMetadataPresent(): void {
+    const notAWorkspace = (): never => {
+      throw new ConsultChimpsError(
+        "DB_NOT_A_WORKSPACE",
+        "This database file was not created by ConsultChimps: its schema metadata tables are missing or malformed.",
+        { details: { expectedTables: [METADATA_TABLE, TABLE_REGISTRY_TABLE] } },
+      );
+    };
     const found = this.#sql.selectValue(
       "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name IN (?, ?);",
       [METADATA_TABLE, TABLE_REGISTRY_TABLE],
     );
     if (found !== 2) {
-      throw new ConsultChimpsError(
-        "DB_NOT_A_WORKSPACE",
-        "This database file was not created by ConsultChimps: its schema metadata tables are missing.",
-        { details: { expectedTables: [METADATA_TABLE, TABLE_REGISTRY_TABLE] } },
+      notAWorkspace();
+    }
+    // The tables can exist with the wrong columns (a damaged or unrelated file),
+    // which would otherwise surface as a raw "no such column" error from the
+    // first metadata query. Confirm the expected layout up front.
+    const hasColumns = (table: string, expected: string[]): boolean => {
+      const columns = new Set(
+        this.#sql
+          .select(`PRAGMA table_info(${quoteIdentifier(table)});`)
+          .map((row) => identifierKey(String(row["name"]))),
       );
+      return expected.every((column) => columns.has(identifierKey(column)));
+    };
+    if (
+      !hasColumns(METADATA_TABLE, ["key", "value"]) ||
+      !hasColumns(TABLE_REGISTRY_TABLE, ["name", "definition", "next_counter"])
+    ) {
+      notAWorkspace();
     }
   }
 
