@@ -53,13 +53,18 @@ export function addRecordsFromTable(
     }
   }
 
-  const inserted: InsertedRecord[] = [];
-  for (const row of table.rows) {
-    const values: Record<string, CellValue> = {};
-    for (const column of mappedColumns) {
-      values[column] = row[column] ?? null;
+  // The whole batch is one transaction: if a later row fails a constraint,
+  // earlier inserts and their consumed id counters roll back, so retrying the
+  // same call does not duplicate a partial prefix.
+  return database.sql.transaction(() => {
+    const inserted: InsertedRecord[] = [];
+    for (const row of table.rows) {
+      const values: Record<string, CellValue> = {};
+      for (const column of mappedColumns) {
+        values[column] = row[column] ?? null;
+      }
+      inserted.push(database.insertRecord(tableName, values));
     }
-    inserted.push(database.insertRecord(tableName, values));
-  }
-  return inserted;
+    return inserted;
+  });
 }

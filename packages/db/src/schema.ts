@@ -186,6 +186,37 @@ export function cellFromSqlValue(
   }
 }
 
+// The text spellings accepted for a boolean column, so an imported "false" or
+// "0" is not silently stored as true by JavaScript truthiness. An empty string
+// is treated as an unset value (null); anything else is rejected rather than
+// guessed.
+const TRUE_TEXT = new Set(["true", "t", "yes", "y", "1"]);
+const FALSE_TEXT = new Set(["false", "f", "no", "n", "0"]);
+
+function booleanToSqlValue(value: Exclude<CellValue, null>): SqlValueType {
+  if (typeof value === "boolean") {
+    return value ? 1 : 0;
+  }
+  if (typeof value === "number") {
+    return value !== 0 ? 1 : 0;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "") {
+    return null;
+  }
+  if (TRUE_TEXT.has(normalized)) {
+    return 1;
+  }
+  if (FALSE_TEXT.has(normalized)) {
+    return 0;
+  }
+  throw new ConsultChimpsError(
+    "DB_INVALID_BOOLEAN",
+    `The value "${value}" cannot be read as a boolean. Use one of true, false, yes, no, 1, or 0.`,
+    { details: { value } },
+  );
+}
+
 /**
  * Convert a tabular cell value to a value SQLite can store, interpreting the
  * column's declared type (booleans store as 0/1 integers).
@@ -199,7 +230,7 @@ export function sqlValueFromCell(
   }
   switch (type) {
     case "boolean":
-      return value ? 1 : 0;
+      return booleanToSqlValue(value);
     case "integer": {
       const numeric = typeof value === "number" ? value : Number(value);
       return Number.isFinite(numeric) ? Math.trunc(numeric) : null;

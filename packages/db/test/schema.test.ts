@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { Database, loadSqlDatabase, type TableSchema } from "../src/index.js";
+import {
+  Database,
+  loadSqlDatabase,
+  quoteIdentifier,
+  METADATA_TABLE,
+  type TableSchema,
+} from "../src/index.js";
 
 const customer: TableSchema = {
   name: "Customer",
@@ -104,6 +110,37 @@ describe("schema round trip through save and load", () => {
       }),
     ).toThrow(/does not exist/i);
     database.close();
+  });
+
+  it("coerces boolean text explicitly rather than by truthiness", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+
+    database.insertRecord("Customer", { name: "A", active: "false" });
+    database.insertRecord("Customer", { name: "B", active: "0" });
+    database.insertRecord("Customer", { name: "C", active: "yes" });
+
+    expect(
+      database.readRecords("Customer").map((row) => row["active"]),
+    ).toEqual([false, false, true]);
+
+    expect(() =>
+      database.insertRecord("Customer", { name: "D", active: "maybe" }),
+    ).toThrow(/boolean/i);
+    database.close();
+  });
+
+  it("rejects a database written with a newer schema format version", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    database.sql.run(
+      `UPDATE ${quoteIdentifier(METADATA_TABLE)} SET value = ? WHERE key = ?;`,
+      ["99", "schema_format_version"],
+    );
+    const bytes = database.serialize();
+    database.close();
+
+    await expect(Database.open(bytes)).rejects.toThrow(/newer/i);
   });
 
   it("refuses to open bytes that are not a ConsultChimps database", async () => {

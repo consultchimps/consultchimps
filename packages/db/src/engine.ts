@@ -2,10 +2,8 @@ import initSqlJs from "sql.js";
 import type {
   BindParams,
   Database as SqlJsDatabase,
-  ParamsObject,
   SqlJsConfig,
   SqlJsStatic,
-  SqlValue,
 } from "sql.js";
 
 /**
@@ -13,6 +11,10 @@ import type {
  * turns its callback-and-statement API into a small typed surface (load bytes,
  * run statements, read rows, serialize back to bytes) so the schema and bridge
  * layers never touch the engine directly and a future engine swap stays local.
+ *
+ * The public surface deliberately uses this package's own value types rather
+ * than re-exporting sql.js's, so a consumer's build resolves the declarations
+ * without needing sql.js's own (absent) type package.
  *
  * sql.js compiles SQLite to WebAssembly and runs it wholly in memory. Loading
  * the runtime is async because the wasm must be fetched and instantiated; every
@@ -22,18 +24,18 @@ import type {
  */
 
 /** A stored cell value: text, a number, binary, or null. */
-export type SqlValueType = SqlValue;
+export type SqlValueType = number | string | Uint8Array | null;
 
 /** Bound statement parameters, positional or named. */
-export type SqlParams = SqlValue[] | Record<string, SqlValue>;
+export type SqlParams = SqlValueType[] | Record<string, SqlValueType>;
 
 /** One result row keyed by column name. */
-export type SqlRow = ParamsObject;
+export type SqlRow = Record<string, SqlValueType>;
 
 /** A raw result set from a multi-row query. */
 export interface SqlQueryResult {
   columns: string[];
-  values: SqlValue[][];
+  values: SqlValueType[][];
 }
 
 /**
@@ -62,13 +64,32 @@ async function loadRuntime(config?: SqlEngineConfig): Promise<SqlJsStatic> {
 }
 
 /**
- * A thin, typed handle over one in-memory SQLite database.
+ * A thin, typed handle over one in-memory SQLite database. Construct it through
+ * `loadSqlDatabase`; the constructor is internal so the sql.js database never
+ * appears in the public type surface.
  */
 export class SqlDatabase {
   readonly #db: SqlJsDatabase;
 
-  constructor(db: SqlJsDatabase) {
+  private constructor(db: SqlJsDatabase) {
     this.#db = db;
+  }
+
+  /**
+   * Load a database into memory. Pass the bytes of an existing SQLite file to
+   * open it, or omit them to create an empty one. Supply `config` in a browser
+   * worker to locate the wasm.
+   */
+  static async load(
+    bytes?: Uint8Array,
+    config?: SqlEngineConfig,
+  ): Promise<SqlDatabase> {
+    const runtime = await loadRuntime(config);
+    const db =
+      bytes !== undefined
+        ? new runtime.Database(bytes)
+        : new runtime.Database();
+    return new SqlDatabase(db);
   }
 
   /** Execute a statement that returns no rows (DDL, insert, update, delete). */
@@ -99,7 +120,7 @@ export class SqlDatabase {
   }
 
   /** Run a query expected to return a single value, or null when it returns no row. */
-  selectValue(sql: string, params?: SqlParams): SqlValue {
+  selectValue(sql: string, params?: SqlParams): SqlValueType {
     const statement = this.#db.prepare(sql, params as BindParams);
     try {
       if (!statement.step()) {
@@ -109,6 +130,22 @@ export class SqlDatabase {
       return values.length > 0 ? values[0]! : null;
     } finally {
       statement.free();
+    }
+  }
+
+  /**
+   * Run `work` inside a single transaction, committing on success and rolling
+   * back if it throws, so a batch of statements is all-or-nothing.
+   */
+  transaction<T>(work: () => T): T {
+    this.#db.run("BEGIN;");
+    try {
+      const result = work();
+      this.#db.run("COMMIT;");
+      return result;
+    } catch (error) {
+      this.#db.run("ROLLBACK;");
+      throw error;
     }
   }
 
@@ -128,12 +165,9 @@ export class SqlDatabase {
  * open it, or omit them to create an empty one. Supply `config` in a browser
  * worker to locate the wasm.
  */
-export async function loadSqlDatabase(
+export function loadSqlDatabase(
   bytes?: Uint8Array,
   config?: SqlEngineConfig,
 ): Promise<SqlDatabase> {
-  const runtime = await loadRuntime(config);
-  const db =
-    bytes !== undefined ? new runtime.Database(bytes) : new runtime.Database();
-  return new SqlDatabase(db);
+  return SqlDatabase.load(bytes, config);
 }

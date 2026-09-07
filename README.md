@@ -38,6 +38,8 @@ documentation site renders its cards and tabs from;
 | `@consultchimps/core`     | Shared errors, artifacts, and operation results        |
 | `@consultchimps/files`    | Input discovery and safe output-path handling          |
 | `@consultchimps/tabular`  | Runtime-neutral table model, union, and column mapping |
+| `@consultchimps/theme`    | Runtime-neutral palette model and colour validation    |
+| `@consultchimps/db`       | Local in-memory database, stable IDs, and table bridge |
 | `@consultchimps/xlsx`     | Excel workbook input and output                        |
 | `@consultchimps/pptx`     | PowerPoint template inspection and population          |
 | `@consultchimps/pdf`      | PDF split and merge operations                         |

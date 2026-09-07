@@ -67,6 +67,7 @@ export class Database {
     const database = new Database(sql);
     sql.run("PRAGMA foreign_keys = ON;");
     database.#assertMetadataPresent();
+    database.#assertSupportedSchemaVersion();
     return database;
   }
 
@@ -94,6 +95,22 @@ export class Database {
         "DB_NOT_A_WORKSPACE",
         "This database file was not created by ConsultChimps: its schema metadata tables are missing.",
         { details: { expectedTables: [METADATA_TABLE, TABLE_REGISTRY_TABLE] } },
+      );
+    }
+  }
+
+  #assertSupportedSchemaVersion(): void {
+    const version = this.schemaFormatVersion();
+    if (version > SCHEMA_FORMAT_VERSION) {
+      throw new ConsultChimpsError(
+        "DB_UNSUPPORTED_SCHEMA_VERSION",
+        `This database was written with schema format version ${version}, which is newer than this version supports (${SCHEMA_FORMAT_VERSION}). Update ConsultChimps to open it.`,
+        {
+          details: {
+            fileVersion: version,
+            supportedVersion: SCHEMA_FORMAT_VERSION,
+          },
+        },
       );
     }
   }

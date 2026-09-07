@@ -95,6 +95,39 @@ describe("addRecordsFromTable", () => {
     database.close();
   });
 
+  it("rolls the whole batch back when a later row fails a constraint", async () => {
+    const database = await Database.create();
+    database.createTable(customerSchema("Customer"));
+    database.createTable({
+      name: "Invoice",
+      columns: [{ name: "customer", type: "text" }],
+      foreignKeys: [{ column: "customer", referencesTable: "Customer" }],
+      recordId: { prefix: "INV", padding: 5 },
+    });
+    const north = database.insertRecord("Customer", {
+      name: "North",
+      active: true,
+      score: 1,
+    });
+
+    const input: Table = {
+      columns: ["customer"],
+      rows: [
+        { customer: north.recordId }, // valid
+        { customer: "CUST-9999" }, // dangling foreign key: the batch must fail
+      ],
+    };
+
+    expect(() => addRecordsFromTable(database, "Invoice", input)).toThrow();
+    // Nothing from the failed batch survives, and no identifier was consumed.
+    expect(databaseTableToTable(database, "Invoice").rows).toEqual([]);
+    const retry = database.insertRecord("Invoice", {
+      customer: north.recordId,
+    });
+    expect(retry.recordId).toBe("INV-00001");
+    database.close();
+  });
+
   it("rejects a Table column the target table does not declare", async () => {
     const database = await Database.create();
     database.createTable(customerSchema("Customer"));
