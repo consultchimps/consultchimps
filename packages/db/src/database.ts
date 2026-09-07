@@ -339,6 +339,7 @@ export class Database {
     const recordId = formatRecordId(definition.recordId, counter);
     insertValues.push(recordId);
 
+    const providedColumns = new Set<string>();
     for (const [name, value] of Object.entries(values)) {
       if (sameIdentifier(name, RECORD_ID_COLUMN)) {
         throw new ConsultChimpsError(
@@ -355,6 +356,18 @@ export class Database {
           { details: { table: tableName, column: name } },
         );
       }
+      // Two keys that resolve to the same column (differing only by case) would
+      // both land in the INSERT, where SQLite keeps only the first and silently
+      // drops the rest; reject the ambiguity instead.
+      const columnKey = identifierKey(column.name);
+      if (providedColumns.has(columnKey)) {
+        throw new ConsultChimpsError(
+          "DB_DUPLICATE_INSERT_COLUMN",
+          `The insert for "${tableName}" gives the column "${column.name}" more than once.`,
+          { details: { table: tableName, column: column.name } },
+        );
+      }
+      providedColumns.add(columnKey);
       // Store under the schema's declared column name, not the caller's casing.
       insertColumns.push(column.name);
       insertValues.push(
@@ -420,7 +433,18 @@ export class Database {
       `SELECT next_counter FROM ${quoteIdentifier(TABLE_REGISTRY_TABLE)} WHERE name = ? COLLATE NOCASE;`,
       [tableName],
     );
-    return typeof value === "number" ? value : Number(value);
+    const counter = typeof value === "number" ? value : Number(value);
+    // The counter is persisted state; a damaged or externally edited file could
+    // hold a zero, negative, fractional, or out-of-range value that would form
+    // an invalid Record ID. Reject it rather than generate one.
+    if (!Number.isSafeInteger(counter) || counter < 1) {
+      throw new ConsultChimpsError(
+        "DB_CORRUPT_RECORD_COUNTER",
+        `The Record ID counter for "${tableName}" is not a positive whole number, so the database may be damaged.`,
+        { details: { table: tableName } },
+      );
+    }
+    return counter;
   }
 
   /** The schema of a single table, read from the stored metadata. */

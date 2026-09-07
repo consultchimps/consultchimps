@@ -5,6 +5,7 @@ import {
   loadSqlDatabase,
   quoteIdentifier,
   METADATA_TABLE,
+  TABLE_REGISTRY_TABLE,
   type TableSchema,
 } from "../src/index.js";
 
@@ -138,6 +139,28 @@ describe("schema round trip through save and load", () => {
     expect(database.insertRecord("Ticket", { priority: "3" }).recordId).toBe(
       "TK-001",
     );
+    database.close();
+  });
+
+  it("rejects an insert that gives one column twice under different casing", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    expect(() =>
+      database.insertRecord("Customer", { name: "a", Name: "b" }),
+    ).toThrow(expect.objectContaining({ code: "DB_DUPLICATE_INSERT_COLUMN" }));
+    database.close();
+  });
+
+  it("rejects a damaged Record ID counter before generating an id", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    database.sql.run(
+      `UPDATE ${quoteIdentifier(TABLE_REGISTRY_TABLE)} SET next_counter = ? WHERE name = ?;`,
+      [0, "Customer"],
+    );
+    expect(() =>
+      database.insertRecord("Customer", { name: "North", active: true }),
+    ).toThrow(expect.objectContaining({ code: "DB_CORRUPT_RECORD_COUNTER" }));
     database.close();
   });
 

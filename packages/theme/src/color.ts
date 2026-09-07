@@ -15,8 +15,11 @@ import { ThemeError } from "./errors.js";
 export type RgbTriple = [number, number, number];
 
 /**
- * A `min(protanopia, deuteranopia)` pair is what the categorical-distinctness
- * check gates on; tritanopia is reported alongside for context.
+ * The categorical-distinctness gate is `min(protanopia, deuteranopia)`, matching
+ * the data-viz method this reuses. Tritanopia is available through `deltaE` for
+ * a caller that wants to measure it, but is deliberately not part of the gate: a
+ * tritan-safe categorical set is a stricter, separate goal, and gating on it
+ * would fail palettes the method treats as valid.
  */
 export type CvdKind = "protan" | "deutan" | "tritan";
 
