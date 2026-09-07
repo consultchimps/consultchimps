@@ -128,6 +128,22 @@ describe("addRecordsFromTable", () => {
     database.close();
   });
 
+  it("matches Table headers to columns case-insensitively", async () => {
+    const database = await Database.create();
+    database.createTable(customerSchema("Customer"));
+    const input: Table = {
+      // Headers differ in case from the declared columns, and a RECORD_ID
+      // header in any casing is ignored.
+      columns: ["RECORD_ID", "Name", "ACTIVE", "Score"],
+      rows: [{ RECORD_ID: "x", Name: "North", ACTIVE: true, Score: 9 }],
+    };
+    addRecordsFromTable(database, "Customer", input);
+    expect(databaseTableToTable(database, "Customer").rows).toEqual([
+      { record_id: "CUST-0001", name: "North", active: true, score: 9 },
+    ]);
+    database.close();
+  });
+
   it("rejects a Table column the target table does not declare", async () => {
     const database = await Database.create();
     database.createTable(customerSchema("Customer"));

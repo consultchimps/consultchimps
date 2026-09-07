@@ -11,7 +11,9 @@ import {
   assertSafeIdentifier,
   cellFromSqlValue,
   formatRecordId,
+  identifierKey,
   quoteIdentifier,
+  sameIdentifier,
   sqlStorageClass,
   sqlValueFromCell,
   type ColumnDefinition,
@@ -198,11 +200,11 @@ export class Database {
     const seenColumns = new Set<string>();
     for (const column of schema.columns) {
       assertSafeIdentifier(column.name, "column");
-      const key = column.name.toLowerCase();
+      const key = identifierKey(column.name);
       // SQLite column names are case-insensitive, so any casing of the reserved
       // Record ID column would collide with the generated one; reject it here
       // with the stable error rather than let CREATE TABLE fail generically.
-      if (key === RECORD_ID_COLUMN) {
+      if (key === identifierKey(RECORD_ID_COLUMN)) {
         throw new ConsultChimpsError(
           "DB_RESERVED_COLUMN",
           `The column name "${column.name}" is reserved for the generated Record ID.`,
@@ -224,11 +226,14 @@ export class Database {
       return `${quoteIdentifier(column.name)} ${sqlStorageClass(column.type)}${nullClause}`;
     });
 
+    // Columns are matched case-insensitively, like SQLite identifiers, and are
+    // unique case-insensitively (enforced above), so the lowercased name is an
+    // unambiguous key.
     const columnByName = new Map(
-      schema.columns.map((column) => [column.name, column]),
+      schema.columns.map((column) => [identifierKey(column.name), column]),
     );
     const foreignKeyClauses = schema.foreignKeys.map((foreignKey) => {
-      const column = columnByName.get(foreignKey.column);
+      const column = columnByName.get(identifierKey(foreignKey.column));
       if (column === undefined) {
         throw new ConsultChimpsError(
           "DB_FOREIGN_KEY_COLUMN_MISSING",
@@ -243,10 +248,14 @@ export class Database {
           { details: { table: schema.name, column: foreignKey.column } },
         );
       }
-      if (
-        foreignKey.referencesTable !== schema.name &&
-        !this.#tableExists(foreignKey.referencesTable)
-      ) {
+      // A self-reference is matched case-insensitively, like every other table
+      // name, so "Customer" referencing "customer" is recognized as itself
+      // even though the table is not yet in the registry.
+      const isSelfReference = sameIdentifier(
+        foreignKey.referencesTable,
+        schema.name,
+      );
+      if (!isSelfReference && !this.#tableExists(foreignKey.referencesTable)) {
         throw new ConsultChimpsError(
           "DB_FOREIGN_KEY_TABLE_MISSING",
           `The foreign key on "${schema.name}" references table "${foreignKey.referencesTable}", which does not exist.`,
@@ -318,17 +327,10 @@ export class Database {
     values: Readonly<Record<string, CellValue>>,
   ): InsertedRecord {
     const definition = this.#requireDefinition(tableName);
+    // Columns are matched case-insensitively, like SQLite identifiers.
     const columnByName = new Map(
-      definition.columns.map((column) => [column.name, column]),
+      definition.columns.map((column) => [identifierKey(column.name), column]),
     );
-
-    if (Object.prototype.hasOwnProperty.call(values, RECORD_ID_COLUMN)) {
-      throw new ConsultChimpsError(
-        "DB_RECORD_ID_IS_GENERATED",
-        `The Record ID for "${tableName}" is generated and cannot be supplied when inserting.`,
-        { details: { table: tableName } },
-      );
-    }
 
     const insertColumns: string[] = [RECORD_ID_COLUMN];
     const insertValues: SqlValueType[] = [];
@@ -338,7 +340,14 @@ export class Database {
     insertValues.push(recordId);
 
     for (const [name, value] of Object.entries(values)) {
-      const column = columnByName.get(name);
+      if (sameIdentifier(name, RECORD_ID_COLUMN)) {
+        throw new ConsultChimpsError(
+          "DB_RECORD_ID_IS_GENERATED",
+          `The Record ID for "${tableName}" is generated and cannot be supplied when inserting.`,
+          { details: { table: tableName } },
+        );
+      }
+      const column = columnByName.get(identifierKey(name));
       if (column === undefined) {
         throw new ConsultChimpsError(
           "DB_UNKNOWN_COLUMN",
@@ -346,8 +355,11 @@ export class Database {
           { details: { table: tableName, column: name } },
         );
       }
-      insertColumns.push(name);
-      insertValues.push(this.#convertCell(column.type, value, tableName, name));
+      // Store under the schema's declared column name, not the caller's casing.
+      insertColumns.push(column.name);
+      insertValues.push(
+        this.#convertCell(column.type, value, tableName, column.name),
+      );
     }
 
     const placeholders = insertColumns.map(() => "?").join(", ");

@@ -2,7 +2,7 @@ import { ConsultChimpsError } from "@consultchimps/core";
 import type { CellValue, Table } from "@consultchimps/tabular";
 
 import type { Database, InsertedRecord } from "./database.js";
-import { RECORD_ID_COLUMN } from "./schema.js";
+import { identifierKey, sameIdentifier, RECORD_ID_COLUMN } from "./schema.js";
 
 /**
  * The bridge between the `@consultchimps/tabular` `Table` model and a database
@@ -38,13 +38,18 @@ export function addRecordsFromTable(
   table: Table,
 ): InsertedRecord[] {
   const schema = database.getTableSchema(tableName);
-  const known = new Set(schema.columns.map((column) => column.name));
+  // Column names are matched case-insensitively, like SQLite identifiers, so a
+  // Table header of any casing lines up with its declared column and a
+  // Record ID column in any casing is ignored.
+  const known = new Set(
+    schema.columns.map((column) => identifierKey(column.name)),
+  );
   const mappedColumns = table.columns.filter(
-    (column) => column !== RECORD_ID_COLUMN,
+    (column) => !sameIdentifier(column, RECORD_ID_COLUMN),
   );
 
   for (const column of mappedColumns) {
-    if (!known.has(column)) {
+    if (!known.has(identifierKey(column))) {
       throw new ConsultChimpsError(
         "DB_UNKNOWN_COLUMN",
         `The table "${tableName}" has no column "${column}" to receive the bridged data.`,

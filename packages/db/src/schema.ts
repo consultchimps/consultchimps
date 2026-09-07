@@ -115,7 +115,7 @@ export function assertSafeIdentifier(
       { details: { role, name } },
     );
   }
-  if (name.toLowerCase().startsWith(RESERVED_TABLE_PREFIX)) {
+  if (identifierKey(name).startsWith(RESERVED_TABLE_PREFIX)) {
     throw new ConsultChimpsError(
       "DB_RESERVED_IDENTIFIER",
       `The ${role} name "${name}" uses the reserved prefix "${RESERVED_TABLE_PREFIX}".`,
@@ -125,7 +125,7 @@ export function assertSafeIdentifier(
   // SQLite reserves the "sqlite_" table-name prefix for its own objects and
   // refuses CREATE TABLE on it; reject it here so the caller gets this stable
   // error rather than an unclassified engine exception.
-  if (role === "table" && name.toLowerCase().startsWith("sqlite_")) {
+  if (role === "table" && identifierKey(name).startsWith("sqlite_")) {
     throw new ConsultChimpsError(
       "DB_RESERVED_IDENTIFIER",
       `The table name "${name}" uses the "sqlite_" prefix, which SQLite reserves for internal use.`,
@@ -141,6 +141,27 @@ export function assertSafeIdentifier(
  */
 export function quoteIdentifier(name: string): string {
   return `"${name}"`;
+}
+
+/**
+ * The case-insensitive key for an identifier. SQLite treats table and column
+ * names case-insensitively, so every identifier comparison in this package goes
+ * through this one normalization (and its SQL twin, `... COLLATE NOCASE`), and
+ * identifiers are stored and displayed with their original case. The fold is
+ * `toLowerCase`, which also folds non-ASCII case that SQLite's ASCII-only
+ * `NOCASE` would not; identifiers here are ordinary table and column names, so
+ * that wider fold only ever makes the guard stricter.
+ */
+export function identifierKey(name: string): string {
+  return name.toLowerCase();
+}
+
+/**
+ * Whether two identifiers denote the same table or column under SQLite's
+ * case-insensitive rules.
+ */
+export function sameIdentifier(a: string, b: string): boolean {
+  return identifierKey(a) === identifierKey(b);
 }
 
 /** Map a column type to its SQLite storage class. */
@@ -208,7 +229,19 @@ function booleanToSqlValue(value: Exclude<CellValue, null>): SqlValueType {
     return value ? 1 : 0;
   }
   if (typeof value === "number") {
-    return value !== 0 ? 1 : 0;
+    // Only 0 and 1 are unambiguous; a stray 2 or NaN is rejected rather than
+    // coerced to true.
+    if (value === 0) {
+      return 0;
+    }
+    if (value === 1) {
+      return 1;
+    }
+    throw new ConsultChimpsError(
+      "DB_INVALID_BOOLEAN",
+      "A boolean column received a number that is not 0 or 1.",
+      { details: { type: "boolean" } },
+    );
   }
   const normalized = value.trim().toLowerCase();
   if (normalized === "") {

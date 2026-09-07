@@ -141,6 +141,48 @@ describe("schema round trip through save and load", () => {
     database.close();
   });
 
+  it("matches insert column names case-insensitively", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    const inserted = database.insertRecord("Customer", {
+      NAME: "North",
+      Active: true,
+    });
+    expect(inserted.recordId).toBe("CUST-0001");
+    // Stored and read back under the declared column names.
+    expect(database.readRecords("Customer")).toEqual([
+      { record_id: "CUST-0001", name: "North", active: true },
+    ]);
+    database.close();
+  });
+
+  it("rejects a boolean number that is not 0 or 1", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    expect(() =>
+      database.insertRecord("Customer", { name: "X", active: 2 }),
+    ).toThrow(expect.objectContaining({ code: "DB_INVALID_BOOLEAN" }));
+    // 0 and 1 remain valid.
+    expect(
+      database.insertRecord("Customer", { name: "Y", active: 1 }).recordId,
+    ).toBe("CUST-0001");
+    database.close();
+  });
+
+  it("accepts a self-referencing foreign key whose table name differs in case", async () => {
+    const database = await Database.create();
+    database.createTable({
+      name: "Node",
+      columns: [{ name: "parent", type: "text" }],
+      foreignKeys: [{ column: "parent", referencesTable: "node" }],
+      recordId: { prefix: "ND", padding: 3 },
+    });
+    const root = database.insertRecord("Node", { parent: null });
+    const child = database.insertRecord("Node", { parent: root.recordId });
+    expect(child.recordId).toBe("ND-002");
+    database.close();
+  });
+
   it("rejects an integer outside the range representable exactly", async () => {
     const database = await Database.create();
     database.createTable({
