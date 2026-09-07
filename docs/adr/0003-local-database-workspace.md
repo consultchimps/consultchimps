@@ -40,8 +40,14 @@ Access only with no fallback.
 mirror and a download fallback.** On Chromium the workspace writes directly back
 to the shared-folder file the user opened, holding the file handle for the
 session. The OPFS copy autosaves for crash recovery and is a mirror, not a
-source of truth, so nobody reconciles two locations. Safari and Firefox, which
-lack the API, fall back to download-and-replace. It serves the shared-folder,
+source of truth, so nobody reconciles two locations. The mirror is tagged with
+the identity of the shared file it belongs to and the moment it was taken. On
+reopen, recovery is offered only when the mirror belongs to the file being
+opened and is newer than it, and it never silently overwrites: if the shared
+file has moved on under another editor since the mirror was taken, the workspace
+surfaces the conflict and lets the person keep the recovered copy under a new
+name rather than clobber someone else's edits. Safari and Firefox, which lack
+the API, fall back to download-and-replace. It serves the shared-folder,
 one-editor model directly and degrades rather than blocking.
 
 ## Decision 2: SQLite engine
@@ -141,10 +147,11 @@ releases.
 **Decision: `@tanstack/charts`, adopted now despite its pre-1.0 status, with the
 risk contained.** Its architecture removes the React-in-the-generator cost that
 every other library carries, and its SVG SSR produces the runtime-free offline
-export this feature needs. To bound the alpha risk: pin an exact `0.16.x`, and
-put all chart construction behind one thin adapter module so a breaking minor
-bump touches a single file rather than every dashboard. Reassess at 1.0. KPI
-stat tiles are plain JSX, not a chart type.
+export this feature needs. To bound the alpha risk: pin the exact version
+`0.16.0` (no caret or range, so a lockfile regeneration cannot pull a different
+patch), and put all chart construction behind one thin adapter module so a
+breaking minor bump touches a single file rather than every dashboard. Reassess
+at 1.0. KPI stat tiles are plain JSX, not a chart type.
 
 ## Decision 7: relationship-diagram rendering
 
@@ -222,8 +229,11 @@ carries, if any, is noted.
 9. **Dashboards.** A KPI, bar, line, and pie builder in the workspace, on
    `@tanstack/charts` behind a thin adapter, themed from `@consultchimps/theme`.
 10. **Dashboard HTML export.** `db.export-dashboard`, a self-contained HTML file
-    per dashboard, static SVG with no runtime, on library, CLI, and browser.
-    (Deferred decision on the payload.)
+    per dashboard, with the charts as static SVG, on library, CLI, and browser.
+    The file carries no JavaScript runtime when the payload is static data; if
+    the deferred payload decision instead inlines a sql.js engine for in-page
+    filtering, the file necessarily carries that runtime. The charts are static
+    SVG either way. (Deferred decision on the payload.)
 11. **Bridge to existing operations.** A database table through `Table` into
     PowerPoint populate and split, so the workspace feeds the tools that already
     exist.
@@ -247,8 +257,11 @@ carries, if any, is noted.
   excluded.
 - Because `@tanstack/charts` is framework-agnostic with SVG server-side
   rendering, the dashboard-export generator produces static SVG without bundling
-  React into the exported file, so the offline dashboard carries no JavaScript
-  runtime.
+  React into the exported file, so the charts add no JavaScript runtime. Whether
+  the whole file is runtime-free depends on the deferred payload decision:
+  static data keeps it runtime-free; an inlined sql.js engine for in-page
+  filtering adds its own runtime. Visx is the documented fallback for the charts
+  if `@tanstack/charts` has to be dropped before it reaches a stable 1.0.
 - Theming ships neutral placeholder palettes only; client colours are runtime
   input and never committed.
 - The feature-completion checklist applies to the three operations as written.
