@@ -208,11 +208,15 @@ carries, if any, is noted.
    types, the sql.js wrapper, the `Table` bridge to `@consultchimps/tabular`)
    and `@consultchimps/theme` (palette model and validation, neutral placeholder
    palettes). Add the workspace and record-editing terms to `CONTEXT.md`.
-2. **Import operation.** `db.import`: Excel or CSV to SQLite, reusing xlsx,
-   tabular, and column mapping, on library, CLI, and browser. Registry entry.
-3. **Schema and relationships model.** Tables, columns, types, foreign keys, and
+2. **Schema and relationships model.** Tables, columns, types, foreign keys, and
    the per-table prefixed stable identifier (Decision 8), persisted in the
-   database file, in the library.
+   database file, in the library. Comes before import so that imported tables
+   are created through this model and receive generated identifiers from the
+   start.
+3. **Import operation.** `db.import`: Excel or CSV to SQLite, reusing xlsx,
+   tabular, and column mapping, and creating tables through the schema model
+   from item 2 so every imported table gets generated stable identifiers. On
+   library, CLI, and browser. Registry entry.
 4. **Workspace shell.** The browser page that opens or creates a database
    through the File System Access API, autosaves to OPFS, and falls back to
    download, outside the registry. Adds the workspace completion checklist.
