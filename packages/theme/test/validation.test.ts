@@ -72,6 +72,22 @@ describe("validatePalette", () => {
     );
   });
 
+  it("reports an explicitly empty categorical palette as a shape issue", () => {
+    const empty = {
+      name: "empty",
+      surface: NEUTRAL_PALETTE.surface,
+      ink: NEUTRAL_PALETTE.ink,
+      categorical: [],
+      sequential: NEUTRAL_PALETTE.sequential,
+      semantic: NEUTRAL_PALETTE.semantic,
+    } as unknown as Palette;
+    const report = validatePalette(empty, "light");
+    expect(report.valid).toBe(false);
+    expect(report.issues.some((issue) => issue.check === "invalid-shape")).toBe(
+      true,
+    );
+  });
+
   it("reports light-mode contrast shortfalls as warnings, not errors", () => {
     const report = validatePalette(NEUTRAL_PALETTE, "light");
     const contrastIssues = report.issues.filter(

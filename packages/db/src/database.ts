@@ -266,14 +266,12 @@ export class Database {
       // which a binary-collated primary key permits in an externally edited file
       // but this package's case-insensitive lookups cannot resolve.
       database.#assertRegistryDistinct();
-      // Force every stored definition to parse now, so a damaged registry is
-      // reported as a corruption error while the handle can still be closed,
-      // rather than throwing later from getSchema or a record operation.
-      database.getSchema();
-      // Every registered table must have a physical table, so a registry entry
-      // whose table was dropped or renamed is reported here rather than as a raw
-      // "no such table" error on the first read or insert.
-      database.#assertRegistryTablesExist();
+      // Parse every stored definition (reporting a damaged registry while the
+      // handle can still be closed) and check each against its physical table,
+      // so a table dropped, recreated with different columns, or recreated
+      // without its foreign keys is reported here rather than as a raw engine
+      // error or a silently dangling relationship on first use.
+      database.#assertPhysicalSchemaMatches();
     } catch (error) {
       // A rejected open must not leak the sql.js allocation the load created,
       // since the caller never receives a handle to close.
@@ -283,17 +281,58 @@ export class Database {
     return database;
   }
 
-  #assertRegistryTablesExist(): void {
-    const orphaned = this.#sql.select(
-      `SELECT r.name AS name FROM ${quoteIdentifier(TABLE_REGISTRY_TABLE)} r ` +
-        `WHERE NOT EXISTS (SELECT 1 FROM sqlite_schema s WHERE s.type = 'table' AND s.name = r.name COLLATE NOCASE);`,
-    );
-    if (orphaned.length > 0) {
+  #assertPhysicalSchemaMatches(): void {
+    const corrupt = (detail: string): never => {
       throw new ConsultChimpsError(
         "DB_CORRUPT_WORKSPACE",
-        "The database registers a table that no longer exists, so it may be damaged.",
+        `The stored schema does not match the database (${detail}), so it may be damaged.`,
         { details: {} },
       );
+    };
+
+    for (const schema of this.getSchema()) {
+      const columnType = new Map<string, string>();
+      for (const row of this.#sql.select(
+        `PRAGMA table_info(${quoteIdentifier(schema.name)});`,
+      )) {
+        columnType.set(
+          identifierKey(String(row["name"])),
+          String(row["type"]).toUpperCase(),
+        );
+      }
+      if (columnType.size === 0) {
+        corrupt(`table "${schema.name}" is missing`);
+      }
+      if (!columnType.has(identifierKey(RECORD_ID_COLUMN))) {
+        corrupt(`table "${schema.name}" has no Record ID column`);
+      }
+      for (const column of schema.columns) {
+        const physical = columnType.get(identifierKey(column.name));
+        if (physical === undefined) {
+          corrupt(`table "${schema.name}" is missing column "${column.name}"`);
+        }
+        if (physical !== sqlStorageClass(column.type)) {
+          corrupt(
+            `column "${column.name}" on "${schema.name}" has the wrong type`,
+          );
+        }
+      }
+      const foreignKeyList = this.#sql.select(
+        `PRAGMA foreign_key_list(${quoteIdentifier(schema.name)});`,
+      );
+      for (const foreignKey of schema.foreignKeys) {
+        const present = foreignKeyList.some(
+          (row) =>
+            sameIdentifier(String(row["from"]), foreignKey.column) &&
+            sameIdentifier(String(row["table"]), foreignKey.referencesTable) &&
+            sameIdentifier(String(row["to"]), RECORD_ID_COLUMN),
+        );
+        if (!present) {
+          corrupt(
+            `table "${schema.name}" is missing a declared foreign key on "${foreignKey.column}"`,
+          );
+        }
+      }
     }
   }
 
@@ -697,9 +736,18 @@ export class Database {
       `SELECT ${selectList} FROM ${quoteIdentifier(tableName)} ORDER BY rowid;`,
     );
     return rows.map((row) => {
-      const output: TableRow = {
-        [RECORD_ID_COLUMN]: String(row[RECORD_ID_COLUMN]),
-      };
+      // The Record ID is a stored text value like any other, so validate it the
+      // same way rather than String()-coercing a stray BLOB or number into a
+      // plausible but wrong identifier.
+      const storedId = row[RECORD_ID_COLUMN];
+      if (typeof storedId !== "string") {
+        throw new ConsultChimpsError(
+          "DB_CORRUPT_STORED_VALUE",
+          `A Record ID in "${tableName}" is not text, so the database may be damaged.`,
+          { details: { table: tableName } },
+        );
+      }
+      const output: TableRow = { [RECORD_ID_COLUMN]: storedId };
       for (const column of definition.columns) {
         // Own-property read so a column named like an Object.prototype member
         // never picks up an inherited value; "__proto__" is refused as a column

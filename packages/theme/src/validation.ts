@@ -210,9 +210,10 @@ export function validatePalette(
     const value = color?.[mode];
     return typeof value === "string" ? value : "";
   };
-  // A runtime palette that omits its categorical colours (or gives a non-array)
-  // is a shape error, not an empty-and-therefore-valid palette.
-  if (!Array.isArray(palette.categorical)) {
+  // A runtime palette that omits its categorical colours, gives a non-array, or
+  // gives an empty array is a shape error: it has no usable series slot, and
+  // every resolveCategorical call on it would throw.
+  if (!Array.isArray(palette.categorical) || palette.categorical.length === 0) {
     return {
       valid: false,
       issues: [

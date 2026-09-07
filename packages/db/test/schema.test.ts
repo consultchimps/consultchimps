@@ -504,6 +504,35 @@ describe("schema round trip through save and load", () => {
     database.close();
   });
 
+  it("rejects opening a database whose physical table dropped a declared foreign key", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    database.createTable(invoice);
+    // Recreate Invoice physically without the declared foreign key.
+    database.sql.run(`DROP TABLE ${quoteIdentifier("Invoice")};`);
+    database.sql.run(
+      `CREATE TABLE ${quoteIdentifier("Invoice")} (${quoteIdentifier("record_id")} TEXT NOT NULL UNIQUE, ${quoteIdentifier("customer")} TEXT, ${quoteIdentifier("amount")} REAL);`,
+    );
+    const bytes = database.serialize();
+    database.close();
+    await expect(Database.open(bytes)).rejects.toThrow(
+      expect.objectContaining({ code: "DB_CORRUPT_WORKSPACE" }),
+    );
+  });
+
+  it("rejects a non-text stored Record ID when reading", async () => {
+    const database = await Database.create();
+    database.createTable(customer);
+    // Insert a BLOB Record ID directly; a TEXT-affinity column keeps a BLOB as is.
+    database.sql.run(
+      `INSERT INTO ${quoteIdentifier("Customer")} (${quoteIdentifier("record_id")}, ${quoteIdentifier("name")}) VALUES (x'4142', 'x');`,
+    );
+    expect(() => database.readRecords("Customer")).toThrow(
+      expect.objectContaining({ code: "DB_CORRUPT_STORED_VALUE" }),
+    );
+    database.close();
+  });
+
   it("rejects opening a database whose registered table is gone", async () => {
     const database = await Database.create();
     database.createTable(customer);
