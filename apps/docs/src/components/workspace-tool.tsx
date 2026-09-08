@@ -8,7 +8,10 @@
  * the workspace Web Worker (`workers/workspace.worker.ts`), which owns the one
  * `@consultchimps/db` instance; this component holds view state and drives the
  * worker through `WorkspaceClient`. Data import and a grid are deliberately not
- * here: they arrive in later work as new worker commands beside these.
+ * here: import arrives in later work as new worker commands beside these.
+ *
+ * The grid that shows and edits a table lives in `workspace-grid.tsx`; this
+ * component only mounts it, keyed on the workspace it belongs to.
  *
  * Saving prefers the File System Access API so a repeat save writes back to the
  * same file in place. Where that API is missing, saving falls back to a plain
@@ -28,6 +31,7 @@ import {
 import { WORKSPACE_FILES } from "@/lib/accepted-files";
 import type { WorkspaceSummary } from "@/lib/workspace-protocol";
 import { WorkspaceClient } from "@/lib/workspace-worker";
+import { WorkspaceGrid } from "@/components/workspace-grid";
 import {
   Database,
   Download,
@@ -119,6 +123,9 @@ export function WorkspaceTool() {
   const fallbackInputRef = useRef<HTMLInputElement | null>(null);
 
   const [workspace, setWorkspace] = useState<OpenWorkspace | null>(null);
+  // Bumped on every create and open, and used as the grid's key: a new database
+  // gets a new grid rather than a reset path that has to remember every field.
+  const [generation, setGeneration] = useState(0);
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -144,6 +151,7 @@ export function WorkspaceTool() {
     try {
       const summary = await client().create();
       handleRef.current = null;
+      setGeneration((previous) => previous + 1);
       setWorkspace({ summary, fileName: null });
       setNotice("Started a new empty workspace");
     } catch (caught) {
@@ -173,6 +181,7 @@ export function WorkspaceTool() {
         const { name, bytes } = await read();
         const summary = await client().open(bytes);
         handleRef.current = handle;
+        setGeneration((previous) => previous + 1);
         setWorkspace({ summary, fileName: name });
         setNotice("Opened the workspace");
       } catch (caught) {
@@ -449,6 +458,10 @@ export function WorkspaceTool() {
           </p>
         </section>
       )}
+
+      {hasWorkspace ? (
+        <WorkspaceGrid getClient={client} key={generation} onError={setError} />
+      ) : null}
 
       {notice ? (
         <p

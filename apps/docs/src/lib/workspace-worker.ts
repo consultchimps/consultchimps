@@ -15,12 +15,21 @@
  * sake.
  */
 import { ConsultChimpsError } from "@consultchimps/core";
+import type { CellValue } from "@consultchimps/tabular";
 
 import type {
+  UpdateWorkspaceCellCommand,
   WorkspaceCommand,
   WorkspaceEvent,
   WorkspaceSummary,
+  WorkspaceTable,
 } from "./workspace-protocol";
+
+/**
+ * One cell edit: which record, which column, and the new value. It is the
+ * update command without its wire fields, so the two cannot drift apart.
+ */
+export type WorkspaceCellEdit = Omit<UpdateWorkspaceCellCommand, "type" | "id">;
 
 /** Raised when the worker cannot start, so no command can be served. */
 export const WORKSPACE_WORKER_UNAVAILABLE = "WORKSPACE_WORKER_UNAVAILABLE";
@@ -72,6 +81,52 @@ export class WorkspaceClient {
     if (event.type !== "closed") {
       throw this.#unexpected(event);
     }
+  }
+
+  /* -----------------------------------------------------------------------
+   * Record grid
+   *
+   * These share the queue above, so a table read cannot overtake a cell edit
+   * that is still in the engine, and a workspace opened while an edit is in
+   * flight cannot swap the database underneath it.
+   * --------------------------------------------------------------------- */
+
+  /** Name the tables the held workspace contains, ordered by name. */
+  async listTables(): Promise<readonly string[]> {
+    const event = await this.#run((id) => ({ type: "listTables", id }));
+    if (event.type !== "tables") {
+      throw this.#unexpected(event);
+    }
+    return event.tables;
+  }
+
+  /** Read one table's columns and every row it holds. */
+  async readTable(name: string): Promise<WorkspaceTable> {
+    const event = await this.#run((id) => ({ type: "readTable", id, name }));
+    if (event.type !== "table") {
+      throw this.#unexpected(event);
+    }
+    return event.table;
+  }
+
+  /**
+   * Write one cell. Resolves with the value the database now holds, which is
+   * not always the value that was sent, and rejects when the database refuses
+   * it, so the caller can show the stored value or put the cell back.
+   */
+  async updateCell(edit: WorkspaceCellEdit): Promise<CellValue> {
+    const event = await this.#run((id) => ({
+      type: "updateCell",
+      id,
+      table: edit.table,
+      recordId: edit.recordId,
+      column: edit.column,
+      value: edit.value,
+    }));
+    if (event.type !== "cellUpdated") {
+      throw this.#unexpected(event);
+    }
+    return event.value;
   }
 
   /** Tear down the worker entirely, failing anything still pending. */

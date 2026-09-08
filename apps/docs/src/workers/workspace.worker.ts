@@ -15,14 +15,19 @@
  * wasm from our own origin, never a CDN, is the local-first rule in
  * docs/adr/0003 Decision 2.
  */
-import { Database } from "@consultchimps/db";
+import { Database, identifierKey, RECORD_ID_COLUMN } from "@consultchimps/db";
 import { ConsultChimpsError, isConsultChimpsError } from "@consultchimps/core";
+import type { CellValue } from "@consultchimps/tabular";
 
 import { basePath } from "@/lib/shared";
-import type {
-  WorkspaceCommand,
-  WorkspaceEvent,
-  WorkspaceSummary,
+import {
+  WORKSPACE_REFERENCE_LIMIT,
+  type WorkspaceColumn,
+  type WorkspaceCommand,
+  type WorkspaceEvent,
+  type WorkspaceReference,
+  type WorkspaceSummary,
+  type WorkspaceTable,
 } from "@/lib/workspace-protocol";
 
 /**
@@ -113,6 +118,142 @@ function handleClose(id: number): void {
   scope.postMessage({ type: "closed", id });
 }
 
+/* -------------------------------------------------------------------------
+ * Record grid
+ *
+ * The grid holds rows, never a database, so every read and every write it makes
+ * lands here. Type enforcement is not repeated: an edit is handed to
+ * `Database.updateRecord`, which routes it through the one conversion point the
+ * library owns, and a value that does not fit the column comes back as a
+ * ConsultChimpsError the page can show.
+ * ------------------------------------------------------------------------- */
+
+function requireDatabase(): Database {
+  if (database === null) {
+    throw new ConsultChimpsError(
+      "WORKSPACE_NONE_OPEN",
+      "There is no workspace open yet. Start a new workspace or open one first.",
+    );
+  }
+  return database;
+}
+
+function handleListTables(id: number): void {
+  const current = requireDatabase();
+  scope.postMessage({
+    type: "tables",
+    id,
+    tables: current.getSchema().map((schema) => schema.name),
+  });
+}
+
+/**
+ * The options a foreign-key column offers. The label is the referenced record's
+ * first text column, which is the closest thing the schema has to a name, with
+ * the Record ID kept alongside it: two customers can share a name, and the
+ * value being stored is the Record ID, so showing it is what makes the choice
+ * unambiguous. A column with no text to show falls back to the Record ID alone.
+ */
+function referenceOptions(
+  current: Database,
+  tableName: string,
+): {
+  references: WorkspaceReference[];
+  truncated: boolean;
+} {
+  const schema = current.getTableSchema(tableName);
+  const foreignKeyColumns = new Set(
+    schema.foreignKeys.map((foreignKey) => identifierKey(foreignKey.column)),
+  );
+  // A foreign key column holds Record IDs, so it names nothing; the first
+  // ordinary text column is the readable one.
+  const labelColumn = schema.columns.find(
+    (column) =>
+      column.type === "text" &&
+      !foreignKeyColumns.has(identifierKey(column.name)),
+  );
+  const rows = current.readRecords(schema.name);
+  const references = rows
+    .slice(0, WORKSPACE_REFERENCE_LIMIT)
+    .map((row): WorkspaceReference => {
+      const value = String(row[RECORD_ID_COLUMN]);
+      const label =
+        labelColumn === undefined ? null : (row[labelColumn.name] ?? null);
+      return {
+        value,
+        label:
+          typeof label === "string" && label.trim() !== ""
+            ? `${label} (${value})`
+            : value,
+      };
+    });
+  return { references, truncated: rows.length > references.length };
+}
+
+function handleReadTable(id: number, name: string): void {
+  const current = requireDatabase();
+  const schema = current.getTableSchema(name);
+  const referencedBy = new Map(
+    schema.foreignKeys.map((foreignKey) => [
+      identifierKey(foreignKey.column),
+      foreignKey.referencesTable,
+    ]),
+  );
+  // One lookup per referenced table, not per column, so two foreign keys onto
+  // the same table read it once.
+  const optionsByTable = new Map<
+    string,
+    { references: WorkspaceReference[]; truncated: boolean }
+  >();
+  const columns = schema.columns.map((column): WorkspaceColumn => {
+    const referencesTable = referencedBy.get(identifierKey(column.name));
+    if (referencesTable === undefined) {
+      return {
+        name: column.name,
+        type: column.type,
+        nullable: column.nullable !== false,
+        references: null,
+        referencesTruncated: false,
+      };
+    }
+    const key = identifierKey(referencesTable);
+    let options = optionsByTable.get(key);
+    if (options === undefined) {
+      options = referenceOptions(current, referencesTable);
+      optionsByTable.set(key, options);
+    }
+    return {
+      name: column.name,
+      type: column.type,
+      nullable: column.nullable !== false,
+      references: options.references,
+      referencesTruncated: options.truncated,
+    };
+  });
+
+  const table: WorkspaceTable = {
+    name: schema.name,
+    columns,
+    rows: current.readRecords(schema.name),
+  };
+  scope.postMessage({ type: "table", id, table });
+}
+
+function handleUpdateCell(
+  id: number,
+  table: string,
+  recordId: string,
+  column: string,
+  value: CellValue,
+): void {
+  const current = requireDatabase();
+  const updated = current.updateRecord(table, recordId, { [column]: value });
+  // Read the stored value back under the column name the schema declared, which
+  // is what updateRecord keys its reply by, whatever casing the grid sent.
+  const [stored] = Object.values(updated.values);
+  scope.postMessage({ type: "cellUpdated", id, value: stored ?? null });
+}
+
 async function dispatch(command: WorkspaceCommand): Promise<void> {
   switch (command.type) {
     case "create":
@@ -123,6 +264,18 @@ async function dispatch(command: WorkspaceCommand): Promise<void> {
       return handleSerialize(command.id);
     case "close":
       return handleClose(command.id);
+    case "listTables":
+      return handleListTables(command.id);
+    case "readTable":
+      return handleReadTable(command.id, command.name);
+    case "updateCell":
+      return handleUpdateCell(
+        command.id,
+        command.table,
+        command.recordId,
+        command.column,
+        command.value,
+      );
   }
 }
 

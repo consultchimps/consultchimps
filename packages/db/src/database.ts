@@ -31,6 +31,19 @@ export interface InsertedRecord {
   rowId: number;
 }
 
+/** The outcome of updating a record: which record was written, and what it now holds. */
+export interface UpdatedRecord {
+  /** The Record ID of the updated record, as it is stored. */
+  recordId: string;
+  /**
+   * The values now stored for the columns that were written, read back and
+   * coerced to their declared types. A caller that displays the record can show
+   * what the database kept rather than what it sent, which differ whenever a
+   * value was converted (the text "yes" into a boolean column, say).
+   */
+  values: Record<string, CellValue>;
+}
+
 // A generous but bounded cap on Record ID zero-padding, so a mistaken
 // configuration cannot drive String.padStart into an enormous allocation.
 const MAX_RECORD_ID_PADDING = 64;
@@ -687,6 +700,140 @@ export class Database {
       recordId,
       rowId: typeof rowId === "number" ? rowId : Number(rowId),
     };
+  }
+
+  /**
+   * Update an existing record, found by its Record ID. The values are keyed by
+   * column name and go through the same conversion as an insert, so a value
+   * that does not fit the column's declared type is refused here rather than
+   * stored in a shape the read side would later call corrupt. The Record ID is
+   * assigned once and cannot be among them.
+   *
+   * Passing no values checks that the record exists and writes nothing, which
+   * is what "update these zero columns" means; it is not an error.
+   */
+  updateRecord(
+    tableName: string,
+    recordId: string,
+    values: Readonly<Record<string, CellValue>>,
+  ): UpdatedRecord {
+    const { name, definition } = this.#requireDefinition(tableName);
+    // Columns are matched case-insensitively, like SQLite identifiers.
+    const columnByName = new Map(
+      definition.columns.map((column) => [identifierKey(column.name), column]),
+    );
+
+    const updateColumns: ColumnDefinition[] = [];
+    const updateValues: SqlValueType[] = [];
+    const providedColumns = new Set<string>();
+    for (const [key, value] of Object.entries(values)) {
+      // The storage trigger refuses this too, but the caller deserves a stable
+      // code and a sentence rather than a raw engine abort.
+      if (sameIdentifier(key, RECORD_ID_COLUMN)) {
+        throw new ConsultChimpsError(
+          "DB_RECORD_ID_IMMUTABLE",
+          `The Record ID for "${name}" is assigned once and cannot be changed.`,
+          { details: { table: name } },
+        );
+      }
+      const column = columnByName.get(identifierKey(key));
+      if (column === undefined) {
+        throw new ConsultChimpsError(
+          "DB_UNKNOWN_COLUMN",
+          `The table "${name}" has no column "${key}".`,
+          { details: { table: name, column: key } },
+        );
+      }
+      // Two keys that resolve to the same column (differing only by case) would
+      // both land in the SET clause, where the last one silently wins; reject
+      // the ambiguity instead, exactly as an insert does.
+      const columnKey = identifierKey(column.name);
+      if (providedColumns.has(columnKey)) {
+        throw new ConsultChimpsError(
+          "DB_DUPLICATE_UPDATE_COLUMN",
+          `The update for "${name}" gives the column "${column.name}" more than once.`,
+          { details: { table: name, column: column.name } },
+        );
+      }
+      providedColumns.add(columnKey);
+      updateColumns.push(column);
+      updateValues.push(
+        this.#convertCell(column.type, value, name, column.name),
+      );
+    }
+
+    // An UPDATE that matches no row is not an error in SQL, so a stale or
+    // mistyped Record ID would otherwise report success having changed nothing.
+    // The Record ID is data, not an identifier, so it is matched exactly.
+    const storedId = this.#sql.selectValue(
+      `SELECT ${quoteIdentifier(RECORD_ID_COLUMN)} FROM ${quoteIdentifier(name)} WHERE ${quoteIdentifier(RECORD_ID_COLUMN)} = ?;`,
+      [recordId],
+    );
+    if (typeof storedId !== "string") {
+      throw new ConsultChimpsError(
+        "DB_RECORD_NOT_FOUND",
+        `The table "${name}" has no record with the Record ID "${recordId}".`,
+        { details: { table: name, recordId } },
+      );
+    }
+
+    if (updateColumns.length > 0) {
+      const assignments = updateColumns
+        .map((column) => `${quoteIdentifier(column.name)} = ?`)
+        .join(", ");
+      try {
+        this.#sql.run(
+          `UPDATE ${quoteIdentifier(name)} SET ${assignments} WHERE ${quoteIdentifier(RECORD_ID_COLUMN)} = ?;`,
+          [...updateValues, storedId],
+        );
+      } catch (error) {
+        throw translateConstraintError(error, name);
+      }
+    }
+
+    return {
+      recordId: storedId,
+      values: this.#readColumns(name, storedId, updateColumns),
+    };
+  }
+
+  // Read the given columns of one record back through the declared-type
+  // conversion, so the caller is told what is stored rather than what it sent.
+  #readColumns(
+    tableName: string,
+    recordId: string,
+    columns: readonly ColumnDefinition[],
+  ): Record<string, CellValue> {
+    const values: Record<string, CellValue> = {};
+    if (columns.length === 0) {
+      return values;
+    }
+    const selectList = columns
+      .map((column) => quoteIdentifier(column.name))
+      .join(", ");
+    const rows = this.#sql.select(
+      `SELECT ${selectList} FROM ${quoteIdentifier(tableName)} WHERE ${quoteIdentifier(RECORD_ID_COLUMN)} = ?;`,
+      [recordId],
+    );
+    const row = rows[0];
+    if (row === undefined) {
+      throw new ConsultChimpsError(
+        "DB_RECORD_NOT_FOUND",
+        `The table "${tableName}" has no record with the Record ID "${recordId}".`,
+        { details: { table: tableName, recordId } },
+      );
+    }
+    for (const column of columns) {
+      // Own-property read, for the same reason readRecords takes one: a column
+      // named like an Object.prototype member must never pick up an inherited
+      // value. "__proto__" is refused as a column name, so assigning declared
+      // names to this plain object is safe.
+      const stored = Object.prototype.hasOwnProperty.call(row, column.name)
+        ? (row[column.name] as SqlValueType)
+        : null;
+      values[column.name] = cellFromSqlValue(column.type, stored);
+    }
+    return values;
   }
 
   // Convert one cell for storage, adding table and column context to a

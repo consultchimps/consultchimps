@@ -28,5 +28,9 @@ export {
   type RecordIdConfig,
   type TableSchema,
 } from "./schema.js";
-export { Database, type InsertedRecord } from "./database.js";
+export {
+  Database,
+  type InsertedRecord,
+  type UpdatedRecord,
+} from "./database.js";
 export { addRecordsFromTable, databaseTableToTable } from "./bridge.js";
