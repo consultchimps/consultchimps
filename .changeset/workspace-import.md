@@ -44,3 +44,12 @@ name in the database was not the name that was asked for.
 the same `sheets`, `headerRow`, and `includeHiddenSheets` options. The byte
 surface had readers for Excel Tables and named ranges but none for the
 worksheets themselves.
+
+A workbook description now also reports `uncachedFormulaCells` per worksheet:
+cells below the header row holding a formula the workbook carries no calculated
+value for. Excel writes a formula and its last result together, but a file
+written by a generator, or saved with calculation switched off, carries the
+formula alone, and every reader then sees those cells as empty because empty is
+all the file says. The count is the only way to tell them apart. Reading and
+consolidating are unchanged and still treat such a cell as empty; the new field
+lets a caller notice the condition and decide.

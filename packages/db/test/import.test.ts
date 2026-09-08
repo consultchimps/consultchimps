@@ -142,8 +142,13 @@ describe("inferColumnTypes", () => {
     expect(typeOfColumn(["2026-01-31T24:00:00.000Z"])).toBe("date");
     expect(typeOfColumn(["2026-01-31T25:00:00Z"])).toBe("text");
 
-    // A leap second sits at 23:59:60 and nowhere else.
+    // A leap second sits at 23:59:60 UTC and nowhere else, so the offset is
+    // part of the rule rather than a separate check that happens to pass.
     expect(typeOfColumn(["2026-12-31T23:59:60Z"])).toBe("date");
+    expect(typeOfColumn(["2026-12-31T23:59:60+00:00"])).toBe("date");
+    expect(typeOfColumn(["2026-12-31T23:59:60+05:00"])).toBe("text");
+    expect(typeOfColumn(["2026-12-31T23:59:60-00:00"])).toBe("text");
+    expect(typeOfColumn(["2026-12-31T23:59:60"])).toBe("text");
     expect(typeOfColumn(["2026-01-31T09:30:60Z"])).toBe("text");
     expect(typeOfColumn(["2026-01-31T23:58:60Z"])).toBe("text");
     expect(typeOfColumn(["2026-01-31T09:61:00Z"])).toBe("text");

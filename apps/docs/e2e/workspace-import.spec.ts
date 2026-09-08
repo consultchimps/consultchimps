@@ -99,8 +99,36 @@ async function delayWorkerImports(page: Page, ms: number): Promise<void> {
   }, ms);
 }
 
+/**
+ * A workbook whose totals column holds formulas nothing has calculated. Excel
+ * writes a formula and its last result together; a file written by a generator,
+ * or saved with calculation off, carries the formula alone.
+ */
+function uncalculatedWorkbook(): Promise<UploadFile> {
+  return createWorkbookUpload("totals.xlsx", [
+    {
+      name: "Customers",
+      rows: [
+        ["Customer", "Region", "Score"],
+        ["Acme", "North", { formula: "10+2" }],
+        ["Beta", "South", { formula: "3+5" }],
+      ],
+    },
+  ]);
+}
+
 function importRow(page: Page, index: number) {
   return page.getByTestId("workspace-import-source").nth(index);
+}
+
+/** Import the workbook's first worksheet and leave the second behind. */
+async function importCustomersSheet(page: Page): Promise<void> {
+  await page
+    .getByTestId("workspace-import-input")
+    .setInputFiles(await customerWorkbook());
+  await importRow(page, 1).getByTestId("workspace-import-selected").uncheck();
+  await page.getByTestId("workspace-import-run").click();
+  await expect(page.getByTestId("workspace-table")).toHaveCount(1);
 }
 
 test.describe("/workspace import", () => {
@@ -344,22 +372,140 @@ test.describe("/workspace import", () => {
     await expect(page.getByTestId("workspace-table")).toHaveCount(1);
   });
 
-  test("reports a file that holds nothing to import", async ({ page }) => {
+  test("refuses a worksheet whose formulas were never calculated", async ({
+    page,
+  }) => {
     await forceDownloadFallback(page);
     await page.goto("/workspace");
     await page.getByTestId("workspace-new").click();
 
-    // A header line and nothing under it: there is no data to make a table
-    // from, so the page says that rather than creating an empty one.
+    await page
+      .getByTestId("workspace-import-input")
+      .setInputFiles(await uncalculatedWorkbook());
+
+    // The worksheet is listed rather than hidden, so the visitor learns why it
+    // cannot be imported instead of wondering where it went, and the tick is
+    // refused before any choice is made.
+    await expect(page.getByTestId("workspace-import-source")).toHaveCount(1);
+    await expect(page.getByTestId("workspace-import-blocked")).toContainText(
+      "2 cells hold a formula this workbook carries no calculated value for",
+    );
+    await expect(page.getByTestId("workspace-import-blocked")).toContainText(
+      "Open the workbook in Excel, let it calculate, save it",
+    );
+    // The tick is refused, so the worksheet can never be chosen, and with
+    // nothing else in the workbook there is nothing left to import.
+    await expect(
+      importRow(page, 0).getByTestId("workspace-import-selected"),
+    ).toBeDisabled();
+    await expect(page.getByTestId("workspace-import-run")).toBeDisabled();
+    await expect(page.getByTestId("workspace-import-problem")).toHaveText(
+      "Choose at least one table to import",
+    );
+
+    // Nothing was created, and the workspace is untouched.
+    await expect(page.getByTestId("workspace-tables-empty")).toBeVisible();
+    await expect(page.getByTestId("workspace-unsaved")).toHaveCount(0);
+  });
+
+  test("holds a link out of the page until the loss is confirmed", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await page.getByTestId("workspace-new").click();
+    await importCustomersSheet(page);
+    await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
+
+    // A client-side transition unloads nothing, so the browser's own warning
+    // never fires; the page has to hold the click itself.
+    await page.getByTestId("guide-link").click();
+    await expect(page.getByTestId("workspace-confirm")).toBeVisible();
+    await expect(page).toHaveURL(/\/workspace$/u);
+    await expect(page.getByTestId("workspace-table")).toHaveCount(1);
+
+    // Keeping the workspace leaves the page exactly where it was.
+    await page.getByTestId("workspace-confirm-cancel").click();
+    await expect(page.getByTestId("workspace-confirm")).toHaveCount(0);
+    await expect(page).toHaveURL(/\/workspace$/u);
+    await expect(page.getByTestId("workspace-table")).toHaveCount(1);
+
+    // Discarding follows the link that was held.
+    await page.getByTestId("guide-link").click();
+    await page.getByTestId("workspace-confirm-discard").click();
+    await expect(page).toHaveURL(/\/docs\/libraries/u);
+  });
+
+  test("follows a link at once when nothing is unsaved", async ({ page }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await page.getByTestId("workspace-new").click();
+    await expect(page.getByTestId("workspace-summary")).toBeVisible();
+
+    await page.getByTestId("guide-link").click();
+    await expect(page).toHaveURL(/\/docs\/libraries/u);
+    await expect(page.getByTestId("workspace-confirm")).toHaveCount(0);
+  });
+
+  test("holds the Back button while the workspace is unsaved", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/tools");
+    await page.goto("/workspace");
+    await page.getByTestId("workspace-new").click();
+    await importCustomersSheet(page);
+
+    // Back cannot be cancelled, so the page keeps a spare history entry to
+    // absorb the first press. Driven through history rather than Playwright's
+    // goBack, which waits for a navigation that deliberately does not happen.
+    await page.evaluate(() => {
+      window.history.back();
+    });
+    await expect(page.getByTestId("workspace-confirm")).toBeVisible();
+    await expect(page).toHaveURL(/\/workspace$/u);
+
+    await page.getByTestId("workspace-confirm-discard").click();
+    await expect(page).toHaveURL(/\/tools$/u);
+  });
+
+  test("reports a workbook that holds nothing to import", async ({ page }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await page.getByTestId("workspace-new").click();
+
+    // A real workbook whose worksheet holds no rows: there is nothing to make
+    // a table from, so the page says that rather than creating an empty one.
+    await page
+      .getByTestId("workspace-import-input")
+      .setInputFiles(
+        await createWorkbookUpload("empty.xlsx", [
+          { name: "Sheet1", rows: [] },
+        ]),
+      );
+
+    await expect(page.getByTestId("workspace-import-error")).toContainText(
+      "has a header row with rows under it, so there is nothing to import",
+    );
+    await expect(page.getByTestId("workspace-import-form")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-tables-empty")).toBeVisible();
+  });
+
+  test("reports a file that is not a readable workbook", async ({ page }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await page.getByTestId("workspace-new").click();
+
+    // Named like a workbook, but not an OOXML package at all.
     await page.getByTestId("workspace-import-input").setInputFiles({
-      name: "empty.xlsx",
+      name: "broken.xlsx",
       mimeType:
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       buffer: Buffer.from("Customer,Region\n", "utf8"),
     });
 
     await expect(page.getByTestId("workspace-import-error")).toContainText(
-      "has a header row with rows under it, so there is nothing to import",
+      "Could not read workbook",
     );
     await expect(page.getByTestId("workspace-import-form")).toHaveCount(0);
     await expect(page.getByTestId("workspace-tables-empty")).toBeVisible();

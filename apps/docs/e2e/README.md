@@ -63,10 +63,11 @@ command when `out/` is missing.
   covers the shell's unsaved-changes guard, because import is the first command
   that can leave a workspace holding work no file has: New and Open ask before
   replacing an imported workspace and leave it untouched until the loss is
-  confirmed, and they ask nothing once it has been saved. A last test holds the
+  confirmed, they ask nothing once it has been saved, and a link out of the page
+  and the Back button are both held the same way. Further tests hold the
   worker's import commands open to check that New, Open, and Save are disabled
-  while a file is being read and while an import runs, and that the page is
-  usable and the workspace dirty once it lands.
+  while a file is being read and while an import runs, and refuse a worksheet
+  whose formulas the workbook carries no calculated value for.
 - `tools-navigation.spec.ts`: the `/tools` index, the sub-bar tabs, the
   tool-named "Try ... online" button each guide gains from the tool registry,
   and the single button a guide shared by two operations offers.
@@ -199,10 +200,17 @@ with `workspace-tables-empty` in their place while there are none.
 has, and `workspace-notice` and `workspace-error` report the outcome of the last
 command.
 
-While that badge is showing, New and Open render `workspace-confirm` instead of
-replacing the workspace, with `workspace-confirm-discard` and
-`workspace-confirm-cancel` as its two answers. It is an inline section rather
-than a `window.confirm`, so it is asserted like any other part of the page.
+While that badge is showing, New, Open, a link out of the page, and the Back
+button all render `workspace-confirm` instead of leaving, with
+`workspace-confirm-discard` and `workspace-confirm-cancel` as its two answers.
+It is an inline section rather than a `window.confirm`, so it is asserted like
+any other part of the page. A source the import cannot read renders
+`workspace-import-blocked` in its row and refuses the tick.
+
+`createWorkbookUpload` accepts `{ formula }` in place of a cell value, which
+writes `<f>` with no `<v>`: a formula the workbook carries no calculated value
+for. A spreadsheet engine will not produce that shape, which is exactly why the
+fixture has to.
 
 Import is its own section, `workspace-import`, with `workspace-import-choose`
 and the hidden `workspace-import-input` behind it. A chosen file renders

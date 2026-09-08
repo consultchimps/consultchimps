@@ -98,9 +98,9 @@ const DECIMAL_TEXT = /^-?(?:0|[1-9]\d*)\.\d+$/u;
  * isolation accepts "24:30" and an offset of "+99:99", neither of which is a
  * time of day.
  */
-const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/u;
+const ISO_DATE = /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})$/u;
 const ISO_DATE_TIME =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?(?:Z|([+-])(\d{2}):(\d{2}))?$/u;
+  /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})T(?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2})(?:\.(?<fraction>\d{1,9}))?)?(?:(?<zulu>Z)|(?<offsetSign>[+-])(?<offsetHour>\d{2}):(?<offsetMinute>\d{2}))?$/u;
 
 /**
  * The text spellings read as a boolean. "1" and "0" are deliberately absent:
@@ -139,31 +139,68 @@ function isCalendarDate(year: number, month: number, day: number): boolean {
 /**
  * Whether a matched date and time is a real instant, judged as a whole.
  *
- * The two spellings ISO 8601 allows outside the ordinary ranges are each tied
- * to the rest of the value rather than waved through on their own:
+ * Every rule here that could be stated about one part of the value is instead
+ * stated about the parts together, because that is where the mistakes are: a
+ * value whose hour, minute, second, and offset are each individually in range
+ * can still be an instant that does not exist.
  *
  * - Hour 24 is the end of a day, so it is accepted only as exactly `24:00`,
  *   with a zero second and a zero fraction if either is written. `24:30` is
  *   nothing.
- * - Second 60 is a leap second, which is inserted at `23:59:60` UTC, so it is
- *   accepted only there. A leap second written against a local offset stays
- *   text, which costs nothing: a date column stores the characters either way.
+ * - Second 60 is a leap second. One is inserted at `23:59:60` UTC, so it is
+ *   accepted only at that time and only when the value says it is UTC, written
+ *   as `Z` or as the explicit `+00:00`. A local offset and an absent offset
+ *   both stay text: `23:59:60+05:00` is a different instant from the leap
+ *   second, and a value with no offset does not say which instant it is. This
+ *   costs nothing, because a date column stores the characters either way.
+ * - An offset is a real offset: hours 00 to 23, minutes 00 to 59, judged as one
+ *   offset rather than three independent numbers.
  *
- * An offset is a real offset: hours 00 to 23, minutes 00 to 59.
+ * The date a leap second falls on is deliberately not constrained. Which day
+ * carries one is a decision announced by IERS, not a rule this package can
+ * state, so it is left to the value.
  */
 function isIsoTimestamp(stamp: RegExpExecArray): boolean {
-  if (!isCalendarDate(Number(stamp[1]), Number(stamp[2]), Number(stamp[3]))) {
+  // Named rather than numbered: adding a capture to the grammar above used to
+  // renumber every read below it, which is its own way of pairing the wrong
+  // things together.
+  const parts = stamp.groups as Record<string, string | undefined>;
+  if (
+    !isCalendarDate(
+      Number(parts["year"]),
+      Number(parts["month"]),
+      Number(parts["day"]),
+    )
+  ) {
     return false;
   }
-  const hour = Number(stamp[4]);
-  const minute = Number(stamp[5]);
-  const second = stamp[6] === undefined ? 0 : Number(stamp[6]);
-  const fraction = stamp[7];
+  const hour = Number(parts["hour"]);
+  const minute = Number(parts["minute"]);
+  const second = parts["second"] === undefined ? 0 : Number(parts["second"]);
+  const fraction = parts["fraction"];
   // Scanned rather than matched with `^0+$`, which backtracks once per digit on
   // a fraction that is not all zeros for no gain over reading it straight
   // through.
   const zeroFraction =
     fraction === undefined || [...fraction].every((digit) => digit === "0");
+
+  // The offset, judged first because the leap-second rule depends on it.
+  const hasOffset = parts["offsetSign"] !== undefined;
+  if (hasOffset) {
+    if (
+      Number(parts["offsetHour"]) > 23 ||
+      Number(parts["offsetMinute"]) > 59
+    ) {
+      return false;
+    }
+  }
+  // "+00:00" is UTC stated the long way. "-00:00" is not: RFC 3339 gives it the
+  // separate meaning of an unknown local offset, so it does not assert UTC.
+  const isUtc =
+    parts["zulu"] !== undefined ||
+    (parts["offsetSign"] === "+" &&
+      Number(parts["offsetHour"]) === 0 &&
+      Number(parts["offsetMinute"]) === 0);
 
   if (hour === 24) {
     if (minute !== 0 || second !== 0 || !zeroFraction) {
@@ -176,21 +213,11 @@ function isIsoTimestamp(stamp: RegExpExecArray): boolean {
     return false;
   }
   if (second === 60) {
-    // A leap second, and only where one is inserted.
-    if (hour !== 23 || minute !== 59) {
+    if (hour !== 23 || minute !== 59 || !isUtc) {
       return false;
     }
   } else if (second > 59) {
     return false;
-  }
-
-  // The offset is present as a whole or not at all: the grammar captures its
-  // sign, hours, and minutes together, so one part cannot be checked without
-  // the others.
-  if (stamp[8] !== undefined) {
-    if (Number(stamp[9]) > 23 || Number(stamp[10]) > 59) {
-      return false;
-    }
   }
   return true;
 }
@@ -198,7 +225,12 @@ function isIsoTimestamp(stamp: RegExpExecArray): boolean {
 function isIsoDateText(value: string): boolean {
   const date = ISO_DATE.exec(value);
   if (date !== null) {
-    return isCalendarDate(Number(date[1]), Number(date[2]), Number(date[3]));
+    const parts = date.groups as Record<string, string>;
+    return isCalendarDate(
+      Number(parts["year"]),
+      Number(parts["month"]),
+      Number(parts["day"]),
+    );
   }
   const stamp = ISO_DATE_TIME.exec(value);
   return stamp !== null && isIsoTimestamp(stamp);

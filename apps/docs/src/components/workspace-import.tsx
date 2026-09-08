@@ -54,13 +54,25 @@ interface SourceChoice {
   recordIdPadding: string;
 }
 
+/**
+ * Whether a source can be imported at all. A worksheet whose formulas the
+ * workbook never calculated cannot: those cells read as empty, so importing it
+ * would create a table with holes and report a clean success. The import
+ * refuses it either way; the form says so first, so the choice is never offered
+ * as if it would work.
+ */
+function isImportable(source: ImportSourceDescription): boolean {
+  return source.uncachedFormulaCells === 0;
+}
+
 function initialChoices(
   sources: readonly ImportSourceDescription[],
 ): SourceChoice[] {
   return sources.map((source) => ({
     // A source with no rows can still be worth creating as an empty table, so
-    // it is offered; everything that carries data is ticked to begin with.
-    selected: source.rowCount > 0,
+    // it is offered; everything that carries data and can be imported is ticked
+    // to begin with.
+    selected: isImportable(source) && source.rowCount > 0,
     tableName: source.suggestedTableName,
     recordIdPrefix: source.suggestedRecordIdPrefix,
     recordIdPadding: DEFAULT_PADDING,
@@ -316,7 +328,7 @@ export function WorkspaceImport({
                     <input
                       checked={choice.selected}
                       data-testid="workspace-import-selected"
-                      disabled={isBusy}
+                      disabled={isBusy || !isImportable(source)}
                       onChange={(event) =>
                         update(index, { selected: event.target.checked })
                       }
@@ -336,13 +348,30 @@ export function WorkspaceImport({
                     </span>
                   </label>
 
+                  {isImportable(source) ? null : (
+                    <p
+                      className="mt-2 text-sm text-fd-muted-foreground"
+                      data-testid="workspace-import-blocked"
+                    >
+                      {source.uncachedFormulaCells === 1
+                        ? "1 cell holds"
+                        : `${source.uncachedFormulaCells} cells hold`}{" "}
+                      a formula this workbook carries no calculated value for,
+                      so importing would leave those values empty. Open the
+                      workbook in Excel, let it calculate, save it, and choose
+                      the file again
+                    </p>
+                  )}
+
                   <div className="mt-3 grid gap-3 sm:grid-cols-[2fr_1fr_1fr]">
                     <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-fd-muted-foreground">
                       Table name
                       <input
                         className={`mt-1 ${inputClass} font-normal normal-case tracking-normal`}
                         data-testid="workspace-import-name"
-                        disabled={isBusy || !choice.selected}
+                        disabled={
+                          isBusy || !choice.selected || !isImportable(source)
+                        }
                         onChange={(event) =>
                           update(index, { tableName: event.target.value })
                         }
@@ -355,7 +384,9 @@ export function WorkspaceImport({
                       <input
                         className={`mt-1 ${inputClass} font-normal normal-case tracking-normal`}
                         data-testid="workspace-import-prefix"
-                        disabled={isBusy || !choice.selected}
+                        disabled={
+                          isBusy || !choice.selected || !isImportable(source)
+                        }
                         onChange={(event) =>
                           update(index, { recordIdPrefix: event.target.value })
                         }
@@ -368,7 +399,9 @@ export function WorkspaceImport({
                       <input
                         className={`mt-1 ${inputClass} font-normal normal-case tracking-normal`}
                         data-testid="workspace-import-padding"
-                        disabled={isBusy || !choice.selected}
+                        disabled={
+                          isBusy || !choice.selected || !isImportable(source)
+                        }
                         max={MAX_RECORD_ID_PADDING}
                         min={0}
                         onChange={(event) =>

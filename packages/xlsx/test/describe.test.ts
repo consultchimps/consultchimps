@@ -149,6 +149,7 @@ describe("describeWorkbook", () => {
         columnCount: 3,
         headerRow: 1,
         dataRowCount: 3,
+        uncachedFormulaCells: 0,
         columns: [
           {
             header: "Case_ID",
@@ -865,6 +866,7 @@ describe("describeWorkbook expected failures", () => {
         headerRow: undefined,
         columns: [],
         dataRowCount: 0,
+        uncachedFormulaCells: 0,
       },
     ]);
     expect(result.warnings).toEqual([
@@ -894,6 +896,107 @@ describe("describeWorkbook named ranges", () => {
       { name: "CaseRange", ref: "A1:C4", sheet: sheetName },
     ]);
     expect(result.metrics.namedRanges).toBe(1);
+  });
+});
+
+/**
+ * A worksheet part whose totals column holds formulas nothing has calculated:
+ * each cell carries `<f>` and no `<v>`, which is what a generator writes when
+ * it has no calculation engine. It is assembled by hand because a spreadsheet
+ * engine will not produce it: SheetJS drops a numeric formula cell with no
+ * cached value while parsing, which is the whole reason this condition has to
+ * be read from the package's own model.
+ */
+async function uncalculatedWorkbookBytes(rows: string): Promise<Uint8Array> {
+  const archive = new JSZip();
+  archive.file(
+    "[Content_Types].xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`,
+  );
+  archive.file(
+    "_rels/.rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
+  );
+  archive.file(
+    "xl/workbook.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Review Log" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+  );
+  archive.file(
+    "xl/_rels/workbook.xml.rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+  );
+  archive.file(
+    "xl/worksheets/sheet1.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows}</sheetData></worksheet>`,
+  );
+  return new Uint8Array(await archive.generateAsync({ type: "nodebuffer" }));
+}
+
+function textCell(address: string, text: string): string {
+  return `<c r="${address}" t="inlineStr"><is><t>${text}</t></is></c>`;
+}
+
+describe("worksheets whose formulas were never calculated", () => {
+  it("counts the cells holding a formula with no calculated value", async () => {
+    const bytes = await uncalculatedWorkbookBytes(
+      `<row r="1">${textCell("A1", "Case_ID")}${textCell("B1", "Failed Checks")}</row>` +
+        `<row r="2">${textCell("A2", "R-1")}<c r="B2"><f>1+1</f></c></row>` +
+        `<row r="3">${textCell("A3", "R-2")}<c r="B3"><f>2+2</f></c></row>`,
+    );
+
+    const { description } = await describeWorkbookBytes({
+      name: "north.xlsx",
+      bytes,
+    });
+
+    expect(description.sheets[0]?.uncachedFormulaCells).toBe(2);
+    // The rows are still occupied, so the count is about the values inside
+    // them rather than about the rows going missing.
+    expect(description.sheets[0]?.dataRowCount).toBe(2);
+  });
+
+  it("counts nothing when the formulas carry their results", async () => {
+    const bytes = await uncalculatedWorkbookBytes(
+      `<row r="1">${textCell("A1", "Case_ID")}${textCell("B1", "Failed Checks")}</row>` +
+        `<row r="2">${textCell("A2", "R-1")}<c r="B2"><f>1+1</f><v>2</v></c></row>`,
+    );
+
+    const { description } = await describeWorkbookBytes({
+      name: "north.xlsx",
+      bytes,
+    });
+
+    expect(description.sheets[0]?.uncachedFormulaCells).toBe(0);
+    expect(description.sheets[0]?.dataRowCount).toBe(1);
+  });
+
+  it("counts nothing for a worksheet of ordinary values", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "north.xlsx");
+    await writeWorkbook(input, [REVIEW_LOG]);
+    const { description } = await describeWorkbook(input);
+
+    expect(description.sheets[0]?.uncachedFormulaCells).toBe(0);
+  });
+
+  it("reports the condition even where the reader can build no table", async () => {
+    // Every value in the body is a formula with no result, so the worksheet
+    // reads as empty and yields no table at all. Without the count beside it,
+    // a workbook of uncalculated formulas is indistinguishable from an empty
+    // one.
+    const bytes = await uncalculatedWorkbookBytes(
+      `<row r="1">${textCell("A1", "Total")}</row>` +
+        `<row r="2"><c r="A2"><f>1+1</f></c></row>`,
+    );
+
+    const { description } = await describeWorkbookBytes({
+      name: "summary.xlsx",
+      bytes,
+    });
+    expect(description.sheets[0]?.uncachedFormulaCells).toBe(1);
+    expect(
+      await readWorkbookTablesBytes({ name: "summary.xlsx", bytes }),
+    ).toEqual([]);
   });
 });
 

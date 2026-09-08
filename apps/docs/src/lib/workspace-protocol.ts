@@ -104,6 +104,12 @@ export interface ImportSourceDescription {
   readonly rowCount: number;
   /** Columns in the header row. */
   readonly columnCount: number;
+  /**
+   * Cells holding a formula the workbook carries no calculated value for. Any
+   * number above zero means the worksheet cannot be imported: those cells read
+   * as empty, so importing would quietly leave holes where the values belong.
+   */
+  readonly uncachedFormulaCells: number;
   /** A safe table name derived from the source name. */
   readonly suggestedTableName: string;
   /** A Record ID prefix derived from that table name. */

@@ -17,9 +17,17 @@
  * The workspace is one in-memory database, so replacing it or leaving the page
  * is the whole of losing it. The shell therefore owns the unsaved-changes flag
  * rather than each mutating feature: `markChanged` is the single place it is
- * set, a successful write is the only place it is cleared, and New, Open, and
- * closing the tab all ask first while it is set. A feature that changes the
- * workspace inherits the guard by calling that one marker.
+ * set, and a write that actually resolved is the only place it is cleared. A
+ * feature that changes the workspace inherits the guard by calling that one
+ * marker.
+ *
+ * Leaving is guarded in every form it takes, not just the one the browser fires
+ * an event for. Replacing the workspace (New, Open), following a link out of
+ * the page, going back, and closing the tab all end the same way, so all four
+ * are held by the same flag and all but the last ask through the same inline
+ * confirmation. A guard attached to `beforeunload` alone would miss a
+ * client-side transition entirely, because that never unloads anything: it just
+ * unmounts this component, and the cleanup below then terminates the worker.
  *
  * Saving prefers the File System Access API so a repeat save writes back to the
  * same file in place. Where that API is missing, saving falls back to a plain
@@ -49,6 +57,7 @@ import {
   Save,
   TriangleAlert,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /** The media type and default name a saved workspace carries. */
@@ -132,8 +141,19 @@ interface OpenWorkspace {
   readonly unsavedChanges: boolean;
 }
 
-/** The replacement a confirmation is standing in front of, or null for none. */
-type PendingReplacement = "new" | "open" | null;
+/**
+ * What a confirmation is standing in front of, or null for none.
+ *
+ * Every way of losing the workspace routes through this one question rather
+ * than growing a dialog each: replacing it, and leaving the page for somewhere
+ * else in the app. `href` is where the visitor was going, or null when they
+ * pressed Back and the way to honour that is to go back again.
+ */
+type PendingAction =
+  | { readonly kind: "new" }
+  | { readonly kind: "open" }
+  | { readonly kind: "leave"; readonly href: string | null }
+  | null;
 
 /**
  * The shell's record-a-change callback, handed to any section that mutates the
@@ -163,12 +183,15 @@ export function WorkspaceTool() {
   // The handle for an in-place save, held only when a picker granted one.
   const handleRef = useRef<WorkspaceFileHandle | null>(null);
   const fallbackInputRef = useRef<HTMLInputElement | null>(null);
+  // Whether the page is holding a spare history entry for the Back guard below.
+  const hasSpareEntryRef = useRef(false);
 
   const [workspace, setWorkspace] = useState<OpenWorkspace | null>(null);
   const [busy, setBusy] = useState<WorkspaceBusy>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [pending, setPending] = useState<PendingReplacement>(null);
+  const [pending, setPending] = useState<PendingAction>(null);
+  const router = useRouter();
 
   const client = useCallback((): WorkspaceClient => {
     clientRef.current ??= new WorkspaceClient();
@@ -289,23 +312,46 @@ export function WorkspaceTool() {
   // Both entry points that replace the held workspace go through here, so a
   // mutating feature added later inherits the guard by doing nothing.
   const replaceWorkspace = useCallback(
-    (replacement: Exclude<PendingReplacement, null>) => {
+    (kind: "new" | "open") => {
       if (hasUnsavedChanges) {
-        setPending(replacement);
+        setPending({ kind });
         return;
       }
-      void (replacement === "new" ? startNew() : startOpen());
+      void (kind === "new" ? startNew() : startOpen());
     },
     [hasUnsavedChanges, startNew, startOpen],
   );
 
-  const onConfirmReplace = useCallback(() => {
-    const replacement = pending;
+  /**
+   * Do the thing the visitor has just accepted losing the workspace for.
+   *
+   * Leaving clears the flag first, because the visitor has answered the
+   * question: keeping it set would arm `beforeunload` and ask them a second
+   * time, in the browser's own words, for the navigation they just approved.
+   */
+  const onConfirmAction = useCallback(() => {
+    const action = pending;
     setPending(null);
-    if (replacement !== null) {
-      void (replacement === "new" ? startNew() : startOpen());
+    if (action === null) {
+      return;
     }
-  }, [pending, startNew, startOpen]);
+    if (action.kind === "new") {
+      void startNew();
+      return;
+    }
+    if (action.kind === "open") {
+      void startOpen();
+      return;
+    }
+    setWorkspace((previous) =>
+      previous === null ? previous : { ...previous, unsavedChanges: false },
+    );
+    if (action.href === null) {
+      window.history.back();
+    } else {
+      router.push(action.href);
+    }
+  }, [pending, router, startNew, startOpen]);
 
   /**
    * Record that the held workspace no longer matches its file.
@@ -328,8 +374,9 @@ export function WorkspaceTool() {
     );
   }, []);
 
-  // Warn before the tab closes or navigates away, which is the one way to lose
-  // the workspace that no button on this page controls.
+  // Warn before the tab closes, reloads, or leaves for another site. This is
+  // the browser's own dialog and the only guard available for those, but it
+  // covers none of the ways of leaving that stay inside the app.
   useEffect(() => {
     if (!hasUnsavedChanges) {
       return;
@@ -343,6 +390,109 @@ export function WorkspaceTool() {
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [hasUnsavedChanges]);
+
+  /**
+   * Hold a link out of the page until the visitor has answered for the
+   * workspace.
+   *
+   * A client-side transition unloads nothing, so `beforeunload` never fires; it
+   * unmounts this component, and the cleanup above then terminates the worker
+   * and the database with it. Catching the click in the capture phase is what
+   * makes the guard run before any of that can start: the router's own handler
+   * never sees the event, so there is nothing to undo afterward. Only a plain
+   * left click on a same-origin link that actually leaves this page is held; a
+   * modified click, a new tab, a download, and a jump to an anchor on this page
+   * are all left alone, because none of them lose the workspace.
+   */
+  useEffect(() => {
+    if (!hasUnsavedChanges) {
+      return;
+    }
+    const hold = (event: MouseEvent): void => {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+      const anchor = (event.target as Element | null)?.closest?.(
+        "a[href]",
+      ) as HTMLAnchorElement | null;
+      if (
+        !anchor ||
+        anchor.hasAttribute("download") ||
+        (anchor.target !== "" && anchor.target !== "_self")
+      ) {
+        return;
+      }
+      const destination = new URL(anchor.href, window.location.href);
+      if (destination.origin !== window.location.origin) {
+        return;
+      }
+      if (
+        destination.pathname === window.location.pathname &&
+        destination.search === window.location.search
+      ) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setPending({ kind: "leave", href: destination.href });
+    };
+    document.addEventListener("click", hold, true);
+    return () => document.removeEventListener("click", hold, true);
+  }, [hasUnsavedChanges]);
+
+  /**
+   * Hold the Back button the same way.
+   *
+   * Back cannot be cancelled once it has happened, so the only way to catch it
+   * is to have somewhere harmless for it to land: while the workspace is
+   * unsaved, one extra history entry for this same page is pushed, and the
+   * first Back press consumes it without changing the route. The trade is one
+   * Back press that appears to do nothing, in a session that had unsaved work,
+   * against losing that work outright, and the second is much the worse of the
+   * two.
+   */
+  useEffect(() => {
+    if (!hasUnsavedChanges) {
+      return;
+    }
+    if (!hasSpareEntryRef.current) {
+      // One spare entry for the life of the page, not one per import: the flag
+      // goes false on every save and true again on the next change, and a spare
+      // pushed each time would cost a dead Back press each time.
+      // Next's router keeps its own state on the entry, so the copy carries it
+      // rather than a null that the router would not recognise on the way back.
+      window.history.pushState(window.history.state, "", window.location.href);
+      hasSpareEntryRef.current = true;
+    }
+    const held = (): void => {
+      // The press just spent the spare entry.
+      hasSpareEntryRef.current = false;
+      setPending({ kind: "leave", href: null });
+    };
+    window.addEventListener("popstate", held);
+    return () => window.removeEventListener("popstate", held);
+  }, [hasUnsavedChanges]);
+
+  /**
+   * Put back what answering the question consumed. A cancelled Back has already
+   * spent the spare history entry, so without this the next Back would leave
+   * with no question asked.
+   */
+  const onCancelAction = useCallback(() => {
+    const action = pending;
+    setPending(null);
+    if (action?.kind === "leave" && action.href === null) {
+      window.history.pushState(window.history.state, "", window.location.href);
+      hasSpareEntryRef.current = true;
+    }
+  }, [pending]);
 
   // Serialize once, then route the bytes to the right destination.
   const saveWith = useCallback(
@@ -527,26 +677,30 @@ export function WorkspaceTool() {
           </div>
           <p className="mt-3 text-sm text-fd-muted-foreground">
             This workspace has changes that have not been saved to a file.{" "}
-            {pending === "new"
-              ? "Starting a new workspace"
-              : "Opening another workspace"}{" "}
-            replaces it, and those changes are gone
+            {pending?.kind === "new"
+              ? "Starting a new workspace replaces it"
+              : pending?.kind === "open"
+                ? "Opening another workspace replaces it"
+                : "Leaving this page closes it"}
+            , and those changes are gone
           </p>
           <div className="mt-5 flex flex-wrap gap-3">
             <button
               className={secondaryButtonClass}
               data-testid="workspace-confirm-discard"
               disabled={isBusy}
-              onClick={onConfirmReplace}
+              onClick={onConfirmAction}
               type="button"
             >
-              Discard the changes and continue
+              {pending?.kind === "leave"
+                ? "Discard the changes and leave"
+                : "Discard the changes and continue"}
             </button>
             <button
               className={primaryButtonClass}
               data-testid="workspace-confirm-cancel"
               disabled={isBusy}
-              onClick={() => setPending(null)}
+              onClick={onCancelAction}
               type="button"
             >
               Keep this workspace

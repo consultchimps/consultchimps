@@ -58,10 +58,22 @@ export interface ExcelTableFixture {
   readonly ref: string;
 }
 
+/**
+ * A cell holding a formula that the workbook carries no calculated value for,
+ * which is what a generator writes when it has no calculation engine. Excel
+ * would write the formula and its last result side by side; here the result
+ * exists nowhere in the file, so every reader sees an empty cell.
+ */
+export interface UncalculatedFormulaCell {
+  readonly formula: string;
+}
+
 /** One worksheet: a name and its rows, top-left aligned at A1. */
 export interface WorksheetFixture {
   readonly name: string;
-  readonly rows: ReadonlyArray<ReadonlyArray<number | string>>;
+  readonly rows: ReadonlyArray<
+    ReadonlyArray<number | string | UncalculatedFormulaCell>
+  >;
   /**
    * How Excel presents the tab. Absent means visible. `veryHidden` is the
    * state only the VBA editor can reverse, which the workbook part spells
@@ -149,6 +161,11 @@ function worksheetXml(
       const cellXml = cells
         .map((value, columnIndex) => {
           const address = `${columnLetter(columnIndex)}${reference}`;
+          if (typeof value === "object") {
+            // A formula with no <v> beside it: the value it would produce is
+            // not in the file.
+            return `<c r="${address}"><f>${escapeXml(value.formula)}</f></c>`;
+          }
           return typeof value === "number"
             ? `<c r="${address}"><v>${value}</v></c>`
             : `<c r="${address}" t="inlineStr"><is><t xml:space="preserve">${escapeXml(value)}</t></is></c>`;

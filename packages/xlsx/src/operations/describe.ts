@@ -120,6 +120,17 @@ export interface WorkbookSheetDescription {
   columns: WorkbookColumnDescription[];
   /** Non-empty rows below the header row. */
   dataRowCount: number;
+  /**
+   * Cells below the header row, within the columns an operation would read,
+   * that hold a formula the workbook carries no calculated value for.
+   *
+   * Zero for a workbook Excel has calculated and saved. Anything above zero
+   * means a reader will see those cells as empty, because the value they would
+   * produce is not in the file: the count is the only way to tell that apart
+   * from a genuinely empty cell, and calculating them belongs to Excel rather
+   * than to this package.
+   */
+  uncachedFormulaCells: number;
 }
 
 export interface WorkbookExcelTableDescription {
@@ -354,12 +365,30 @@ function isOccupiedCell(cell: CellModel): boolean {
   );
 }
 
+/**
+ * Whether a cell holds a formula the workbook carries no calculated value for.
+ *
+ * Excel writes a formula and its last calculated result side by side. A file
+ * written by a generator, or saved with calculation switched off, carries the
+ * formula alone, and the value it would produce exists nowhere in the bytes.
+ * Every reader downstream then sees an empty cell, because empty is all the
+ * file says, so a caller that needs to tell missing data from absent data can
+ * only learn it here.
+ */
+function isUncachedFormula(cell: CellModel): boolean {
+  return (
+    cell.formula !== undefined &&
+    (cell.value === undefined || cell.value === "")
+  );
+}
+
 const EMPTY_SHEET = {
   columnCount: 0,
   columns: [] as WorkbookColumnDescription[],
   dataRowCount: 0,
   headerRow: undefined,
   rowCount: 0,
+  uncachedFormulaCells: 0,
 } as const;
 
 /**
@@ -442,6 +471,7 @@ async function describeWorksheet(
   const samples = headers.map(() => [] as CellValue[]);
   const seen = headers.map(() => new Set<string>());
   let dataRowCount = 0;
+  let uncachedFormulaCells = 0;
   let satisfiedColumns = sampleLimit === 0 ? headers.length : 0;
   let rowsSinceYield = 0;
 
@@ -473,6 +503,14 @@ async function describeWorksheet(
       continue;
     }
     dataRowCount += 1;
+    // Counted before the sampling short-circuit below, which stops reading
+    // values once every column has its quota: the condition is about the whole
+    // sheet, so it has to be counted for the whole sheet.
+    for (const cell of row.cells) {
+      if (regionColumns.has(cell.ref.column) && isUncachedFormula(cell)) {
+        uncachedFormulaCells += 1;
+      }
+    }
 
     if (satisfiedColumns >= headers.length) {
       continue;
@@ -511,6 +549,7 @@ async function describeWorksheet(
     headerRow: region.headerRow,
     name: sheet.name,
     rowCount,
+    uncachedFormulaCells,
     visibility,
   };
 }

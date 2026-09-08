@@ -452,6 +452,14 @@ reported exactly as the workbook stores them, so `1` and `"1"` stay distinct.
 other reader here; naming a worksheet the workbook does not have is refused with
 `XLSX_WORKSHEET_NOT_FOUND` rather than answered with an empty description.
 
+Each sheet also reports `uncachedFormulaCells`: cells below the header row that
+hold a formula the workbook carries no calculated value for. Excel writes a
+formula and its last result side by side, but a file written by a generator, or
+saved with calculation switched off, carries the formula alone. Every reader
+then sees those cells as empty, because empty is all the file says, so this
+count is the only way to tell them from cells that really are empty. Calculating
+them belongs to Excel: open the workbook, let it calculate, and save it again.
+
 `describeWorkbookBytes` is the byte-level twin and produces a structurally
 identical description for the same workbook.
 
