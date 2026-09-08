@@ -93,11 +93,13 @@ function formProblem(
     if (choice.recordIdPrefix.trim() === "") {
       return `Give "${name}" a Record ID prefix`;
     }
+    // The text is judged, not just the number it parses to: "1e3" is a whole
+    // number to `Number` and a refusal to `assertRecordIdConfig`, and a page
+    // that enables Import on a value the library will reject has checked the
+    // wrong thing.
     const padding = Number(choice.recordIdPadding);
     if (
-      choice.recordIdPadding.trim() === "" ||
-      !Number.isInteger(padding) ||
-      padding < 0 ||
+      !/^\d+$/u.test(choice.recordIdPadding.trim()) ||
       padding > MAX_RECORD_ID_PADDING
     ) {
       return `The padding for "${name}" must be a whole number from 0 to ${MAX_RECORD_ID_PADDING}`;

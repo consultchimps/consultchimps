@@ -59,7 +59,11 @@ command when `out/` is missing.
   and a `.csv` into an open workspace, checking the table listing that follows
   (row counts, Record ID prefixes, and the inferred column types), keeping both
   tables across a save and a reopen, refusing a table name the workspace already
-  reads as the same name, and reporting a file with nothing to import.
+  reads as the same name, and reporting a file with nothing to import. It also
+  covers the shell's unsaved-changes guard, because import is the first command
+  that can leave a workspace holding work no file has: New and Open ask before
+  replacing an imported workspace and leave it untouched until the loss is
+  confirmed, and they ask nothing once it has been saved.
 - `tools-navigation.spec.ts`: the `/tools` index, the sub-bar tabs, the
   tool-named "Try ... online" button each guide gains from the tool registry,
   and the single button a guide shared by two operations offers.
@@ -188,7 +192,14 @@ and `workspace-save-as`, and lists what the workspace holds: one
 `workspace-table` per table carrying `workspace-table-name`,
 `workspace-table-rows`, `workspace-table-prefix`, and `workspace-table-columns`,
 with `workspace-tables-empty` in their place while there are none.
-`workspace-notice` and `workspace-error` report the outcome of the last command.
+`workspace-unsaved` is the badge shown while the workspace holds changes no file
+has, and `workspace-notice` and `workspace-error` report the outcome of the last
+command.
+
+While that badge is showing, New and Open render `workspace-confirm` instead of
+replacing the workspace, with `workspace-confirm-discard` and
+`workspace-confirm-cancel` as its two answers. It is an inline section rather
+than a `window.confirm`, so it is asserted like any other part of the page.
 
 Import is its own section, `workspace-import`, with `workspace-import-choose`
 and the hidden `workspace-import-input` behind it. A chosen file renders

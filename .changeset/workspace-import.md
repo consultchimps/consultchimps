@@ -17,10 +17,13 @@ in one place rather than guessed by a spreadsheet engine while it parses.
 
 Inference is conservative and never guesses: a column takes `boolean`, `date`,
 `integer`, or `real` only when every value that is not blank fits it, and stays
-`text` otherwise. A padded reference code such as `007`, an exponent form, a
-whole number past the exactly representable range, and a date written any way
-other than ISO 8601 all stay text, because reading them as a number or a date
-would change them. An import of several tables is one unit: names, Record ID
+`text` otherwise. Both numeric rules run one round-trip test, so a value is read
+as a number only when it reads back as the number it wrote: a padded reference
+code such as `007`, an exponent form, a whole number past the range stored
+exactly, and a decimal carrying more digits than a number can hold all stay
+text. A timestamp is judged as one value, so hour 24 is accepted only as the end
+of a day, second 60 only as a leap second at 23:59, and an offset only within
+its real range. An import of several tables is one unit: names, Record ID
 prefixes, and column names are checked first, then every table is created and
 filled inside a single transaction, so a failure part way through leaves the
 database exactly as it was.

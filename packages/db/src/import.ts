@@ -89,10 +89,16 @@ const DECIMAL_TEXT = /^-?(?:0|[1-9]\d*)\.\d+$/u;
  * them. A date written any other way ("01/02/2024") stays text, because there
  * is no way to tell a January date from a February one without guessing a
  * convention the file never stated.
+ *
+ * The grammar only says which characters may appear where. What the parts mean
+ * together is decided in `isIsoTimestamp`, because a timestamp is one value:
+ * checking its hour, minute, second, and offset against their own ranges in
+ * isolation accepts "24:30" and an offset of "+99:99", neither of which is a
+ * time of day.
  */
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/u;
 const ISO_DATE_TIME =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})?$/u;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?(?:Z|([+-])(\d{2}):(\d{2}))?$/u;
 
 /**
  * The text spellings read as a boolean. "1" and "0" are deliberately absent:
@@ -128,24 +134,72 @@ function isCalendarDate(year: number, month: number, day: number): boolean {
   return day <= (lengths[month - 1] as number);
 }
 
-function isIsoDateText(value: string): boolean {
-  const date = ISO_DATE.exec(value);
-  if (date !== null) {
-    return isCalendarDate(Number(date[1]), Number(date[2]), Number(date[3]));
-  }
-  const stamp = ISO_DATE_TIME.exec(value);
-  if (stamp === null) {
-    return false;
-  }
+/**
+ * Whether a matched date and time is a real instant, judged as a whole.
+ *
+ * The two spellings ISO 8601 allows outside the ordinary ranges are each tied
+ * to the rest of the value rather than waved through on their own:
+ *
+ * - Hour 24 is the end of a day, so it is accepted only as exactly `24:00`,
+ *   with a zero second and a zero fraction if either is written. `24:30` is
+ *   nothing.
+ * - Second 60 is a leap second, which is inserted at `23:59:60` UTC, so it is
+ *   accepted only there. A leap second written against a local offset stays
+ *   text, which costs nothing: a date column stores the characters either way.
+ *
+ * An offset is a real offset: hours 00 to 23, minutes 00 to 59.
+ */
+function isIsoTimestamp(stamp: RegExpExecArray): boolean {
   if (!isCalendarDate(Number(stamp[1]), Number(stamp[2]), Number(stamp[3]))) {
     return false;
   }
   const hour = Number(stamp[4]);
   const minute = Number(stamp[5]);
   const second = stamp[6] === undefined ? 0 : Number(stamp[6]);
-  // 24:00 and a leap second are legal ISO spellings, so the bounds are the
-  // written ones rather than a clock's.
-  return hour <= 24 && minute <= 59 && second <= 60;
+  const fraction = stamp[7];
+  // Scanned rather than matched with `^0+$`, which backtracks once per digit on
+  // a fraction that is not all zeros for no gain over reading it straight
+  // through.
+  const zeroFraction =
+    fraction === undefined || [...fraction].every((digit) => digit === "0");
+
+  if (hour === 24) {
+    if (minute !== 0 || second !== 0 || !zeroFraction) {
+      return false;
+    }
+  } else if (hour > 23) {
+    return false;
+  }
+  if (minute > 59) {
+    return false;
+  }
+  if (second === 60) {
+    // A leap second, and only where one is inserted.
+    if (hour !== 23 || minute !== 59) {
+      return false;
+    }
+  } else if (second > 59) {
+    return false;
+  }
+
+  // The offset is present as a whole or not at all: the grammar captures its
+  // sign, hours, and minutes together, so one part cannot be checked without
+  // the others.
+  if (stamp[8] !== undefined) {
+    if (Number(stamp[9]) > 23 || Number(stamp[10]) > 59) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isIsoDateText(value: string): boolean {
+  const date = ISO_DATE.exec(value);
+  if (date !== null) {
+    return isCalendarDate(Number(date[1]), Number(date[2]), Number(date[3]));
+  }
+  const stamp = ISO_DATE_TIME.exec(value);
+  return stamp !== null && isIsoTimestamp(stamp);
 }
 
 /** What a single value could be. A blank value votes for nothing. */
@@ -163,6 +217,78 @@ const NOTHING: ValueVote = {
   date: false,
 };
 
+/** A plain or exponent-form decimal, the two shapes `String(number)` produces. */
+const DECIMAL_PARTS = /^([+-]?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/u;
+
+/** Trim leading zeros with a scan, so no regular expression can be quadratic. */
+function withoutLeadingZeros(digits: string): string {
+  let start = 0;
+  while (start < digits.length - 1 && digits[start] === "0") {
+    start += 1;
+  }
+  return digits.slice(start);
+}
+
+/** Trim trailing zeros with a scan, for the same reason. */
+function withoutTrailingZeros(digits: string): string {
+  let end = digits.length;
+  while (end > 0 && digits[end - 1] === "0") {
+    end -= 1;
+  }
+  return digits.slice(0, end);
+}
+
+/**
+ * One canonical spelling for the exact value a decimal denotes, so two
+ * spellings of the same number compare equal and two spellings of different
+ * numbers do not. "12.50" and "12.5" both give "12.5", and "1e+21" gives its
+ * twenty-two digits. Negative zero is zero, which is the one place the value
+ * and the characters part company on purpose.
+ */
+function canonicalDecimal(text: string): string | null {
+  const parts = DECIMAL_PARTS.exec(text);
+  if (parts === null) {
+    return null;
+  }
+  const exponent = parts[4] === undefined ? 0 : Number(parts[4]);
+  const whole = parts[2] as string;
+  let digits = whole + (parts[3] ?? "");
+  // How many digits sit left of the point once the exponent has moved it.
+  let point = whole.length + exponent;
+  if (point < 0) {
+    digits = "0".repeat(-point) + digits;
+    point = 0;
+  }
+  if (point > digits.length) {
+    digits += "0".repeat(point - digits.length);
+  }
+  const integerPart = withoutLeadingZeros(digits.slice(0, point) || "0");
+  const fractionPart = withoutTrailingZeros(digits.slice(point));
+  const magnitude =
+    fractionPart === "" ? integerPart : `${integerPart}.${fractionPart}`;
+  return magnitude === "0" ? "0" : `${parts[1] === "-" ? "-" : ""}${magnitude}`;
+}
+
+/**
+ * Whether reading this text as a number gives back exactly the value written.
+ *
+ * Both numeric candidates go through this one predicate, so neither can end up
+ * with a weaker rule than the other. Parsing alone is not enough: `Number` is
+ * happy to return a finite number for "0.12345678901234567890", having quietly
+ * dropped the digits it cannot hold, and a value the column would read back
+ * differently has been changed rather than converted. Comparing the canonical
+ * form of the text with the canonical form of the parsed number catches every
+ * such case, overflow to Infinity and underflow to zero included.
+ */
+function roundTripsAsNumber(text: string): boolean {
+  const parsed = Number(text);
+  if (!Number.isFinite(parsed)) {
+    return false;
+  }
+  const written = canonicalDecimal(text);
+  return written !== null && written === canonicalDecimal(String(parsed));
+}
+
 function voteForText(value: string): ValueVote {
   const trimmed = value.trim();
   if (BOOLEAN_TEXT.has(trimmed.toLowerCase())) {
@@ -172,16 +298,16 @@ function voteForText(value: string): ValueVote {
     return { ...NOTHING, date: true };
   }
   if (INTEGER_TEXT.test(trimmed)) {
-    // A whole number past the exactly representable range would be rounded on
-    // the way in, so it stays text and keeps its digits.
-    const exact = BigInt(trimmed);
-    const representable =
-      exact >= BigInt(Number.MIN_SAFE_INTEGER) &&
-      exact <= BigInt(Number.MAX_SAFE_INTEGER);
-    return representable ? { ...NOTHING, integer: true, real: true } : NOTHING;
+    // A whole number has to round-trip and to land inside the range an integer
+    // column stores exactly, which is the narrower of the two: 2^53 survives
+    // the conversion but is past the range `sqlValueFromCell` accepts, so
+    // inference must not offer it as an integer either.
+    return roundTripsAsNumber(trimmed) && Number.isSafeInteger(Number(trimmed))
+      ? { ...NOTHING, integer: true, real: true }
+      : NOTHING;
   }
-  if (DECIMAL_TEXT.test(trimmed) && Number.isFinite(Number(trimmed))) {
-    return { ...NOTHING, real: true };
+  if (DECIMAL_TEXT.test(trimmed)) {
+    return roundTripsAsNumber(trimmed) ? { ...NOTHING, real: true } : NOTHING;
   }
   return NOTHING;
 }
@@ -191,6 +317,9 @@ function voteFor(value: CellValue): ValueVote {
     return { ...NOTHING, boolean: true };
   }
   if (typeof value === "number") {
+    // A value that arrives as a number has already been through the conversion
+    // `roundTripsAsNumber` guards, so there is nothing left for it to lose. The
+    // range check an integer column needs still applies.
     if (!Number.isFinite(value)) {
       return NOTHING;
     }

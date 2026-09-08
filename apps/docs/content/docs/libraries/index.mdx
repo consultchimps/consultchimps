@@ -317,19 +317,35 @@ console.log(imported.rowCount, imported.firstRecordId); // 2 "CL-0001"
 
 A column takes a type only when every value that is not blank fits it:
 
-| Type      | When                                                              |
-| --------- | ----------------------------------------------------------------- |
-| `boolean` | every value is true, false, yes, or no, in any case               |
-| `date`    | every value is an ISO 8601 date or date and time, on the calendar |
-| `integer` | every value is a whole number, exactly representable              |
-| `real`    | every value is a number, a fractional part allowed                |
-| `text`    | anything else, and a column with no values in it                  |
+| Type      | When                                                               |
+| --------- | ------------------------------------------------------------------ |
+| `boolean` | every value is true, false, yes, or no, in any case                |
+| `date`    | every value is an ISO 8601 date or timestamp naming a real instant |
+| `integer` | every value is a whole number that reads back unchanged, and fits  |
+| `real`    | every value is a number that reads back unchanged                  |
+| `text`    | anything else, and a column with no values in it                   |
 
-Nothing is guessed. A padded reference code (`007`), an exponent form (`1e5`), a
-grouped number (`1,000`), a whole number past the range JavaScript represents
-exactly, and a date written any other way (`01/02/2026`) all stay text, because
-reading them as a number or a date would change them. So does a column whose
-values disagree: `1` beside `yes` is text.
+Nothing is guessed, and nothing is quietly rounded. Both numeric rules run the
+same test: the text has to read back as the number it wrote. So a padded
+reference code (`007`), an exponent form (`1e5`), a grouped number (`1,000`), a
+whole number past the range stored exactly, and a decimal carrying more digits
+than a number can hold (`0.12345678901234567890`) all stay text, as do a value
+that overflows to infinity and one that underflows to zero. A whole number also
+has to fit the range an integer column stores exactly, which is the narrower of
+the two.
+
+A timestamp is judged as one value rather than part by part, so `24:00` is the
+end of a day but `24:30` is nothing, `:60` is a leap second only at `23:59`, and
+an offset of `+99:99` is not an offset. A date written any other way
+(`01/02/2026`) stays text, because there is no way to tell a January date from a
+February one without guessing a convention the file never stated. So does a
+column whose values disagree: `1` beside `yes` is text.
+
+`parseCsvTable` follows RFC 4180 and states its whole contract in the module's
+documentation: what it accepts, what it refuses with a stable error code (text
+after a closing quote, an unclosed quoted value, a value no header names), and
+what it tolerates on purpose (a quote that does not start a field, a short row,
+a trailing separator, a blank row).
 
 `importTables` creates several tables in one call, which is what a multi-sheet
 workbook needs. Names, Record ID prefixes, and column names are all checked

@@ -91,8 +91,67 @@ describe("parseCsvTable", () => {
     );
   });
 
-  it("refuses an empty field separator and honours another one", () => {
+  it("names where an unclosed quoted value was opened", () => {
+    let message = "";
+    try {
+      parseCsvTable('Customer,Region\nAcme,North\nBeta,"South\nmore\n');
+    } catch (error) {
+      message = error instanceof Error ? error.message : "";
+    }
+    expect(message).toContain("row 3, column 2");
+  });
+
+  it("refuses text after a closing quote rather than joining it on", () => {
+    // Before the parser had a "quote just closed" state this imported as
+    // "Acmex", which is neither what the file says nor a refusal.
+    expect(codeOf(() => parseCsvTable('Customer\n"Acme"x\n'))).toBe(
+      "DB_CSV_TEXT_AFTER_QUOTE",
+    );
+    expect(
+      codeOf(() => parseCsvTable('Customer,Region\n"Acme" ,North\n')),
+    ).toBe("DB_CSV_TEXT_AFTER_QUOTE");
+    let message = "";
+    try {
+      parseCsvTable('Customer,Region\nAcme,"North"junk\n');
+    } catch (error) {
+      message = error instanceof Error ? error.message : "";
+    }
+    expect(message).toContain("Row 2, column 2");
+  });
+
+  it("counts a line break inside a quoted value toward the file's lines", () => {
+    let message = "";
+    try {
+      // The quoted value spans lines 2 and 3, so the bad row is line 4.
+      parseCsvTable('Customer,Region\n"Two\nlines",North\nBeta,South,extra\n');
+    } catch (error) {
+      message = error instanceof Error ? error.message : "";
+    }
+    expect(message).toContain("Row 4");
+  });
+
+  it("reads a quote that does not start a field as an ordinary character", () => {
+    // A deliberate tolerance: RFC 4180 leaves this undefined, and a bare quote
+    // in an unquoted field is far more often a measurement than a mistake.
+    expect(parseCsvTable('Part\n5" pipe\n').rows).toEqual([
+      { Part: '5" pipe' },
+    ]);
+  });
+
+  it("keeps an empty quoted field at the end of a file", () => {
+    expect(parseCsvTable('Customer,Region\nAcme,""').rows).toEqual([
+      { Customer: "Acme", Region: null },
+    ]);
+  });
+
+  it("refuses a separator it could not tell from its own syntax", () => {
     expect(codeOf(() => parseCsvTable("a\nb", { delimiter: "" }))).toBe(
+      "DB_CSV_INVALID_DELIMITER",
+    );
+    expect(codeOf(() => parseCsvTable("a\nb", { delimiter: '"' }))).toBe(
+      "DB_CSV_INVALID_DELIMITER",
+    );
+    expect(codeOf(() => parseCsvTable("a\nb", { delimiter: "\n" }))).toBe(
       "DB_CSV_INVALID_DELIMITER",
     );
     expect(

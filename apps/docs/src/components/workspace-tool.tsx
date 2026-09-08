@@ -14,6 +14,13 @@
  * how a person sees what a workspace holds: each table's name, row count,
  * Record ID prefix, and the column types import inferred.
  *
+ * The workspace is one in-memory database, so replacing it or leaving the page
+ * is the whole of losing it. The shell therefore owns the unsaved-changes flag
+ * rather than each mutating feature: `markChanged` is the single place it is
+ * set, a successful write is the only place it is cleared, and New, Open, and
+ * closing the tab all ask first while it is set. A feature that changes the
+ * workspace inherits the guard by calling that one marker.
+ *
  * Saving prefers the File System Access API so a repeat save writes back to the
  * same file in place. Where that API is missing, saving falls back to a plain
  * download, which is why the page never promises an in-place save it cannot
@@ -40,6 +47,7 @@ import {
   FolderOpen,
   LoaderCircle,
   Save,
+  TriangleAlert,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -113,7 +121,28 @@ interface OpenWorkspace {
   readonly summary: WorkspaceSummary;
   /** The file it was opened from or last saved as, or null for a fresh one. */
   readonly fileName: string | null;
+  /**
+   * Whether the workspace has changed since it was last written to a file.
+   *
+   * The workspace is one in-memory database and nothing else: replacing it, or
+   * leaving the page, is the whole of losing it. So the shell tracks this
+   * itself rather than leaving each mutating feature to remember, which is what
+   * keeps the guard true for a mutation the shell has never heard of.
+   */
+  readonly unsavedChanges: boolean;
 }
+
+/** The replacement a confirmation is standing in front of, or null for none. */
+type PendingReplacement = "new" | "open" | null;
+
+/**
+ * The shell's record-a-change callback, handed to any section that mutates the
+ * workspace. Import receives it folded into `onImported`; the record grid takes
+ * it directly when its cell edits land. Passing a summary replaces the table
+ * listing at the same time, and passing nothing marks the workspace changed
+ * without one.
+ */
+export type MarkWorkspaceChanged = (summary?: WorkspaceSummary) => void;
 
 type Busy = "creating" | "opening" | "saving" | null;
 
@@ -127,6 +156,7 @@ export function WorkspaceTool() {
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingReplacement>(null);
 
   const client = useCallback((): WorkspaceClient => {
     clientRef.current ??= new WorkspaceClient();
@@ -142,14 +172,14 @@ export function WorkspaceTool() {
     [],
   );
 
-  const onNew = useCallback(async () => {
+  const startNew = useCallback(async () => {
     setBusy("creating");
     setError(null);
     setNotice(null);
     try {
       const summary = await client().create();
       handleRef.current = null;
-      setWorkspace({ summary, fileName: null });
+      setWorkspace({ summary, fileName: null, unsavedChanges: false });
       setNotice("Started a new empty workspace");
     } catch (caught) {
       setError(describeFailure(caught));
@@ -178,7 +208,7 @@ export function WorkspaceTool() {
         const { name, bytes } = await read();
         const summary = await client().open(bytes);
         handleRef.current = handle;
-        setWorkspace({ summary, fileName: name });
+        setWorkspace({ summary, fileName: name, unsavedChanges: false });
         setNotice("Opened the workspace");
       } catch (caught) {
         setError(describeFailure(caught));
@@ -189,7 +219,10 @@ export function WorkspaceTool() {
     [client],
   );
 
-  const onOpen = useCallback(async () => {
+  // The work an Open does once it is allowed to. The hidden file input below is
+  // reachable only from here, so guarding this entry point guards every way a
+  // visitor can replace the workspace with a file.
+  const startOpen = useCallback(async () => {
     const picker = fileSystemWindow().showOpenFilePicker;
     if (picker === undefined) {
       // No File System Access API: fall back to the file input, whose change
@@ -239,6 +272,66 @@ export function WorkspaceTool() {
     [openWorkspace],
   );
 
+  const hasUnsavedChanges = workspace?.unsavedChanges === true;
+
+  // Both entry points that replace the held workspace go through here, so a
+  // mutating feature added later inherits the guard by doing nothing.
+  const replaceWorkspace = useCallback(
+    (replacement: Exclude<PendingReplacement, null>) => {
+      if (hasUnsavedChanges) {
+        setPending(replacement);
+        return;
+      }
+      void (replacement === "new" ? startNew() : startOpen());
+    },
+    [hasUnsavedChanges, startNew, startOpen],
+  );
+
+  const onConfirmReplace = useCallback(() => {
+    const replacement = pending;
+    setPending(null);
+    if (replacement !== null) {
+      void (replacement === "new" ? startNew() : startOpen());
+    }
+  }, [pending, startNew, startOpen]);
+
+  /**
+   * Record that the held workspace no longer matches its file.
+   *
+   * Every command that changes the workspace reports through here: import calls
+   * it below with the summary it got back, and the record grid's cell edits call
+   * it the same way when they land, with or without a summary. One flag, one
+   * place that sets it, so a second mutating feature cannot arrive with a second
+   * idea of what unsaved means.
+   */
+  const markChanged = useCallback<MarkWorkspaceChanged>((summary) => {
+    setWorkspace((previous) =>
+      previous === null
+        ? previous
+        : {
+            ...previous,
+            summary: summary ?? previous.summary,
+            unsavedChanges: true,
+          },
+    );
+  }, []);
+
+  // Warn before the tab closes or navigates away, which is the one way to lose
+  // the workspace that no button on this page controls.
+  useEffect(() => {
+    if (!hasUnsavedChanges) {
+      return;
+    }
+    const warn = (event: BeforeUnloadEvent): void => {
+      // Browsers show their own wording; both spellings of "yes, warn" are set
+      // because they disagree about which one they honour.
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [hasUnsavedChanges]);
+
   // Serialize once, then route the bytes to the right destination.
   const saveWith = useCallback(
     async (mode: "save" | "saveAs") => {
@@ -253,6 +346,14 @@ export function WorkspaceTool() {
         // Save writes back in place when a handle is already held.
         if (mode === "save" && existing !== null) {
           await writeToHandle(existing, bytes);
+          // Cleared here rather than beside the serialize above: the bytes only
+          // reach the file once the write resolves, and a write that throws has
+          // to leave the workspace unsaved.
+          setWorkspace((previous) =>
+            previous === null
+              ? previous
+              : { ...previous, unsavedChanges: false },
+          );
           setNotice("Saved to the workspace file");
           return;
         }
@@ -277,7 +378,7 @@ export function WorkspaceTool() {
           setWorkspace((previous) =>
             previous === null
               ? previous
-              : { ...previous, fileName: handle.name },
+              : { ...previous, fileName: handle.name, unsavedChanges: false },
           );
           setNotice("Saved to the workspace file");
           return;
@@ -288,6 +389,14 @@ export function WorkspaceTool() {
           bytes,
           workspace?.fileName ?? DEFAULT_WORKSPACE_NAME,
           WORKSPACE_MEDIA_TYPE,
+        );
+        // A download hands the bytes to the browser and the page never learns
+        // where they landed, so this is the strongest signal this surface
+        // offers. Treating it as unsaved forever would make the guard fire on
+        // every New in a browser without the File System Access API, which
+        // teaches people to dismiss it.
+        setWorkspace((previous) =>
+          previous === null ? previous : { ...previous, unsavedChanges: false },
         );
         setNotice("Downloaded a copy of the workspace");
       } catch (caught) {
@@ -300,20 +409,22 @@ export function WorkspaceTool() {
   );
 
   // Import replaces the summary wholesale, so the table listing above always
-  // reflects what the worker now holds rather than a count kept in step by hand.
+  // reflects what the worker now holds rather than a count kept in step by hand,
+  // and it marks the workspace changed through the shared marker.
   const onImported = useCallback(
     (summary: WorkspaceSummary, imported: string) => {
-      setWorkspace((previous) =>
-        previous === null ? previous : { ...previous, summary },
-      );
+      markChanged(summary);
       setError(null);
       setNotice(imported);
     },
-    [],
+    [markChanged],
   );
 
   const isBusy = busy !== null;
   const hasWorkspace = workspace !== null;
+  // Derived rather than stored, so a save made while the question is on screen
+  // answers it: the reason to ask is gone, so the asking goes with it.
+  const confirming = pending !== null && hasUnsavedChanges;
 
   return (
     <ToolShell
@@ -329,14 +440,16 @@ export function WorkspaceTool() {
         </h2>
         <p className="mt-3 text-sm text-fd-muted-foreground">
           A new workspace is empty. Saving writes back to the same file where
-          your browser supports it, and downloads a copy everywhere else
+          your browser supports it, and downloads a copy everywhere else.
+          Starting or opening another workspace replaces the one in this tab, so
+          changes that have not been saved are confirmed first
         </p>
         <div className="mt-5 flex flex-wrap gap-3">
           <button
             className={primaryButtonClass}
             data-testid="workspace-new"
             disabled={isBusy}
-            onClick={() => void onNew()}
+            onClick={() => replaceWorkspace("new")}
             type="button"
           >
             {busy === "creating" ? (
@@ -353,7 +466,7 @@ export function WorkspaceTool() {
             className={secondaryButtonClass}
             data-testid="workspace-open"
             disabled={isBusy}
-            onClick={() => void onOpen()}
+            onClick={() => replaceWorkspace("open")}
             type="button"
           >
             {busy === "opening" ? (
@@ -385,6 +498,51 @@ export function WorkspaceTool() {
         </div>
       </section>
 
+      {confirming ? (
+        <section
+          aria-live="assertive"
+          className={`${sectionClass} border-fd-primary/60`}
+          data-testid="workspace-confirm"
+        >
+          <div className="flex items-center gap-2">
+            <TriangleAlert
+              aria-hidden="true"
+              className="size-5 shrink-0 text-fd-primary"
+            />
+            <h2 className="text-xl font-bold tracking-[-0.03em]">
+              Unsaved changes
+            </h2>
+          </div>
+          <p className="mt-3 text-sm text-fd-muted-foreground">
+            This workspace has changes that have not been saved to a file.{" "}
+            {pending === "new"
+              ? "Starting a new workspace"
+              : "Opening another workspace"}{" "}
+            replaces it, and those changes are gone
+          </p>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <button
+              className={secondaryButtonClass}
+              data-testid="workspace-confirm-discard"
+              disabled={isBusy}
+              onClick={onConfirmReplace}
+              type="button"
+            >
+              Discard the changes and continue
+            </button>
+            <button
+              className={primaryButtonClass}
+              data-testid="workspace-confirm-cancel"
+              disabled={isBusy}
+              onClick={() => setPending(null)}
+              type="button"
+            >
+              Keep this workspace
+            </button>
+          </div>
+        </section>
+      ) : null}
+
       {hasWorkspace ? (
         <section className={sectionClass} data-testid="workspace-summary">
           <div className="flex items-center gap-2">
@@ -395,6 +553,14 @@ export function WorkspaceTool() {
             <h2 className="text-xl font-bold tracking-[-0.03em]">
               Workspace open
             </h2>
+            {workspace.unsavedChanges ? (
+              <span
+                className="rounded-full border border-fd-primary/50 bg-fd-accent/40 px-2.5 py-0.5 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-fd-accent-foreground"
+                data-testid="workspace-unsaved"
+              >
+                Unsaved changes
+              </span>
+            ) : null}
           </div>
           <dl className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3">
             <div>

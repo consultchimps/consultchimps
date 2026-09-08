@@ -74,21 +74,83 @@ describe("inferColumnTypes", () => {
   });
 
   it("keeps a value text whenever reading it as a number would change it", () => {
-    // A padded reference code, an exponent form, a grouped number, a leading
-    // plus, and a whole number past the exactly representable range.
+    // A padded reference code, an exponent form, a grouped number, and a
+    // leading plus: each says something the number would not say back.
     expect(typeOfColumn(["007", "008"])).toBe("text");
     expect(typeOfColumn(["1e5"])).toBe("text");
     expect(typeOfColumn(["1,000"])).toBe("text");
     expect(typeOfColumn(["+5"])).toBe("text");
-    expect(typeOfColumn(["9007199254740993"])).toBe("text");
     expect(typeOfColumn(["0", "-3", "0.5"])).toBe("real");
   });
 
-  it("refuses a date that is not on the calendar, and an out-of-range time", () => {
+  it("holds both numeric paths to the same round trip", () => {
+    // Whole numbers: past the exactly representable range, and past the range
+    // an integer column stores, both of which read back as another number.
+    expect(typeOfColumn(["9007199254740993"])).toBe("text");
+    expect(typeOfColumn(["9007199254740992"])).toBe("text");
+    expect(typeOfColumn(["9007199254740991"])).toBe("integer");
+    expect(typeOfColumn([`1${"0".repeat(400)}`])).toBe("text");
+
+    // Decimals: more precision than a number can hold, underflow to zero, and
+    // overflow to Infinity. Before the shared predicate the first of these was
+    // accepted, because the decimal path only asked whether Number() was
+    // finite.
+    expect(typeOfColumn(["0.12345678901234567890"])).toBe("text");
+    expect(typeOfColumn([`0.${"0".repeat(400)}1`])).toBe("text");
+    expect(typeOfColumn([`1${"0".repeat(400)}.5`])).toBe("text");
+
+    // A decimal that does survive the conversion, including one written with a
+    // trailing zero, which is the same value spelled differently.
+    expect(typeOfColumn(["12.5", "0.25"])).toBe("real");
+    expect(typeOfColumn(["12.50"])).toBe("real");
+    expect(typeOfColumn(["0.1"])).toBe("real");
+  });
+
+  it("stores a number column without changing any of its values", async () => {
+    const database = await Database.create();
+    importTable(
+      database,
+      {
+        columns: ["Score"],
+        rows: [{ Score: "12.50" }, { Score: "0.25" }],
+      },
+      { name: "Scores", recordId: { prefix: "SC", padding: 4 } },
+    );
+    expect(
+      databaseTableToTable(database, "Scores").rows.map((row) => row["Score"]),
+    ).toEqual([12.5, 0.25]);
+    database.close();
+  });
+
+  it("refuses a date that is not on the calendar", () => {
     expect(typeOfColumn(["2026-02-30"])).toBe("text");
     expect(typeOfColumn(["2026-13-01"])).toBe("text");
     expect(typeOfColumn(["2024-02-29"])).toBe("date");
+    expect(typeOfColumn(["2023-02-29"])).toBe("text");
+  });
+
+  it("judges a timestamp as a whole, not part by part", () => {
+    // Hour 24 is the end of a day and nothing else.
+    expect(typeOfColumn(["2026-01-31T24:00:00Z"])).toBe("date");
+    expect(typeOfColumn(["2026-01-31T24:00"])).toBe("date");
+    expect(typeOfColumn(["2026-01-31T24:30:00Z"])).toBe("text");
+    expect(typeOfColumn(["2026-01-31T24:00:01Z"])).toBe("text");
+    expect(typeOfColumn(["2026-01-31T24:00:00.500Z"])).toBe("text");
+    expect(typeOfColumn(["2026-01-31T24:00:00.000Z"])).toBe("date");
     expect(typeOfColumn(["2026-01-31T25:00:00Z"])).toBe("text");
+
+    // A leap second sits at 23:59:60 and nowhere else.
+    expect(typeOfColumn(["2026-12-31T23:59:60Z"])).toBe("date");
+    expect(typeOfColumn(["2026-01-31T09:30:60Z"])).toBe("text");
+    expect(typeOfColumn(["2026-01-31T23:58:60Z"])).toBe("text");
+    expect(typeOfColumn(["2026-01-31T09:61:00Z"])).toBe("text");
+
+    // An offset is a real offset.
+    expect(typeOfColumn(["2026-01-31T09:30:00+05:30"])).toBe("date");
+    expect(typeOfColumn(["2026-01-31T09:30:00-08:00"])).toBe("date");
+    expect(typeOfColumn(["2026-01-31T09:30:00+99:99"])).toBe("text");
+    expect(typeOfColumn(["2026-01-31T09:30:00+24:00"])).toBe("text");
+    expect(typeOfColumn(["2026-01-31T09:30:00+05:60"])).toBe("text");
   });
 
   it("reports how many values decided each column", () => {

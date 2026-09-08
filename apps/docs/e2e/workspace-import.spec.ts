@@ -15,6 +15,11 @@ import { createWorkbookUpload, type UploadFile } from "./fixtures";
  *
  * The pickers are removed before the page loads, as in the shell's spec, so
  * saving downloads a copy and the saved bytes can be reopened here.
+ *
+ * The last two tests cover the shell's unsaved-changes guard rather than import
+ * itself. They live here because import is the first command that can leave a
+ * workspace holding work no file has: the guard is the shell's, and the record
+ * grid will lean on the same flag.
  */
 async function forceDownloadFallback(page: Page): Promise<void> {
   await page.addInitScript(() => {
@@ -102,6 +107,8 @@ test.describe("/workspace import", () => {
     );
     await expect(page.getByTestId("workspace-table-rows")).toHaveText("2 rows");
     await expect(page.getByTestId("workspace-table-prefix")).toHaveText("CUS");
+    // The workspace now holds work that no file has.
+    await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
     // Every column took the type its own values agree on.
     await expect(page.getByTestId("workspace-table-columns")).toHaveText(
       "Customer (text), Region (text), Active (boolean), Score (real), Opened (date)",
@@ -140,6 +147,9 @@ test.describe("/workspace import", () => {
     await page.getByTestId("workspace-save-as").click();
     const download = await downloadPromise;
     const bytes = await readFile(await download.path());
+
+    // Saving cleared the flag, so reopening asks nothing.
+    await expect(page.getByTestId("workspace-unsaved")).toHaveCount(0);
 
     await page.getByTestId("file-input").setInputFiles({
       name: "reopened.sqlite",
@@ -195,6 +205,68 @@ test.describe("/workspace import", () => {
     );
     await expect(page.getByTestId("workspace-import-run")).toBeDisabled();
     await expect(page.getByTestId("workspace-table")).toHaveCount(1);
+  });
+
+  test("will not replace an imported workspace until the loss is confirmed", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await page.getByTestId("workspace-new").click();
+
+    await page
+      .getByTestId("workspace-import-input")
+      .setInputFiles(await customerWorkbook());
+    await importRow(page, 1).getByTestId("workspace-import-selected").uncheck();
+    await page.getByTestId("workspace-import-run").click();
+    await expect(page.getByTestId("workspace-table")).toHaveCount(1);
+    await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
+
+    // New asks first, and the imported table is still there while it asks.
+    await page.getByTestId("workspace-new").click();
+    await expect(page.getByTestId("workspace-confirm")).toBeVisible();
+    await expect(page.getByTestId("workspace-table")).toHaveCount(1);
+
+    // Keeping the workspace leaves it exactly as it was.
+    await page.getByTestId("workspace-confirm-cancel").click();
+    await expect(page.getByTestId("workspace-confirm")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-table")).toHaveCount(1);
+    await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
+
+    // Open asks the same question, and discarding then replaces the workspace.
+    await page.getByTestId("workspace-open").click();
+    await expect(page.getByTestId("workspace-confirm")).toBeVisible();
+    await page.getByTestId("workspace-confirm-cancel").click();
+
+    await page.getByTestId("workspace-new").click();
+    await page.getByTestId("workspace-confirm-discard").click();
+    await expect(page.getByTestId("workspace-tables-empty")).toBeVisible();
+    await expect(page.getByTestId("workspace-unsaved")).toHaveCount(0);
+  });
+
+  test("asks nothing once the imported workspace has been saved", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await page.getByTestId("workspace-new").click();
+
+    await page
+      .getByTestId("workspace-import-input")
+      .setInputFiles(await customerWorkbook());
+    await importRow(page, 1).getByTestId("workspace-import-selected").uncheck();
+    await page.getByTestId("workspace-import-run").click();
+    await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
+
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByTestId("workspace-save-as").click();
+    await downloadPromise;
+    await expect(page.getByTestId("workspace-unsaved")).toHaveCount(0);
+
+    // Nothing is at risk any more, so New replaces the workspace at once.
+    await page.getByTestId("workspace-new").click();
+    await expect(page.getByTestId("workspace-tables-empty")).toBeVisible();
+    await expect(page.getByTestId("workspace-confirm")).toHaveCount(0);
   });
 
   test("reports a file that holds nothing to import", async ({ page }) => {
