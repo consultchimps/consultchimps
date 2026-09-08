@@ -116,6 +116,8 @@ Put behavior at the lowest reusable layer and keep the CLI as an adapter.
 | `packages/core`     | Shared errors, artifacts, operation results, and contracts     |
 | `packages/files`    | Input discovery and safe output-path handling                  |
 | `packages/tabular`  | Runtime-neutral table models and table operations              |
+| `packages/theme`    | Runtime-neutral palette model and colour validation            |
+| `packages/db`       | Local in-memory database, stable identifiers, and table bridge |
 | `packages/xlsx`     | Excel workbook reading, writing, consolidation, and splitting  |
 | `packages/pptx`     | PowerPoint template inspection and population                  |
 | `packages/pdf`      | PDF splitting and merging                                      |

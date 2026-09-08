@@ -1,0 +1,43 @@
+{
+  "name": "@consultchimps/db",
+  "version": "0.1.0",
+  "description": "Local in-memory SQLite database model, stable record identifiers, and table bridge for ConsultChimps.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/consultchimps/consultchimps.git",
+    "directory": "packages/db"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "prepack": "tsup src/index.ts --format esm --dts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@consultchimps/core": "workspace:*",
+    "@consultchimps/tabular": "workspace:*",
+    "sql.js": "1.14.2"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "devDependencies": {
+    "@types/sql.js": "1.4.11",
+    "typescript": "7.0.2"
+  }
+}

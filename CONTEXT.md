@@ -43,3 +43,25 @@ issues use these terms with exactly these meanings.
   "Preserved" (`preserve`), "Adjusted to stay correct" (`fix`), "Removed,
   reported as a warning" (`strip-warn`), "Refused before anything is written"
   (`refuse`), and "Needs review" (no declared cell).
+
+## Database workspace (draft)
+
+First draft for later review, added with the ADR 0003 foundation. Nothing here
+is final; the maintainer will refine the terms and the record-editing verbs are
+still to agree.
+
+- **Workspace**: the stateful page for one project's database, opened from a
+  file, edited in place, and saved back to that file.
+- **Database**: the local relational store for a project, held in a single file
+  that carries its own tables, schema, and identifier state.
+- **Table**: a named set of columns and the records held under them.
+- **Record**: one row of a table.
+- **Record ID**: the human-readable, always-generated, immutable identifier for
+  a record (for example `CUST-0001`) that relationships reference. Provisional
+  name, agreed changeable.
+- **Relationship**: a link from a column in one table to another table's Record
+  ID (a foreign key).
+- **Computed column** (defined for later): a column whose values are derived by
+  a formula rather than entered by hand.
+- **Dashboard** (defined for later): a saved arrangement of charts and figures
+  drawn from the database.
