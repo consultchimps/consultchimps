@@ -153,18 +153,24 @@ export function WorkspaceTool() {
     }
   }, [client]);
 
-  // Shared open path: open the bytes in the worker, and remember the handle when
-  // a picker supplied one so a later save can write back in place.
+  // Shared open path for every way a file arrives. The read itself runs inside
+  // the guarded section, so a file that stops being readable after it was
+  // chosen (moved, deleted, locked) reports through the same error path as a
+  // database the worker rejects, whichever entry point chose it. The handle is
+  // remembered when a picker supplied one so a later save writes back in place.
   const openWorkspace = useCallback(
     async (
-      name: string,
-      bytes: Uint8Array,
+      read: () => Promise<{
+        readonly name: string;
+        readonly bytes: Uint8Array;
+      }>,
       handle: WorkspaceFileHandle | null,
     ) => {
       setBusy("opening");
       setError(null);
       setNotice(null);
       try {
+        const { name, bytes } = await read();
         const summary = await client().open(bytes);
         handleRef.current = handle;
         setWorkspace({ summary, fileName: name });
@@ -200,27 +206,30 @@ export function WorkspaceTool() {
     if (handle === undefined) {
       return;
     }
-    const file = await handle.getFile();
-    const bytes = new Uint8Array(await file.arrayBuffer());
+    const chosen = handle;
     // A picker grants a writable handle, so a later Save writes back in place.
-    await openWorkspace(file.name, bytes, handle);
+    await openWorkspace(async () => {
+      const file = await chosen.getFile();
+      return {
+        name: file.name,
+        bytes: new Uint8Array(await file.arrayBuffer()),
+      };
+    }, chosen);
   }, [openWorkspace]);
 
   const onFallbackFiles = useCallback(
     (files: readonly File[]) => {
-      void (async () => {
+      // A file input alone grants no write handle, so a later Save downloads a
+      // copy, or offers Save as where the browser supports it.
+      void openWorkspace(async () => {
         const [first] = await readUploads(files, WORKSPACE_FILES.accepts);
         if (first === undefined) {
-          setNotice(null);
-          setError(
+          throw new Error(
             `That file is not ${WORKSPACE_FILES.description}, so nothing was opened`,
           );
-          return;
         }
-        // A file input alone grants no write handle, so a later Save downloads a
-        // copy, or offers Save as where the browser supports it.
-        await openWorkspace(first.name, first.bytes, null);
-      })();
+        return first;
+      }, null);
     },
     [openWorkspace],
   );
