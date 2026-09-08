@@ -44,6 +44,17 @@ export interface UpdatedRecord {
   values: Record<string, CellValue>;
 }
 
+/** Narrow what `Database.readRecords` reads. Omit either field for all. */
+export interface ReadRecordsOptions {
+  /**
+   * Columns to read besides the Record ID, which is always read first. Names
+   * match case-insensitively; an unknown or repeated name is refused.
+   */
+  readonly columns?: readonly string[];
+  /** Read at most this many records, in storage order. Zero reads none. */
+  readonly limit?: number;
+}
+
 // A generous but bounded cap on Record ID zero-padding, so a mistaken
 // configuration cannot drive String.padStart into an enormous allocation.
 const MAX_RECORD_ID_PADDING = 64;
@@ -799,6 +810,49 @@ export class Database {
 
   // Read the given columns of one record back through the declared-type
   // conversion, so the caller is told what is stored rather than what it sent.
+  /**
+   * Resolve the columns a read asked for, in the order asked. Names match
+   * case-insensitively like every other identifier here. The Record ID column
+   * is always read, so naming it is allowed and changes nothing; an unknown
+   * column or one named twice is refused, since either means the caller and
+   * the schema disagree.
+   */
+  #selectColumns(
+    tableName: string,
+    definition: StoredDefinition,
+    requested: readonly string[],
+  ): ColumnDefinition[] {
+    const byKey = new Map(
+      definition.columns.map((column) => [identifierKey(column.name), column]),
+    );
+    const selected: ColumnDefinition[] = [];
+    const seen = new Set<string>();
+    for (const key of requested) {
+      if (sameIdentifier(key, RECORD_ID_COLUMN)) {
+        continue;
+      }
+      const column = byKey.get(identifierKey(key));
+      if (column === undefined) {
+        throw new ConsultChimpsError(
+          "DB_UNKNOWN_COLUMN",
+          `The table "${tableName}" has no column "${key}".`,
+          { details: { table: tableName, column: key } },
+        );
+      }
+      const columnKey = identifierKey(column.name);
+      if (seen.has(columnKey)) {
+        throw new ConsultChimpsError(
+          "DB_DUPLICATE_READ_COLUMN",
+          `The read from "${tableName}" names the column "${column.name}" more than once.`,
+          { details: { table: tableName, column: column.name } },
+        );
+      }
+      seen.add(columnKey);
+      selected.push(column);
+    }
+    return selected;
+  }
+
   #readColumns(
     tableName: string,
     recordId: string,
@@ -919,15 +973,28 @@ export class Database {
    * column, with values coerced to their declared types. Rows come back ordered
    * by internal rowid, which is insertion order.
    */
-  readRecords(tableName: string): TableRow[] {
-    const { definition } = this.#requireDefinition(tableName);
+  readRecords(tableName: string, options: ReadRecordsOptions = {}): TableRow[] {
+    const { name, definition } = this.#requireDefinition(tableName);
+    const columns =
+      options.columns === undefined
+        ? definition.columns
+        : this.#selectColumns(name, definition, options.columns);
+    const limit = options.limit;
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 0)) {
+      throw new ConsultChimpsError(
+        "DB_INVALID_LIMIT",
+        `A record limit for "${name}" must be a whole number of zero or more, not ${String(limit)}.`,
+        { details: { table: name, limit } },
+      );
+    }
     const columnNames = [
       RECORD_ID_COLUMN,
-      ...definition.columns.map((column) => column.name),
+      ...columns.map((column) => column.name),
     ];
     const selectList = columnNames.map(quoteIdentifier).join(", ");
     const rows = this.#sql.select(
-      `SELECT ${selectList} FROM ${quoteIdentifier(tableName)} ORDER BY rowid;`,
+      `SELECT ${selectList} FROM ${quoteIdentifier(name)} ORDER BY rowid${limit === undefined ? "" : " LIMIT ?"};`,
+      limit === undefined ? [] : [limit],
     );
     return rows.map((row) => {
       // The Record ID is a stored text value like any other, so validate it the
@@ -942,7 +1009,7 @@ export class Database {
         );
       }
       const output: TableRow = { [RECORD_ID_COLUMN]: storedId };
-      for (const column of definition.columns) {
+      for (const column of columns) {
         // Own-property read so a column named like an Object.prototype member
         // never picks up an inherited value; "__proto__" is refused as a column
         // name, so assigning declared names to this plain object is safe.

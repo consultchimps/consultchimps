@@ -188,7 +188,13 @@ function referenceOptions(
       column.type === "text" &&
       !foreignKeyColumns.has(identifierKey(column.name)),
   );
-  const rows = current.readRecords(schema.name);
+  // Read only the two columns an option needs, and one record past the cap:
+  // that single extra row says whether the table holds more than is offered,
+  // without counting or materialising the rest of a large referenced table.
+  const rows = current.readRecords(schema.name, {
+    columns: labelColumn === undefined ? [] : [labelColumn.name],
+    limit: WORKSPACE_REFERENCE_LIMIT + 1,
+  });
   const references = rows
     .slice(0, WORKSPACE_REFERENCE_LIMIT)
     .map((row): WorkspaceReference => {

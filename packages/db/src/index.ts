@@ -31,6 +31,7 @@ export {
 export {
   Database,
   type InsertedRecord,
+  type ReadRecordsOptions,
   type UpdatedRecord,
 } from "./database.js";
 export { addRecordsFromTable, databaseTableToTable } from "./bridge.js";
