@@ -17,6 +17,10 @@ export const homeLinks: NonNullable<BaseLayoutProps["links"]> = [
     url: "/tools",
   },
   {
+    text: "Workspace",
+    url: "/workspace",
+  },
+  {
     text: "Shortcuts",
     url: "/shortcuts",
   },

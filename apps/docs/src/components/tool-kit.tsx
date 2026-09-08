@@ -157,6 +157,23 @@ export function saveTextFile(
   saveBlob(new Blob([text], { type: mediaType }), name);
 }
 
+/**
+ * Offer page-built binary bytes as a download. This is the plain-download half
+ * of saving a workspace: the fallback the workspace page uses wherever the File
+ * System Access API is unavailable, and for a "download a copy" that is never an
+ * in-place save. The bytes are copied into a fresh buffer first so the blob
+ * never aliases memory the worker still holds.
+ */
+export function saveBinaryFile(
+  bytes: Uint8Array,
+  name: string,
+  mediaType: string,
+): void {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  saveBlob(new Blob([copy.buffer], { type: mediaType }), name);
+}
+
 function saveArtifact(artifact: ByteArtifact, fallbackMediaType: string): void {
   // Copy into a fresh buffer so the blob never aliases the operation's memory.
   const copy = new Uint8Array(artifact.bytes.byteLength);

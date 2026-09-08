@@ -60,6 +60,9 @@ importers:
       '@consultchimps/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@consultchimps/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@consultchimps/messages':
         specifier: workspace:*
         version: link:../../packages/messages
