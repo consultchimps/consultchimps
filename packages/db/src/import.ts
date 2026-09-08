@@ -281,9 +281,16 @@ export function inferColumnTypes(table: Table): InferredColumn[] {
  * prefixed rather than silently changed into something unrecognisable.
  */
 export function suggestTableName(source: string): string {
+  // The first replace collapses every run of other characters to one "_", so
+  // the edge trims below never face repeated underscores and stay linear on any
+  // input. A trailing "_+$" would not: it can start matching anywhere inside a
+  // run, which is quadratic on a name that ends in something else. This is the
+  // same shape, and the same fix, as `normalizedColumnKey` in
+  // `@consultchimps/tabular`.
   const cleaned = source
     .replace(/[^\p{L}\p{N}]+/gu, "_")
-    .replace(/^_+|_+$/gu, "")
+    .replace(/^_/u, "")
+    .replace(/_$/u, "")
     .slice(0, 180);
   const candidate = cleaned === "" ? "table" : cleaned;
   try {
