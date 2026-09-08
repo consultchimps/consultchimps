@@ -67,6 +67,11 @@ it turns OPFS into a second live database and still needs an explicit serialize
 to write back to the shared folder, so the extra machinery buys little for a
 small database. Revisit if databases outgrow a comfortable in-memory size.
 
+The sql.js WebAssembly binary is served from our own origin as a bundled static
+asset, never a CDN: the browser worker points `locateFile` (or passes
+`wasmBinary`) at that local asset. A CDN `locateFile` would break the offline,
+local-first guarantee, so wave-2 work must not reach for one.
+
 ## Decision 3: how the workspace fits the registry
 
 Options considered: a workspace page outside the operation registry with
