@@ -905,6 +905,29 @@ export async function mergeWorkbooksBytes(
 }
 
 /**
+ * Read every visible worksheet that holds data as a `Table`, from bytes.
+ *
+ * The byte twin of `readWorkbookTables`: same selection options, same header
+ * resolution, same `Table` shape, with blank and repeated headers filled in and
+ * numbered rather than refused. The byte surface had readers for Excel Tables
+ * and named ranges but none for the worksheets themselves, so a browser caller
+ * that wanted a worksheet's data had to take the record reader's display text
+ * instead of the stored values.
+ */
+export async function readWorkbookTablesBytes(
+  input: WorkbookInputBytes,
+  options: ReadWorkbookOptions = {},
+): Promise<Table[]> {
+  return workbookTables(
+    parseWorkbookBytes(input.bytes, input.name, {
+      details: { source: input.name },
+    }),
+    input.name,
+    options,
+  );
+}
+
+/**
  * Read one worksheet as text records, the shape template population and other
  * record-driven operations consume.
  */

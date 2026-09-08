@@ -8,6 +8,7 @@ import {
   type SqlValueType,
 } from "./engine.js";
 import {
+  assertRecordIdConfig,
   assertSafeIdentifier,
   cellFromSqlValue,
   formatRecordId,
@@ -19,6 +20,7 @@ import {
   type ColumnDefinition,
   type RecordIdConfig,
   type TableSchema,
+  MAX_RECORD_ID_PADDING,
   METADATA_TABLE,
   RECORD_ID_COLUMN,
   SCHEMA_FORMAT_VERSION,
@@ -30,10 +32,6 @@ export interface InsertedRecord {
   recordId: string;
   rowId: number;
 }
-
-// A generous but bounded cap on Record ID zero-padding, so a mistaken
-// configuration cannot drive String.padStart into an enormous allocation.
-const MAX_RECORD_ID_PADDING = 64;
 
 /** The stored shape of a table definition in the registry. */
 interface StoredDefinition {
@@ -482,7 +480,7 @@ export class Database {
   createTable(schema: TableSchema): void {
     assertSafeIdentifier(schema.name, "table");
     this.#assertTableAbsent(schema.name);
-    this.#validateRecordIdConfig(schema.name, schema.recordId);
+    assertRecordIdConfig(schema.name, schema.recordId);
 
     const seenColumns = new Set<string>();
     for (const column of schema.columns) {
@@ -585,27 +583,6 @@ export class Database {
       `INSERT INTO ${quoteIdentifier(TABLE_REGISTRY_TABLE)} (name, definition, next_counter) VALUES (?, ?, ?);`,
       [schema.name, JSON.stringify(definition), 1],
     );
-  }
-
-  #validateRecordIdConfig(table: string, config: RecordIdConfig): void {
-    if (config.prefix.trim() === "") {
-      throw new ConsultChimpsError(
-        "DB_INVALID_RECORD_ID_CONFIG",
-        `The Record ID prefix for "${table}" cannot be empty.`,
-        { details: { table } },
-      );
-    }
-    if (
-      !Number.isInteger(config.padding) ||
-      config.padding < 0 ||
-      config.padding > MAX_RECORD_ID_PADDING
-    ) {
-      throw new ConsultChimpsError(
-        "DB_INVALID_RECORD_ID_CONFIG",
-        `The Record ID padding for "${table}" must be a whole number from 0 to ${MAX_RECORD_ID_PADDING}.`,
-        { details: { table, padding: config.padding } },
-      );
-    }
   }
 
   /**
@@ -806,6 +783,22 @@ export class Database {
       }
       return output;
     });
+  }
+
+  /**
+   * How many records a table holds. Counted in the engine rather than by
+   * reading the rows, so a summary of a large workspace does not materialize
+   * every record just to show a number.
+   */
+  countRecords(tableName: string): number {
+    // Resolves the declared spelling and raises DB_TABLE_NOT_FOUND for an
+    // unknown table, so a count cannot be taken against a name the registry
+    // does not carry.
+    const { name } = this.#requireDefinition(tableName);
+    const value = this.#sql.selectValue(
+      `SELECT count(*) FROM ${quoteIdentifier(name)};`,
+    );
+    return typeof value === "number" ? value : Number(value);
   }
 
   /** The ordered column names of a table, Record ID first. */

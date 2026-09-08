@@ -135,6 +135,23 @@ export const PDF_FILES = createAcceptedFileKind({
 });
 
 /**
+ * Files a workspace can import data from. Both workbook extensions reach the
+ * same worksheet reader, and delimited text is read as UTF-8 with the first row
+ * as its header. A browser rarely reports a media type for `.csv`, and the ones
+ * it does report disagree, so the predicate leans on the extension here too.
+ */
+export const WORKSPACE_IMPORT_FILES = createAcceptedFileKind({
+  description: "an Excel .xlsx or .xlsm workbook, or a .csv file",
+  extensions: [".xlsx", ".xlsm", ".csv"],
+  mediaTypes: [
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel.sheet.macroEnabled.12",
+    "text/csv",
+  ],
+  pluralDescription: "Excel .xlsx or .xlsm workbooks and .csv files",
+});
+
+/**
  * Workspace database files. A workspace is a single SQLite file the browser
  * both reads and writes, so the picker accepts the extensions a saved workspace
  * can carry. Browsers rarely report a media type for a SQLite file, so the

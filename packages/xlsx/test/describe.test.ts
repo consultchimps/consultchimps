@@ -13,11 +13,13 @@ import {
   describeWorkbookBytes,
   readWorkbookExcelTablesBytes,
   readWorkbookNamedRangesBytes,
+  readWorkbookTablesBytes,
 } from "../src/bytes.js";
 import {
   describeWorkbook,
   readWorkbookExcelTables,
   readWorkbookNamedRanges,
+  readWorkbookTables,
 } from "../src/index.js";
 
 const temporaryDirectories: string[] = [];
@@ -920,6 +922,48 @@ describe("byte-surface readers match the file surface", () => {
       await readWorkbookExcelTablesBytes(
         { name: "clients.xlsx", bytes },
         { tables: ["missing"] },
+      ),
+    ).toEqual([]);
+  });
+
+  it("reads the same worksheet tables from bytes as from a path", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "north.xlsx");
+    const bytes = await writeWorkbook(input, [
+      REVIEW_LOG,
+      { hidden: 1, name: "Notes", rows: [["Note"], ["kept back"]] },
+    ]);
+
+    const fromFile = await readWorkbookTables(input);
+    const fromBytes = await readWorkbookTablesBytes({
+      name: "north.xlsx",
+      bytes,
+    });
+
+    expect(fromBytes).toEqual(fromFile);
+    expect(fromBytes).toHaveLength(1);
+    expect(fromBytes[0]).toMatchObject({
+      columns: ["Case_ID", "Region", "Failed Checks"],
+      rows: [
+        { Case_ID: "R-1", Region: "north", "Failed Checks": 5 },
+        { Case_ID: "R-2", Region: "south", "Failed Checks": 7 },
+        { Case_ID: "R-3", Region: "north", "Failed Checks": 9 },
+      ],
+    });
+
+    // The selection options travel with the reader, hidden worksheets included.
+    expect(
+      (
+        await readWorkbookTablesBytes(
+          { name: "north.xlsx", bytes },
+          { includeHiddenSheets: true },
+        )
+      ).map((table) => table.source?.sheet),
+    ).toEqual(["Review Log", "Notes"]);
+    expect(
+      await readWorkbookTablesBytes(
+        { name: "north.xlsx", bytes },
+        { sheets: ["missing"] },
       ),
     ).toEqual([]);
   });

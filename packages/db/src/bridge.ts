@@ -37,6 +37,26 @@ export function addRecordsFromTable(
   tableName: string,
   table: Table,
 ): InsertedRecord[] {
+  // The whole batch is one transaction: if a later row fails a constraint,
+  // earlier inserts and their consumed id counters roll back, so retrying the
+  // same call does not duplicate a partial prefix.
+  return database.sql.transaction(() =>
+    insertRecordsFromTable(database, tableName, table),
+  );
+}
+
+/**
+ * The insert itself, without a transaction of its own, so a caller that is
+ * already inside one (the import, which creates a table and fills it as a
+ * single unit) can reuse it. SQLite has no nested transactions, so this split
+ * is what keeps `addRecordsFromTable` all-or-nothing on its own while the
+ * import stays all-or-nothing across every table it creates.
+ */
+export function insertRecordsFromTable(
+  database: Database,
+  tableName: string,
+  table: Table,
+): InsertedRecord[] {
   const schema = database.getTableSchema(tableName);
   // Column names are matched case-insensitively, like SQLite identifiers, so a
   // Table header of any casing lines up with its declared column and a
@@ -58,23 +78,18 @@ export function addRecordsFromTable(
     }
   }
 
-  // The whole batch is one transaction: if a later row fails a constraint,
-  // earlier inserts and their consumed id counters roll back, so retrying the
-  // same call does not duplicate a partial prefix.
-  return database.sql.transaction(() => {
-    const inserted: InsertedRecord[] = [];
-    for (const row of table.rows) {
-      // A prototype-free destination, and own-property reads, so a column named
-      // like an Object.prototype member ("constructor") reads the row's own
-      // value or null, never an inherited function.
-      const values: Record<string, CellValue> = Object.create(null);
-      for (const column of mappedColumns) {
-        values[column] = Object.prototype.hasOwnProperty.call(row, column)
-          ? (row[column] ?? null)
-          : null;
-      }
-      inserted.push(database.insertRecord(tableName, values));
+  const inserted: InsertedRecord[] = [];
+  for (const row of table.rows) {
+    // A prototype-free destination, and own-property reads, so a column named
+    // like an Object.prototype member ("constructor") reads the row's own
+    // value or null, never an inherited function.
+    const values: Record<string, CellValue> = Object.create(null);
+    for (const column of mappedColumns) {
+      values[column] = Object.prototype.hasOwnProperty.call(row, column)
+        ? (row[column] ?? null)
+        : null;
     }
-    return inserted;
-  });
+    inserted.push(database.insertRecord(tableName, values));
+  }
+  return inserted;
 }

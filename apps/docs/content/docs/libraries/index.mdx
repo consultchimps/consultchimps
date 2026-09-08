@@ -281,6 +281,72 @@ const table = databaseTableToTable(database, "Customer");
 addRecordsFromTable(database, "Customer", table);
 ```
 
+### Import a table of values
+
+The import half is pure and runtime-neutral, so the same call creates the same
+tables from a browser worker or from a terminal. `inferColumnTypes` decides each
+column's type from its own values, and `importTable` creates the table and fills
+it, generating a Record ID for every row:
+
+```ts
+import {
+  importTable,
+  inferColumnTypes,
+  parseCsvTable,
+  suggestRecordIdPrefix,
+  suggestTableName,
+} from "@consultchimps/db";
+import { readWorkbookTables } from "@consultchimps/xlsx";
+
+// A worksheet, or comma-separated text read as a Table of text values.
+const [worksheet] = await readWorkbookTables("customers.xlsx");
+const orders = parseCsvTable("Reference,Quantity\n007,3\n008,11\n");
+
+// What the types would be, before anything is created.
+console.log(inferColumnTypes(orders));
+// [{ name: "Reference", type: "text", valueCount: 2 },
+//  { name: "Quantity", type: "integer", valueCount: 2 }]
+
+const name = suggestTableName("Customer List"); // "Customer_List"
+const imported = importTable(database, worksheet, {
+  name,
+  recordId: { prefix: suggestRecordIdPrefix(name), padding: 4 },
+});
+console.log(imported.rowCount, imported.firstRecordId); // 2 "CL-0001"
+```
+
+A column takes a type only when every value that is not blank fits it:
+
+| Type      | When                                                              |
+| --------- | ----------------------------------------------------------------- |
+| `boolean` | every value is true, false, yes, or no, in any case               |
+| `date`    | every value is an ISO 8601 date or date and time, on the calendar |
+| `integer` | every value is a whole number, exactly representable              |
+| `real`    | every value is a number, a fractional part allowed                |
+| `text`    | anything else, and a column with no values in it                  |
+
+Nothing is guessed. A padded reference code (`007`), an exponent form (`1e5`), a
+grouped number (`1,000`), a whole number past the range JavaScript represents
+exactly, and a date written any other way (`01/02/2026`) all stay text, because
+reading them as a number or a date would change them. So does a column whose
+values disagree: `1` beside `yes` is text.
+
+`importTables` creates several tables in one call, which is what a multi-sheet
+workbook needs. Names, Record ID prefixes, and column names are all checked
+first, and the creation and the rows then run inside a single transaction, so a
+failure part way through leaves the database exactly as it was rather than half
+imported. A table name that the database already reads as the same name, under
+the case-insensitive rules SQLite applies, is refused before anything is
+written. A Record ID column in the input is left out rather than refused, since
+identifiers are always generated, so a table read back out of a database can be
+imported again as a copy.
+
+`importedTableSchema` returns the `TableSchema` an import would create without
+creating it, and `@consultchimps/db/schema` publishes the schema model on its
+own, with no database engine behind it, for a caller that only needs the
+identifier rules (`identifierKey`, `sameIdentifier`, `assertSafeIdentifier`,
+`MAX_RECORD_ID_PADDING`).
+
 ### Configure sql.js in a browser worker
 
 In Node the WebAssembly binary resolves beside the installed package, so no
@@ -320,10 +386,12 @@ const namedRanges = await readWorkbookNamedRanges("clients.xlsx");
 ```
 
 `readWorkbookTables` accepts the consolidator's selection options: `sheets`, a
-one-based `headerRow`, and `includeHiddenSheets`. `readWorksheetRecords` selects
-one `worksheet` and a `headerRow`; the Excel Table and named-range readers
-filter by `sheets` plus `tables` or `names`. The `writeTable` counterpart writes
-one in-memory `Table` to a new formatted workbook.
+one-based `headerRow`, and `includeHiddenSheets`. `readWorkbookTablesBytes` is
+its byte-level twin, for a browser that holds the workbook's bytes rather than a
+path. `readWorksheetRecords` selects one `worksheet` and a `headerRow`; the
+Excel Table and named-range readers filter by `sheets` plus `tables` or `names`.
+The `writeTable` counterpart writes one in-memory `Table` to a new formatted
+workbook.
 
 ## Inspect a workbook before operating on it
 

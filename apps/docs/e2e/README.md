@@ -52,6 +52,14 @@ command when `out/` is missing.
   deck, naming the output, downloading it, reporting a placeholder no column
   feeds, refusing a template that is not a presentation, and inspecting a
   template's placeholders with their occurrence counts on the chosen slide.
+- `workspace.spec.ts`: reaching `/workspace` from the header, starting an empty
+  workspace, saving it to a `.sqlite` file, reopening exactly those bytes, and
+  reporting a file that is not a readable database or not a workspace type.
+- `workspace-import.spec.ts`: importing one worksheet of a two-sheet workbook
+  and a `.csv` into an open workspace, checking the table listing that follows
+  (row counts, Record ID prefixes, and the inferred column types), keeping both
+  tables across a save and a reopen, refusing a table name the workspace already
+  reads as the same name, and reporting a file with nothing to import.
 - `tools-navigation.spec.ts`: the `/tools` index, the sub-bar tabs, the
   tool-named "Try ... online" button each guide gains from the tool registry,
   and the single button a guide shared by two operations offers.
@@ -170,6 +178,28 @@ ms preview debounce, so they are safe to assert. A finished deck is withdrawn on
 the same rule: changing any option removes `results-section` entirely, because a
 worksheet change can produce a deck with the identical filename from different
 rows.
+
+The workspace page is not an operation, so it renders none of the shell
+identifiers above. It starts with `workspace-actions` (`workspace-new`,
+`workspace-open`, and the fallback `file-input` for browsers without the File
+System Access API), then either `workspace-empty` or `workspace-summary`. The
+summary holds `workspace-file-name`, `workspace-table-count`, `workspace-save`,
+and `workspace-save-as`, and lists what the workspace holds: one
+`workspace-table` per table carrying `workspace-table-name`,
+`workspace-table-rows`, `workspace-table-prefix`, and `workspace-table-columns`,
+with `workspace-tables-empty` in their place while there are none.
+`workspace-notice` and `workspace-error` report the outcome of the last command.
+
+Import is its own section, `workspace-import`, with `workspace-import-choose`
+and the hidden `workspace-import-input` behind it. A chosen file renders
+`workspace-import-form`, one `workspace-import-source` per worksheet (each with
+`workspace-import-source-name`, `workspace-import-selected`,
+`workspace-import-name`, `workspace-import-prefix`, and
+`workspace-import-padding`), then `workspace-import-run` and
+`workspace-import-cancel`. `workspace-import-problem` holds the one reason Run
+is held back, and `workspace-import-error` a refusal from the worker. Because
+both the page and the import section render a file input, scope the workspace
+one to `workspace-import-input` rather than the bare `file-input` helper.
 
 The preview and results panels also carry accessible names, so
 `getByRole("region", { name: "Results" })` works where a role-based query reads

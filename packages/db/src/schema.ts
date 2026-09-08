@@ -10,6 +10,12 @@ import type { SqlValueType } from "./engine.js";
  * reference. The model, its per-table identifier configuration, and each table's
  * next-id counter are persisted inside the database file itself, so a reopened
  * file knows its own schema and where its identifiers left off.
+ *
+ * This module holds no engine and is published on its own as
+ * `@consultchimps/db/schema`. A browser page that only has to decide whether
+ * two table names are the same name, or what a padding may be, would otherwise
+ * download a WebAssembly database to ask, and it must not: the identifier rules
+ * belong wherever a name is typed, and the engine belongs only where rows are.
  */
 
 /** The supported column value kinds, each mapped to a SQLite storage class. */
@@ -70,6 +76,41 @@ export const SCHEMA_FORMAT_VERSION = 1;
 
 /** Default separator between a Record ID prefix and its number. */
 export const DEFAULT_RECORD_ID_SEPARATOR = "-";
+
+/**
+ * A generous but bounded cap on Record ID zero-padding, so a mistaken
+ * configuration cannot drive `String.padStart` into an enormous allocation.
+ */
+export const MAX_RECORD_ID_PADDING = 64;
+
+/**
+ * Guard a Record ID configuration before it is stored or used. Table creation
+ * and the import path both call this, so a prefix or padding is judged by one
+ * rule wherever it arrives from.
+ */
+export function assertRecordIdConfig(
+  table: string,
+  config: RecordIdConfig,
+): void {
+  if (config.prefix.trim() === "") {
+    throw new ConsultChimpsError(
+      "DB_INVALID_RECORD_ID_CONFIG",
+      `The Record ID prefix for "${table}" cannot be empty.`,
+      { details: { table } },
+    );
+  }
+  if (
+    !Number.isInteger(config.padding) ||
+    config.padding < 0 ||
+    config.padding > MAX_RECORD_ID_PADDING
+  ) {
+    throw new ConsultChimpsError(
+      "DB_INVALID_RECORD_ID_CONFIG",
+      `The Record ID padding for "${table}" must be a whole number from 0 to ${MAX_RECORD_ID_PADDING}.`,
+      { details: { table, padding: config.padding } },
+    );
+  }
+}
 
 /**
  * Format a Record ID from its configuration and a counter value. The counter is

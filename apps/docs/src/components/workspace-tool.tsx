@@ -7,8 +7,12 @@
  * `.sqlite` file, and saves the workspace back out. The database itself lives in
  * the workspace Web Worker (`workers/workspace.worker.ts`), which owns the one
  * `@consultchimps/db` instance; this component holds view state and drives the
- * worker through `WorkspaceClient`. Data import and a grid are deliberately not
- * here: they arrive in later work as new worker commands beside these.
+ * worker through `WorkspaceClient`.
+ *
+ * Data import lives in `workspace-import.tsx` and is mounted below the summary;
+ * a grid is still to come. Until it does, the table listing in the summary is
+ * how a person sees what a workspace holds: each table's name, row count,
+ * Record ID prefix, and the column types import inferred.
  *
  * Saving prefers the File System Access API so a repeat save writes back to the
  * same file in place. Where that API is missing, saving falls back to a plain
@@ -25,6 +29,7 @@ import {
   sectionClass,
   ToolShell,
 } from "@/components/tool-kit";
+import { WorkspaceImport } from "@/components/workspace-import";
 import { WORKSPACE_FILES } from "@/lib/accepted-files";
 import type { WorkspaceSummary } from "@/lib/workspace-protocol";
 import { WorkspaceClient } from "@/lib/workspace-worker";
@@ -294,12 +299,25 @@ export function WorkspaceTool() {
     [client, workspace],
   );
 
+  // Import replaces the summary wholesale, so the table listing above always
+  // reflects what the worker now holds rather than a count kept in step by hand.
+  const onImported = useCallback(
+    (summary: WorkspaceSummary, imported: string) => {
+      setWorkspace((previous) =>
+        previous === null ? previous : { ...previous, summary },
+      );
+      setError(null);
+      setNotice(imported);
+    },
+    [],
+  );
+
   const isBusy = busy !== null;
   const hasWorkspace = workspace !== null;
 
   return (
     <ToolShell
-      description="Start a workspace in this tab, or open one you saved before, then save it back to a single file. The workspace is an in-memory database that never leaves your browser"
+      description="Start a workspace in this tab, or open one you saved before, import a worksheet or a .csv file into it, then save it back to a single file. The workspace is an in-memory database that never leaves your browser"
       guideHref="/docs/libraries#build-a-local-database"
       guideLabel="Read about the local database"
       kicker="Online tool · Data workspace"
@@ -411,6 +429,57 @@ export function WorkspaceTool() {
             </div>
           </dl>
 
+          {workspace.summary.tables.length > 0 ? (
+            <ul className="mt-6 space-y-3" data-testid="workspace-tables">
+              {workspace.summary.tables.map((table) => (
+                <li
+                  className="rounded-lg border bg-fd-background/60 px-4 py-3"
+                  data-testid="workspace-table"
+                  key={table.name}
+                >
+                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <span
+                      className="font-mono text-sm font-semibold"
+                      data-testid="workspace-table-name"
+                    >
+                      {table.name}
+                    </span>
+                    <span
+                      className="text-sm text-fd-muted-foreground"
+                      data-testid="workspace-table-rows"
+                    >
+                      {table.rowCount === 1
+                        ? "1 row"
+                        : `${table.rowCount} rows`}
+                    </span>
+                    <span
+                      className="font-mono text-xs text-fd-muted-foreground"
+                      data-testid="workspace-table-prefix"
+                    >
+                      {table.recordIdPrefix}
+                    </span>
+                  </div>
+                  <p
+                    className="mt-1 font-mono text-xs text-fd-muted-foreground"
+                    data-testid="workspace-table-columns"
+                  >
+                    {table.columns
+                      .map((column) => `${column.name} (${column.type})`)
+                      .join(", ")}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p
+              className="mt-6 text-sm text-fd-muted-foreground"
+              data-testid="workspace-tables-empty"
+            >
+              This workspace holds no tables yet. Import a worksheet or a .csv
+              file to add one
+            </p>
+          )}
+
           <div className="mt-6 flex flex-wrap gap-3">
             <button
               className={primaryButtonClass}
@@ -449,6 +518,20 @@ export function WorkspaceTool() {
           </p>
         </section>
       )}
+
+      {/* Import mounts as its own section so the two files stay independent:
+          everything the flow needs lives in workspace-import.tsx and only the
+          new workspace summary comes back here. */}
+      {hasWorkspace ? (
+        <WorkspaceImport
+          client={client}
+          disabled={isBusy}
+          existingTableNames={workspace.summary.tables.map(
+            (table) => table.name,
+          )}
+          onImported={onImported}
+        />
+      ) : null}
 
       {notice ? (
         <p

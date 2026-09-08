@@ -8,6 +8,7 @@ export {
   type SqlValueType,
 } from "./engine.js";
 export {
+  assertRecordIdConfig,
   assertSafeIdentifier,
   cellFromSqlValue,
   formatRecordId,
@@ -17,6 +18,7 @@ export {
   sqlStorageClass,
   sqlValueFromCell,
   DEFAULT_RECORD_ID_SEPARATOR,
+  MAX_RECORD_ID_PADDING,
   METADATA_TABLE,
   RECORD_ID_COLUMN,
   RESERVED_TABLE_PREFIX,
@@ -30,3 +32,16 @@ export {
 } from "./schema.js";
 export { Database, type InsertedRecord } from "./database.js";
 export { addRecordsFromTable, databaseTableToTable } from "./bridge.js";
+export { parseCsvTable, type ParseCsvOptions } from "./csv.js";
+export {
+  importTable,
+  importTables,
+  importedTableSchema,
+  inferColumnTypes,
+  suggestRecordIdPrefix,
+  suggestTableName,
+  type ImportTableOptions,
+  type ImportTableRequest,
+  type ImportedTable,
+  type InferredColumn,
+} from "./import.js";
