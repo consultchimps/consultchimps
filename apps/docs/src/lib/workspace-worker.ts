@@ -36,6 +36,8 @@ export type WorkspaceCellEdit = Omit<UpdateWorkspaceCellCommand, "type" | "id">;
 /** Raised when the worker cannot start, so no command can be served. */
 export const WORKSPACE_WORKER_UNAVAILABLE = "WORKSPACE_WORKER_UNAVAILABLE";
 
+const CLOSED_REASON = "The workspace was closed before the task finished.";
+
 interface PendingCommand {
   readonly resolve: (event: WorkspaceEvent) => void;
   readonly reject: (error: unknown) => void;
@@ -48,6 +50,9 @@ export class WorkspaceClient {
   // A promise chain that serializes commands: each new command is appended and
   // runs only after the previous one settles.
   #queue: Promise<unknown> = Promise.resolve();
+  // Set by terminate() and never cleared: a torn-down client must not start a
+  // worker again, however many commands were still waiting in the queue.
+  #terminated = false;
 
   /** Start a new, empty workspace. Resolves with its summary. */
   async create(): Promise<WorkspaceSummary> {
@@ -146,13 +151,18 @@ export class WorkspaceClient {
     return event.value;
   }
 
-  /** Tear down the worker entirely, failing anything still pending. */
+  /**
+   * Tear down the worker entirely, failing anything still pending, and refuse
+   * every command from now on. Commands still waiting in the queue when this
+   * runs reach `#ensureWorker` only after the pending one is rejected, so the
+   * flag is what stops them from creating a worker the page has already left
+   * behind. Calling this more than once is harmless.
+   */
   terminate(): void {
+    this.#terminated = true;
     this.#worker?.terminate();
     this.#worker = null;
-    this.#failEveryPending(
-      "The workspace was closed before the task finished.",
-    );
+    this.#failEveryPending(CLOSED_REASON);
   }
 
   #expectReady(event: WorkspaceEvent): WorkspaceSummary {
@@ -167,6 +177,9 @@ export class WorkspaceClient {
   }
 
   #ensureWorker(): Worker {
+    if (this.#terminated) {
+      throw new ConsultChimpsError(WORKSPACE_WORKER_UNAVAILABLE, CLOSED_REASON);
+    }
     if (this.#worker) {
       return this.#worker;
     }
