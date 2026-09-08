@@ -133,3 +133,17 @@ export const PDF_FILES = createAcceptedFileKind({
   mediaTypes: ["application/pdf"],
   pluralDescription: ".pdf documents",
 });
+
+/**
+ * Workspace database files. A workspace is a single SQLite file the browser
+ * both reads and writes, so the picker accepts the extensions a saved workspace
+ * can carry. Browsers rarely report a media type for a SQLite file, so the
+ * predicate leans on the extension; the two registered types cover the browsers
+ * that do report one.
+ */
+export const WORKSPACE_FILES = createAcceptedFileKind({
+  description: "a .sqlite workspace file",
+  extensions: [".sqlite", ".sqlite3", ".db"],
+  mediaTypes: ["application/vnd.sqlite3", "application/x-sqlite3"],
+  pluralDescription: ".sqlite workspace files",
+});
