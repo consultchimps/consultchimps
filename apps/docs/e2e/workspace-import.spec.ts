@@ -109,7 +109,9 @@ function uncalculatedWorkbook(): Promise<UploadFile> {
     {
       name: "Customers",
       rows: [
-        ["Customer", "Region", "Score"],
+        // The last header is a formula too, so a header that reads as blank and
+        // would import under an invented name is caught with the rest.
+        ["Customer", "Region", { formula: 'CONCATENATE("Sc","ore")' }],
         ["Acme", "North", { formula: "10+2" }],
         ["Beta", "South", { formula: "3+5" }],
       ],
@@ -403,7 +405,7 @@ test.describe("/workspace import", () => {
     // refused before any choice is made.
     await expect(page.getByTestId("workspace-import-source")).toHaveCount(1);
     await expect(page.getByTestId("workspace-import-blocked")).toContainText(
-      "2 cells hold a formula this workbook carries no calculated value for",
+      "3 cells hold a formula this workbook carries no calculated value for",
     );
     await expect(page.getByTestId("workspace-import-blocked")).toContainText(
       "Open the workbook in Excel, let it calculate, save it",
@@ -549,6 +551,42 @@ test.describe("/workspace import", () => {
     await pressBack(page);
     await expect(page.getByTestId("workspace-confirm")).toBeVisible();
     await expect(page).toHaveURL(/\/workspace$/u);
+  });
+
+  test("names a one-worksheet workbook after the file it came from", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await page.getByTestId("workspace-new").click();
+
+    // One worksheet, and its name says nothing to the visitor: the file they
+    // chose is the name they know.
+    await page
+      .getByTestId("workspace-import-input")
+      .setInputFiles(
+        await createWorkbookUpload("customers.xlsx", [
+          { name: "Sheet1", rows: [["Customer"], ["Acme"]] },
+        ]),
+      );
+    await expect(
+      importRow(page, 0).getByTestId("workspace-import-name"),
+    ).toHaveValue("customers");
+    await expect(
+      importRow(page, 0).getByTestId("workspace-import-prefix"),
+    ).toHaveValue("CUST");
+
+    // More than one worksheet, and the worksheet names are what tell them
+    // apart, so those are used instead.
+    await page
+      .getByTestId("workspace-import-input")
+      .setInputFiles(await customerWorkbook());
+    await expect(
+      importRow(page, 0).getByTestId("workspace-import-name"),
+    ).toHaveValue("Customers");
+    await expect(
+      importRow(page, 1).getByTestId("workspace-import-name"),
+    ).toHaveValue("Regions");
   });
 
   test("reports a workbook that holds nothing to import", async ({ page }) => {

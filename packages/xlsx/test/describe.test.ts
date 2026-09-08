@@ -955,6 +955,63 @@ describe("worksheets whose formulas were never calculated", () => {
     expect(description.sheets[0]?.dataRowCount).toBe(2);
   });
 
+  it("counts a header cell whose formula was never calculated", async () => {
+    // The header reads as blank, so the reader invents a name for the column
+    // and the worksheet imports under a different schema. A count that started
+    // below the header row would have said the worksheet was fine.
+    const bytes = await uncalculatedWorkbookBytes(
+      `<row r="1">${textCell("A1", "Case_ID")}<c r="B1"><f>CONCATENATE("Failed"," Checks")</f></c>${textCell("C1", "Region")}</row>` +
+        `<row r="2">${textCell("A2", "R-1")}<c r="B2"><v>5</v></c>${textCell("C2", "north")}</row>`,
+    );
+
+    const { description } = await describeWorkbookBytes({
+      name: "north.xlsx",
+      bytes,
+    });
+
+    expect(description.sheets[0]?.uncachedFormulaCells).toBe(1);
+  });
+
+  it("leaves a header cell whose formula carries its result alone", async () => {
+    const bytes = await uncalculatedWorkbookBytes(
+      `<row r="1">${textCell("A1", "Case_ID")}<c r="B1" t="str"><f>CONCATENATE("Failed"," Checks")</f><v>Failed Checks</v></c></row>` +
+        `<row r="2">${textCell("A2", "R-1")}<c r="B2"><v>5</v></c></row>`,
+    );
+
+    const { description } = await describeWorkbookBytes({
+      name: "north.xlsx",
+      bytes,
+    });
+
+    expect(description.sheets[0]?.uncachedFormulaCells).toBe(0);
+    expect(
+      description.sheets[0]?.columns.map((column) => column.header),
+    ).toEqual(["Case_ID", "Failed Checks"]);
+  });
+
+  it("counts an uncalculated header in the last column too", async () => {
+    // The blank header sits at the edge of the used range, where a region could
+    // plausibly stop short of it while the table reader, which spans the used
+    // range, still builds a column for it.
+    const bytes = await uncalculatedWorkbookBytes(
+      `<row r="1">${textCell("A1", "Case_ID")}<c r="B1"><f>1+1</f></c></row>` +
+        `<row r="2">${textCell("A2", "R-1")}<c r="B2"><v>5</v></c></row>`,
+    );
+
+    const { description } = await describeWorkbookBytes({
+      name: "north.xlsx",
+      bytes,
+    });
+    expect(description.sheets[0]?.uncachedFormulaCells).toBe(1);
+    // The table reader does build that column, under an invented name, which is
+    // the schema difference the count exists to catch.
+    const [table] = await readWorkbookTablesBytes({
+      name: "north.xlsx",
+      bytes,
+    });
+    expect(table?.columns).toEqual(["Case_ID", "column_2"]);
+  });
+
   it("treats an empty cached result as calculated, because it is", async () => {
     // A string formula that evaluates to nothing is written with an empty
     // cached value. Reading that as "never calculated" would block the

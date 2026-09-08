@@ -121,8 +121,8 @@ export interface WorkbookSheetDescription {
   /** Non-empty rows below the header row. */
   dataRowCount: number;
   /**
-   * Cells below the header row, within the columns an operation would read,
-   * that hold a formula the workbook carries no calculated value for.
+   * Cells in the region an operation would read, its header row included, that
+   * hold a formula the workbook carries no calculated value for.
    *
    * Zero for a workbook Excel has calculated and saved. Anything above zero
    * means a reader will see those cells as empty, because the value they would
@@ -473,7 +473,23 @@ async function describeWorksheet(
   const samples = headers.map(() => [] as CellValue[]);
   const seen = headers.map(() => new Set<string>());
   let dataRowCount = 0;
+
+  // The header row, counted before the body, because the claim this count makes
+  // is about the region an operation reads and that region starts at its
+  // headers. A header cell whose formula was never calculated reads as blank,
+  // and a blank header is not a missing value: it is a column that arrives
+  // under an invented name, with a different schema and nothing said about it.
+  // The body loop below starts under the header row, so leaving this to it
+  // would make the scan narrower than the promise.
   let uncachedFormulaCells = 0;
+  const headerCells = storedRows.find(
+    (row) => row.number === region.headerRow,
+  )?.cells;
+  for (const cell of headerCells ?? []) {
+    if (regionColumns.has(cell.ref.column) && isUncachedFormula(cell)) {
+      uncachedFormulaCells += 1;
+    }
+  }
   let satisfiedColumns = sampleLimit === 0 ? headers.length : 0;
   let rowsSinceYield = 0;
 
@@ -507,7 +523,7 @@ async function describeWorksheet(
     dataRowCount += 1;
     // Counted before the sampling short-circuit below, which stops reading
     // values once every column has its quota: the condition is about the whole
-    // sheet, so it has to be counted for the whole sheet.
+    // region, so it has to be counted over the whole region.
     for (const cell of row.cells) {
       if (regionColumns.has(cell.ref.column) && isUncachedFormula(cell)) {
         uncachedFormulaCells += 1;

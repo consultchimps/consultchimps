@@ -129,9 +129,15 @@ async function readSources(
     describeWorkbookBytes(input),
     readWorkbookTablesBytes(input),
   ]);
-  const tableBySheet = new Map(
-    tables.map((table) => [table.source?.sheet ?? "", table]),
-  );
+  const tableBySheet = new Map<string, Table>();
+  for (const table of tables) {
+    const sheet = table.source?.sheet;
+    // Keyed only by a name the table actually carries. Standing in a "" for a
+    // missing one would put it under a key a worksheet could hold for real.
+    if (sheet !== undefined) {
+      tableBySheet.set(sheet, table);
+    }
+  }
   const sources = description.sheets
     .map((sheet) => ({
       name: sheet.name,
@@ -166,13 +172,17 @@ export async function describeImportSources(
   bytes: Uint8Array,
 ): Promise<ImportSourceDescription[]> {
   const sources = await readSources(fileName, bytes);
+  // A file with one table to give is named after the file, because that is the
+  // name the visitor chose and the only one they have seen. A worksheet name is
+  // used only where there is more than one worksheet to tell apart, which is
+  // the only time it means anything to them. Both come from `fileName` rather
+  // than from the source happening to be named after it, which held for
+  // delimited text by coincidence and never for a one-worksheet workbook.
   const single = sources.length === 1;
   return sources.map((source) => {
-    // A one-table file is named after the file, not after a worksheet the
-    // visitor never sees, which is what makes "customers.csv" suggest
-    // "customers" rather than the file name with its extension attached.
-    const label = single ? withoutExtension(source.name) : source.name;
-    const suggestedTableName = suggestTableName(label);
+    const suggestedTableName = suggestTableName(
+      single ? withoutExtension(fileName) : source.name,
+    );
     return {
       name: source.name,
       rowCount: source.table?.rows.length ?? 0,

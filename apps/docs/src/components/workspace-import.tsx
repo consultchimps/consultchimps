@@ -60,6 +60,12 @@ interface SourceChoice {
  * would create a table with holes and report a clean success. The import
  * refuses it either way; the form says so first, so the choice is never offered
  * as if it would work.
+ *
+ * Uncalculated formulas are the only reason a listed source can be unimportable,
+ * because `describeImportSources` lists a source only when it has a table or has
+ * those formulas. That is the guarantee this rule rests on, and the worker
+ * refuses a source with no table regardless, so a change to that listing shows
+ * up as a refusal rather than as a table full of holes.
  */
 function isImportable(source: ImportSourceDescription): boolean {
   return source.uncachedFormulaCells === 0;
