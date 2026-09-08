@@ -64,7 +64,10 @@ command when `out/` is missing.
   that can leave a workspace holding work no file has: New and Open ask before
   replacing an imported workspace and leave it untouched until the loss is
   confirmed, they ask nothing once it has been saved, and a link out of the page
-  and the Back button are both held the same way. Further tests hold the
+  and the Back button are both held the same way. The guard covers an import
+  still in flight as well as unsaved changes, so a link click during one is held
+  even from a clean workspace, and the spare history entry the Back guard relies
+  on is armed again after an earlier press spent it. Further tests hold the
   worker's import commands open to check that New, Open, and Save are disabled
   while a file is being read and while an import runs, and refuse a worksheet
   whose formulas the workbook carries no calculated value for.

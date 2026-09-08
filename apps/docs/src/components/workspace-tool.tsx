@@ -183,8 +183,11 @@ export function WorkspaceTool() {
   // The handle for an in-place save, held only when a picker granted one.
   const handleRef = useRef<WorkspaceFileHandle | null>(null);
   const fallbackInputRef = useRef<HTMLInputElement | null>(null);
-  // Whether the page is holding a spare history entry for the Back guard below.
-  const hasSpareEntryRef = useRef(false);
+  // How many spare history entries the page is holding for the Back guard, and
+  // the condition that guard reads. Both are refs because the popstate listener
+  // is installed once and has to see the current answer, not the first one.
+  const spareEntriesRef = useRef(0);
+  const mustHoldRef = useRef(false);
 
   const [workspace, setWorkspace] = useState<OpenWorkspace | null>(null);
   const [busy, setBusy] = useState<WorkspaceBusy>(null);
@@ -309,17 +312,48 @@ export function WorkspaceTool() {
 
   const hasUnsavedChanges = workspace?.unsavedChanges === true;
 
+  /**
+   * Whether there is anything to lose by leaving or replacing the workspace.
+   *
+   * Two conditions, one answer, because the guards below all ask the same
+   * question and any of them keyed on only half of it is a hole. Unsaved
+   * changes are the obvious half. The other is an import that has not come
+   * back: it is the one command whose result exists nowhere else, so leaving
+   * mid-import destroys work that was never anywhere but this tab.
+   *
+   * The other busy states are deliberately not held. Creating and opening have
+   * nothing to lose yet, reading a file to describe it touches no workspace,
+   * and a save is already covered because the unsaved flag stays set until its
+   * write resolves. Holding those would put a warning in front of a visitor who
+   * has nothing at stake, which is how a warning stops being read.
+   */
+  const mustHold = hasUnsavedChanges || busy === "importing";
+
+  // The question exists only while its reason does. A save made while it is on
+  // screen, or an import that fails after a link was held, answers it by
+  // removing what it was about; left standing it would reappear at the next
+  // change, asking about something that already happened. Adjusted during
+  // render, which is React's own pattern for state that follows another value:
+  // an effect would show the stale question for a frame first.
+  const [heldFor, setHeldFor] = useState(mustHold);
+  if (heldFor !== mustHold) {
+    setHeldFor(mustHold);
+    if (!mustHold && pending !== null) {
+      setPending(null);
+    }
+  }
+
   // Both entry points that replace the held workspace go through here, so a
   // mutating feature added later inherits the guard by doing nothing.
   const replaceWorkspace = useCallback(
     (kind: "new" | "open") => {
-      if (hasUnsavedChanges) {
+      if (mustHold) {
         setPending({ kind });
         return;
       }
       void (kind === "new" ? startNew() : startOpen());
     },
-    [hasUnsavedChanges, startNew, startOpen],
+    [mustHold, startNew, startOpen],
   );
 
   /**
@@ -347,7 +381,10 @@ export function WorkspaceTool() {
       previous === null ? previous : { ...previous, unsavedChanges: false },
     );
     if (action.href === null) {
-      window.history.back();
+      // Step back over this page and every spare entry pushed above it, so one
+      // answer honours the press however many times it was made.
+      window.history.go(-(spareEntriesRef.current + 1));
+      spareEntriesRef.current = 0;
     } else {
       router.push(action.href);
     }
@@ -378,7 +415,7 @@ export function WorkspaceTool() {
   // the browser's own dialog and the only guard available for those, but it
   // covers none of the ways of leaving that stay inside the app.
   useEffect(() => {
-    if (!hasUnsavedChanges) {
+    if (!mustHold) {
       return;
     }
     const warn = (event: BeforeUnloadEvent): void => {
@@ -389,7 +426,7 @@ export function WorkspaceTool() {
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [hasUnsavedChanges]);
+  }, [mustHold]);
 
   /**
    * Hold a link out of the page until the visitor has answered for the
@@ -405,7 +442,7 @@ export function WorkspaceTool() {
    * are all left alone, because none of them lose the workspace.
    */
   useEffect(() => {
-    if (!hasUnsavedChanges) {
+    if (!mustHold) {
       return;
     }
     const hold = (event: MouseEvent): void => {
@@ -445,54 +482,71 @@ export function WorkspaceTool() {
     };
     document.addEventListener("click", hold, true);
     return () => document.removeEventListener("click", hold, true);
-  }, [hasUnsavedChanges]);
+  }, [mustHold]);
 
   /**
    * Hold the Back button the same way.
    *
    * Back cannot be cancelled once it has happened, so the only way to catch it
-   * is to have somewhere harmless for it to land: while the workspace is
-   * unsaved, one extra history entry for this same page is pushed, and the
-   * first Back press consumes it without changing the route. The trade is one
-   * Back press that appears to do nothing, in a session that had unsaved work,
-   * against losing that work outright, and the second is much the worse of the
-   * two.
+   * is to have somewhere harmless for it to land: a spare history entry for
+   * this same page, which the first Back press consumes without changing the
+   * route. The trade is one Back press that appears to do nothing, in a session
+   * that had something at stake, against losing that work outright.
+   *
+   * Two things keep the bookkeeping honest. The listener is installed for the
+   * life of the page rather than while the guard is armed, so a press that
+   * happens between arming and re-arming is still counted: what the page
+   * believes about history comes from what happened to history, never from what
+   * the guard was doing at the time. And it counts entries rather than holding a
+   * flag, so a press while the question is already showing is caught too, and
+   * answering it steps back over exactly the spares that were pushed.
    */
   useEffect(() => {
-    if (!hasUnsavedChanges) {
-      return;
-    }
-    if (!hasSpareEntryRef.current) {
-      // One spare entry for the life of the page, not one per import: the flag
-      // goes false on every save and true again on the next change, and a spare
-      // pushed each time would cost a dead Back press each time.
-      // Next's router keeps its own state on the entry, so the copy carries it
-      // rather than a null that the router would not recognise on the way back.
+    const observed = (): void => {
+      if (spareEntriesRef.current === 0) {
+        // Not one of ours: the visitor is leaving a page we never armed.
+        return;
+      }
+      spareEntriesRef.current -= 1;
+      if (!mustHoldRef.current) {
+        // Nothing at stake, so the press was simply spent. Whether the page
+        // stays or goes from here is the browser's business.
+        return;
+      }
+      // Re-arm before asking, so a second press while the question is up lands
+      // somewhere harmless too.
       window.history.pushState(window.history.state, "", window.location.href);
-      hasSpareEntryRef.current = true;
-    }
-    const held = (): void => {
-      // The press just spent the spare entry.
-      hasSpareEntryRef.current = false;
+      spareEntriesRef.current += 1;
       setPending({ kind: "leave", href: null });
     };
-    window.addEventListener("popstate", held);
-    return () => window.removeEventListener("popstate", held);
-  }, [hasUnsavedChanges]);
+    window.addEventListener("popstate", observed);
+    return () => window.removeEventListener("popstate", observed);
+  }, []);
 
-  /**
-   * Put back what answering the question consumed. A cancelled Back has already
-   * spent the spare history entry, so without this the next Back would leave
-   * with no question asked.
-   */
-  const onCancelAction = useCallback(() => {
-    const action = pending;
-    setPending(null);
-    if (action?.kind === "leave" && action.href === null) {
-      window.history.pushState(window.history.state, "", window.location.href);
-      hasSpareEntryRef.current = true;
+  // The observer above outlives every render, so it reads the condition from a
+  // ref rather than closing over a stale copy of it.
+  useEffect(() => {
+    mustHoldRef.current = mustHold;
+  }, [mustHold]);
+
+  // Arm whenever there is something to lose and no spare entry is held, which
+  // covers both the first change and a change made after an earlier spare was
+  // spent.
+  useEffect(() => {
+    if (!mustHold || spareEntriesRef.current > 0) {
+      return;
     }
-  }, [pending]);
+    // Nothing below this page means Back cannot leave it, so there is nothing
+    // to guard against. Arming anyway would make a dead button look live, and
+    // then offer to leave for somewhere that does not exist.
+    if (window.history.length <= 1) {
+      return;
+    }
+    // Next's router keeps its own state on the entry, so the copy carries it
+    // rather than a null that the router would not recognise on the way back.
+    window.history.pushState(window.history.state, "", window.location.href);
+    spareEntriesRef.current += 1;
+  }, [mustHold]);
 
   // Serialize once, then route the bytes to the right destination.
   const saveWith = useCallback(
@@ -586,7 +640,9 @@ export function WorkspaceTool() {
   const hasWorkspace = workspace !== null;
   // Derived rather than stored, so a save made while the question is on screen
   // answers it: the reason to ask is gone, so the asking goes with it.
-  const confirming = pending !== null && hasUnsavedChanges;
+  // `pending` is cleared the moment its reason goes, so holding one is the
+  // whole condition rather than half of it.
+  const confirming = pending !== null;
 
   return (
     <ToolShell
@@ -676,13 +732,15 @@ export function WorkspaceTool() {
             </h2>
           </div>
           <p className="mt-3 text-sm text-fd-muted-foreground">
-            This workspace has changes that have not been saved to a file.{" "}
+            {hasUnsavedChanges
+              ? "This workspace has changes that have not been saved to a file."
+              : "An import is still running."}{" "}
             {pending?.kind === "new"
-              ? "Starting a new workspace replaces it"
+              ? "Starting a new workspace replaces this one"
               : pending?.kind === "open"
-                ? "Opening another workspace replaces it"
-                : "Leaving this page closes it"}
-            , and those changes are gone
+                ? "Opening another workspace replaces this one"
+                : "Leaving this page closes the workspace"}
+            , and that work is gone
           </p>
           <div className="mt-5 flex flex-wrap gap-3">
             <button
@@ -700,7 +758,7 @@ export function WorkspaceTool() {
               className={primaryButtonClass}
               data-testid="workspace-confirm-cancel"
               disabled={isBusy}
-              onClick={onCancelAction}
+              onClick={() => setPending(null)}
               type="button"
             >
               Keep this workspace

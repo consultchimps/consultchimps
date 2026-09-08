@@ -8,6 +8,31 @@
  * document: every edit is applied to one element the caller located first.
  */
 
+/**
+ * A cell's cached value element: `<v>` for a stored value, `<is>` for inline
+ * text, present or self-closing, whatever it holds.
+ *
+ * Cache presence is about the element being there, never about what is inside
+ * it. A string formula that evaluates to an empty string is written
+ * `<f>...</f><v></v>`, and a numeric one that evaluates to zero is written
+ * `<v>0</v>`: both are calculated results, and reading emptiness as "never
+ * calculated" would condemn them forever, since recalculating produces the same
+ * empty result again. This is the single definition of the question, used by
+ * the values-only conversion and by the workbook description alike, so the two
+ * cannot answer it differently.
+ */
+const CACHED_VALUE_ELEMENT =
+  /<(?:[A-Za-z_][\w.-]*:)?(?:v|is)\b[^>]*(?:\/\s*>|>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?(?:v|is)\s*>)/u;
+
+/**
+ * Whether cell XML carries a cached value element. Accepts either the whole
+ * `<c>` element or just its body: a cell's open tag cannot contain one, so the
+ * answer is the same for both.
+ */
+export function hasCachedValueElement(cellXml: string): boolean {
+  return CACHED_VALUE_ELEMENT.test(cellXml);
+}
+
 export interface XmlAttributeSpan {
   /** The attribute name exactly as written, including any prefix. */
   readonly name: string;

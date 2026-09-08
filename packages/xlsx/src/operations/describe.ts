@@ -374,12 +374,14 @@ function isOccupiedCell(cell: CellModel): boolean {
  * Every reader downstream then sees an empty cell, because empty is all the
  * file says, so a caller that needs to tell missing data from absent data can
  * only learn it here.
+ *
+ * The question is whether a cached value element is there, never what it holds:
+ * a formula that evaluated to an empty string, or to zero, has been calculated.
+ * That is `hasCachedValueElement`, the same definition the values-only
+ * conversion uses to decide which formulas it can safely replace.
  */
 function isUncachedFormula(cell: CellModel): boolean {
-  return (
-    cell.formula !== undefined &&
-    (cell.value === undefined || cell.value === "")
-  );
+  return cell.formula !== undefined && !cell.hasCachedValue;
 }
 
 const EMPTY_SHEET = {

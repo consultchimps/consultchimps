@@ -17,6 +17,7 @@ import {
   findElement,
   findElements,
   getAttribute,
+  hasCachedValueElement,
   parseAttributes,
   setAttribute,
 } from "./xml.js";
@@ -201,6 +202,16 @@ export class WorksheetCell {
           .join("");
   }
 
+  /**
+   * Whether a cached value element is present, whatever it holds. `valueText`
+   * cannot answer this: it returns `""` for `<v></v>` and `undefined` for a
+   * self-closing `<v/>`, so neither an empty result nor an absent one can be
+   * told from the other by looking at the text.
+   */
+  get hasCachedValue(): boolean {
+    return hasCachedValueElement(this.body);
+  }
+
   get formula(): CellFormula | undefined {
     const element = findElement(this.body, "f");
     if (!element) {
@@ -231,6 +242,7 @@ export class WorksheetCell {
       styleIndex: styleIndex === undefined ? undefined : Number(styleIndex),
       value: this.valueText,
       formula: this.formula,
+      hasCachedValue: this.hasCachedValue,
     };
   }
 

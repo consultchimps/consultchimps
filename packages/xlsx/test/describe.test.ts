@@ -955,6 +955,26 @@ describe("worksheets whose formulas were never calculated", () => {
     expect(description.sheets[0]?.dataRowCount).toBe(2);
   });
 
+  it("treats an empty cached result as calculated, because it is", async () => {
+    // A string formula that evaluates to nothing is written with an empty
+    // cached value. Reading that as "never calculated" would block the
+    // worksheet forever: recalculating in Excel produces the same empty result.
+    const bytes = await uncalculatedWorkbookBytes(
+      `<row r="1">${textCell("A1", "Case_ID")}${textCell("B1", "Note")}</row>` +
+        `<row r="2">${textCell("A2", "R-1")}<c r="B2" t="str"><f>IF(1=2,"x","")</f><v></v></c></row>` +
+        `<row r="3">${textCell("A3", "R-2")}<c r="B3"><f>0+0</f><v>0</v></c></row>` +
+        `<row r="4">${textCell("A4", "R-3")}<c r="B4"><f>1+1</f><v>  </v></c></row>`,
+    );
+
+    const { description } = await describeWorkbookBytes({
+      name: "north.xlsx",
+      bytes,
+    });
+
+    // An empty string, a zero, and whitespace are all calculated results.
+    expect(description.sheets[0]?.uncachedFormulaCells).toBe(0);
+  });
+
   it("counts nothing when the formulas carry their results", async () => {
     const bytes = await uncalculatedWorkbookBytes(
       `<row r="1">${textCell("A1", "Case_ID")}${textCell("B1", "Failed Checks")}</row>` +

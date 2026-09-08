@@ -117,6 +117,21 @@ function uncalculatedWorkbook(): Promise<UploadFile> {
   ]);
 }
 
+/**
+ * Press Back and wait for the page to have seen it. A same-document traversal
+ * changes nothing a navigation assertion could wait on, so the press is only
+ * observable through the event it fires.
+ */
+async function pressBack(page: Page): Promise<void> {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        window.addEventListener("popstate", () => resolve(), { once: true });
+        window.history.back();
+      }),
+  );
+}
+
 function importRow(page: Page, index: number) {
   return page.getByTestId("workspace-import-source").nth(index);
 }
@@ -467,6 +482,73 @@ test.describe("/workspace import", () => {
 
     await page.getByTestId("workspace-confirm-discard").click();
     await expect(page).toHaveURL(/\/tools$/u);
+  });
+
+  test("holds a link out of the page while an import is still running", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await delayWorkerImports(page, 1500);
+    await page.goto("/workspace");
+    await page.getByTestId("workspace-new").click();
+    await expect(page.getByTestId("workspace-new")).toBeEnabled();
+
+    await page
+      .getByTestId("workspace-import-input")
+      .setInputFiles(await customerWorkbook());
+    await expect(page.getByTestId("workspace-import-form")).toBeVisible();
+    await importRow(page, 1).getByTestId("workspace-import-selected").uncheck();
+    // Nothing is unsaved yet: what is at stake is the import itself, which
+    // exists nowhere but this tab until it lands.
+    await expect(page.getByTestId("workspace-unsaved")).toHaveCount(0);
+    await page.getByTestId("workspace-import-run").click();
+
+    await page.getByTestId("guide-link").click();
+    await expect(page.getByTestId("workspace-confirm")).toContainText(
+      "An import is still running",
+    );
+    await expect(page).toHaveURL(/\/workspace$/u);
+
+    // The click was held rather than obeyed, so the worker was never torn down
+    // and the import finished.
+    await expect(page.getByTestId("workspace-notice")).toHaveText(
+      "Imported 1 table with 2 rows",
+    );
+    await expect(page.getByTestId("workspace-table")).toHaveCount(1);
+  });
+
+  test("arms the Back guard again after a save has spent it", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/tools");
+    await page.goto("/workspace");
+    await page.getByTestId("workspace-new").click();
+    await importCustomersSheet(page);
+
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByTestId("workspace-save-as").click();
+    await downloadPromise;
+    await expect(page.getByTestId("workspace-unsaved")).toHaveCount(0);
+
+    // Nothing is at stake, so this press is simply spent. The page still has to
+    // notice that it went, or it will believe it is still holding the spare.
+    await pressBack(page);
+    await expect(page.getByTestId("workspace-confirm")).toHaveCount(0);
+    await expect(page).toHaveURL(/\/workspace$/u);
+
+    // A second import has to arm the guard again rather than trust a flag left
+    // over from the first.
+    await page.getByTestId("workspace-import-input").setInputFiles(ORDERS_CSV);
+    await importRow(page, 0)
+      .getByTestId("workspace-import-name")
+      .fill("Orders");
+    await page.getByTestId("workspace-import-run").click();
+    await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
+
+    await pressBack(page);
+    await expect(page.getByTestId("workspace-confirm")).toBeVisible();
+    await expect(page).toHaveURL(/\/workspace$/u);
   });
 
   test("reports a workbook that holds nothing to import", async ({ page }) => {
