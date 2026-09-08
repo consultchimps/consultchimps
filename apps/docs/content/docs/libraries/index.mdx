@@ -291,6 +291,20 @@ column is refused the same way, and so is any attempt to change the Record ID,
 which is assigned once: it is `DB_RECORD_ID_IMMUTABLE` here, and a database
 trigger under that refuses it even to a raw statement.
 
+`readRecords` reads a table's records, the Record ID first in every row. Pass
+options to narrow it: `columns` reads only the named columns, matched like every
+other identifier, and `limit` reads at most that many records in storage order.
+An unknown or repeated column name, or a limit that is not a whole number within
+the safe integer range, is refused with a stable error rather than guessed at.
+
+```ts
+// The first ten records, Record ID and name only.
+const recent = database.readRecords("Customer", {
+  columns: ["name"],
+  limit: 10,
+});
+```
+
 ### Bridge to the table model
 
 The database exchanges rows with `@consultchimps/tabular` in both directions, so

@@ -828,27 +828,36 @@ export class Database {
     const selected: ColumnDefinition[] = [];
     const seen = new Set<string>();
     for (const key of requested) {
+      // Resolve the declared name first, so the Record ID takes part in
+      // duplicate tracking like any other column even though it is never
+      // added to the projection (it is always read).
+      let resolved: string;
+      let column: ColumnDefinition | undefined;
       if (sameIdentifier(key, RECORD_ID_COLUMN)) {
-        continue;
+        resolved = RECORD_ID_COLUMN;
+      } else {
+        column = byKey.get(identifierKey(key));
+        if (column === undefined) {
+          throw new ConsultChimpsError(
+            "DB_UNKNOWN_COLUMN",
+            `The table "${tableName}" has no column "${key}".`,
+            { details: { table: tableName, column: key } },
+          );
+        }
+        resolved = column.name;
       }
-      const column = byKey.get(identifierKey(key));
-      if (column === undefined) {
-        throw new ConsultChimpsError(
-          "DB_UNKNOWN_COLUMN",
-          `The table "${tableName}" has no column "${key}".`,
-          { details: { table: tableName, column: key } },
-        );
-      }
-      const columnKey = identifierKey(column.name);
+      const columnKey = identifierKey(resolved);
       if (seen.has(columnKey)) {
         throw new ConsultChimpsError(
           "DB_DUPLICATE_READ_COLUMN",
-          `The read from "${tableName}" names the column "${column.name}" more than once.`,
-          { details: { table: tableName, column: column.name } },
+          `The read from "${tableName}" names the column "${resolved}" more than once.`,
+          { details: { table: tableName, column: resolved } },
         );
       }
       seen.add(columnKey);
-      selected.push(column);
+      if (column !== undefined) {
+        selected.push(column);
+      }
     }
     return selected;
   }
@@ -980,10 +989,13 @@ export class Database {
         ? definition.columns
         : this.#selectColumns(name, definition, options.columns);
     const limit = options.limit;
-    if (limit !== undefined && (!Number.isInteger(limit) || limit < 0)) {
+    // Safe integer, not merely integer: 1e20 passes Number.isInteger but is
+    // past what SQLite accepts as a LIMIT, and the raw engine error would
+    // otherwise escape in place of the stable one.
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 0)) {
       throw new ConsultChimpsError(
         "DB_INVALID_LIMIT",
-        `A record limit for "${name}" must be a whole number of zero or more, not ${String(limit)}.`,
+        `A record limit for "${name}" must be a whole number from zero up to the safe integer range, not ${String(limit)}.`,
         { details: { table: name, limit } },
       );
     }

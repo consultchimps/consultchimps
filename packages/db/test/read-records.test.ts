@@ -92,11 +92,20 @@ describe("readRecords options", () => {
         database.readRecords("Customer", { columns: ["name", "Name"] }),
       ),
     ).toBe("DB_DUPLICATE_READ_COLUMN");
+    // The Record ID is always read, so naming it once is allowed; naming it
+    // twice is the same contradiction as any other repeated column.
+    expect(
+      codeOf(() =>
+        database.readRecords("Customer", {
+          columns: [RECORD_ID_COLUMN, "RECORD_ID"],
+        }),
+      ),
+    ).toBe("DB_DUPLICATE_READ_COLUMN");
   });
 
   it("refuses a limit that is not a whole number of zero or more", async () => {
     const database = await seeded();
-    for (const limit of [1.5, -1, Number.NaN]) {
+    for (const limit of [1.5, -1, Number.NaN, 1e20]) {
       expect(codeOf(() => database.readRecords("Customer", { limit }))).toBe(
         "DB_INVALID_LIMIT",
       );
