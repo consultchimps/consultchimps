@@ -34,8 +34,14 @@
 import "tabulator-tables/dist/css/tabulator.min.css";
 
 import { describeFailure, sectionClass } from "@/components/tool-kit";
-import type { WorkspaceColumn, WorkspaceTable } from "@/lib/workspace-protocol";
+import {
+  WORKSPACE_STALE_READ,
+  type WorkspaceColumn,
+  type WorkspaceTable,
+  type WorkspaceTables,
+} from "@/lib/workspace-protocol";
 import type { WorkspaceClient } from "@/lib/workspace-worker";
+import { isConsultChimpsError } from "@consultchimps/core";
 import { RECORD_ID_COLUMN } from "@consultchimps/db";
 import type { CellValue, TableRow } from "@consultchimps/tabular";
 import { Table2 } from "lucide-react";
@@ -43,6 +49,8 @@ import { useEffect, useId, useRef, useState } from "react";
 import type {
   CellComponent,
   ColumnDefinition,
+  Formatter,
+  ListEditorParams,
   RowComponent,
   Tabulator,
 } from "tabulator-tables";
@@ -54,6 +62,28 @@ function textElement(text: string): HTMLElement {
   return element;
 }
 
+/**
+ * A column title, rendered as text.
+ *
+ * Tabulator writes a plain `title` into the header with `innerHTML`, and a
+ * column name is workspace data: the schema accepts any identifier without a
+ * control character or a double quote, angle brackets included. A title
+ * formatter is handed the title as its cell value, so returning a node shows
+ * the name as the name it is.
+ */
+const titleElement: Formatter = (cell) =>
+  textElement(String(cell.getValue() ?? ""));
+
+/**
+ * A foreign-key option label, rendered as text, for the same reason: Tabulator
+ * writes a plain label into the list with `innerHTML`, and a label is built
+ * from the referenced record's own text. The published types say the formatter
+ * returns a string; Tabulator appends an `HTMLElement` when it is given one,
+ * which is the only way to keep a label literal.
+ */
+const labelElement = ((label: string) =>
+  textElement(label)) as unknown as ListEditorParams["itemFormatter"];
+
 /** How a value reads in a cell when nothing prettier applies. */
 function asText(value: CellValue | undefined): string {
   return value === null || value === undefined ? "" : String(value);
@@ -62,12 +92,22 @@ function asText(value: CellValue | undefined): string {
 /**
  * The editor a column gets. Each is Tabulator's own: the point is to hand the
  * visitor an input that suits the column, not to police what they put in it.
+ *
+ * `editable` is asked on every attempt to open an editor, so the page can lock
+ * the grid while a workspace command is in flight without the grid being
+ * rebuilt. That is a lifecycle question, not a validity one: what a cell may
+ * hold is still the library's answer alone.
  */
-function gridColumn(column: WorkspaceColumn): ColumnDefinition {
+function gridColumn(
+  column: WorkspaceColumn,
+  editable: () => boolean,
+): ColumnDefinition {
   const base: ColumnDefinition = {
     title: column.name,
+    titleFormatter: titleElement,
     field: column.name,
     minWidth: 120,
+    editable,
   };
 
   // A foreign key stores the referenced Record ID and shows a readable label.
@@ -92,6 +132,7 @@ function gridColumn(column: WorkspaceColumn): ColumnDefinition {
         // this editor's.
         freetext: column.referencesTruncated,
         placeholderEmpty: "No matching record",
+        itemFormatter: labelElement,
       },
       formatter: (cell: CellComponent) => {
         const value = cell.getValue() as CellValue | undefined;
@@ -122,27 +163,37 @@ function gridColumn(column: WorkspaceColumn): ColumnDefinition {
   }
 }
 
-function gridColumns(table: WorkspaceTable): ColumnDefinition[] {
+function gridColumns(
+  table: WorkspaceTable,
+  editable: () => boolean,
+): ColumnDefinition[] {
   return [
     {
       title: "Record ID",
+      titleFormatter: titleElement,
       field: RECORD_ID_COLUMN,
       headerTooltip:
         "Assigned once when the record is created, and never changes",
       width: 150,
     },
-    ...table.columns.map(gridColumn),
+    ...table.columns.map((column) => gridColumn(column, editable)),
   ];
 }
 
 export interface WorkspaceGridProps {
-  /** The client that owns the workspace database. */
   /**
    * Hands back the client that owns the workspace database. It is a function
    * rather than the client itself because the page holds it in a ref, and a ref
    * is only safe to read where this component reads it: inside an effect.
    */
   readonly getClient: () => WorkspaceClient;
+  /**
+   * Whether the page is in the middle of a workspace command (new, open, or
+   * save). While it is, the grid refuses to open an editor and cancels one that
+   * is open, so a visitor is never invited to make an edit that the worker would
+   * refuse, and no edit can slip in between a save's snapshot and its notice.
+   */
+  readonly locked: boolean;
   /** Where a refusal is shown. Called with null once an edit succeeds. */
   readonly onError: (message: string | null) => void;
 }
@@ -159,13 +210,24 @@ interface LoadedTable {
  * Every piece of state here belongs to one database, so a new one gets a new
  * component rather than a reset path that has to remember each field.
  */
-export function WorkspaceGrid({ getClient, onError }: WorkspaceGridProps) {
+export function WorkspaceGrid({
+  getClient,
+  locked,
+  onError,
+}: WorkspaceGridProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // Read by Tabulator's editable callback whenever an editor is about to open,
+  // so the lock takes effect without rebuilding the grid.
+  const lockedRef = useRef(locked);
+  // The cell whose editor is open, so the lock can close it.
+  const editingRef = useRef<CellComponent | null>(null);
   const selectId = useId();
 
-  const [tables, setTables] = useState<readonly string[] | null>(null);
+  const [workspace, setWorkspace] = useState<WorkspaceTables | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<LoadedTable | null>(null);
+
+  const tables = workspace?.tables ?? null;
 
   // Which tables the workspace holds. Read once: this component belongs to one
   // database, and no path in this page adds or drops a table.
@@ -173,18 +235,18 @@ export function WorkspaceGrid({ getClient, onError }: WorkspaceGridProps) {
     let cancelled = false;
     void getClient()
       .listTables()
-      .then((names) => {
+      .then((listing) => {
         if (cancelled) {
           return;
         }
-        setTables(names);
-        setSelected(names[0] ?? null);
+        setWorkspace(listing);
+        setSelected(listing.tables[0] ?? null);
       })
       .catch((caught: unknown) => {
         if (cancelled) {
           return;
         }
-        setTables([]);
+        setWorkspace({ generation: 0, tables: [] });
         onError(describeFailure(caught));
       });
     return () => {
@@ -196,12 +258,13 @@ export function WorkspaceGrid({ getClient, onError }: WorkspaceGridProps) {
   // for, so one that arrives after the visitor switched away is recognised as
   // stale below rather than rendered under the wrong heading.
   useEffect(() => {
-    if (selected === null) {
+    if (workspace === null || selected === null) {
       return;
     }
+    const generation = workspace.generation;
     let cancelled = false;
     void getClient()
-      .readTable(selected)
+      .readTable(selected, generation)
       .then((table) => {
         if (!cancelled) {
           setLoaded({ table: selected, data: table });
@@ -212,12 +275,32 @@ export function WorkspaceGrid({ getClient, onError }: WorkspaceGridProps) {
           return;
         }
         setLoaded({ table: selected, data: null });
+        // A read refused because the workspace was replaced is not something to
+        // report: the page has already opened another one, and this component is
+        // being replaced along with it. Anything else is a real failure.
+        if (
+          isConsultChimpsError(caught) &&
+          caught.code === WORKSPACE_STALE_READ
+        ) {
+          return;
+        }
         onError(describeFailure(caught));
       });
     return () => {
       cancelled = true;
     };
-  }, [getClient, onError, selected]);
+  }, [getClient, onError, selected, workspace]);
+
+  // The lock is a ref so the grid does not have to be rebuilt to honour it, and
+  // an effect so an editor already open is closed rather than left to commit
+  // after the page has taken its snapshot.
+  useEffect(() => {
+    lockedRef.current = locked;
+    if (locked) {
+      editingRef.current?.cancelEdit();
+      editingRef.current = null;
+    }
+  }, [locked]);
 
   // Derived rather than stored, so switching tables needs no state reset: the
   // grid shows a table only while it is the selected one, and is reading until
@@ -234,7 +317,7 @@ export function WorkspaceGrid({ getClient, onError }: WorkspaceGridProps) {
       return;
     }
 
-    const workspace = getClient();
+    const client = getClient();
     let instance: Tabulator | null = null;
     let destroyed = false;
 
@@ -253,11 +336,39 @@ export function WorkspaceGrid({ getClient, onError }: WorkspaceGridProps) {
     // anything written while this is raised.
     let applying = 0;
 
+    // Put a cell back to the last value the database confirmed. A record with
+    // no baseline is left alone rather than blanked, so a missing entry could
+    // never turn a refusal into data loss.
+    const restore = (cell: CellComponent, recordId: string): void => {
+      const row = committed.get(recordId);
+      if (row === undefined) {
+        return;
+      }
+      applying += 1;
+      try {
+        cell.setValue(row[cell.getField()] ?? null);
+      } finally {
+        applying -= 1;
+      }
+    };
+
     const persist = (cell: CellComponent): void => {
       if (applying > 0) {
         return;
       }
       const recordId = String(cell.getRow().getIndex());
+      // The lock closes an open editor, and the editable callback stops a new
+      // one opening, so reaching here while locked takes an edit committed in
+      // the same instant the page became busy. Refuse it: written now it would
+      // land after a save has taken its snapshot, and the file would not hold
+      // what the grid shows.
+      if (lockedRef.current) {
+        restore(cell, recordId);
+        onError(
+          "That edit was not made because the workspace was busy. Make it again now the workspace is ready",
+        );
+        return;
+      }
       const column = cell.getField();
       // A separator no identifier can hold, so two cells cannot share a key.
       const key = `${recordId}\u0000${column}`;
@@ -271,8 +382,17 @@ export function WorkspaceGrid({ getClient, onError }: WorkspaceGridProps) {
       const raw = cell.getValue() as CellValue | undefined;
       const value: CellValue = raw === "" || raw === undefined ? null : raw;
 
-      void workspace
-        .updateCell({ table: data.name, recordId, column, value })
+      void client
+        .updateCell({
+          // The workspace these rows came from. The worker refuses the edit if
+          // that is no longer the workspace it holds, rather than applying it to
+          // whichever record in the new one happens to carry this Record ID.
+          generation: data.generation,
+          table: data.name,
+          recordId,
+          column,
+          value,
+        })
         .then((stored) => {
           const row = committed.get(recordId);
           if (row !== undefined) {
@@ -289,19 +409,8 @@ export function WorkspaceGrid({ getClient, onError }: WorkspaceGridProps) {
           }
           latest.delete(key);
           // One path for both outcomes: the cell is set to what the database
-          // holds, which a success has just updated and a refusal has not. A
-          // record with no baseline is left alone rather than blanked, so a
-          // missing entry could never turn a refusal into data loss.
-          const row = committed.get(recordId);
-          if (row === undefined) {
-            return;
-          }
-          applying += 1;
-          try {
-            cell.setValue(row[column] ?? null);
-          } finally {
-            applying -= 1;
-          }
+          // holds, which a success has just updated and a refusal has not.
+          restore(cell, recordId);
         });
     };
 
@@ -314,7 +423,13 @@ export function WorkspaceGrid({ getClient, onError }: WorkspaceGridProps) {
         // Copies, because Tabulator writes into the row objects it is given and
         // these are the baseline a refused edit reverts to.
         data: data.rows.map((row) => ({ ...row })),
-        columns: gridColumns(data),
+        columns: gridColumns(data, () => !lockedRef.current),
+        // A field is a column name and nothing else. Tabulator otherwise reads
+        // a dot in a field as a path into nested data, so a legal column such
+        // as "billing.address" would render blank and its edits would go to a
+        // property nobody asked for. The schema accepts the dot, so the grid
+        // has to address it literally.
+        nestedFieldSeparator: false,
         // Rows are keyed by Record ID, so getRow and every edit address a
         // record rather than a position in an array.
         index: RECORD_ID_COLUMN,
@@ -336,10 +451,22 @@ export function WorkspaceGrid({ getClient, onError }: WorkspaceGridProps) {
       // Registered after construction because a cell edit is a table event in
       // Tabulator 6, not a table option.
       instance.on("cellEdited", persist);
+      // Which cell is being edited, so the lock can close an editor that is
+      // already open rather than let it commit after the page has moved on.
+      instance.on("cellEditing", (cell: CellComponent) => {
+        editingRef.current = cell;
+      });
+      instance.on("cellEdited", () => {
+        editingRef.current = null;
+      });
+      instance.on("cellEditCancelled", () => {
+        editingRef.current = null;
+      });
     })();
 
     return () => {
       destroyed = true;
+      editingRef.current = null;
       instance?.destroy();
     };
   }, [data, getClient, onError]);
@@ -363,6 +490,7 @@ export function WorkspaceGrid({ getClient, onError }: WorkspaceGridProps) {
             <select
               className="rounded-lg border bg-fd-card px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-fd-ring"
               data-testid="workspace-table-select"
+              disabled={locked}
               id={selectId}
               onChange={(event) => setSelected(event.target.value)}
               value={selected ?? ""}

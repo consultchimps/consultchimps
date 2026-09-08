@@ -23,11 +23,13 @@ import type {
   WorkspaceEvent,
   WorkspaceSummary,
   WorkspaceTable,
+  WorkspaceTables,
 } from "./workspace-protocol";
 
 /**
- * One cell edit: which record, which column, and the new value. It is the
- * update command without its wire fields, so the two cannot drift apart.
+ * One cell edit: which workspace, which record, which column, and the new
+ * value. It is the update command without its wire fields, so the two cannot
+ * drift apart.
  */
 export type WorkspaceCellEdit = Omit<UpdateWorkspaceCellCommand, "type" | "id">;
 
@@ -91,18 +93,30 @@ export class WorkspaceClient {
    * flight cannot swap the database underneath it.
    * --------------------------------------------------------------------- */
 
-  /** Name the tables the held workspace contains, ordered by name. */
-  async listTables(): Promise<readonly string[]> {
+  /**
+   * Name the tables the held workspace contains, ordered by name, along with
+   * the generation every later read and write must quote back.
+   */
+  async listTables(): Promise<WorkspaceTables> {
     const event = await this.#run((id) => ({ type: "listTables", id }));
     if (event.type !== "tables") {
       throw this.#unexpected(event);
     }
-    return event.tables;
+    return { generation: event.generation, tables: event.tables };
   }
 
-  /** Read one table's columns and every row it holds. */
-  async readTable(name: string): Promise<WorkspaceTable> {
-    const event = await this.#run((id) => ({ type: "readTable", id, name }));
+  /**
+   * Read one table's columns and every row it holds, from the workspace
+   * `generation` names. Rejects with `WORKSPACE_STALE_READ` once that workspace
+   * has been replaced or closed.
+   */
+  async readTable(name: string, generation: number): Promise<WorkspaceTable> {
+    const event = await this.#run((id) => ({
+      type: "readTable",
+      id,
+      name,
+      generation,
+    }));
     if (event.type !== "table") {
       throw this.#unexpected(event);
     }
@@ -112,12 +126,15 @@ export class WorkspaceClient {
   /**
    * Write one cell. Resolves with the value the database now holds, which is
    * not always the value that was sent, and rejects when the database refuses
-   * it, so the caller can show the stored value or put the cell back.
+   * it, so the caller can show the stored value or put the cell back. An edit
+   * naming a workspace that is no longer held is refused with
+   * `WORKSPACE_STALE_EDIT` rather than applied to the one that replaced it.
    */
   async updateCell(edit: WorkspaceCellEdit): Promise<CellValue> {
     const event = await this.#run((id) => ({
       type: "updateCell",
       id,
+      generation: edit.generation,
       table: edit.table,
       recordId: edit.recordId,
       column: edit.column,

@@ -38,29 +38,34 @@ const customer: TableSchema = {
     { name: "region", type: "text" },
     { name: "headcount", type: "integer" },
     { name: "active", type: "boolean" },
+    // A legal column name with a dot in it. The schema accepts it, so the grid
+    // has to address it literally rather than as a path into nested data.
+    { name: "billing.address", type: "text" },
   ],
   foreignKeys: [{ column: "region", referencesTable: "Region" }],
   recordId: { prefix: "CUST", padding: 4 },
 };
 
 /** Two related tables with a few neutral records, as saved workspace bytes. */
-async function workspaceFixture(): Promise<Buffer> {
+async function workspaceFixture(customerName = "Acme"): Promise<Buffer> {
   const database = await Database.create();
   database.createTable(region);
   database.createTable(customer);
   database.insertRecord("Region", { name: "North" });
   database.insertRecord("Region", { name: "South" });
   database.insertRecord("Customer", {
-    name: "Acme",
+    name: customerName,
     region: "REG-0001",
     headcount: 12,
     active: true,
+    "billing.address": "1 North Street",
   });
   database.insertRecord("Customer", {
     name: "Globex",
     region: "REG-0002",
     headcount: 7,
     active: false,
+    "billing.address": "2 South Street",
   });
   const bytes = Buffer.from(database.serialize());
   database.close();
@@ -87,22 +92,34 @@ function cellOf(page: Page, recordId: string, field: string): Locator {
 }
 
 /**
- * Open a cell's editor and hand back its input.
+ * Do something to a cell, from the click that opens its editor through to the
+ * keystroke that commits, retrying the whole interaction rather than any one
+ * step of it.
  *
- * The click is retried rather than made once. Tabulator renders rows into the
- * DOM as they are needed and re-lays the columns out after the first paint, so
- * a click can land on a cell element that is being replaced, which opens no
- * editor and reports no error. Retrying until the editor is up tests what a
- * visitor experiences (clicking a cell edits it) without pinning the test to
- * the grid's internal render timing.
+ * Tabulator renders rows into the DOM as they are needed and re-lays its
+ * columns out when the table is resized, which moves the element under a click
+ * and closes an editor that happens to be open. That is the grid's own render
+ * timing, not behaviour worth asserting, and a test that pins itself to one
+ * uninterrupted interaction is testing the timing instead of the feature.
+ *
+ * Every step therefore carries a short timeout of its own, so an action that
+ * catches the grid mid-layout gives up quickly and the whole interaction is
+ * tried again, rather than one waiting action holding the test open until it
+ * times out. Every `interaction` must be safe to repeat: typing the same value
+ * twice commits once, because the second attempt changes nothing.
  */
-async function openEditor(cell: Locator): Promise<Locator> {
+const STEP_TIMEOUT = 2_000;
+
+async function editCell(
+  cell: Locator,
+  interaction: (input: Locator) => Promise<void>,
+): Promise<void> {
   const input = cell.locator("input");
   await expect(async () => {
-    await cell.click();
-    await expect(input).toBeVisible({ timeout: 1000 });
-  }).toPass({ timeout: 20_000 });
-  return input;
+    await cell.click({ timeout: STEP_TIMEOUT });
+    await expect(input).toBeVisible({ timeout: STEP_TIMEOUT });
+    await interaction(input);
+  }).toPass({ timeout: 30_000 });
 }
 
 /** Type into a cell and commit with Enter, the way a visitor would. */
@@ -112,9 +129,10 @@ async function typeInCell(
   field: string,
   value: string,
 ): Promise<void> {
-  const input = await openEditor(cellOf(page, recordId, field));
-  await input.fill(value);
-  await input.press("Enter");
+  await editCell(cellOf(page, recordId, field), async (input) => {
+    await input.fill(value, { timeout: STEP_TIMEOUT });
+    await input.press("Enter", { timeout: STEP_TIMEOUT });
+  });
 }
 
 async function downloadedWorkspace(page: Page): Promise<Buffer> {
@@ -149,6 +167,54 @@ test.describe("/workspace record grid", () => {
     await expect(cellOf(page, "CUST-0001", "name")).toHaveCount(0);
   });
 
+  test("addresses a column name with a dot in it literally", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await openWorkspace(page, await workspaceFixture());
+
+    // Tabulator reads a dot in a field as a path into nested data unless it is
+    // told otherwise, which would render this column blank and send its edits
+    // to a property nobody asked for. The schema accepts the name, so the grid
+    // has to show and write it as the column it is.
+    await expect(cellOf(page, "CUST-0001", "billing.address")).toHaveText(
+      "1 North Street",
+    );
+
+    await typeInCell(page, "CUST-0001", "billing.address", "9 East Street");
+    await expect(cellOf(page, "CUST-0001", "billing.address")).toHaveText(
+      "9 East Street",
+    );
+    await expect(cellOf(page, "CUST-0002", "billing.address")).toHaveText(
+      "2 South Street",
+    );
+
+    const saved = await downloadedWorkspace(page);
+    await openWorkspace(page, saved);
+    await expect(cellOf(page, "CUST-0001", "billing.address")).toHaveText(
+      "9 East Street",
+    );
+  });
+
+  test("replaces the grid when another workspace is opened", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await openWorkspace(page, await workspaceFixture("Acme"));
+    await typeInCell(page, "CUST-0001", "headcount", "15");
+    await expect(cellOf(page, "CUST-0001", "headcount")).toHaveText("15");
+
+    // A second workspace holds the same table and the same Record IDs, which is
+    // exactly why an edit is bound to the workspace it was made in. The grid is
+    // replaced with the new one, and nothing from the first survives in it.
+    await openWorkspace(page, await workspaceFixture("Globex"));
+    await expect(cellOf(page, "CUST-0001", "name")).toHaveText("Globex");
+    await expect(cellOf(page, "CUST-0001", "headcount")).toHaveText("12");
+    await expect(page.getByTestId("workspace-error")).toHaveCount(0);
+  });
+
   test("never offers an editor for the Record ID", async ({ page }) => {
     await forceDownloadFallback(page);
     await page.goto("/workspace");
@@ -161,11 +227,12 @@ test.describe("/workspace record grid", () => {
 
     // Tab from an editable cell lands on the next editable one, never on a
     // Record ID.
-    await openEditor(cellOf(page, "CUST-0001", "name"));
-    await page.keyboard.press("Tab");
-    await expect(
-      cellOf(page, "CUST-0001", "region").locator("input"),
-    ).toBeVisible();
+    await editCell(cellOf(page, "CUST-0001", "name"), async () => {
+      await page.keyboard.press("Tab");
+      await expect(
+        cellOf(page, "CUST-0001", "region").locator("input"),
+      ).toBeVisible({ timeout: STEP_TIMEOUT });
+    });
   });
 
   test("persists cell edits into the saved workspace", async ({ page }) => {
@@ -180,10 +247,11 @@ test.describe("/workspace record grid", () => {
     await expect(cellOf(page, "CUST-0001", "headcount")).toHaveText("15");
 
     // The foreign-key picker shows labels and stores the Record ID behind them.
-    await openEditor(cellOf(page, "CUST-0001", "region"));
-    await page
-      .locator(".tabulator-edit-list-item", { hasText: "South (REG-0002)" })
-      .click();
+    await editCell(cellOf(page, "CUST-0001", "region"), async () => {
+      await page
+        .locator(".tabulator-edit-list-item", { hasText: "South (REG-0002)" })
+        .click({ timeout: STEP_TIMEOUT });
+    });
     await expect(cellOf(page, "CUST-0001", "region")).toHaveText(
       "South (REG-0002)",
     );

@@ -20,6 +20,7 @@ import { ConsultChimpsError, isConsultChimpsError } from "@consultchimps/core";
 import type { CellValue } from "@consultchimps/tabular";
 
 import { basePath } from "@/lib/shared";
+import { WorkspaceGenerations } from "@/lib/workspace-generation";
 import {
   WORKSPACE_REFERENCE_LIMIT,
   type WorkspaceColumn,
@@ -51,6 +52,14 @@ const engineConfig = {
 /** The one workspace this worker owns, or null before the first create or open. */
 let database: Database | null = null;
 
+/**
+ * Which database that is. Every grid read and write names the workspace it
+ * belongs to and is checked against this, so a command posted before a create,
+ * open, or close and delivered after it is refused rather than applied to the
+ * database that took its place. See `lib/workspace-generation.ts`.
+ */
+const generations = new WorkspaceGenerations();
+
 function summarize(current: Database): WorkspaceSummary {
   return {
     tableCount: current.getSchema().length,
@@ -66,6 +75,7 @@ function replaceDatabase(next: Database): void {
     database.close();
   }
   database = next;
+  generations.replaced();
 }
 
 function reportError(id: number, error: unknown): void {
@@ -115,6 +125,9 @@ function handleClose(id: number): void {
     database.close();
     database = null;
   }
+  // Releasing the workspace makes everything read from it stale too, so the
+  // counter moves here as well as on a replacement.
+  generations.replaced();
   scope.postMessage({ type: "closed", id });
 }
 
@@ -143,6 +156,9 @@ function handleListTables(id: number): void {
   scope.postMessage({
     type: "tables",
     id,
+    // Handed out so every later read and write can name the workspace it came
+    // from, and be refused once that workspace is gone.
+    generation: generations.current,
     tables: current.getSchema().map((schema) => schema.name),
   });
 }
@@ -190,7 +206,8 @@ function referenceOptions(
   return { references, truncated: rows.length > references.length };
 }
 
-function handleReadTable(id: number, name: string): void {
+function handleReadTable(id: number, name: string, generation: number): void {
+  generations.assertCurrent(generation, "read");
   const current = requireDatabase();
   const schema = current.getTableSchema(name);
   const referencedBy = new Map(
@@ -232,6 +249,7 @@ function handleReadTable(id: number, name: string): void {
   });
 
   const table: WorkspaceTable = {
+    generation: generations.current,
     name: schema.name,
     columns,
     rows: current.readRecords(schema.name),
@@ -241,11 +259,17 @@ function handleReadTable(id: number, name: string): void {
 
 function handleUpdateCell(
   id: number,
+  generation: number,
   table: string,
   recordId: string,
   column: string,
   value: CellValue,
 ): void {
+  // Before anything else: an edit made in a workspace that has since been
+  // replaced names a table and a Record ID that mean something different here,
+  // and the Record ID very likely exists in this database too. Refuse it rather
+  // than write it to whatever record happens to match.
+  generations.assertCurrent(generation, "edit");
   const current = requireDatabase();
   const updated = current.updateRecord(table, recordId, { [column]: value });
   // Read the stored value back under the column name the schema declared, which
@@ -267,10 +291,11 @@ async function dispatch(command: WorkspaceCommand): Promise<void> {
     case "listTables":
       return handleListTables(command.id);
     case "readTable":
-      return handleReadTable(command.id, command.name);
+      return handleReadTable(command.id, command.name, command.generation);
     case "updateCell":
       return handleUpdateCell(
         command.id,
+        command.generation,
         command.table,
         command.recordId,
         command.column,

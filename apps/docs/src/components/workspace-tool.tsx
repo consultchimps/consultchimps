@@ -460,7 +460,12 @@ export function WorkspaceTool() {
       )}
 
       {hasWorkspace ? (
-        <WorkspaceGrid getClient={client} key={generation} onError={setError} />
+        <WorkspaceGrid
+          getClient={client}
+          key={generation}
+          locked={isBusy}
+          onError={setError}
+        />
       ) : null}
 
       {notice ? (

@@ -146,6 +146,24 @@ export type WorkspaceEvent =
  */
 export const WORKSPACE_REFERENCE_LIMIT = 500;
 
+/**
+ * Raised when a command names a workspace the worker no longer holds.
+ *
+ * The rows a grid shows came from one database. Creating, opening, or closing a
+ * workspace replaces that database, and the commands already in the queue do not
+ * know it: a cell edit posted after an open would otherwise be applied to the
+ * new database, against a table and Record ID that mean something else there, or
+ * to a record that happens to carry the same Record ID. Every read and write
+ * therefore names the workspace it belongs to, and the worker refuses the ones
+ * that do not match instead of applying them somewhere they were never meant to
+ * go. The page disables editing while it is busy, which is why a visitor should
+ * never meet this; the check is what makes that true rather than likely.
+ */
+export const WORKSPACE_STALE_EDIT = "WORKSPACE_STALE_EDIT";
+
+/** The read equivalent: the rows asked for belong to a replaced workspace. */
+export const WORKSPACE_STALE_READ = "WORKSPACE_STALE_READ";
+
 /** One option a foreign-key column offers: what is stored, and what is shown. */
 export interface WorkspaceReference {
   /** The referenced Record ID, which is the value the cell stores. */
@@ -169,8 +187,18 @@ export interface WorkspaceColumn {
   readonly referencesTruncated: boolean;
 }
 
+/** The tables one workspace holds, named against the workspace they came from. */
+export interface WorkspaceTables {
+  /** Which database this listing describes. See `WORKSPACE_STALE_EDIT`. */
+  readonly generation: number;
+  /** The table names, ordered by name. */
+  readonly tables: readonly string[];
+}
+
 /** One table of the workspace: its columns and all of its rows. */
 export interface WorkspaceTable {
+  /** Which database these rows came from. See `WORKSPACE_STALE_EDIT`. */
+  readonly generation: number;
   /** The table name as the schema declares it, not as it was asked for. */
   readonly name: string;
   /** The user columns, in schema order. The Record ID is not among them. */
@@ -188,21 +216,24 @@ export interface ListWorkspaceTablesCommand {
   readonly id: number;
 }
 
-/** Read one table's columns and rows. */
+/** Read one table's columns and rows, from the workspace `generation` names. */
 export interface ReadWorkspaceTableCommand {
   readonly type: "readTable";
   readonly id: number;
   readonly name: string;
+  readonly generation: number;
 }
 
 /**
  * Write one cell, found by its Record ID rather than by any position, so a
  * sorted, filtered, or concurrently reloaded grid can never write to the wrong
- * record.
+ * record, and named against the workspace the row was read from, so a replaced
+ * database can never be written to by an edit meant for the previous one.
  */
 export interface UpdateWorkspaceCellCommand {
   readonly type: "updateCell";
   readonly id: number;
+  readonly generation: number;
   readonly table: string;
   readonly recordId: string;
   readonly column: string;
@@ -213,6 +244,7 @@ export interface UpdateWorkspaceCellCommand {
 export interface WorkspaceTablesEvent {
   readonly type: "tables";
   readonly id: number;
+  readonly generation: number;
   readonly tables: readonly string[];
 }
 
