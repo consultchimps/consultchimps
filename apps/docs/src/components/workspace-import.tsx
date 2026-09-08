@@ -29,6 +29,7 @@ import type {
   ImportTableChoice,
   WorkspaceSummary,
 } from "@/lib/workspace-protocol";
+import type { WorkspaceBusy } from "@/components/workspace-tool";
 import type { WorkspaceClient } from "@/lib/workspace-worker";
 import { identifierKey, MAX_RECORD_ID_PADDING } from "@consultchimps/db/schema";
 import { FileUp, LoaderCircle, Upload, X } from "lucide-react";
@@ -52,8 +53,6 @@ interface SourceChoice {
   /** Held as text so the field can be emptied while it is being retyped. */
   recordIdPadding: string;
 }
-
-type Busy = "reading" | "importing" | null;
 
 function initialChoices(
   sources: readonly ImportSourceDescription[],
@@ -117,26 +116,34 @@ function formProblem(
 }
 
 export interface WorkspaceImportProps {
+  /**
+   * The page's one busy state, read rather than kept here. Reading a file and
+   * running an import are page-wide commands like a save, so they belong in the
+   * shell's busy state: while either runs, New, Open, and Save are held back
+   * with the rest of the page, and a click on New cannot queue itself behind an
+   * import and discard what the import created.
+   */
+  readonly busy: WorkspaceBusy;
   /** The worker client, created lazily by the page that owns it. */
   readonly client: () => WorkspaceClient;
-  /** True while the page is running another command. */
-  readonly disabled: boolean;
   /** The tables the workspace already holds, so a clash is caught early. */
   readonly existingTableNames: readonly string[];
+  /** Reports this section's commands into the page's busy state. */
+  readonly onBusy: (busy: WorkspaceBusy) => void;
   /** Hands the page the workspace as it stands after a successful import. */
   readonly onImported: (summary: WorkspaceSummary, notice: string) => void;
 }
 
 export function WorkspaceImport({
+  busy,
   client,
-  disabled,
   existingTableNames,
+  onBusy,
   onImported,
 }: WorkspaceImportProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [file, setFile] = useState<ChosenFile | null>(null);
   const [choices, setChoices] = useState<SourceChoice[]>([]);
-  const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
 
   const reset = useCallback(() => {
@@ -148,7 +155,7 @@ export function WorkspaceImport({
   const onFiles = useCallback(
     (files: readonly File[]) => {
       void (async () => {
-        setBusy("reading");
+        onBusy("reading");
         setError(null);
         try {
           const [first] = await readUploads(
@@ -171,11 +178,11 @@ export function WorkspaceImport({
           setChoices([]);
           setError(describeFailure(caught));
         } finally {
-          setBusy(null);
+          onBusy(null);
         }
       })();
     },
-    [client],
+    [client, onBusy],
   );
 
   const update = useCallback((index: number, change: Partial<SourceChoice>) => {
@@ -205,7 +212,7 @@ export function WorkspaceImport({
         });
       });
 
-      setBusy("importing");
+      onBusy("importing");
       setError(null);
       try {
         const result = await client().importFile(file.name, file.bytes, tables);
@@ -234,14 +241,14 @@ export function WorkspaceImport({
       } catch (caught) {
         setError(describeFailure(caught));
       } finally {
-        setBusy(null);
+        onBusy(null);
       }
     })();
-  }, [choices, client, file, onImported, reset]);
+  }, [choices, client, file, onBusy, onImported, reset]);
 
   const problem =
     file === null ? null : formProblem(choices, existingTableNames);
-  const isBusy = busy !== null || disabled;
+  const isBusy = busy !== null;
 
   return (
     <section className={sectionClass} data-testid="workspace-import">
@@ -407,7 +414,7 @@ export function WorkspaceImport({
             <button
               className={secondaryButtonClass}
               data-testid="workspace-import-cancel"
-              disabled={busy !== null}
+              disabled={isBusy}
               onClick={reset}
               type="button"
             >

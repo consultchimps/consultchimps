@@ -7,6 +7,8 @@ import {
   assertRecordIdConfig,
   assertSafeIdentifier,
   identifierKey,
+  truncateIdentifier,
+  MAX_IDENTIFIER_LENGTH,
   RECORD_ID_COLUMN,
   type ColumnDefinition,
   type ColumnType,
@@ -403,6 +405,9 @@ export function inferColumnTypes(table: Table): InferredColumn[] {
   });
 }
 
+/** Put in front of a cleaned name the schema would otherwise refuse. */
+const FALLBACK_TABLE_PREFIX = "table_";
+
 /**
  * A safe table name derived from a worksheet or file name, as a starting point
  * a person can edit. Letters and digits in any script are kept, every other run
@@ -416,11 +421,17 @@ export function suggestTableName(source: string): string {
   // run, which is quadratic on a name that ends in something else. This is the
   // same shape, and the same fix, as `normalizedColumnKey` in
   // `@consultchimps/tabular`.
-  const cleaned = source
-    .replace(/[^\p{L}\p{N}]+/gu, "_")
-    .replace(/^_/u, "")
-    .replace(/_$/u, "")
-    .slice(0, 180);
+  //
+  // The budget leaves room for the fallback prefix below, so a name that needs
+  // both shortening and prefixing still fits, and it is spent in the unit the
+  // limit is written in rather than a number picked to be safely under it.
+  const cleaned = truncateIdentifier(
+    source
+      .replace(/[^\p{L}\p{N}]+/gu, "_")
+      .replace(/^_/u, "")
+      .replace(/_$/u, ""),
+    MAX_IDENTIFIER_LENGTH - FALLBACK_TABLE_PREFIX.length,
+  );
   const candidate = cleaned === "" ? "table" : cleaned;
   try {
     assertSafeIdentifier(candidate, "table");
@@ -428,7 +439,7 @@ export function suggestTableName(source: string): string {
   } catch {
     // A reserved prefix ("sqlite_", the package's own) is the only way a
     // cleaned name still fails, and prefixing keeps the original readable.
-    return `table_${candidate}`;
+    return `${FALLBACK_TABLE_PREFIX}${candidate}`;
   }
 }
 

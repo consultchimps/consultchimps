@@ -63,7 +63,10 @@ command when `out/` is missing.
   covers the shell's unsaved-changes guard, because import is the first command
   that can leave a workspace holding work no file has: New and Open ask before
   replacing an imported workspace and leave it untouched until the loss is
-  confirmed, and they ask nothing once it has been saved.
+  confirmed, and they ask nothing once it has been saved. A last test holds the
+  worker's import commands open to check that New, Open, and Save are disabled
+  while a file is being read and while an import runs, and that the page is
+  usable and the workspace dirty once it lands.
 - `tools-navigation.spec.ts`: the `/tools` index, the sub-bar tabs, the
   tool-named "Try ... online" button each guide gains from the tool registry,
   and the single button a guide shared by two operations offers.

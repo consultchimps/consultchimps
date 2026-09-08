@@ -144,7 +144,19 @@ type PendingReplacement = "new" | "open" | null;
  */
 export type MarkWorkspaceChanged = (summary?: WorkspaceSummary) => void;
 
-type Busy = "creating" | "opening" | "saving" | null;
+/**
+ * The one command in flight, or null while the page is idle.
+ *
+ * There is a single busy state for the whole page, not one per section, because
+ * the worker runs one command at a time and every long-running command has the
+ * same consequence: nothing else may start, and in particular nothing may
+ * replace the workspace. A section that runs its own command reports through
+ * `onBusy` rather than keeping a flag of its own, so the shell can always see
+ * that something is in flight. A second notion of busy is exactly how a click
+ * on New lands behind a running import and throws its result away.
+ */
+export type WorkspaceBusy =
+  "creating" | "opening" | "saving" | "reading" | "importing" | null;
 
 export function WorkspaceTool() {
   const clientRef = useRef<WorkspaceClient | null>(null);
@@ -153,7 +165,7 @@ export function WorkspaceTool() {
   const fallbackInputRef = useRef<HTMLInputElement | null>(null);
 
   const [workspace, setWorkspace] = useState<OpenWorkspace | null>(null);
-  const [busy, setBusy] = useState<Busy>(null);
+  const [busy, setBusy] = useState<WorkspaceBusy>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingReplacement>(null);
@@ -690,11 +702,12 @@ export function WorkspaceTool() {
           new workspace summary comes back here. */}
       {hasWorkspace ? (
         <WorkspaceImport
+          busy={busy}
           client={client}
-          disabled={isBusy}
           existingTableNames={workspace.summary.tables.map(
             (table) => table.name,
           )}
+          onBusy={setBusy}
           onImported={onImported}
         />
       ) : null}

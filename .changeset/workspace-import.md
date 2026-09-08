@@ -30,9 +30,14 @@ database exactly as it was.
 
 Also new: `Database.countRecords` counts a table's records in the engine rather
 than by reading its rows, `assertRecordIdConfig` and `MAX_RECORD_ID_PADDING`
-make the Record ID rules callable, and `@consultchimps/db/schema` publishes the
-schema model on its own, with no database engine behind it, so a browser page
-can fold an identifier without downloading WebAssembly to do it.
+make the Record ID rules callable, `MAX_IDENTIFIER_LENGTH` and
+`truncateIdentifier` state the identifier limit and shorten a name to fit it
+without ever cutting a character in half, and `@consultchimps/db/schema`
+publishes the schema model on its own, with no database engine behind it, so a
+browser page can fold an identifier without downloading WebAssembly to do it.
+`assertSafeIdentifier` now also refuses a name that is not well-formed text: an
+incomplete character passed every other check and was stored as U+FFFD, so the
+name in the database was not the name that was asked for.
 
 `@consultchimps/xlsx` gains `readWorkbookTablesBytes`, the byte twin of
 `readWorkbookTables`: every visible worksheet that holds data as a `Table`, with

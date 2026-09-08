@@ -64,6 +64,41 @@ const ORDERS_CSV: UploadFile = {
   ),
 };
 
+/**
+ * Hold the worker's import commands for a while, so the page can be inspected
+ * while one is genuinely in flight.
+ *
+ * A real import of a real file finishes in milliseconds, which is too short to
+ * assert anything about reliably; making the fixture big enough to be slow
+ * would trade a timing assumption for a slower one. Delaying the command on its
+ * way to the worker is the same kind of stand-in as removing the file pickers
+ * above: the page is untouched, and what is being tested is exactly what the
+ * page does while a command has not come back.
+ */
+async function delayWorkerImports(page: Page, ms: number): Promise<void> {
+  await page.addInitScript((delay: number) => {
+    const post = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (
+      this: Worker,
+      message: unknown,
+      transfer?: unknown,
+    ): void {
+      const type = (message as { type?: string } | null)?.type;
+      if (type === "describeImport" || type === "import") {
+        window.setTimeout(() => {
+          (post as (m: unknown, t?: unknown) => void).call(
+            this,
+            message,
+            transfer,
+          );
+        }, delay);
+        return;
+      }
+      (post as (m: unknown, t?: unknown) => void).call(this, message, transfer);
+    } as typeof Worker.prototype.postMessage;
+  }, ms);
+}
+
 function importRow(page: Page, index: number) {
   return page.getByTestId("workspace-import-source").nth(index);
 }
@@ -267,6 +302,46 @@ test.describe("/workspace import", () => {
     await page.getByTestId("workspace-new").click();
     await expect(page.getByTestId("workspace-tables-empty")).toBeVisible();
     await expect(page.getByTestId("workspace-confirm")).toHaveCount(0);
+  });
+
+  test("holds the rest of the page while an import is in flight", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await delayWorkerImports(page, 1200);
+    await page.goto("/workspace");
+    await page.getByTestId("workspace-new").click();
+    await expect(page.getByTestId("workspace-new")).toBeEnabled();
+
+    // Reading the file is a page command too, so the same buttons are held.
+    await page
+      .getByTestId("workspace-import-input")
+      .setInputFiles(await customerWorkbook());
+    await expect(page.getByTestId("workspace-new")).toBeDisabled();
+    await expect(page.getByTestId("workspace-open")).toBeDisabled();
+    await expect(page.getByTestId("workspace-save")).toBeDisabled();
+    await expect(page.getByTestId("workspace-import-form")).toBeVisible();
+    await expect(page.getByTestId("workspace-new")).toBeEnabled();
+
+    // The import itself. Nothing may replace the workspace while it runs: a
+    // click that got through here would land behind the import and discard
+    // the tables it was still creating.
+    await importRow(page, 1).getByTestId("workspace-import-selected").uncheck();
+    await page.getByTestId("workspace-import-run").click();
+    await expect(page.getByTestId("workspace-new")).toBeDisabled();
+    await expect(page.getByTestId("workspace-open")).toBeDisabled();
+    await expect(page.getByTestId("workspace-save")).toBeDisabled();
+    await expect(page.getByTestId("workspace-save-as")).toBeDisabled();
+    await expect(page.getByTestId("workspace-import-run")).toBeDisabled();
+
+    // Once it lands the page is usable again, and the workspace is dirty.
+    await expect(page.getByTestId("workspace-notice")).toHaveText(
+      "Imported 1 table with 2 rows",
+    );
+    await expect(page.getByTestId("workspace-new")).toBeEnabled();
+    await expect(page.getByTestId("workspace-open")).toBeEnabled();
+    await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
+    await expect(page.getByTestId("workspace-table")).toHaveCount(1);
   });
 
   test("reports a file that holds nothing to import", async ({ page }) => {

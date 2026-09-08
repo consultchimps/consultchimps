@@ -78,6 +78,43 @@ export const SCHEMA_FORMAT_VERSION = 1;
 export const DEFAULT_RECORD_ID_SEPARATOR = "-";
 
 /**
+ * The longest a table or column name may be, measured the way JavaScript
+ * measures a string: in UTF-16 code units, so a character outside the basic
+ * plane counts as the two units it occupies. The unit matters, because anything
+ * that shortens a name to fit has to shorten it in the same unit this is
+ * expressed in, which is why `truncateIdentifier` lives beside it.
+ */
+export const MAX_IDENTIFIER_LENGTH = 200;
+
+/**
+ * Shorten text so it fits the identifier limit, cutting only between whole
+ * characters.
+ *
+ * Slicing a string at a code-unit index can land in the middle of a surrogate
+ * pair and leave half a character behind. That half is not text: SQLite stores
+ * it as U+FFFD, so the name that comes back is not the name that went in, and
+ * a suggestion a person accepted turns into something else on the way to the
+ * database. Iterating a string yields whole code points, so the cut can only
+ * fall between characters.
+ */
+export function truncateIdentifier(
+  text: string,
+  limit: number = MAX_IDENTIFIER_LENGTH,
+): string {
+  if (text.length <= limit) {
+    return text;
+  }
+  let result = "";
+  for (const character of text) {
+    if (result.length + character.length > limit) {
+      break;
+    }
+    result += character;
+  }
+  return result;
+}
+
+/**
  * A generous but bounded cap on Record ID zero-padding, so a mistaken
  * configuration cannot drive `String.padStart` into an enormous allocation.
  */
@@ -141,11 +178,23 @@ export function assertSafeIdentifier(
       { details: { role } },
     );
   }
-  if (name.length > 200) {
+  if (name.length > MAX_IDENTIFIER_LENGTH) {
     throw new ConsultChimpsError(
       "DB_INVALID_IDENTIFIER",
-      `The ${role} name "${name}" is too long (limit 200 characters).`,
+      `The ${role} name "${name}" is too long (limit ${MAX_IDENTIFIER_LENGTH} characters).`,
       { details: { role, name } },
+    );
+  }
+  // An identifier has to be text before it can be anything else. A lone
+  // surrogate is half a character: it survives every check below, and SQLite
+  // then stores it as U+FFFD, so the name in the database is not the name that
+  // was asked for. Refusing it here means every caller inherits the rule,
+  // rather than each one having to remember to produce well-formed input.
+  if (!name.isWellFormed()) {
+    throw new ConsultChimpsError(
+      "DB_INVALID_IDENTIFIER",
+      `The ${role} name contains an incomplete character, so it is not valid text. Check the encoding of the file it came from.`,
+      { details: { role } },
     );
   }
   // eslint-disable-next-line no-control-regex -- deliberately rejecting control characters and quotes in identifiers.

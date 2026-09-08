@@ -3,6 +3,7 @@ import type { Table, TableRow } from "@consultchimps/tabular";
 import { describe, expect, it } from "vitest";
 
 import {
+  assertSafeIdentifier,
   Database,
   databaseTableToTable,
   importTable,
@@ -11,6 +12,8 @@ import {
   parseCsvTable,
   suggestRecordIdPrefix,
   suggestTableName,
+  truncateIdentifier,
+  MAX_IDENTIFIER_LENGTH,
 } from "../src/index.js";
 
 /** A one-column table, so an inference rule can be stated as its values. */
@@ -167,6 +170,78 @@ describe("suggestTableName and suggestRecordIdPrefix", () => {
     expect(suggestRecordIdPrefix("Customers")).toBe("CUST");
     expect(suggestRecordIdPrefix("Sales Orders")).toBe("SO");
     expect(suggestRecordIdPrefix("__")).toBe("REC");
+  });
+});
+
+describe("identifiers made of whole characters", () => {
+  // U+10400 DESERET CAPITAL LONG I: one character, two UTF-16 code units, which
+  // is what a slice at a code-unit index can cut in half.
+  const WIDE = "\u{10400}";
+
+  it("never cuts a character in half when it shortens a name", () => {
+    // Long enough that the cut lands exactly where the wide character starts.
+    const budget = MAX_IDENTIFIER_LENGTH - "table_".length;
+    const source = "a".repeat(budget - 1) + WIDE;
+
+    // The defect this pins down: cutting at the same budget by code units
+    // leaves half a character behind, which is not text at all.
+    expect(source.slice(0, budget).isWellFormed()).toBe(false);
+
+    const suggested = suggestTableName(source);
+    expect(suggested.isWellFormed()).toBe(true);
+    expect(suggested.length).toBeLessThanOrEqual(budget);
+    expect(suggested).toBe("a".repeat(budget - 1));
+    expect(() => assertSafeIdentifier(suggested, "table")).not.toThrow();
+  });
+
+  it("shortens a name made only of wide characters to whole ones", () => {
+    const suggested = suggestTableName(WIDE.repeat(300));
+
+    expect(suggested.isWellFormed()).toBe(true);
+    expect(suggested.length).toBeLessThanOrEqual(MAX_IDENTIFIER_LENGTH);
+    expect(() => assertSafeIdentifier(suggested, "table")).not.toThrow();
+  });
+
+  it("truncates at the limit's own unit, whole characters at a time", () => {
+    expect(truncateIdentifier("abcdef", 4)).toBe("abcd");
+    expect(truncateIdentifier(`abc${WIDE}`, 4)).toBe("abc");
+    expect(truncateIdentifier(`abc${WIDE}`, 5)).toBe(`abc${WIDE}`);
+    expect(truncateIdentifier("abc", 10)).toBe("abc");
+  });
+
+  it("refuses an identifier that is not whole text", async () => {
+    // Half a character survives every other check and is stored as U+FFFD, so
+    // the name in the database would not be the name that was asked for.
+    const half = "Custom\uD800er";
+    expect(half.isWellFormed()).toBe(false);
+    expect(await codeOf(() => assertSafeIdentifier(half, "table"))).toBe(
+      "DB_INVALID_IDENTIFIER",
+    );
+    expect(
+      await codeOf(() => assertSafeIdentifier("Region\uDC00", "column")),
+    ).toBe("DB_INVALID_IDENTIFIER");
+    // A whole character outside the basic plane is ordinary text.
+    expect(() => assertSafeIdentifier(`Data${WIDE}`, "table")).not.toThrow();
+  });
+
+  it("refuses a column header that is not whole text, before writing", async () => {
+    const database = await Database.create();
+    expect(
+      await codeOf(() =>
+        importTable(
+          database,
+          { columns: ["Region\uD800"], rows: [] },
+          { name: "Regions", recordId: { prefix: "REG", padding: 4 } },
+        ),
+      ),
+    ).toBe("DB_INVALID_IDENTIFIER");
+    expect(database.getSchema()).toEqual([]);
+    database.close();
+  });
+
+  it("keeps a suggested Record ID prefix to whole characters too", () => {
+    expect(suggestRecordIdPrefix(WIDE.repeat(8)).isWellFormed()).toBe(true);
+    expect(suggestRecordIdPrefix(WIDE.repeat(8))).toBe(WIDE.repeat(4));
   });
 });
 
