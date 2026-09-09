@@ -410,6 +410,130 @@ describe("a value a column will not take", () => {
   });
 });
 
+describe("column names that have to fit", () => {
+  const WIDE = "\u{10400}";
+
+  /**
+   * Import one header row and report the names the table ended up with.
+   *
+   * The headers are the ones a reader hands over, which are already distinct:
+   * both the delimited-text and worksheet readers number a repeated header
+   * before the import sees it. That is where the too-long name comes from in
+   * the first place, since numbering a header already at the limit is what
+   * pushes it past one.
+   */
+  async function columnsFor(headers: string[]): Promise<{
+    names: string[];
+    renamed: ReadonlyArray<{ from: string; to: string }>;
+    rows: TableRow[];
+  }> {
+    expect(new Set(headers).size).toBe(headers.length);
+    const database = await Database.create();
+    const row: TableRow = Object.create(null);
+    headers.forEach((header, index) => {
+      row[header] = `v${index}`;
+    });
+    const imported = importTable(
+      database,
+      { columns: headers, rows: [row] },
+      { name: "Wide", recordId: { prefix: "W", padding: 4 } },
+    );
+    const stored = databaseTableToTable(database, "Wide");
+    database.close();
+    return {
+      names: imported.columns.map((column) => column.name),
+      renamed: imported.renamedColumns,
+      rows: stored.rows,
+    };
+  }
+
+  /** Every name a table was given is one the schema will take. */
+  function expectStorable(names: string[]): void {
+    expect(new Set(names).size).toBe(names.length);
+    for (const name of names) {
+      expect(name.length).toBeLessThanOrEqual(MAX_IDENTIFIER_LENGTH);
+      expect(name.isWellFormed()).toBe(true);
+      expect(() => assertSafeIdentifier(name, "column")).not.toThrow();
+    }
+  }
+
+  it("takes a header the reader already numbered past the limit", async () => {
+    // Two copies of a 200-character header reach the import as the 200 and the
+    // 202 the reader made of them. Checking the limit after the numbering, in
+    // another layer, refused the whole import over a column name nobody can
+    // edit, for a duplicate the import was meant to number for them.
+    const header = "a".repeat(200);
+    const { names, renamed, rows } = await columnsFor([header, `${header}_2`]);
+
+    expectStorable(names);
+    expect(names).toHaveLength(2);
+    // Both values are still there, under the names the result reports.
+    expect(rows[0]?.[names[0] as string]).toBe("v0");
+    expect(rows[0]?.[names[1] as string]).toBe("v1");
+    expect(renamed.map((entry) => entry.from)).toEqual([header, `${header}_2`]);
+  });
+
+  it("numbers headers that differ only past the cut, keeping every value", async () => {
+    const base = "a".repeat(199);
+    const { names, rows } = await columnsFor([`${base}X`, `${base}Y`]);
+
+    expectStorable(names);
+    expect(rows[0]?.[names[0] as string]).toBe("v0");
+    expect(rows[0]?.[names[1] as string]).toBe("v1");
+  });
+
+  it("cuts a header between whole characters when the limit falls inside one", async () => {
+    // The budget lands exactly where the wide character starts, so a cut by
+    // code unit would leave half of it behind.
+    const budget = MAX_IDENTIFIER_LENGTH - "_6".length;
+    const header = "a".repeat(budget - 1) + WIDE;
+    const { names } = await columnsFor([header, `${header}_2`]);
+
+    expectStorable(names);
+  });
+
+  it("keeps twelve long headers inside the limit, with two-digit numbers", async () => {
+    const header = "b".repeat(200);
+    const { names } = await columnsFor([
+      header,
+      ...Array.from(
+        { length: 11 },
+        (_unused, index) => `${header}_${index + 2}`,
+      ),
+    ]);
+
+    expect(names).toHaveLength(12);
+    expectStorable(names);
+  });
+
+  it("never produces a column name the schema would refuse", async () => {
+    // A stand-in for the shapes a real header row takes: at the limit, past it,
+    // differing only past the cut, and a wide character on the boundary. The
+    // cases are enumerated rather than drawn at random, so a failure here fails
+    // the same way twice.
+    const lengths = [1, 2, 190, 197, 198, 199, 200, 201, 250, 300];
+    for (const length of lengths) {
+      for (const filler of ["c", WIDE]) {
+        const base = filler.repeat(length);
+        const { names } = await columnsFor([
+          base,
+          `${base}x`,
+          `${base}_2`,
+          `${base}${WIDE}`,
+        ]);
+        expect(names).toHaveLength(4);
+        expectStorable(names);
+      }
+    }
+  });
+
+  it("leaves a header that already fits exactly as it was", async () => {
+    const { names, renamed } = await columnsFor(["Customer", "Region"]);
+    expect(names).toEqual(["Customer", "Region"]);
+    expect(renamed).toEqual([]);
+  });
+});
+
 describe("identifiers made of whole characters", () => {
   // U+10400 DESERET CAPITAL LONG I: one character, two UTF-16 code units, which
   // is what a slice at a code-unit index can cut in half.

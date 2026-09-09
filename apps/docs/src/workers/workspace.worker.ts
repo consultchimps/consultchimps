@@ -186,6 +186,7 @@ async function handleImport(
       firstRecordId: table.firstRecordId,
       lastRecordId: table.lastRecordId,
       ignoredColumns: table.ignoredColumns,
+      renamedColumns: table.renamedColumns,
     })),
   });
 }

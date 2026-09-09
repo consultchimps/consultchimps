@@ -353,6 +353,17 @@ after a closing quote, an unclosed quoted value, a value no header names), and
 what it tolerates on purpose (a quote that does not start a field, a short row,
 a trailing separator, a blank row).
 
+Column names are derived in the same step that numbers repeated ones, so a name
+is inside the limit by construction. A header longer than a column name may be
+is shortened first, at a whole-character boundary and with room left for the
+number a duplicate may need, and the numbering then runs over names that already
+fit. Headers that differed only past the cut collide and are numbered. No value
+is lost: every column is still stored, and `ImportedTable.renamedColumns`
+reports each header that ended up under a different name, so the change is
+visible rather than silent. Shortening the header and then checking the limit
+would be two steps in two layers, and two copies of a 200-character header would
+fail between them, over a column name nobody can edit.
+
 `importTables` creates several tables in one call, which is what a multi-sheet
 workbook needs. Names, Record ID prefixes, and column names are all checked
 first, and the creation and the rows then run inside a single transaction, so a

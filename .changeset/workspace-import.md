@@ -39,6 +39,14 @@ column that claims a spelling holds it and an empty cell is findable as empty.
 This is a behaviour change: a date column that previously accepted any text now
 accepts only a date.
 
+A column name is derived in the same step that numbers repeated ones, so it is
+inside the identifier limit by construction: a header too long to be a name is
+shortened at a whole-character boundary with room left for the number a
+duplicate may need, and `ImportedTable.renamedColumns` reports every header that
+ended up under a different name. Shortening after numbering, in a different
+layer, refused a whole import when two copies of a 200-character header became a
+name of 202.
+
 Also new: `Database.countRecords` counts a table's records in the engine rather
 than by reading its rows, `assertRecordIdConfig` and `MAX_RECORD_ID_PADDING`
 make the Record ID rules callable, `MAX_IDENTIFIER_LENGTH` and

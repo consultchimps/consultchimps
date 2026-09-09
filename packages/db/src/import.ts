@@ -1,5 +1,10 @@
 import { ConsultChimpsError } from "@consultchimps/core";
-import type { CellValue, Table, TableRow } from "@consultchimps/tabular";
+import {
+  uniqueHeaders,
+  type CellValue,
+  type Table,
+  type TableRow,
+} from "@consultchimps/tabular";
 
 import { insertRecordsFromTable } from "./bridge.js";
 import type { Database } from "./database.js";
@@ -69,41 +74,105 @@ export interface ImportedTable {
    * without it rather than refused.
    */
   readonly ignoredColumns: string[];
+  /**
+   * Columns stored under a different name from the one the file wrote, because
+   * the header was longer than a name may be or collided with another once it
+   * had been shortened. Every value is still there; only the name changed.
+   */
+  readonly renamedColumns: RenamedColumn[];
+}
+
+/** A column of the source, and the name the table carries it under. */
+export interface RenamedColumn {
+  /** The header as the file wrote it. */
+  readonly from: string;
+  /** The name it is stored as, once it had to fit. */
+  readonly to: string;
+}
+
+/** The source table as both inference and storage will see it. */
+interface PreparedTable {
+  readonly table: Table;
+  readonly renamedColumns: RenamedColumn[];
 }
 
 /**
- * Read a table the way both inference and storage will see it.
+ * How much room a name has to leave for the number that may be added to it.
+ *
+ * `uniqueHeaders` numbers a repeated name `_2`, `_3`, and so on, taking the
+ * lowest number free. What blocks a number is a name already taken or one the
+ * header row carries further along, and there is at most one of each per column,
+ * so the number can never pass twice the column count plus two. Room for that
+ * many digits, and the underscore, is what makes the finished name fit by
+ * construction rather than by hoping it does.
+ */
+function suffixHeadroom(columnCount: number): number {
+  return 1 + String(2 * columnCount + 2).length;
+}
+
+/**
+ * Read a table the way both inference and storage will see it: blanks resolved,
+ * and every column under the name it will actually be stored as.
  *
  * A cell holding nothing but whitespace holds nothing. Inference already treats
- * one as blank, so without this the column's type is decided as if the cell
- * were empty while the cell itself is stored as spaces: a value that is neither
- * absent nor present, that `IS NULL` does not find. Making it null here, once,
- * before anything looks at the table, is what keeps the judgement and the
- * storage about the same value.
+ * one as blank, so without this the column's type is decided as if the cell were
+ * empty while the cell itself is stored as spaces: a value that is neither
+ * absent nor present, that `IS NULL` does not find.
  *
- * Only blankness is normalized. Surrounding spaces on a value that is not blank
- * are removed by the conversion for a typed column, which is the one place that
- * knows the column's type and already has to trim to read a number or a
- * boolean; a text column keeps its content exactly as the file wrote it,
- * because trimming text is a change to data nobody asked for. The worksheet and
- * delimited-text readers therefore agree here rather than each deciding.
+ * Only blankness is normalized in the values. Surrounding spaces on a value that
+ * is not blank are removed by the conversion for a typed column, which is the
+ * one place that knows the column's type; a text column keeps its content
+ * exactly as the file wrote it.
+ *
+ * The names are the other half of the same idea. A header may be any length in a
+ * `Table`, which is a runtime-neutral model that knows nothing about a database,
+ * while a column name here has a limit. Numbering a repeated header and then
+ * checking that limit is two steps in two layers, and it fails between them: two
+ * copies of a 200-character header become one name of 202, and the whole import
+ * is refused over a name the person had no way to change, for a duplicate the
+ * import was supposed to number for them. So the limit is applied first, with
+ * room left for the number, and the numbering runs over names that already fit.
+ * Headers that differed only past the cut collide and are numbered,
+ * deterministically, and no value is lost: every column is still stored, under a
+ * name the result reports.
  */
-function withoutBlankCells(table: Table): Table {
+function prepareForImport(table: Table): PreparedTable {
+  const budget = Math.max(
+    1,
+    MAX_IDENTIFIER_LENGTH - suffixHeadroom(table.columns.length),
+  );
+  // A header cut down to nothing, which takes a name wider than the budget,
+  // becomes a blank for `uniqueHeaders` to fill the way it fills any other.
+  const columns = uniqueHeaders(
+    table.columns.map((column) => truncateIdentifier(column, budget) || null),
+  );
+  const renamedColumns: RenamedColumn[] = [];
+  table.columns.forEach((from, index) => {
+    const to = columns[index] as string;
+    if (to !== from) {
+      renamedColumns.push({ from, to });
+    }
+  });
+
   return {
-    ...table,
-    rows: table.rows.map((row) => {
-      // A prototype-free destination, and own-property reads, for the reason
-      // `addRecordsFromTable` gives.
-      const cleaned: TableRow = Object.create(null);
-      for (const column of table.columns) {
-        const value = Object.prototype.hasOwnProperty.call(row, column)
-          ? (row[column] ?? null)
-          : null;
-        cleaned[column] =
-          typeof value === "string" && value.trim() === "" ? null : value;
-      }
-      return cleaned;
-    }),
+    renamedColumns,
+    table: {
+      ...table,
+      columns,
+      rows: table.rows.map((row) => {
+        // A prototype-free destination, and own-property reads, for the reason
+        // `addRecordsFromTable` gives.
+        const cleaned: TableRow = Object.create(null);
+        table.columns.forEach((from, index) => {
+          const value = Object.prototype.hasOwnProperty.call(row, from)
+            ? (row[from] ?? null)
+            : null;
+          cleaned[columns[index] as string] =
+            typeof value === "string" && value.trim() === "" ? null : value;
+        });
+        return cleaned;
+      }),
+    },
   };
 }
 
@@ -481,13 +550,15 @@ export function importTables(
 
   const planned: Array<{
     inferred: InferredColumn[];
+    renamedColumns: RenamedColumn[];
     request: ImportTableRequest;
     schema: TableSchema;
   }> = [];
   for (const request of requests) {
-    // Normalized before the columns are judged, so the table the types were
-    // decided from is the table the rows are read from below.
-    const table = withoutBlankCells(request.table);
+    // Prepared before the columns are judged, so the table the types were
+    // decided from is the table the rows are read from below, under the names
+    // it will be stored under.
+    const { renamedColumns, table } = prepareForImport(request.table);
     const inferred = inferColumnTypes(table);
     const schema = schemaFromColumns(inferred, request);
     // Table and column names are matched the way SQLite matches them, never by
@@ -506,11 +577,16 @@ export function importTables(
     }
     taken.set(key, schema.name);
     assertImportColumns(schema.name, schema.columns);
-    planned.push({ inferred, request: { ...request, table }, schema });
+    planned.push({
+      inferred,
+      renamedColumns,
+      request: { ...request, table },
+      schema,
+    });
   }
 
   return database.sql.transaction(() =>
-    planned.map(({ inferred, request, schema }) => {
+    planned.map(({ inferred, renamedColumns, request, schema }) => {
       database.createTable(schema);
       const inserted = insertRecordsFromTable(
         database,
@@ -526,6 +602,7 @@ export function importTables(
         rowCount: inserted.length,
         firstRecordId: inserted[0]?.recordId ?? null,
         lastRecordId: inserted[inserted.length - 1]?.recordId ?? null,
+        renamedColumns,
         ignoredColumns: request.table.columns.filter(
           (column) => identifierKey(column) === RECORD_ID_KEY,
         ),

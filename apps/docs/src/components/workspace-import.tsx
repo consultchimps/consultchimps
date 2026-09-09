@@ -280,12 +280,23 @@ export function WorkspaceImport({
             result.tables.flatMap((table) => [...table.ignoredColumns]),
           ),
         ];
+        // A header too long to be a column name, or one that collided with
+        // another once it had been shortened, is stored under a name the file
+        // did not write. The values are all there, so this is a note rather
+        // than a warning, but it is not something to leave unsaid.
+        const renamed = result.tables.flatMap((table) => [
+          ...table.renamedColumns,
+        ]);
         onImported(
           result.summary,
           `Imported ${result.tables.length === 1 ? "1 table" : `${result.tables.length} tables`} with ${rows === 1 ? "1 row" : `${rows} rows`}${
             ignored.length === 0
               ? ""
               : `. The ${ignored.join(" and ")} column${ignored.length === 1 ? " was" : "s were"} left out, because a Record ID is always generated`
+          }${
+            renamed.length === 0
+              ? ""
+              : `. ${renamed.length === 1 ? "1 column was" : `${renamed.length} columns were`} stored under a shorter name, because the header was longer than a column name can be`
           }`,
         );
         reset();

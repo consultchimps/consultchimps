@@ -225,6 +225,16 @@ export interface ImportedTableSummary {
    * data it quietly left behind.
    */
   readonly ignoredColumns: readonly string[];
+  /**
+   * Columns stored under a different name from the one the file wrote, because
+   * the header was longer than a name may be, or collided with another once it
+   * had been shortened. Every value is still there; only the name changed, and
+   * saying so is the difference between a report and a claim.
+   */
+  readonly renamedColumns: ReadonlyArray<{
+    readonly from: string;
+    readonly to: string;
+  }>;
 }
 
 /**

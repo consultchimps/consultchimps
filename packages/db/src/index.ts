@@ -49,4 +49,5 @@ export {
   type ImportTableRequest,
   type ImportedTable,
   type InferredColumn,
+  type RenamedColumn,
 } from "./import.js";
