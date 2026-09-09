@@ -44,6 +44,12 @@ import {
   readWorksheetReports,
   type WorksheetImportReport,
 } from "./operations/worksheets.js";
+
+// The worksheet report types beside the file surface that returns them, so a
+// caller of readWorkbookWorksheets can name its result from the same entry
+// point; the byte surface exports the same three.
+export type { WorksheetImportReport } from "./operations/worksheets.js";
+export type { WorksheetRegion, WorksheetTableReport } from "./shared.js";
 import {
   describeWorkbookModel,
   loadWorkbookModelForDescribe,
