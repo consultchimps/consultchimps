@@ -1,5 +1,5 @@
 import { ConsultChimpsError } from "@consultchimps/core";
-import type { CellValue, Table } from "@consultchimps/tabular";
+import type { CellValue, Table, TableRow } from "@consultchimps/tabular";
 
 import { insertRecordsFromTable } from "./bridge.js";
 import type { Database } from "./database.js";
@@ -7,6 +7,7 @@ import {
   assertRecordIdConfig,
   assertSafeIdentifier,
   identifierKey,
+  isIsoDateText,
   truncateIdentifier,
   MAX_IDENTIFIER_LENGTH,
   RECORD_ID_COLUMN,
@@ -70,6 +71,42 @@ export interface ImportedTable {
   readonly ignoredColumns: string[];
 }
 
+/**
+ * Read a table the way both inference and storage will see it.
+ *
+ * A cell holding nothing but whitespace holds nothing. Inference already treats
+ * one as blank, so without this the column's type is decided as if the cell
+ * were empty while the cell itself is stored as spaces: a value that is neither
+ * absent nor present, that `IS NULL` does not find. Making it null here, once,
+ * before anything looks at the table, is what keeps the judgement and the
+ * storage about the same value.
+ *
+ * Only blankness is normalized. Surrounding spaces on a value that is not blank
+ * are removed by the conversion for a typed column, which is the one place that
+ * knows the column's type and already has to trim to read a number or a
+ * boolean; a text column keeps its content exactly as the file wrote it,
+ * because trimming text is a change to data nobody asked for. The worksheet and
+ * delimited-text readers therefore agree here rather than each deciding.
+ */
+function withoutBlankCells(table: Table): Table {
+  return {
+    ...table,
+    rows: table.rows.map((row) => {
+      // A prototype-free destination, and own-property reads, for the reason
+      // `addRecordsFromTable` gives.
+      const cleaned: TableRow = Object.create(null);
+      for (const column of table.columns) {
+        const value = Object.prototype.hasOwnProperty.call(row, column)
+          ? (row[column] ?? null)
+          : null;
+        cleaned[column] =
+          typeof value === "string" && value.trim() === "" ? null : value;
+      }
+      return cleaned;
+    }),
+  };
+}
+
 /** The Record ID column's matching key, folded once rather than at each use. */
 const RECORD_ID_KEY = identifierKey(RECORD_ID_COLUMN);
 
@@ -87,22 +124,6 @@ const INTEGER_TEXT = /^-?(?:0|[1-9]\d*)$/u;
 const DECIMAL_TEXT = /^-?(?:0|[1-9]\d*)\.\d+$/u;
 
 /**
- * A calendar date, and a date with a time, in the one spelling ISO 8601 gives
- * them. A date written any other way ("01/02/2024") stays text, because there
- * is no way to tell a January date from a February one without guessing a
- * convention the file never stated.
- *
- * The grammar only says which characters may appear where. What the parts mean
- * together is decided in `isIsoTimestamp`, because a timestamp is one value:
- * checking its hour, minute, second, and offset against their own ranges in
- * isolation accepts "24:30" and an offset of "+99:99", neither of which is a
- * time of day.
- */
-const ISO_DATE = /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})$/u;
-const ISO_DATE_TIME =
-  /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})T(?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2})(?:\.(?<fraction>\d{1,9}))?)?(?:(?<zulu>Z)|(?<offsetSign>[+-])(?<offsetHour>\d{2}):(?<offsetMinute>\d{2}))?$/u;
-
-/**
  * The text spellings read as a boolean. "1" and "0" are deliberately absent:
  * they are numbers in every file that also holds counts, and a column of ones
  * and zeros is far more often a quantity than a flag. A column that really is a
@@ -110,131 +131,6 @@ const ISO_DATE_TIME =
  * which is recoverable; guessing the other way is not.
  */
 const BOOLEAN_TEXT = new Set(["true", "false", "yes", "no"]);
-
-function isLeapYear(year: number): boolean {
-  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-}
-
-function isCalendarDate(year: number, month: number, day: number): boolean {
-  if (month < 1 || month > 12 || day < 1) {
-    return false;
-  }
-  const lengths = [
-    31,
-    isLeapYear(year) ? 29 : 28,
-    31,
-    30,
-    31,
-    30,
-    31,
-    31,
-    30,
-    31,
-    30,
-    31,
-  ];
-  return day <= (lengths[month - 1] as number);
-}
-
-/**
- * Whether a matched date and time is a real instant, judged as a whole.
- *
- * Every rule here that could be stated about one part of the value is instead
- * stated about the parts together, because that is where the mistakes are: a
- * value whose hour, minute, second, and offset are each individually in range
- * can still be an instant that does not exist.
- *
- * - Hour 24 is the end of a day, so it is accepted only as exactly `24:00`,
- *   with a zero second and a zero fraction if either is written. `24:30` is
- *   nothing.
- * - Second 60 is a leap second. One is inserted at `23:59:60` UTC, so it is
- *   accepted only at that time and only when the value says it is UTC, written
- *   as `Z` or as the explicit `+00:00`. A local offset and an absent offset
- *   both stay text: `23:59:60+05:00` is a different instant from the leap
- *   second, and a value with no offset does not say which instant it is. This
- *   costs nothing, because a date column stores the characters either way.
- * - An offset is a real offset: hours 00 to 23, minutes 00 to 59, judged as one
- *   offset rather than three independent numbers.
- *
- * The date a leap second falls on is deliberately not constrained. Which day
- * carries one is a decision announced by IERS, not a rule this package can
- * state, so it is left to the value.
- */
-function isIsoTimestamp(stamp: RegExpExecArray): boolean {
-  // Named rather than numbered: adding a capture to the grammar above used to
-  // renumber every read below it, which is its own way of pairing the wrong
-  // things together.
-  const parts = stamp.groups as Record<string, string | undefined>;
-  if (
-    !isCalendarDate(
-      Number(parts["year"]),
-      Number(parts["month"]),
-      Number(parts["day"]),
-    )
-  ) {
-    return false;
-  }
-  const hour = Number(parts["hour"]);
-  const minute = Number(parts["minute"]);
-  const second = parts["second"] === undefined ? 0 : Number(parts["second"]);
-  const fraction = parts["fraction"];
-  // Scanned rather than matched with `^0+$`, which backtracks once per digit on
-  // a fraction that is not all zeros for no gain over reading it straight
-  // through.
-  const zeroFraction =
-    fraction === undefined || [...fraction].every((digit) => digit === "0");
-
-  // The offset, judged first because the leap-second rule depends on it.
-  const hasOffset = parts["offsetSign"] !== undefined;
-  if (hasOffset) {
-    if (
-      Number(parts["offsetHour"]) > 23 ||
-      Number(parts["offsetMinute"]) > 59
-    ) {
-      return false;
-    }
-  }
-  // "+00:00" is UTC stated the long way. "-00:00" is not: RFC 3339 gives it the
-  // separate meaning of an unknown local offset, so it does not assert UTC.
-  const isUtc =
-    parts["zulu"] !== undefined ||
-    (parts["offsetSign"] === "+" &&
-      Number(parts["offsetHour"]) === 0 &&
-      Number(parts["offsetMinute"]) === 0);
-
-  if (hour === 24) {
-    if (minute !== 0 || second !== 0 || !zeroFraction) {
-      return false;
-    }
-  } else if (hour > 23) {
-    return false;
-  }
-  if (minute > 59) {
-    return false;
-  }
-  if (second === 60) {
-    if (hour !== 23 || minute !== 59 || !isUtc) {
-      return false;
-    }
-  } else if (second > 59) {
-    return false;
-  }
-  return true;
-}
-
-function isIsoDateText(value: string): boolean {
-  const date = ISO_DATE.exec(value);
-  if (date !== null) {
-    const parts = date.groups as Record<string, string>;
-    return isCalendarDate(
-      Number(parts["year"]),
-      Number(parts["month"]),
-      Number(parts["day"]),
-    );
-  }
-  const stamp = ISO_DATE_TIME.exec(value);
-  return stamp !== null && isIsoTimestamp(stamp);
-}
 
 /** What a single value could be. A blank value votes for nothing. */
 interface ValueVote {
@@ -589,7 +485,10 @@ export function importTables(
     schema: TableSchema;
   }> = [];
   for (const request of requests) {
-    const inferred = inferColumnTypes(request.table);
+    // Normalized before the columns are judged, so the table the types were
+    // decided from is the table the rows are read from below.
+    const table = withoutBlankCells(request.table);
+    const inferred = inferColumnTypes(table);
     const schema = schemaFromColumns(inferred, request);
     // Table and column names are matched the way SQLite matches them, never by
     // a fresh case-insensitive comparison, so "Customer" and "customer" are one
@@ -607,7 +506,7 @@ export function importTables(
     }
     taken.set(key, schema.name);
     assertImportColumns(schema.name, schema.columns);
-    planned.push({ inferred, request, schema });
+    planned.push({ inferred, request: { ...request, table }, schema });
   }
 
   return database.sql.transaction(() =>

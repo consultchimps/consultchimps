@@ -1102,6 +1102,67 @@ describe("worksheets whose formulas were never calculated", () => {
   });
 });
 
+describe("worksheets that leave positions to document order", () => {
+  // The r attribute is optional on both <row> and <c>: a worksheet may rely on
+  // document order instead. A generator that writes one is a workbook a person
+  // can open, so refusing it because the model wanted an attribute the format
+  // makes optional refuses a readable file.
+  const implicit =
+    `<row><c t="inlineStr"><is><t>Case_ID</t></is></c><c t="inlineStr"><is><t>Region</t></is></c></row>` +
+    `<row><c t="inlineStr"><is><t>R-1</t></is></c><c t="inlineStr"><is><t>north</t></is></c></row>` +
+    `<row><c t="inlineStr"><is><t>R-2</t></is></c><c><f>1+1</f></c></row>`;
+
+  it("reads rows and cells that carry no reference", async () => {
+    const bytes = await uncalculatedWorkbookBytes(implicit);
+
+    const [report] = await readWorkbookWorksheetsBytes({
+      name: "implicit.xlsx",
+      bytes,
+    });
+
+    // Document order put the header on row 1 and the values under it.
+    expect(report?.region?.headerRow).toBe(1);
+    expect(report?.table?.rows).toEqual([
+      { Case_ID: "R-1", Region: "north" },
+      { Case_ID: "R-2", Region: null },
+    ]);
+    // And the formula in the last cell was found, which is the whole reason the
+    // model has to be able to read this worksheet at all.
+    expect(report?.uncachedFormulaCells).toBe(1);
+  });
+
+  it("describes such a worksheet through the L1 consumers", async () => {
+    const bytes = await uncalculatedWorkbookBytes(implicit);
+
+    const { description } = await describeWorkbookBytes({
+      name: "implicit.xlsx",
+      bytes,
+    });
+    const sheet = description.sheets[0];
+    expect(sheet?.headerRow).toBe(1);
+    expect(sheet?.rowCount).toBe(3);
+    expect(sheet?.dataRowCount).toBe(2);
+    expect(sheet?.columns.map((column) => column.header)).toEqual([
+      "Case_ID",
+      "Region",
+    ]);
+  });
+
+  it("still refuses a reference that is present and unreadable", async () => {
+    // Absent is the format saying "use document order". Present and malformed
+    // is a damaged file, and stays an error rather than being guessed at. The
+    // rows are parsed on demand rather than at load, so this surfaces as the
+    // model's own error rather than the read failure that wraps a bad package.
+    const bytes = await uncalculatedWorkbookBytes(
+      `<row r="1"><c r="not-a-cell" t="inlineStr"><is><t>Case_ID</t></is></c></row>`,
+    );
+
+    await expect(
+      describeWorkbookBytes({ name: "broken.xlsx", bytes }),
+    ).rejects.toThrow(/invalid cell reference: not-a-cell/u);
+  });
+});
+
 describe("byte-surface readers match the file surface", () => {
   it("reads the same Excel Tables from bytes as from a path", async () => {
     const directory = await createTemporaryDirectory();

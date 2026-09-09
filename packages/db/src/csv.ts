@@ -57,7 +57,10 @@ import {
  * - A blank record anywhere is skipped, as the workbook reader skips a blank
  *   worksheet row.
  * - An empty field becomes null rather than an empty string, so a missing value
- *   and an empty one are one thing rather than two.
+ *   and an empty one are one thing rather than two. A field of nothing but
+ *   spaces is kept as it was written: deciding that spaces mean nothing is a
+ *   judgement about meaning, and this parser deliberately makes none. The
+ *   import makes it, once, for delimited text and worksheets alike.
  * - A blank or repeated header is filled in and numbered rather than refused,
  *   as the workbook reader does for a worksheet's header row.
  */

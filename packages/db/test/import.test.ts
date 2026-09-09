@@ -178,6 +178,137 @@ describe("suggestTableName and suggestRecordIdPrefix", () => {
   });
 });
 
+describe("dates a date column will hold", () => {
+  it("stores what inference judged, without the spaces around it", async () => {
+    const database = await Database.create();
+
+    const imported = importTable(
+      database,
+      {
+        columns: ["Opened"],
+        rows: [{ Opened: " 2026-01-31 " }, { Opened: "2026-02-01" }],
+      },
+      { name: "Events", recordId: { prefix: "EV", padding: 4 } },
+    );
+
+    // Inference judged the trimmed text, so the trimmed text is what is stored.
+    expect(imported.columns[0]?.type).toBe("date");
+    expect(
+      databaseTableToTable(database, "Events").rows.map((row) => row["Opened"]),
+    ).toEqual(["2026-01-31", "2026-02-01"]);
+    database.close();
+  });
+
+  it("reads a cell of nothing but spaces as no value at all", async () => {
+    const database = await Database.create();
+
+    importTable(
+      database,
+      {
+        columns: ["Opened", "Note"],
+        rows: [
+          { Opened: "   ", Note: "  " },
+          { Opened: "2026-01-31", Note: "x" },
+        ],
+      },
+      { name: "Events", recordId: { prefix: "EV", padding: 4 } },
+    );
+
+    // Null rather than whitespace, in a text column as well as a typed one, so
+    // an empty cell is findable as empty.
+    expect(databaseTableToTable(database, "Events").rows[0]).toMatchObject({
+      Opened: null,
+      Note: null,
+    });
+    expect(
+      database.sql.selectValue(
+        'SELECT count(*) FROM "Events" WHERE "Note" IS NULL;',
+      ),
+    ).toBe(1);
+    database.close();
+  });
+
+  it("refuses a value that is not a date, whatever writes it", async () => {
+    const database = await Database.create();
+    database.createTable({
+      name: "Events",
+      columns: [{ name: "Opened", type: "date" }],
+      foreignKeys: [],
+      recordId: { prefix: "EV", padding: 4 },
+    });
+
+    // The single conversion point every write goes through, so the record grid
+    // inherits this without having to remember it.
+    expect(
+      await codeOf(() => database.insertRecord("Events", { Opened: "hello" })),
+    ).toBe("DB_INVALID_DATE");
+    expect(
+      await codeOf(() =>
+        database.insertRecord("Events", { Opened: "01/02/2026" }),
+      ),
+    ).toBe("DB_INVALID_DATE");
+    expect(
+      await codeOf(() =>
+        database.insertRecord("Events", { Opened: "2026-02-30" }),
+      ),
+    ).toBe("DB_INVALID_DATE");
+
+    // A real date, written with a spreadsheet's padding, is stored as the date.
+    database.insertRecord("Events", { Opened: " 2026-01-31T09:30:00Z " });
+    expect(database.readRecords("Events")[0]?.["Opened"]).toBe(
+      "2026-01-31T09:30:00Z",
+    );
+    // And a blank is an unset cell, as it is for every other typed column.
+    database.insertRecord("Events", { Opened: "  " });
+    expect(database.readRecords("Events")[1]?.["Opened"]).toBeNull();
+    database.close();
+  });
+
+  it("stores a padded number and boolean as the value inference judged", async () => {
+    // The same question as the date, asked of the other typed columns: the
+    // conversion trims before reading them, so what inference judged is what is
+    // stored, and nothing keeps the padding.
+    const database = await Database.create();
+
+    importTable(
+      database,
+      {
+        columns: ["Score", "Active"],
+        rows: [{ Score: " 12.5 ", Active: " TRUE " }],
+      },
+      { name: "Rows", recordId: { prefix: "R", padding: 4 } },
+    );
+
+    expect(databaseTableToTable(database, "Rows").rows[0]).toMatchObject({
+      Score: 12.5,
+      Active: true,
+    });
+    // And a grouped number is still text, so nothing about it is normalized.
+    expect(typeOfColumn(["1,000"])).toBe("text");
+    database.close();
+  });
+
+  it("reports a stored value that is not a date as damage", async () => {
+    const database = await Database.create();
+    database.createTable({
+      name: "Events",
+      columns: [{ name: "Opened", type: "date" }],
+      foreignKeys: [],
+      recordId: { prefix: "EV", padding: 4 },
+    });
+    // Written past the conversion, the way an external edit would.
+    database.sql.run(
+      'INSERT INTO "Events" (record_id, "Opened") VALUES (?, ?);',
+      ["EV-9999", "not a date"],
+    );
+
+    expect(await codeOf(() => database.readRecords("Events"))).toBe(
+      "DB_CORRUPT_STORED_VALUE",
+    );
+    database.close();
+  });
+});
+
 describe("identifiers made of whole characters", () => {
   // U+10400 DESERET CAPITAL LONG I: one character, two UTF-16 code units, which
   // is what a slice at a code-unit index can cut in half.
@@ -457,28 +588,22 @@ describe("importTables", () => {
     database.close();
   });
 
-  it("leaves the workspace untouched when a later table fails mid-import", async () => {
+  it("creates nothing when a later table cannot be read", async () => {
     const database = await Database.create();
     importTable(database, CUSTOMERS, {
       name: "Existing",
       recordId: { prefix: "EX", padding: 4 },
     });
 
-    // A source that stops being readable partway through the import: the value
-    // is read once while the columns are inferred and again while the row is
-    // inserted, and the second read fails. That is the shape of every failure
-    // validation cannot catch up front (a worker that dies, a file that goes
-    // away), and it is the one an import has to survive without leaving half a
-    // workbook behind.
-    let reads = 0;
-    const failingRow = Object.defineProperty({}, "Value", {
+    // A source that cannot be read to the end. Every table is normalized,
+    // judged, and checked before the first one is created, so a source that
+    // fails takes the whole call down before anything exists, rather than
+    // after some of it does. The creation and the rows still run inside one
+    // transaction underneath, which covers what validation cannot foresee.
+    const unreadableRow = Object.defineProperty({}, "Value", {
       enumerable: true,
       get: (): string => {
-        reads += 1;
-        if (reads > 1) {
-          throw new Error("The file could not be read to the end.");
-        }
-        return "2";
+        throw new Error("The file could not be read to the end.");
       },
     }) as TableRow;
 
@@ -492,13 +617,13 @@ describe("importTables", () => {
         {
           name: "Broken",
           recordId: { prefix: "BRK", padding: 4 },
-          table: { columns: ["Value"], rows: [failingRow] },
+          table: { columns: ["Value"], rows: [unreadableRow] },
         },
       ]),
     ).rejects.toThrow("could not be read");
 
-    // Neither the table that had already been created nor the one that failed
-    // survives, and the workspace still holds only what it held before.
+    // Neither the table that would have come first nor the one that failed
+    // exists, and the workspace still holds only what it held before.
     expect(database.getSchema().map((schema) => schema.name)).toEqual([
       "Existing",
     ]);

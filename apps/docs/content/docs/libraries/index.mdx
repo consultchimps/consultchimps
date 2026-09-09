@@ -336,10 +336,16 @@ the two.
 
 A timestamp is judged as one value rather than part by part, so `24:00` is the
 end of a day but `24:30` is nothing, `:60` is a leap second only at `23:59`, and
-an offset of `+99:99` is not an offset. A date written any other way
-(`01/02/2026`) stays text, because there is no way to tell a January date from a
-February one without guessing a convention the file never stated. So does a
-column whose values disagree: `1` beside `yes` is text.
+an offset of `+99:99` is not an offset. A `date` column holds that spelling and
+no other: `isIsoDateText` is the rule, and it is the same rule inference used to
+decide the column was a date, so `insertRecord` refuses anything else rather
+than storing text a later read cannot trust. Surrounding spaces are removed
+before the value is judged and stored, so `" 2026-01-31 "` is stored as
+`2026-01-31`, and a cell holding nothing but spaces is stored as no value at
+all. A text column keeps its content exactly as it was read. A date written any
+other way (`01/02/2026`) stays text, because there is no way to tell a January
+date from a February one without guessing a convention the file never stated. So
+does a column whose values disagree: `1` beside `yes` is text.
 
 `parseCsvTable` follows RFC 4180 and states its whole contract in the module's
 documentation: what it accepts, what it refuses with a stable error code (text

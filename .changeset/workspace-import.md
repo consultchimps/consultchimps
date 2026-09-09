@@ -29,6 +29,16 @@ prefixes, and column names are checked first, then every table is created and
 filled inside a single transaction, so a failure part way through leaves the
 database exactly as it was.
 
+A `date` column now holds ISO 8601 text and nothing else. `sqlValueFromCell`,
+the single point every write goes through, judges a date with `isIsoDateText`,
+the same rule the import's inference uses to decide a column is a date, and
+refuses anything else with `DB_INVALID_DATE`; reading back a stored value that
+is not one reports damage. Surrounding spaces are removed before the value is
+judged and stored, and a value of nothing but spaces is stored as null, so a
+column that claims a spelling holds it and an empty cell is findable as empty.
+This is a behaviour change: a date column that previously accepted any text now
+accepts only a date.
+
 Also new: `Database.countRecords` counts a table's records in the engine rather
 than by reading its rows, `assertRecordIdConfig` and `MAX_RECORD_ID_PADDING`
 make the Record ID rules callable, `MAX_IDENTIFIER_LENGTH` and

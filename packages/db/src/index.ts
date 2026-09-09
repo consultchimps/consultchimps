@@ -13,6 +13,7 @@ export {
   cellFromSqlValue,
   formatRecordId,
   identifierKey,
+  isIsoDateText,
   quoteIdentifier,
   sameIdentifier,
   sqlStorageClass,

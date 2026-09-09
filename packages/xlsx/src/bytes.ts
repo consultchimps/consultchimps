@@ -1034,12 +1034,20 @@ export async function readWorkbookWorksheetsBytes(
   );
   return reports.map((report) => {
     const worksheet = model.worksheet(report.sheet);
+    if (worksheet === undefined) {
+      // A zero here would say "this worksheet has no uncalculated formulas",
+      // which is a claim about a worksheet nothing looked at. The whole reason
+      // this count exists is that a reader silently reporting nothing is
+      // indistinguishable from a reader reporting nothing is there.
+      throw new ConsultChimpsError(
+        XLSX_ERRORS.XLSX_READ_FAILED,
+        `Worksheet "${report.sheet}" could not be read from ${input.name} to check its formulas, so whether it holds values the workbook never calculated is unknown.`,
+        { details: { ...details, worksheet: report.sheet } },
+      );
+    }
     return {
       ...report,
-      uncachedFormulaCells:
-        worksheet === undefined
-          ? 0
-          : countUncachedFormulas(worksheet, report.region),
+      uncachedFormulaCells: countUncachedFormulas(worksheet, report.region),
     };
   });
 }

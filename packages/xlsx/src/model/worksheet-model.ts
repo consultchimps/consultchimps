@@ -147,24 +147,40 @@ export class WorksheetCell {
   body: string;
   readonly closeTag: string;
 
-  constructor(text: string) {
+  /**
+   * @param impliedColumn Where document order puts this cell when it carries no
+   *   reference of its own: the previous cell's column plus one, or A for the
+   *   first cell of a row.
+   * @param impliedRow The row this cell was found in, for the same case.
+   */
+  constructor(text: string, impliedColumn: number, impliedRow: number) {
     const element = findElement(text, "c");
     if (!element) {
       throw new Error("Encountered an invalid worksheet cell element.");
     }
-    const reference = getAttribute(element.openTag, "r");
-    if (!reference) {
-      throw new Error("Encountered a worksheet cell without a reference.");
+    const written = getAttribute(element.openTag, "r");
+    // The reference is optional in the format: a cell without one sits where
+    // document order puts it. A reference that is present but unreadable is a
+    // different thing, and stays an error.
+    const decoded = written === undefined ? undefined : decodeCell(written);
+    if (written !== undefined && !decoded) {
+      throw new Error(`Encountered an invalid cell reference: ${written}`);
     }
-    const decoded = decodeCell(reference);
-    if (!decoded) {
-      throw new Error(`Encountered an invalid cell reference: ${reference}`);
-    }
+    const reference = written ?? encodeCell(impliedColumn, impliedRow);
 
     this.reference = reference;
-    this.column = decoded.column;
-    this.row = decoded.row;
-    this.openTag = element.openTag;
+    this.column = decoded?.column ?? impliedColumn;
+    this.row = decoded?.row ?? impliedRow;
+    // Written back explicitly rather than left implicit. An implicit position
+    // is only meaningful in the document it was read from: once a later edit
+    // adds or removes a row or a cell before it, the same bytes mean a
+    // different cell. Making it explicit here costs the exact bytes of a
+    // worksheet that omitted an optional attribute, and buys every consumer,
+    // including the ones that renumber rows, a position that cannot shift.
+    this.openTag =
+      written === undefined
+        ? setAttribute(element.openTag, "r", reference)
+        : element.openTag;
     this.selfClosing = element.selfClosing;
     this.body = element.selfClosing
       ? ""
@@ -310,23 +326,40 @@ export class WorksheetRow {
   readonly segments: CellSegment[];
   #cellIndex: Map<number, WorksheetCell> | undefined;
 
-  constructor(text: string) {
+  /**
+   * @param impliedNumber The row number document order gives this row when it
+   *   carries none of its own: the previous row's number plus one, or 1 for the
+   *   first row of the sheet.
+   */
+  constructor(text: string, impliedNumber: number) {
     const element = findElement(text, "row");
     if (!element) {
       throw new Error("Encountered an invalid worksheet row element.");
     }
-    const number = Number(getAttribute(element.openTag, "r"));
+    // The row number is optional in the format, the same way a cell reference
+    // is. A number that is present but not a positive whole one is malformed
+    // and stays an error.
+    const written = getAttribute(element.openTag, "r");
+    const number = written === undefined ? impliedNumber : Number(written);
     if (!Number.isInteger(number) || number < 1) {
-      throw new Error("Encountered a worksheet row without a row number.");
+      throw new Error(
+        `Encountered a worksheet row with an invalid row number: ${String(written)}`,
+      );
     }
 
     this.number = number;
-    this.openTag = element.openTag;
+    // Made explicit for the reason the cell above gives: an implicit number
+    // moves when the rows before it do.
+    this.openTag =
+      written === undefined
+        ? setAttribute(element.openTag, "r", String(number))
+        : element.openTag;
     this.selfClosing = element.selfClosing;
     this.closeTag = element.selfClosing ? "" : `</${element.name}>`;
     this.segments = element.selfClosing
       ? []
       : splitCells(
+          number,
           text.slice(
             element.innerStart - element.start,
             element.innerEnd - element.start,
@@ -398,9 +431,12 @@ export class WorksheetRow {
   }
 }
 
-function splitCells(inner: string): CellSegment[] {
+function splitCells(rowNumber: number, inner: string): CellSegment[] {
   const segments: CellSegment[] = [];
   let cursor = 0;
+  // Where the next cell sits if it does not say: the first column, then one
+  // past whatever the last cell turned out to occupy.
+  let impliedColumn = 0;
 
   for (const element of findElements(inner, "c")) {
     if (element.start > cursor) {
@@ -409,10 +445,13 @@ function splitCells(inner: string): CellSegment[] {
         text: inner.slice(cursor, element.start),
       });
     }
-    segments.push({
-      cell: new WorksheetCell(inner.slice(element.start, element.end)),
-      text: "",
-    });
+    const cell = new WorksheetCell(
+      inner.slice(element.start, element.end),
+      impliedColumn,
+      rowNumber,
+    );
+    impliedColumn = cell.column + 1;
+    segments.push({ cell, text: "" });
     cursor = element.end;
   }
   if (cursor < inner.length) {
@@ -482,6 +521,9 @@ export class WorksheetModel implements WorksheetModelContract {
     const inner = worksheetXml.slice(sheetData.innerStart, sheetData.innerEnd);
     const segments: RowSegment[] = [];
     let cursor = 0;
+    // Where the next row sits if it does not say: the first row, then one past
+    // whatever the last row turned out to be.
+    let impliedRowNumber = 1;
     for (const element of findElements(inner, "row")) {
       if (element.start > cursor) {
         segments.push({
@@ -489,10 +531,12 @@ export class WorksheetModel implements WorksheetModelContract {
           text: inner.slice(cursor, element.start),
         });
       }
-      segments.push({
-        row: new WorksheetRow(inner.slice(element.start, element.end)),
-        text: "",
-      });
+      const row = new WorksheetRow(
+        inner.slice(element.start, element.end),
+        impliedRowNumber,
+      );
+      impliedRowNumber = row.number + 1;
+      segments.push({ row, text: "" });
       cursor = element.end;
     }
     if (cursor < inner.length) {

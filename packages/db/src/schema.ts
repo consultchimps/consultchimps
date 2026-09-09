@@ -18,7 +18,15 @@ import type { SqlValueType } from "./engine.js";
  * belong wherever a name is typed, and the engine belongs only where rows are.
  */
 
-/** The supported column value kinds, each mapped to a SQLite storage class. */
+/**
+ * The supported column value kinds, each mapped to a SQLite storage class.
+ *
+ * A `date` column holds ISO 8601 text and nothing else: a calendar date
+ * (`2026-01-31`) or a date and time (`2026-01-31T09:30:00Z`), stored as written
+ * once its surrounding spaces are removed. Anything else is refused rather than
+ * stored, because a column that claims a spelling and holds another is a column
+ * nothing can read back reliably. `isIsoDateText` is the rule.
+ */
 export type ColumnType = "text" | "integer" | "real" | "boolean" | "date";
 
 /** A user-defined column. The Record ID column is reserved and never declared here. */
@@ -147,6 +155,155 @@ export function assertRecordIdConfig(
       { details: { table, padding: config.padding } },
     );
   }
+}
+
+/**
+ * A calendar date, and a date with a time, in the one spelling ISO 8601 gives
+ * them. A date written any other way ("01/02/2024") stays text, because there
+ * is no way to tell a January date from a February one without guessing a
+ * convention the file never stated.
+ *
+ * The grammar only says which characters may appear where. What the parts mean
+ * together is decided in `isIsoTimestamp`, because a timestamp is one value:
+ * checking its hour, minute, second, and offset against their own ranges in
+ * isolation accepts "24:30" and an offset of "+99:99", neither of which is a
+ * time of day.
+ */
+const ISO_DATE = /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})$/u;
+const ISO_DATE_TIME =
+  /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})T(?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2})(?:\.(?<fraction>\d{1,9}))?)?(?:(?<zulu>Z)|(?<offsetSign>[+-])(?<offsetHour>\d{2}):(?<offsetMinute>\d{2}))?$/u;
+
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+function isCalendarDate(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12 || day < 1) {
+    return false;
+  }
+  const lengths = [
+    31,
+    isLeapYear(year) ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+  return day <= (lengths[month - 1] as number);
+}
+
+/**
+ * Whether a matched date and time is a real instant, judged as a whole.
+ *
+ * Every rule here that could be stated about one part of the value is instead
+ * stated about the parts together, because that is where the mistakes are: a
+ * value whose hour, minute, second, and offset are each individually in range
+ * can still be an instant that does not exist.
+ *
+ * - Hour 24 is the end of a day, so it is accepted only as exactly `24:00`,
+ *   with a zero second and a zero fraction if either is written. `24:30` is
+ *   nothing.
+ * - Second 60 is a leap second. One is inserted at `23:59:60` UTC, so it is
+ *   accepted only at that time and only when the value says it is UTC, written
+ *   as `Z` or as the explicit `+00:00`. A local offset and an absent offset
+ *   both stay text: `23:59:60+05:00` is a different instant from the leap
+ *   second, and a value with no offset does not say which instant it is. This
+ *   costs nothing, because a date column stores the characters either way.
+ * - An offset is a real offset: hours 00 to 23, minutes 00 to 59, judged as one
+ *   offset rather than three independent numbers.
+ *
+ * The date a leap second falls on is deliberately not constrained. Which day
+ * carries one is a decision announced by IERS, not a rule this package can
+ * state, so it is left to the value.
+ */
+function isIsoTimestamp(stamp: RegExpExecArray): boolean {
+  // Named rather than numbered: adding a capture to the grammar above used to
+  // renumber every read below it, which is its own way of pairing the wrong
+  // things together.
+  const parts = stamp.groups as Record<string, string | undefined>;
+  if (
+    !isCalendarDate(
+      Number(parts["year"]),
+      Number(parts["month"]),
+      Number(parts["day"]),
+    )
+  ) {
+    return false;
+  }
+  const hour = Number(parts["hour"]);
+  const minute = Number(parts["minute"]);
+  const second = parts["second"] === undefined ? 0 : Number(parts["second"]);
+  const fraction = parts["fraction"];
+  // Scanned rather than matched with `^0+$`, which backtracks once per digit on
+  // a fraction that is not all zeros for no gain over reading it straight
+  // through.
+  const zeroFraction =
+    fraction === undefined || [...fraction].every((digit) => digit === "0");
+
+  // The offset, judged first because the leap-second rule depends on it.
+  const hasOffset = parts["offsetSign"] !== undefined;
+  if (hasOffset) {
+    if (
+      Number(parts["offsetHour"]) > 23 ||
+      Number(parts["offsetMinute"]) > 59
+    ) {
+      return false;
+    }
+  }
+  // "+00:00" is UTC stated the long way. "-00:00" is not: RFC 3339 gives it the
+  // separate meaning of an unknown local offset, so it does not assert UTC.
+  const isUtc =
+    parts["zulu"] !== undefined ||
+    (parts["offsetSign"] === "+" &&
+      Number(parts["offsetHour"]) === 0 &&
+      Number(parts["offsetMinute"]) === 0);
+
+  if (hour === 24) {
+    if (minute !== 0 || second !== 0 || !zeroFraction) {
+      return false;
+    }
+  } else if (hour > 23) {
+    return false;
+  }
+  if (minute > 59) {
+    return false;
+  }
+  if (second === 60) {
+    if (hour !== 23 || minute !== 59 || !isUtc) {
+      return false;
+    }
+  } else if (second > 59) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Whether text is a date this package will store in a `date` column.
+ *
+ * One definition, used by the import's type inference to decide that a column
+ * is a date and by `sqlValueFromCell` to decide that a value may be stored in
+ * one. Two definitions would mean a column inferred as a date could reject the
+ * very values that made it a date, or accept ones that never would have.
+ */
+export function isIsoDateText(value: string): boolean {
+  const date = ISO_DATE.exec(value);
+  if (date !== null) {
+    const parts = date.groups as Record<string, string>;
+    return isCalendarDate(
+      Number(parts["year"]),
+      Number(parts["month"]),
+      Number(parts["day"]),
+    );
+  }
+  const stamp = ISO_DATE_TIME.exec(value);
+  return stamp !== null && isIsoTimestamp(stamp);
 }
 
 /**
@@ -339,8 +496,20 @@ export function cellFromSqlValue(
         "A number column holds a stored value that is not a finite number, so the database may be damaged.",
         { details: { type } },
       );
-    case "text":
     case "date":
+      // The write side refuses anything that is not an ISO 8601 date, so a
+      // stored value that is not one arrived through the raw `sql` handle or an
+      // external edit. Reading it back as a date would carry that through to
+      // every caller, so it is reported here instead.
+      if (typeof value === "string" && isIsoDateText(value)) {
+        return value;
+      }
+      throw new ConsultChimpsError(
+        "DB_CORRUPT_STORED_VALUE",
+        "A date column holds a stored value that is not an ISO 8601 date, so the database may be damaged.",
+        { details: { type } },
+      );
+    case "text":
       // A raw write or external edit could leave a BLOB here, which sql.js
       // returns as a Uint8Array; converting it to "65,66" would corrupt the
       // value, so reject a non-string stored value instead.
@@ -490,6 +659,34 @@ function numberToSqlValue(
 }
 
 /**
+ * Parse a value for a date column.
+ *
+ * The column claims ISO 8601, so this is where that claim is kept. Surrounding
+ * spaces are removed first, because " 2026-01-31 " is the same date written
+ * with a spreadsheet's padding and storing the padding would put a value in the
+ * column that does not match the spelling the column promises. A blank is an
+ * unset cell, like every other typed column here. Anything else is refused: a
+ * date column that quietly holds "hello" is a column every later read has to
+ * second-guess.
+ */
+function dateToSqlValue(value: Exclude<CellValue, null>): SqlValueType {
+  const text = typeof value === "string" ? value.trim() : String(value);
+  if (text === "") {
+    return null;
+  }
+  if (!isIsoDateText(text)) {
+    // The offending value is deliberately left out: it is imported cell content
+    // and may be confidential. The caller adds the table and column context.
+    throw new ConsultChimpsError(
+      "DB_INVALID_DATE",
+      "A date column received a value that is not an ISO 8601 date such as 2026-01-31 or 2026-01-31T09:30:00Z.",
+      { details: { type: "date" } },
+    );
+  }
+  return text;
+}
+
+/**
  * Convert a tabular cell value to a value SQLite can store, interpreting the
  * column's declared type (booleans store as 0/1 integers).
  */
@@ -507,8 +704,9 @@ export function sqlValueFromCell(
       return numberToSqlValue(value, true);
     case "real":
       return numberToSqlValue(value, false);
-    case "text":
     case "date":
+      return dateToSqlValue(value);
+    case "text":
       return typeof value === "string" ? value : String(value);
     default: {
       const unexpected: never = type;
