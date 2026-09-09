@@ -360,6 +360,14 @@ function isBlank(value: CellValue): boolean {
  * Nothing is guessed: a column of "1" and "yes" is text, and so is a column of
  * "2026-01-31" and "31/01/2026", because either could be read two ways and text
  * is the only reading that changes nothing.
+ *
+ * This judges the table it is handed, exactly as handed: it is the inference
+ * primitive, not the import. It does not resolve blank cells or shorten a header
+ * to a name a database will take, because it has no column names to give and no
+ * limit to give them against. An import prepares a table first and infers from
+ * that, which is why `importedTableSchema` and `importTables` agree; a caller
+ * running this on raw headers is asking a narrower question and gets an answer
+ * to that question.
  */
 export function inferColumnTypes(table: Table): InferredColumn[] {
   return table.columns.map((column) => {
@@ -472,11 +480,43 @@ export function importedTableSchema(
   table: Table,
   options: ImportTableOptions,
 ): TableSchema {
-  return schemaFromColumns(inferColumnTypes(table), options);
+  return planImport(table, options).schema;
 }
 
 // The schema half of an import, taking the inference as given so a table is
 // scanned once even though the schema and the report both describe its columns.
+/** What one table of an import will be, worked out once. */
+interface PlannedTable {
+  /** The source, prepared: blanks resolved and columns under storable names. */
+  readonly table: Table;
+  /** The types inferred from that prepared table. */
+  readonly inferred: InferredColumn[];
+  /** Headers stored under a different name from the one the file wrote. */
+  readonly renamedColumns: RenamedColumn[];
+  /** The schema the import will create. */
+  readonly schema: TableSchema;
+}
+
+/**
+ * Work out what importing this table would create.
+ *
+ * The one derivation. A preview that repeated any part of it would eventually
+ * describe a table the import does not build: `importedTableSchema` used to
+ * infer straight from the raw headers, so it advertised a column name of 201
+ * characters that the import itself would never have created, and a duplicate
+ * under a different name from the one that would be stored.
+ */
+function planImport(table: Table, options: ImportTableOptions): PlannedTable {
+  const { renamedColumns, table: prepared } = prepareForImport(table);
+  const inferred = inferColumnTypes(prepared);
+  return {
+    inferred,
+    renamedColumns,
+    schema: schemaFromColumns(inferred, options),
+    table: prepared,
+  };
+}
+
 function schemaFromColumns(
   inferred: readonly InferredColumn[],
   options: ImportTableOptions,
@@ -555,12 +595,12 @@ export function importTables(
     schema: TableSchema;
   }> = [];
   for (const request of requests) {
-    // Prepared before the columns are judged, so the table the types were
-    // decided from is the table the rows are read from below, under the names
-    // it will be stored under.
-    const { renamedColumns, table } = prepareForImport(request.table);
-    const inferred = inferColumnTypes(table);
-    const schema = schemaFromColumns(inferred, request);
+    // The same derivation `importedTableSchema` answers with, so what a caller
+    // was shown is what gets built.
+    const { inferred, renamedColumns, schema, table } = planImport(
+      request.table,
+      request,
+    );
     // Table and column names are matched the way SQLite matches them, never by
     // a fresh case-insensitive comparison, so "Customer" and "customer" are one
     // name here exactly as they are in the engine.

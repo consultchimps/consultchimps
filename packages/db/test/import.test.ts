@@ -17,6 +17,8 @@ import {
   suggestRecordIdPrefix,
   suggestTableName,
   truncateIdentifier,
+  importedTableSchema,
+  type TableSchema,
   MAX_IDENTIFIER_LENGTH,
 } from "../src/index.js";
 
@@ -408,6 +410,61 @@ describe("a value a column will not take", () => {
     expect(isValueConversionError(other)).toBe(false);
     database.close();
   });
+});
+
+describe("the schema a preview promises", () => {
+  const OPTIONS = {
+    name: "Preview",
+    recordId: { prefix: "PV", padding: 4 },
+  };
+
+  /** The table an import creates, read back from the database it created it in. */
+  async function createdSchema(table: Table): Promise<TableSchema> {
+    const database = await Database.create();
+    importTable(database, table, OPTIONS);
+    const [schema] = database.getSchema();
+    database.close();
+    return schema as TableSchema;
+  }
+
+  const CASES: ReadonlyArray<readonly [string, Table]> = [
+    [
+      "a header past the limit",
+      {
+        columns: ["z".repeat(200), `${"z".repeat(200)}_2`],
+        rows: [{ [`${"z".repeat(200)}_2`]: "v" }],
+      },
+    ],
+    [
+      "headers that collide once shortened",
+      {
+        columns: [`${"y".repeat(199)}A`, `${"y".repeat(199)}B`],
+        rows: [{ [`${"y".repeat(199)}A`]: "v" }],
+      },
+    ],
+    [
+      "a column holding nothing but spaces",
+      { columns: ["Note", "Score"], rows: [{ Note: "   ", Score: " 12 " }] },
+    ],
+  ];
+
+  it.each(CASES)(
+    "promises the schema the import builds, for %s",
+    async (_label, table) => {
+      const preview = importedTableSchema(table, OPTIONS);
+      // Deeply equal to what the database ended up holding, not merely similar.
+      expect(preview).toEqual(await createdSchema(table));
+    },
+  );
+
+  it.each(CASES)(
+    "never previews a name the schema refuses, for %s",
+    (_label, table) => {
+      for (const column of importedTableSchema(table, OPTIONS).columns) {
+        expect(() => assertSafeIdentifier(column.name, "column")).not.toThrow();
+      }
+    },
+  );
 });
 
 describe("column names that have to fit", () => {

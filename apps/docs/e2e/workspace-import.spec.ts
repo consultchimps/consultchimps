@@ -619,6 +619,53 @@ test.describe("/workspace import", () => {
     );
   });
 
+  test("leaves one entry behind when a held link is followed", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/tools");
+    await page.goto("/workspace");
+    await page.getByTestId("workspace-new").click();
+    await importCustomersSheet(page);
+
+    // The guard armed a spare entry for this page. Following the link has to
+    // take its place rather than stack on top of it, or Back reaches a second
+    // copy of the workspace before it reaches the page before it.
+    await page.getByTestId("guide-link").click();
+    await page.getByTestId("workspace-confirm-discard").click();
+    await expect(page).toHaveURL(/\/docs\/libraries/u);
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/workspace$/u);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/tools$/u);
+  });
+
+  test("leaves one entry behind when a link is followed after saving", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/tools");
+    await page.goto("/workspace");
+    await page.getByTestId("workspace-new").click();
+    await importCustomersSheet(page);
+
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByTestId("workspace-save-as").click();
+    await downloadPromise;
+    await expect(page.getByTestId("workspace-unsaved")).toHaveCount(0);
+
+    // Saving clears the flag but cannot remove the entry the change armed, so
+    // the clean way out has to retire it too.
+    await page.getByTestId("guide-link").click();
+    await expect(page).toHaveURL(/\/docs\/libraries/u);
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/workspace$/u);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/tools$/u);
+  });
+
   test("reports a workbook that holds nothing to import", async ({ page }) => {
     await forceDownloadFallback(page);
     await page.goto("/workspace");

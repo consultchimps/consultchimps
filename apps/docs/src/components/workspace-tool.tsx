@@ -363,6 +363,41 @@ export function WorkspaceTool() {
    * question: keeping it set would arm `beforeunload` and ask them a second
    * time, in the browser's own words, for the navigation they just approved.
    */
+  /**
+   * Leave this page, retiring the spare history entries the Back guard pushed.
+   *
+   * Every way of leaving goes through here, because retiring them on only one
+   * way out is how they became phantoms: a link followed forward pushed the
+   * destination on top of the spare, so Back reached a second copy of this page
+   * before reaching the page before it. Taking the spare's place instead of
+   * stacking on it leaves exactly one entry for this page behind, whichever way
+   * it was left and whether or not the guard had ever armed.
+   *
+   * `href` is null when the visitor pressed Back, which is honoured by stepping
+   * back over the spares and this page together.
+   */
+  const leaveFor = useCallback(
+    (href: string | null) => {
+      const spares = spareEntriesRef.current;
+      spareEntriesRef.current = 0;
+      if (href === null) {
+        window.history.go(-(spares + 1));
+        return;
+      }
+      // The guard holds at most one spare, pushed only when none is held and
+      // re-armed in the same breath by a Back that spends one, and the page is
+      // sitting on it: nothing here pushes an entry of its own, and a jump
+      // within this same page is left to the router untouched. So replacing the
+      // current entry retires the spare exactly.
+      if (spares > 0) {
+        router.replace(href);
+        return;
+      }
+      router.push(href);
+    },
+    [router],
+  );
+
   const onConfirmAction = useCallback(() => {
     const action = pending;
     setPending(null);
@@ -380,15 +415,8 @@ export function WorkspaceTool() {
     setWorkspace((previous) =>
       previous === null ? previous : { ...previous, unsavedChanges: false },
     );
-    if (action.href === null) {
-      // Step back over this page and every spare entry pushed above it, so one
-      // answer honours the press however many times it was made.
-      window.history.go(-(spareEntriesRef.current + 1));
-      spareEntriesRef.current = 0;
-    } else {
-      router.push(action.href);
-    }
-  }, [pending, router, startNew, startOpen]);
+    leaveFor(action.href);
+  }, [leaveFor, pending, startNew, startOpen]);
 
   /**
    * Record that the held workspace no longer matches its file.
@@ -440,11 +468,13 @@ export function WorkspaceTool() {
    * left click on a same-origin link that actually leaves this page is held; a
    * modified click, a new tab, a download, and a jump to an anchor on this page
    * are all left alone, because none of them lose the workspace.
+   *
+   * The listener lives for the whole page rather than only while the guard is
+   * armed, for the reason the Back observer does: a link followed after a save
+   * still has to retire the spare entry that change left in the history, and a
+   * listener that was not there cannot.
    */
   useEffect(() => {
-    if (!mustHold) {
-      return;
-    }
     const hold = (event: MouseEvent): void => {
       if (
         event.defaultPrevented ||
@@ -476,13 +506,27 @@ export function WorkspaceTool() {
       ) {
         return;
       }
+      if (mustHoldRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
+        setPending({ kind: "leave", href: destination.href });
+        return;
+      }
+      if (spareEntriesRef.current === 0) {
+        // Nothing at stake and nothing to retire: the router's own handling is
+        // exactly right, so it is left alone.
+        return;
+      }
+      // Nothing at stake, but a spare from an earlier change is still in the
+      // history. A save clears the flag and cannot remove that entry, so the
+      // clean way out has to retire it or inherit the phantom.
       event.preventDefault();
       event.stopPropagation();
-      setPending({ kind: "leave", href: destination.href });
+      leaveFor(destination.href);
     };
     document.addEventListener("click", hold, true);
     return () => document.removeEventListener("click", hold, true);
-  }, [mustHold]);
+  }, [leaveFor]);
 
   /**
    * Hold the Back button the same way.
