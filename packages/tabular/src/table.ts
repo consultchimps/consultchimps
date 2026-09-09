@@ -112,6 +112,12 @@ export function uniqueHeaders(values: Array<string | null>): string[] {
   // header row already carries further along.
   const reserved = new Set(bases.map(columnKey));
   const taken = new Set<string>();
+  // The next suffix to try for each folded base, so a run of repeated headers
+  // does not restart at 2 and re-probe every number already handed out. A wide
+  // file of identical headers then costs one probe per column rather than one
+  // per column per earlier duplicate, which matters for delimited text, whose
+  // width nothing bounds. The names produced are the same either way.
+  const nextSuffix = new Map<string, number>();
 
   return bases.map((base) => {
     const key = columnKey(base);
@@ -119,7 +125,7 @@ export function uniqueHeaders(values: Array<string | null>): string[] {
       taken.add(key);
       return base;
     }
-    let suffix = 2;
+    let suffix = nextSuffix.get(key) ?? 2;
     let candidate = `${base}_${suffix}`;
     while (
       taken.has(columnKey(candidate)) ||
@@ -128,6 +134,7 @@ export function uniqueHeaders(values: Array<string | null>): string[] {
       suffix += 1;
       candidate = `${base}_${suffix}`;
     }
+    nextSuffix.set(key, suffix + 1);
     taken.add(columnKey(candidate));
     return candidate;
   });

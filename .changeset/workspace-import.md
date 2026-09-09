@@ -1,6 +1,7 @@
 ---
 "@consultchimps/db": minor
 "@consultchimps/xlsx": minor
+"@consultchimps/tabular": patch
 ---
 
 Import a table of values into a local database.
@@ -59,3 +60,12 @@ than by what it holds, so a formula that evaluated to an empty string or to zero
 counts as calculated; that is the definition the values-only conversion already
 used, now shared between them. Reading, consolidating, merging, and splitting
 are unchanged and still treat such a cell as empty.
+
+`uniqueHeaders` in `@consultchimps/tabular` now decides uniqueness against the
+whole header row: every original spelling is reserved before any suffix is
+generated, so a row such as `A, A, A_2` keeps three distinct columns instead of
+writing two of them under one name and silently dropping a column's values. A
+run of repeated headers is named in one pass rather than re-probing every suffix
+already handed out. Every reader that names columns (delimited text, worksheets,
+Excel Tables, named ranges, and the workbook description) inherits both, which
+is why the package is versioned here.

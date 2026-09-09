@@ -38,6 +38,18 @@ describe("uniqueHeaders", () => {
     expect(uniqueHeaders(["column_1", null])).toEqual(["column_1", "column_2"]);
   });
 
+  it("names a long run of repeated headers in one pass", () => {
+    // Every duplicate takes the next free suffix for its base rather than
+    // re-probing from 2, so a wide row of one repeated header stays linear;
+    // the names are the ones the slower search would have produced.
+    const count = 20000;
+    const result = uniqueHeaders(Array.from({ length: count }, () => "A"));
+    expect(result[0]).toBe("A");
+    expect(result[1]).toBe("A_2");
+    expect(result[count - 1]).toBe(`A_${count}`);
+    expect(new Set(result.map(columnKey)).size).toBe(count);
+  });
+
   it("treats names that differ only by case as one name", () => {
     // The same rule every other column lookup here uses, so a header row cannot
     // name two columns that a later lookup would not tell apart.
