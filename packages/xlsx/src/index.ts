@@ -41,6 +41,10 @@ import {
 
 import { XLSX_ERRORS } from "./errors.js";
 import {
+  readWorksheetReports,
+  type WorksheetImportReport,
+} from "./operations/worksheets.js";
+import {
   describeWorkbookModel,
   loadWorkbookModelForDescribe,
   MAX_COLUMN_SAMPLE_VALUES,
@@ -346,6 +350,27 @@ export async function readWorkbookTables(
   const absolutePath = path.resolve(filePath);
   const { workbook } = await readWorkbookFile(absolutePath);
   return workbookTables(workbook, path.basename(absolutePath), options);
+}
+
+/**
+ * Read every visible worksheet that holds data, with the rectangle each read
+ * covered and the cells in it holding a formula the workbook carries no
+ * calculated value for.
+ *
+ * `readWorkbookTables` is this list with the tables taken out of it. The file
+ * twin of `readWorkbookWorksheetsBytes`: both adapt their input and hand the
+ * same operation the same bytes, so neither can answer differently.
+ */
+export async function readWorkbookWorksheets(
+  filePath: string,
+  options: ReadWorkbookOptions = {},
+): Promise<WorksheetImportReport[]> {
+  const absolutePath = path.resolve(filePath);
+  return readWorksheetReports(
+    await readWorkbookBytes(absolutePath),
+    path.basename(absolutePath),
+    options,
+  );
 }
 
 export async function readWorksheetRecords(

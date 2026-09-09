@@ -21,6 +21,7 @@ import {
   readWorkbookExcelTables,
   readWorkbookNamedRanges,
   readWorkbookTables,
+  readWorkbookWorksheets,
 } from "../src/index.js";
 
 const temporaryDirectories: string[] = [];
@@ -1190,6 +1191,29 @@ describe("byte-surface readers match the file surface", () => {
         { tables: ["missing"] },
       ),
     ).toEqual([]);
+  });
+
+  it("reports the same worksheets from a path as from bytes", async () => {
+    // Both surfaces adapt their input and hand the same operation the same
+    // bytes, so neither can answer differently about the same workbook. The
+    // formula count is part of that answer.
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "north.xlsx");
+    const bytes = await uncalculatedWorkbookBytes(
+      `<row r="1">${textCell("A1", "Case_ID")}${textCell("B1", "Failed Checks")}</row>` +
+        `<row r="2">${textCell("A2", "R-1")}<c r="B2"><f>1+1</f></c></row>`,
+    );
+    await writeFile(input, bytes);
+
+    const fromBytes = await readWorkbookWorksheetsBytes({
+      name: "north.xlsx",
+      bytes,
+    });
+    const fromFile = await readWorkbookWorksheets(input);
+
+    expect(fromFile).toEqual(fromBytes);
+    expect(fromFile[0]?.uncachedFormulaCells).toBe(1);
+    expect(fromFile[0]?.region?.headerRow).toBe(1);
   });
 
   it("reads the same worksheet tables from bytes as from a path", async () => {

@@ -56,9 +56,11 @@ the same `sheets`, `headerRow`, and `includeHiddenSheets` options. The byte
 surface had readers for Excel Tables and named ranges but none for the
 worksheets themselves.
 
-`readWorkbookWorksheetsBytes` joins it: every selected worksheet, whether or not
-it yielded a table, with the rectangle the read covered and a count of the cells
-in it holding a formula the workbook carries no calculated value for. Excel
+`readWorkbookWorksheets` and `readWorkbookWorksheetsBytes` join it: every
+selected worksheet, whether or not it yielded a table, with the rectangle the
+read covered and a count of the cells in it holding a formula the workbook
+carries no calculated value for. Both surfaces adapt their input and call one
+operation, so neither can answer differently about the same workbook. Excel
 writes a formula and its last result together, but a file written by a generator
 carries the formula alone, and every reader then sees those cells as empty
 because empty is all the file says. The count is read from this package's own
