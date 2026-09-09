@@ -112,6 +112,12 @@ export interface ImportSourceDescription {
    * as empty, so importing would quietly leave holes where the values belong.
    */
   readonly uncachedFormulaCells: number;
+  /**
+   * Cells holding an error value. Any number above zero means the worksheet
+   * cannot be imported: those cells read as the internal code Excel numbers
+   * each error by, so importing would store numbers nobody entered.
+   */
+  readonly errorCells: number;
   /** A safe table name derived from the source name. */
   readonly suggestedTableName: string;
   /** A Record ID prefix derived from that table name. */

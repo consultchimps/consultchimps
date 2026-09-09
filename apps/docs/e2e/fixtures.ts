@@ -68,12 +68,25 @@ export interface UncalculatedFormulaCell {
   readonly formula: string;
 }
 
+/**
+ * A cell holding an error value: `#REF!`, `#DIV/0!` and their kind, which the
+ * format stores as `t="e"`. A reader built on a spreadsheet engine sees the
+ * internal code Excel numbers the error by, not the text the cell shows, so
+ * such a cell arrives as an ordinary-looking number.
+ */
+export interface ErrorValueCell {
+  /** The error as the cell shows it, such as `#REF!`. */
+  readonly error: string;
+}
+
+/** One cell of a worksheet fixture. */
+export type WorksheetCellFixture =
+  number | string | UncalculatedFormulaCell | ErrorValueCell;
+
 /** One worksheet: a name and its rows, top-left aligned at A1. */
 export interface WorksheetFixture {
   readonly name: string;
-  readonly rows: ReadonlyArray<
-    ReadonlyArray<number | string | UncalculatedFormulaCell>
-  >;
+  readonly rows: ReadonlyArray<ReadonlyArray<WorksheetCellFixture>>;
   /**
    * How Excel presents the tab. Absent means visible. `veryHidden` is the
    * state only the VBA editor can reverse, which the workbook part spells
@@ -162,9 +175,11 @@ function worksheetXml(
         .map((value, columnIndex) => {
           const address = `${columnLetter(columnIndex)}${reference}`;
           if (typeof value === "object") {
-            // A formula with no <v> beside it: the value it would produce is
-            // not in the file.
-            return `<c r="${address}"><f>${escapeXml(value.formula)}</f></c>`;
+            return "formula" in value
+              ? // A formula with no <v> beside it: the value it would produce
+                // is not in the file.
+                `<c r="${address}"><f>${escapeXml(value.formula)}</f></c>`
+              : `<c r="${address}" t="e"><v>${escapeXml(value.error)}</v></c>`;
           }
           return typeof value === "number"
             ? `<c r="${address}"><v>${value}</v></c>`

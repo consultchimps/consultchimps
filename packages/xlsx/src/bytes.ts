@@ -28,13 +28,13 @@ import {
   WORKBOOK_MAIN_PART,
   WorkbookPackage,
 } from "./package/index.js";
+import { WorkbookRead } from "./operations/read-model.js";
 import {
   readWorksheetReports,
   type WorksheetImportReport,
 } from "./operations/worksheets.js";
 import {
   describeWorkbookModel,
-  loadWorkbookModelForDescribe,
   MAX_COLUMN_SAMPLE_VALUES,
   type DescribeWorkbookMetric,
   type DescribeWorkbookOptions,
@@ -1021,10 +1021,11 @@ export async function describeWorkbookBytes(
   options: DescribeWorkbookOptions = {},
 ): Promise<WorkbookDescriptionOutcome> {
   throwIfAborted(options.signal, INSPECT_OPERATION, "memory");
-  const workbook = await loadWorkbookModelForDescribe(input.bytes, input.name, {
+  const read = await WorkbookRead.load(input.bytes, {
     source: input.name,
+    details: { source: input.name },
   });
-  return describeWorkbookModel(workbook, input.name, options, "memory");
+  return describeWorkbookModel(read, input.name, options, "memory");
 }
 
 export { XLSX_ERRORS, type XlsxErrorCode } from "./errors.js";

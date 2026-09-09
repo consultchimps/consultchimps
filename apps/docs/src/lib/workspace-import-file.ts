@@ -24,6 +24,7 @@ import {
   WORKSPACE_IMPORT_FILES,
   type WorkspaceImportKind,
 } from "./accepted-files";
+import { cellCountText, importBlockers } from "./workspace-import-blockers";
 import type {
   ImportSourceDescription,
   ImportTableChoice,
@@ -39,6 +40,11 @@ interface ImportSource {
    * workbook Excel has calculated and saved has none.
    */
   readonly uncachedFormulaCells: number;
+  /**
+   * Cells holding an error value. A workbook whose values are all values has
+   * none.
+   */
+  readonly errorCells: number;
 }
 
 function decodeUtf8(bytes: Uint8Array, fileName: string): string {
@@ -56,28 +62,48 @@ function decodeUtf8(bytes: Uint8Array, fileName: string): string {
 }
 
 /**
- * Refuse a worksheet whose formulas have never been calculated.
+ * Refuse a worksheet holding cells the table beside it misrepresents.
  *
  * A formula cell with no cached result reads as empty, because empty is all the
  * file says, so importing it would create a table with holes where the numbers
- * should be and report a clean success. There is no way to work the values out
- * here: the calculation belongs to Excel. So the import stops and says what to
- * do about it, which is the one outcome that neither loses data nor pretends.
+ * should be. An error cell reads as a number: the workbook stores `#REF!` and
+ * its kind as the internal code Excel numbers each error by, so importing it
+ * would store 23 where the worksheet shows `#REF!` and nothing afterwards could
+ * tell that from a measurement.
+ *
+ * Neither can be worked out here. Calculating belongs to Excel, and what a
+ * broken formula was meant to say is not in the file at all. So the import stops
+ * and says what to do about it, which is the one outcome that neither loses data
+ * nor invents it.
+ *
+ * The conditions come from the shared rule the page uses to leave the source
+ * unticked, so a source the form offers is a source this accepts.
  */
-function assertCalculated(source: ImportSource, fileName: string): void {
-  if (source.uncachedFormulaCells === 0) {
+function assertImportable(source: ImportSource, fileName: string): void {
+  const [blocker] = importBlockers(source);
+  if (blocker === undefined) {
     return;
   }
-  const cells =
-    source.uncachedFormulaCells === 1
-      ? "1 cell"
-      : `${source.uncachedFormulaCells} cells`;
+  const held = cellCountText(blocker.cells);
+  if (blocker.kind === "uncalculated-formulas") {
+    throw new ConsultChimpsError(
+      "WORKSPACE_IMPORT_UNCACHED_FORMULAS",
+      `"${source.name}" in "${fileName}" has ${held} holding a formula the workbook carries no calculated value for, so importing it would leave those values empty. Open the workbook in Excel, let it calculate, save it, and import it again.`,
+      {
+        details: {
+          cells: blocker.cells,
+          file: fileName,
+          source: source.name,
+        },
+      },
+    );
+  }
   throw new ConsultChimpsError(
-    "WORKSPACE_IMPORT_UNCACHED_FORMULAS",
-    `${cells} in "${source.name}" hold a formula that "${fileName}" carries no calculated value for, so importing it would leave those values empty. Open the workbook in Excel, let it calculate, save it, and import it again.`,
+    "WORKSPACE_IMPORT_ERROR_CELLS",
+    `"${source.name}" in "${fileName}" has ${held} holding an error value, which the workbook stores as the number Excel codes that error by, so importing it would store numbers nobody entered. Fix or clear the errors in Excel, save the workbook, and import it again.`,
     {
       details: {
-        cells: source.uncachedFormulaCells,
+        cells: blocker.cells,
         file: fileName,
         source: source.name,
       },
@@ -104,8 +130,10 @@ async function readSources(
       {
         name: fileName,
         table: parseCsvTable(decodeUtf8(bytes, fileName), { file: fileName }),
-        // Delimited text holds values, never formulas.
+        // Delimited text holds values: no formulas to leave uncalculated, and
+        // no cell type for an error, so `#REF!` in a CSV is the text `#REF!`.
         uncachedFormulaCells: 0,
+        errorCells: 0,
       },
     ];
   }
@@ -115,24 +143,25 @@ async function readSources(
   // never download either.
   const { readWorkbookWorksheetsBytes } =
     await import("@consultchimps/xlsx/bytes");
-  // One reader, so the tables and the formula count describe the same read of
-  // the same worksheet. Asking a second reader for the count would let it
-  // answer about a different region: this package resolves a worksheet's header
-  // two ways, and they disagree on exactly the rows that read as blank, which
-  // is every row holding nothing but uncalculated formulas.
+  // One reader, so the tables and the cell counts describe the same read of the
+  // same worksheet. Asking a second reader for the counts would let it answer
+  // about a different region: this package resolves a worksheet's header two
+  // ways, and they disagree on exactly the rows that read as blank, which is
+  // every row holding nothing but uncalculated formulas.
   const reports = await readWorkbookWorksheetsBytes({ name: fileName, bytes });
   const sources = reports
     .map((report) => ({
       name: report.sheet,
       table: report.table,
       uncachedFormulaCells: report.uncachedFormulaCells,
+      errorCells: report.errorCells,
     }))
-    // A worksheet with neither data nor uncalculated formulas has nothing to
-    // say, so it is left out. One that cannot be imported because of its
-    // formulas is kept, so the visitor is told why rather than left to wonder
-    // where their worksheet went.
+    // A worksheet with no data and nothing to refuse has nothing to say, so it
+    // is left out. One that cannot be imported is kept, so the visitor is told
+    // why rather than left to wonder where their worksheet went.
     .filter(
-      (source) => source.table !== undefined || source.uncachedFormulaCells > 0,
+      (source) =>
+        source.table !== undefined || importBlockers(source).length > 0,
     );
 
   if (sources.length === 0) {
@@ -172,6 +201,7 @@ export async function describeImportSources(
       rowCount: source.table?.rows.length ?? 0,
       columnCount: source.table?.columns.length ?? 0,
       uncachedFormulaCells: source.uncachedFormulaCells,
+      errorCells: source.errorCells,
       suggestedTableName,
       suggestedRecordIdPrefix: suggestRecordIdPrefix(suggestedTableName),
     };
@@ -207,7 +237,7 @@ export async function resolveImportRequests(
     }
     // Checked here as well as in the page, because the page can only hold a
     // button back and this is what decides whether anything is written.
-    assertCalculated(source, fileName);
+    assertImportable(source, fileName);
     if (source.table === undefined) {
       throw new ConsultChimpsError(
         "WORKSPACE_IMPORT_SOURCE_EMPTY",

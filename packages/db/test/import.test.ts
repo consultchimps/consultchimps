@@ -584,6 +584,30 @@ describe("column names that have to fit", () => {
     }
   });
 
+  it("leaves a unique header at the limit exactly as it was", async () => {
+    // Nothing will be numbered, so nothing has to make room for a number.
+    // Taking that room anyway shortened a schema the person cannot rename.
+    const header = "d".repeat(200);
+    const { names, renamed } = await columnsFor([header]);
+
+    expect(names).toEqual([header]);
+    expect(renamed).toEqual([]);
+    expectStorable(names);
+  });
+
+  it("shortens the headers that fold together and leaves the rest", async () => {
+    const unique = "e".repeat(200);
+    const pair = "f".repeat(200);
+    const { names, renamed } = await columnsFor([unique, pair, `${pair}_2`]);
+
+    // The one that stands alone keeps every character it had.
+    expect(names[0]).toBe(unique);
+    expect(renamed.some((entry) => entry.from === unique)).toBe(false);
+    // The two that fold together are numbered, inside the limit.
+    expect(names[1]).not.toBe(names[2]);
+    expectStorable(names);
+  });
+
   it("leaves a header that already fits exactly as it was", async () => {
     const { names, renamed } = await columnsFor(["Customer", "Region"]);
     expect(names).toEqual(["Customer", "Region"]);

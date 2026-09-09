@@ -1,5 +1,6 @@
 import { ConsultChimpsError } from "@consultchimps/core";
 import {
+  columnKey,
   uniqueHeaders,
   type CellValue,
   type Table,
@@ -136,16 +137,58 @@ function suffixHeadroom(columnCount: number): number {
  * deterministically, and no value is lost: every column is still stored, under a
  * name the result reports.
  */
-function prepareForImport(table: Table): PreparedTable {
-  const budget = Math.max(
-    1,
-    MAX_IDENTIFIER_LENGTH - suffixHeadroom(table.columns.length),
+/**
+ * Name every column so that each fits the identifier limit, shortening only the
+ * headers that have to be shortened.
+ *
+ * Room for a number is only needed by a name that will be given one, and a name
+ * is given one only when another claims it first. Taking that room from every
+ * header would shorten a header that is unique and already fits, changing a
+ * perfectly good schema that the person cannot rename. So the full limit is
+ * spent first, and only the headers that fold together give any of it back.
+ *
+ * A shortened name can land on one that was left at full length, and the
+ * numbering that follows can then reach a name that no longer fits. Rather than
+ * argue that it cannot, the result is checked, and the uniform shortening, whose
+ * fit is provable, is used when it does: every name is inside the budget, and the
+ * number can never pass twice the column count plus two, so a name and its
+ * number together are inside the limit. Both paths are decided by the headers
+ * alone, so the same table always yields the same names.
+ */
+function deriveColumnNames(headers: readonly string[]): string[] {
+  const headroom = suffixHeadroom(headers.length);
+  const budget = Math.max(1, MAX_IDENTIFIER_LENGTH - headroom);
+  const full = headers.map((header) =>
+    truncateIdentifier(header, MAX_IDENTIFIER_LENGTH),
   );
+
+  // Folded the way `uniqueHeaders` folds, so "Region" and "region" count as the
+  // one name they will turn out to be.
+  const occurrences = new Map<string, number>();
+  for (const name of full) {
+    const key = columnKey(name);
+    occurrences.set(key, (occurrences.get(key) ?? 0) + 1);
+  }
+
   // A header cut down to nothing, which takes a name wider than the budget,
   // becomes a blank for `uniqueHeaders` to fill the way it fills any other.
-  const columns = uniqueHeaders(
-    table.columns.map((column) => truncateIdentifier(column, budget) || null),
+  const preferred = uniqueHeaders(
+    full.map((name) =>
+      (occurrences.get(columnKey(name)) ?? 0) > 1
+        ? truncateIdentifier(name, budget) || null
+        : name || null,
+    ),
   );
+  if (preferred.every((name) => name.length <= MAX_IDENTIFIER_LENGTH)) {
+    return preferred;
+  }
+  return uniqueHeaders(
+    full.map((name) => truncateIdentifier(name, budget) || null),
+  );
+}
+
+function prepareForImport(table: Table): PreparedTable {
+  const columns = deriveColumnNames(table.columns);
   const renamedColumns: RenamedColumn[] = [];
   table.columns.forEach((from, index) => {
     const to = columns[index] as string;

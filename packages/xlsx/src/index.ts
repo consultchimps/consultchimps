@@ -40,6 +40,7 @@ import {
 } from "./bytes.js";
 
 import { XLSX_ERRORS } from "./errors.js";
+import { WorkbookRead } from "./operations/read-model.js";
 import {
   readWorksheetReports,
   type WorksheetImportReport,
@@ -52,7 +53,6 @@ export type { WorksheetImportReport } from "./operations/worksheets.js";
 export type { WorksheetRegion, WorksheetTableReport } from "./shared.js";
 import {
   describeWorkbookModel,
-  loadWorkbookModelForDescribe,
   MAX_COLUMN_SAMPLE_VALUES,
   type DescribeWorkbookMetric,
   type DescribeWorkbookOptions,
@@ -439,12 +439,11 @@ export async function describeWorkbook(
   // caring, and a large valid workbook would be loaded in full for nothing.
   throwIfAborted(options.signal, INSPECT_OPERATION);
   const absolutePath = path.resolve(filePath);
-  const workbook = await loadWorkbookModelForDescribe(
-    await readWorkbookBytes(absolutePath),
-    absolutePath,
-    { filePath: absolutePath },
-  );
-  return describeWorkbookModel(workbook, path.basename(absolutePath), options);
+  const read = await WorkbookRead.load(await readWorkbookBytes(absolutePath), {
+    source: absolutePath,
+    details: { filePath: absolutePath },
+  });
+  return describeWorkbookModel(read, path.basename(absolutePath), options);
 }
 
 export async function writeTable(

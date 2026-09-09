@@ -9,6 +9,7 @@ import JSZip from "jszip";
 import { afterEach, describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 
+import { XLSX_ERRORS } from "../src/errors.js";
 import {
   describeWorkbookBytes,
   readWorkbookExcelTablesBytes,
@@ -1103,6 +1104,124 @@ describe("worksheets whose formulas were never calculated", () => {
   });
 });
 
+describe("worksheets holding error values", () => {
+  const input = async (rows: string) => ({
+    name: "north.xlsx",
+    bytes: await uncalculatedWorkbookBytes(rows),
+  });
+
+  it("counts a typed error and a failed formula alike", async () => {
+    const [report] = await readWorkbookWorksheetsBytes(
+      await input(
+        `<row r="1">${textCell("A1", "Customer")}${textCell("B1", "Amount")}</row>` +
+          `<row r="2">${textCell("A2", "Acme")}<c r="B2" t="e"><v>#REF!</v></c></row>` +
+          `<row r="3">${textCell("A3", "Beta")}<c r="B3" t="e"><f>1/0</f><v>#DIV/0!</v></c></row>`,
+      ),
+    );
+
+    expect(report?.errorCells).toBe(2);
+    // And this is why the count has to travel beside the table: the engine
+    // hands back the internal code Excel numbers each error by, so the amounts
+    // read as ordinary numbers that were never in the worksheet.
+    expect(report?.table?.rows).toEqual([
+      { Customer: "Acme", Amount: 23 },
+      { Customer: "Beta", Amount: 7 },
+    ]);
+  });
+
+  it("counts an error in the header row", async () => {
+    const [report] = await readWorkbookWorksheetsBytes(
+      await input(
+        `<row r="1">${textCell("A1", "Customer")}<c r="B1" t="e"><v>#NAME?</v></c></row>` +
+          `<row r="2">${textCell("A2", "Acme")}<c r="B2"><v>5</v></c></row>`,
+      ),
+    );
+
+    expect(report?.errorCells).toBe(1);
+  });
+
+  it("leaves an error above the header alone", async () => {
+    // An error cell reads as a value, so it never pushes the header row down by
+    // itself; the header is declared here instead, which is what a caller does
+    // when a worksheet opens with a title block. The cell above it is outside
+    // the rectangle the rows were read from, and counting it would refuse the
+    // worksheet over a cell the import never reads - the same region rule the
+    // uncalculated formulas follow.
+    const rows =
+      `<row r="1"><c r="A1" t="e"><v>#REF!</v></c></row>` +
+      `<row r="2">${textCell("A2", "Customer")}${textCell("B2", "Region")}</row>` +
+      `<row r="3">${textCell("A3", "Acme")}${textCell("B3", "north")}</row>`;
+
+    const [inside] = await readWorkbookWorksheetsBytes(await input(rows));
+    expect(inside?.region?.headerRow).toBe(1);
+    expect(inside?.errorCells).toBe(1);
+
+    const [outside] = await readWorkbookWorksheetsBytes(await input(rows), {
+      headerRow: 2,
+    });
+    expect(outside?.region?.headerRow).toBe(2);
+    expect(outside?.errorCells).toBe(0);
+    expect(outside?.table?.rows).toEqual([
+      { Customer: "Acme", Region: "north" },
+    ]);
+  });
+
+  it("counts the two conditions separately in one read", async () => {
+    const [report] = await readWorkbookWorksheetsBytes(
+      await input(
+        `<row r="1">${textCell("A1", "Customer")}${textCell("B1", "Amount")}${textCell("C1", "Share")}</row>` +
+          `<row r="2">${textCell("A2", "Acme")}<c r="B2" t="e"><v>#REF!</v></c><c r="C2"><f>B2/10</f></c></row>`,
+      ),
+    );
+
+    expect(report?.errorCells).toBe(1);
+    expect(report?.uncachedFormulaCells).toBe(1);
+  });
+
+  it("counts nothing for a worksheet of ordinary values", async () => {
+    const directory = await createTemporaryDirectory();
+    const path_ = path.join(directory, "north.xlsx");
+    const bytes = await writeWorkbook(path_, [REVIEW_LOG]);
+
+    const [report] = await readWorkbookWorksheetsBytes({
+      name: "north.xlsx",
+      bytes,
+    });
+    expect(report?.errorCells).toBe(0);
+  });
+});
+
+describe("worksheets the model cannot parse", () => {
+  // The package opens in two steps and only the first is eager: the worksheet
+  // part is parsed the first time somebody asks for it, so a malformed row
+  // surfaces from a property access rather than from the load.
+  const malformed =
+    `<row r="1">${textCell("A1", "Customer")}</row>` +
+    `<row r="0">${textCell("A2", "Acme")}</row>`;
+
+  it("reports a worksheet read as the stable read failure, naming the sheet", async () => {
+    const bytes = await uncalculatedWorkbookBytes(malformed);
+
+    await expect(
+      readWorkbookWorksheetsBytes({ name: "north.xlsx", bytes }),
+    ).rejects.toMatchObject({
+      code: XLSX_ERRORS.XLSX_READ_FAILED,
+      details: { source: "north.xlsx", worksheet: "Review Log" },
+    });
+  });
+
+  it("reports the same failure from the description of the same file", async () => {
+    const bytes = await uncalculatedWorkbookBytes(malformed);
+
+    await expect(
+      describeWorkbookBytes({ name: "north.xlsx", bytes }),
+    ).rejects.toMatchObject({
+      code: XLSX_ERRORS.XLSX_READ_FAILED,
+      details: { source: "north.xlsx", worksheet: "Review Log" },
+    });
+  });
+});
+
 describe("worksheets that leave positions to document order", () => {
   // The r attribute is optional on both <row> and <c>: a worksheet may rely on
   // document order instead. A generator that writes one is a workbook a person
@@ -1152,15 +1271,25 @@ describe("worksheets that leave positions to document order", () => {
   it("still refuses a reference that is present and unreadable", async () => {
     // Absent is the format saying "use document order". Present and malformed
     // is a damaged file, and stays an error rather than being guessed at. The
-    // rows are parsed on demand rather than at load, so this surfaces as the
-    // model's own error rather than the read failure that wraps a bad package.
+    // rows are parsed on demand rather than at load, so this arrives from a
+    // property access; it is translated into the same read failure the load
+    // itself raises, and the parser's own message stays reachable as the cause.
     const bytes = await uncalculatedWorkbookBytes(
       `<row r="1"><c r="not-a-cell" t="inlineStr"><is><t>Case_ID</t></is></c></row>`,
     );
 
-    await expect(
-      describeWorkbookBytes({ name: "broken.xlsx", bytes }),
-    ).rejects.toThrow(/invalid cell reference: not-a-cell/u);
+    const failure = await describeWorkbookBytes({
+      name: "broken.xlsx",
+      bytes,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      code: XLSX_ERRORS.XLSX_READ_FAILED,
+      details: { source: "broken.xlsx", worksheet: "Review Log" },
+    });
+    expect((failure as { cause?: unknown }).cause).toMatchObject({
+      message: expect.stringContaining("invalid cell reference: not-a-cell"),
+    });
   });
 });
 

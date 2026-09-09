@@ -476,15 +476,25 @@ other reader here; naming a worksheet the workbook does not have is refused with
 `describeWorkbookBytes` is the byte-level twin and produces a structurally
 identical description for the same workbook.
 
-### Notice formulas the workbook never calculated
+### Notice cells a table cannot represent
+
+Two kinds of cell reach a `Table` as something they are not.
 
 Excel writes a formula and its last calculated result side by side, but a file
 written by a generator, or saved with calculation switched off, carries the
-formula alone. Every reader then sees those cells as empty, because empty is all
-the file says, and a table read from that worksheet has holes where the numbers
-belong. `readWorkbookWorksheetsBytes` reports each selected worksheet, whether
-or not it yielded a table, with the rectangle the read covered and the count of
-such cells inside it:
+formula alone. Every reader then sees those cells as **empty**, because empty is
+all the file says, and a table read from that worksheet has holes where the
+numbers belong.
+
+An error cell reaches it as a **number**. `#REF!`, `#DIV/0!` and their kind are
+stored as `t="e"`, and the spreadsheet engine reports the internal code Excel
+numbers each error by, so a `#REF!` arrives as `23` and a `#DIV/0!` as `7`. That
+is worse than a hole: a column of amounts still infers a numeric type, and
+nothing downstream can tell those codes from data.
+
+`readWorkbookWorksheetsBytes` reports each selected worksheet, whether or not it
+yielded a table, with the rectangle the read covered and the count of each kind
+inside it:
 
 ```ts
 import { readWorkbookWorksheetsBytes } from "@consultchimps/xlsx/bytes";
@@ -498,21 +508,34 @@ for (const worksheet of await readWorkbookWorksheetsBytes({
     // and save it again.
     console.log(`${worksheet.sheet} has values the file does not carry`);
   }
+  if (worksheet.errorCells > 0) {
+    // What a broken formula was meant to say is not in the file at all: fix or
+    // clear the errors in Excel and save it again.
+    console.log(`${worksheet.sheet} has values that are errors`);
+  }
 }
 ```
 
 `readWorkbookWorksheets` is the file twin: both surfaces hand the same operation
 the same bytes, so neither can answer differently about the same workbook.
 
-The count is read from the package's own document model, because the spreadsheet
-engine behind the table readers drops a numeric formula cell with no cached
-value while parsing, and it is scoped to the rectangle the table reader
-reported, so it describes the read you got rather than a region resolved a
-second time. A cached value counts as present when the element is there,
-whatever it holds, so a formula that evaluated to an empty string or to zero has
-been calculated. `readWorkbookTablesBytes` is this list with the tables taken
-out of it, and the consolidation, merge, and split operations are unchanged:
-they go on treating an uncalculated formula as an empty cell.
+Both counts are read from the package's own document model, because the
+spreadsheet engine behind the table readers drops a numeric formula cell with no
+cached value while parsing and flattens an error into that code, and they are
+scoped in one walk to the rectangle the table reader reported, so they describe
+the read you got rather than a region resolved a second time. A cached value
+counts as present when the element is there, whatever it holds, so a formula
+that evaluated to an empty string or to zero has been calculated; an error
+counts whether somebody typed it in or a formula left it there.
+`readWorkbookTablesBytes` is this list with the tables taken out of it, and the
+consolidation, merge, and split operations are unchanged: they go on treating an
+uncalculated formula as an empty cell and an error as the code it is stored as.
+
+A worksheet part is parsed the first time something asks for it, so a malformed
+row or cell reference surfaces long after the workbook opened. Whichever step it
+comes from, it is reported as `XLSX_READ_FAILED`, naming the workbook and, when
+the failure belongs to a worksheet, that worksheet; the parser's own complaint
+is the error's `cause`.
 
 ## Remove worksheet and workbook protection
 

@@ -120,6 +120,24 @@ function uncalculatedWorkbook(): Promise<UploadFile> {
 }
 
 /**
+ * A workbook whose amounts are errors. A reader built on a spreadsheet engine
+ * sees the internal code Excel numbers each error by, so `#REF!` would import
+ * as 23 and `#DIV/0!` as 7, and the column would infer a numeric type.
+ */
+function errorValueWorkbook(): Promise<UploadFile> {
+  return createWorkbookUpload("amounts.xlsx", [
+    {
+      name: "Customers",
+      rows: [
+        ["Customer", "Region", "Amount"],
+        ["Acme", "North", { error: "#REF!" }],
+        ["Beta", "South", { error: "#DIV/0!" }],
+      ],
+    },
+  ]);
+}
+
+/**
  * Press Back and wait for the page to have seen it. A same-document traversal
  * changes nothing a navigation assertion could wait on, so the press is only
  * observable through the event it fires.
@@ -419,6 +437,35 @@ test.describe("/workspace import", () => {
     await expect(page.getByTestId("workspace-import-problem")).toHaveText(
       "Choose at least one table to import",
     );
+
+    // Nothing was created, and the workspace is untouched.
+    await expect(page.getByTestId("workspace-tables-empty")).toBeVisible();
+    await expect(page.getByTestId("workspace-unsaved")).toHaveCount(0);
+  });
+
+  test("refuses a worksheet holding error values", async ({ page }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await page.getByTestId("workspace-new").click();
+
+    await page
+      .getByTestId("workspace-import-input")
+      .setInputFiles(await errorValueWorkbook());
+
+    // Listed rather than hidden, for the same reason: an error cell reads as an
+    // ordinary number, so importing it would report a clean success and put
+    // numbers nobody entered in the table.
+    await expect(page.getByTestId("workspace-import-source")).toHaveCount(1);
+    await expect(page.getByTestId("workspace-import-blocked")).toContainText(
+      "2 cells hold an error value",
+    );
+    await expect(page.getByTestId("workspace-import-blocked")).toContainText(
+      "Fix or clear the errors in Excel, save the workbook",
+    );
+    await expect(
+      importRow(page, 0).getByTestId("workspace-import-selected"),
+    ).toBeDisabled();
+    await expect(page.getByTestId("workspace-import-run")).toBeDisabled();
 
     // Nothing was created, and the workspace is untouched.
     await expect(page.getByTestId("workspace-tables-empty")).toBeVisible();

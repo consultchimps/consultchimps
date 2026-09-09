@@ -66,20 +66,33 @@ worksheets themselves.
 
 `readWorkbookWorksheets` and `readWorkbookWorksheetsBytes` join it: every
 selected worksheet, whether or not it yielded a table, with the rectangle the
-read covered and a count of the cells in it holding a formula the workbook
-carries no calculated value for. Both surfaces adapt their input and call one
-operation, so neither can answer differently about the same workbook. Excel
-writes a formula and its last result together, but a file written by a generator
-carries the formula alone, and every reader then sees those cells as empty
-because empty is all the file says. The count is read from this package's own
-document model, because the spreadsheet engine drops such a cell while parsing,
-and it is scoped to the rectangle the table reader reported rather than to a
-second header resolution, so it can only describe the read the caller got.
-Whether a cached value is present is decided by the element being there rather
-than by what it holds, so a formula that evaluated to an empty string or to zero
-counts as calculated; that is the definition the values-only conversion already
-used, now shared between them. Reading, consolidating, merging, and splitting
-are unchanged and still treat such a cell as empty.
+read covered and counts of the cells in it that a `Table` cannot represent.
+`uncachedFormulaCells` counts the cells holding a formula the workbook carries
+no calculated value for: Excel writes a formula and its last result together,
+but a file written by a generator carries the formula alone, and every reader
+then sees those cells as empty because empty is all the file says. `errorCells`
+counts the cells holding an error value, typed in or left by a formula whose
+last calculation failed: those are stored as `t="e"` and the spreadsheet engine
+reports the internal code Excel numbers each error by, so a `#REF!` arrives as
+`23` and a `#DIV/0!` as `7`, and a column of amounts still infers a numeric
+type. Both surfaces adapt their input and call one operation, so neither can
+answer differently about the same workbook. Both counts are read from this
+package's own document model, because the spreadsheet engine drops an
+uncalculated cell while parsing and flattens an error into that code, and they
+are taken in one walk over the rectangle the table reader reported rather than
+over a second header resolution, so they can only describe the read the caller
+got. Whether a cached value is present is decided by the element being there
+rather than by what it holds, so a formula that evaluated to an empty string or
+to zero counts as calculated; that is the definition the values-only conversion
+already used, now shared between them. Reading, consolidating, merging, and
+splitting are unchanged and still treat such a cell as empty or as its code.
+
+A worksheet part is parsed the first time something asks for it, so a malformed
+row or cell reference surfaced from an ordinary property access as a bare parser
+error while the same damage in the package surfaced as `XLSX_READ_FAILED`. Both
+now go through one translation: a failed read reports `XLSX_READ_FAILED` naming
+the workbook and, where the failure belongs to a worksheet, that worksheet, with
+the parser's own complaint as the error's `cause`.
 
 `uniqueHeaders` in `@consultchimps/tabular` now decides uniqueness against the
 whole header row: every original spelling is reserved before any suffix is
