@@ -14,6 +14,7 @@ import {
   readWorkbookExcelTablesBytes,
   readWorkbookNamedRangesBytes,
   readWorkbookTablesBytes,
+  readWorkbookWorksheetsBytes,
 } from "../src/bytes.js";
 import {
   describeWorkbook,
@@ -149,7 +150,6 @@ describe("describeWorkbook", () => {
         columnCount: 3,
         headerRow: 1,
         dataRowCount: 3,
-        uncachedFormulaCells: 0,
         columns: [
           {
             header: "Case_ID",
@@ -866,7 +866,6 @@ describe("describeWorkbook expected failures", () => {
         headerRow: undefined,
         columns: [],
         dataRowCount: 0,
-        uncachedFormulaCells: 0,
       },
     ]);
     expect(result.warnings).toEqual([
@@ -937,74 +936,91 @@ function textCell(address: string, text: string): string {
 }
 
 describe("worksheets whose formulas were never calculated", () => {
+  const input = async (rows: string) => ({
+    name: "north.xlsx",
+    bytes: await uncalculatedWorkbookBytes(rows),
+  });
+
   it("counts the cells holding a formula with no calculated value", async () => {
-    const bytes = await uncalculatedWorkbookBytes(
-      `<row r="1">${textCell("A1", "Case_ID")}${textCell("B1", "Failed Checks")}</row>` +
-        `<row r="2">${textCell("A2", "R-1")}<c r="B2"><f>1+1</f></c></row>` +
-        `<row r="3">${textCell("A3", "R-2")}<c r="B3"><f>2+2</f></c></row>`,
+    const [report] = await readWorkbookWorksheetsBytes(
+      await input(
+        `<row r="1">${textCell("A1", "Case_ID")}${textCell("B1", "Failed Checks")}</row>` +
+          `<row r="2">${textCell("A2", "R-1")}<c r="B2"><f>1+1</f></c></row>` +
+          `<row r="3">${textCell("A3", "R-2")}<c r="B3"><f>2+2</f></c></row>`,
+      ),
     );
 
-    const { description } = await describeWorkbookBytes({
-      name: "north.xlsx",
-      bytes,
-    });
-
-    expect(description.sheets[0]?.uncachedFormulaCells).toBe(2);
-    // The rows are still occupied, so the count is about the values inside
-    // them rather than about the rows going missing.
-    expect(description.sheets[0]?.dataRowCount).toBe(2);
+    expect(report?.sheet).toBe("Review Log");
+    expect(report?.uncachedFormulaCells).toBe(2);
+    // The table still reads them as empty, which is all the file says, and is
+    // exactly why the count has to travel beside it.
+    expect(report?.table?.rows).toEqual([
+      { Case_ID: "R-1", "Failed Checks": null },
+      { Case_ID: "R-2", "Failed Checks": null },
+    ]);
   });
 
   it("counts a header cell whose formula was never calculated", async () => {
     // The header reads as blank, so the reader invents a name for the column
-    // and the worksheet imports under a different schema. A count that started
-    // below the header row would have said the worksheet was fine.
-    const bytes = await uncalculatedWorkbookBytes(
-      `<row r="1">${textCell("A1", "Case_ID")}<c r="B1"><f>CONCATENATE("Failed"," Checks")</f></c>${textCell("C1", "Region")}</row>` +
-        `<row r="2">${textCell("A2", "R-1")}<c r="B2"><v>5</v></c>${textCell("C2", "north")}</row>`,
+    // and the worksheet imports under a different schema.
+    const [report] = await readWorkbookWorksheetsBytes(
+      await input(
+        `<row r="1">${textCell("A1", "Case_ID")}<c r="B1"><f>CONCATENATE("Failed"," Checks")</f></c></row>` +
+          `<row r="2">${textCell("A2", "R-1")}<c r="B2"><v>5</v></c></row>`,
+      ),
     );
 
-    const { description } = await describeWorkbookBytes({
-      name: "north.xlsx",
-      bytes,
-    });
-
-    expect(description.sheets[0]?.uncachedFormulaCells).toBe(1);
+    expect(report?.uncachedFormulaCells).toBe(1);
+    expect(report?.table?.columns).toEqual(["Case_ID", "column_2"]);
   });
 
-  it("leaves a header cell whose formula carries its result alone", async () => {
-    const bytes = await uncalculatedWorkbookBytes(
-      `<row r="1">${textCell("A1", "Case_ID")}<c r="B1" t="str"><f>CONCATENATE("Failed"," Checks")</f><v>Failed Checks</v></c></row>` +
-        `<row r="2">${textCell("A2", "R-1")}<c r="B2"><v>5</v></c></row>`,
+  it("leaves a formula above the header alone, and reads from the header", async () => {
+    // The used range opens with a title cell nothing has calculated. The reader
+    // sees no value there and keys on the real header below it, so that formula
+    // is outside the table that would be imported. Counting it would refuse the
+    // worksheet over a cell the import never reads.
+    const [report] = await readWorkbookWorksheetsBytes(
+      await input(
+        `<row r="1"><c r="A1"><f>CONCATENATE("Q","1")</f></c></row>` +
+          `<row r="2">${textCell("A2", "Case_ID")}${textCell("B2", "Region")}</row>` +
+          `<row r="3">${textCell("A3", "R-1")}${textCell("B3", "north")}</row>`,
+      ),
     );
 
-    const { description } = await describeWorkbookBytes({
-      name: "north.xlsx",
-      bytes,
-    });
+    expect(report?.uncachedFormulaCells).toBe(0);
+    // The region reported is the one the rows were read from, header included.
+    expect(report?.region?.headerRow).toBe(2);
+    expect(report?.table?.source?.firstDataRow).toBe(3);
+    expect(report?.table?.rows).toEqual([{ Case_ID: "R-1", Region: "north" }]);
+  });
 
-    expect(description.sheets[0]?.uncachedFormulaCells).toBe(0);
-    expect(
-      description.sheets[0]?.columns.map((column) => column.header),
-    ).toEqual(["Case_ID", "Failed Checks"]);
+  it("counts the same formula once it sits inside the region", async () => {
+    // The identical cell, now under the header rather than above it, is part of
+    // what would be imported and is counted.
+    const [report] = await readWorkbookWorksheetsBytes(
+      await input(
+        `<row r="1">${textCell("A1", "Case_ID")}${textCell("B1", "Region")}</row>` +
+          `<row r="2">${textCell("A2", "R-1")}<c r="B2"><f>CONCATENATE("Q","1")</f></c></row>`,
+      ),
+    );
+
+    expect(report?.region?.headerRow).toBe(1);
+    expect(report?.uncachedFormulaCells).toBe(1);
   });
 
   it("counts an uncalculated header in the last column too", async () => {
-    // The blank header sits at the edge of the used range, where a region could
-    // plausibly stop short of it while the table reader, which spans the used
-    // range, still builds a column for it.
-    const bytes = await uncalculatedWorkbookBytes(
-      `<row r="1">${textCell("A1", "Case_ID")}<c r="B1"><f>1+1</f></c></row>` +
-        `<row r="2">${textCell("A2", "R-1")}<c r="B2"><v>5</v></c></row>`,
-    );
+    const bytes = (
+      await input(
+        `<row r="1">${textCell("A1", "Case_ID")}<c r="B1"><f>1+1</f></c></row>` +
+          `<row r="2">${textCell("A2", "R-1")}<c r="B2"><v>5</v></c></row>`,
+      )
+    ).bytes;
 
-    const { description } = await describeWorkbookBytes({
+    const [report] = await readWorkbookWorksheetsBytes({
       name: "north.xlsx",
       bytes,
     });
-    expect(description.sheets[0]?.uncachedFormulaCells).toBe(1);
-    // The table reader does build that column, under an invented name, which is
-    // the schema difference the count exists to catch.
+    expect(report?.uncachedFormulaCells).toBe(1);
     const [table] = await readWorkbookTablesBytes({
       name: "north.xlsx",
       bytes,
@@ -1016,64 +1032,73 @@ describe("worksheets whose formulas were never calculated", () => {
     // A string formula that evaluates to nothing is written with an empty
     // cached value. Reading that as "never calculated" would block the
     // worksheet forever: recalculating in Excel produces the same empty result.
-    const bytes = await uncalculatedWorkbookBytes(
-      `<row r="1">${textCell("A1", "Case_ID")}${textCell("B1", "Note")}</row>` +
-        `<row r="2">${textCell("A2", "R-1")}<c r="B2" t="str"><f>IF(1=2,"x","")</f><v></v></c></row>` +
-        `<row r="3">${textCell("A3", "R-2")}<c r="B3"><f>0+0</f><v>0</v></c></row>` +
-        `<row r="4">${textCell("A4", "R-3")}<c r="B4"><f>1+1</f><v>  </v></c></row>`,
+    const [report] = await readWorkbookWorksheetsBytes(
+      await input(
+        `<row r="1">${textCell("A1", "Case_ID")}${textCell("B1", "Note")}</row>` +
+          `<row r="2">${textCell("A2", "R-1")}<c r="B2" t="str"><f>IF(1=2,"x","")</f><v></v></c></row>` +
+          `<row r="3">${textCell("A3", "R-2")}<c r="B3"><f>0+0</f><v>0</v></c></row>` +
+          `<row r="4">${textCell("A4", "R-3")}<c r="B4"><f>1+1</f><v>  </v></c></row>`,
+      ),
     );
-
-    const { description } = await describeWorkbookBytes({
-      name: "north.xlsx",
-      bytes,
-    });
 
     // An empty string, a zero, and whitespace are all calculated results.
-    expect(description.sheets[0]?.uncachedFormulaCells).toBe(0);
-  });
-
-  it("counts nothing when the formulas carry their results", async () => {
-    const bytes = await uncalculatedWorkbookBytes(
-      `<row r="1">${textCell("A1", "Case_ID")}${textCell("B1", "Failed Checks")}</row>` +
-        `<row r="2">${textCell("A2", "R-1")}<c r="B2"><f>1+1</f><v>2</v></c></row>`,
-    );
-
-    const { description } = await describeWorkbookBytes({
-      name: "north.xlsx",
-      bytes,
-    });
-
-    expect(description.sheets[0]?.uncachedFormulaCells).toBe(0);
-    expect(description.sheets[0]?.dataRowCount).toBe(1);
-  });
-
-  it("counts nothing for a worksheet of ordinary values", async () => {
-    const directory = await createTemporaryDirectory();
-    const input = path.join(directory, "north.xlsx");
-    await writeWorkbook(input, [REVIEW_LOG]);
-    const { description } = await describeWorkbook(input);
-
-    expect(description.sheets[0]?.uncachedFormulaCells).toBe(0);
+    expect(report?.uncachedFormulaCells).toBe(0);
   });
 
   it("reports the condition even where the reader can build no table", async () => {
     // Every value in the body is a formula with no result, so the worksheet
-    // reads as empty and yields no table at all. Without the count beside it,
-    // a workbook of uncalculated formulas is indistinguishable from an empty
-    // one.
-    const bytes = await uncalculatedWorkbookBytes(
-      `<row r="1">${textCell("A1", "Total")}</row>` +
-        `<row r="2"><c r="A2"><f>1+1</f></c></row>`,
-    );
+    // reads as empty and yields no table at all. With no region to scope to,
+    // the whole worksheet is counted, which is what explains why it looks
+    // empty.
+    const bytes = (
+      await input(
+        `<row r="1">${textCell("A1", "Total")}</row>` +
+          `<row r="2"><c r="A2"><f>1+1</f></c></row>`,
+      )
+    ).bytes;
 
-    const { description } = await describeWorkbookBytes({
+    const [report] = await readWorkbookWorksheetsBytes({
       name: "summary.xlsx",
       bytes,
     });
-    expect(description.sheets[0]?.uncachedFormulaCells).toBe(1);
+    expect(report?.table).toBeUndefined();
+    expect(report?.region).toBeUndefined();
+    expect(report?.uncachedFormulaCells).toBe(1);
     expect(
       await readWorkbookTablesBytes({ name: "summary.xlsx", bytes }),
     ).toEqual([]);
+  });
+
+  it("counts nothing for a worksheet of ordinary values", async () => {
+    const directory = await createTemporaryDirectory();
+    const path_ = path.join(directory, "north.xlsx");
+    const bytes = await writeWorkbook(path_, [REVIEW_LOG]);
+
+    const [report] = await readWorkbookWorksheetsBytes({
+      name: "north.xlsx",
+      bytes,
+    });
+    expect(report?.uncachedFormulaCells).toBe(0);
+  });
+
+  it("leaves the table list exactly as it was", async () => {
+    const bytes = (
+      await input(
+        `<row r="1">${textCell("A1", "Case_ID")}${textCell("B1", "Region")}</row>` +
+          `<row r="2">${textCell("A2", "R-1")}${textCell("B2", "north")}</row>`,
+      )
+    ).bytes;
+
+    const reports = await readWorkbookWorksheetsBytes({
+      name: "north.xlsx",
+      bytes,
+    });
+    const tables = await readWorkbookTablesBytes({ name: "north.xlsx", bytes });
+
+    // One walk seen two ways, so a table can never differ between them.
+    expect(tables).toEqual(
+      reports.map((report) => report.table).filter((table) => table),
+    );
   });
 });
 

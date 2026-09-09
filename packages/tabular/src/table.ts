@@ -84,15 +84,52 @@ export function normalizedColumnKey(column: string): string {
   return normalized === "" ? columnKey(column) : normalized;
 }
 
+/**
+ * Name every column of a header row so that no two names collide, filling a
+ * blank header with its position.
+ *
+ * Uniqueness is decided against the whole header row, not against the names
+ * seen so far. Counting occurrences left to right is not enough: for A, A, A_2
+ * it renames the second A to A_2 and then meets the real A_2, and two columns
+ * end up with one name. Where those names become object keys, as they do in
+ * every `TableRow`, the second column's values are simply overwritten by the
+ * third's, and nothing says so.
+ *
+ * So every original spelling is reserved first, and a generated name has to
+ * clear both the originals and the names already generated. The suffix is the
+ * lowest number from 2 that does, which keeps the result deterministic and
+ * keeps the common case (A, A) reading as A, A_2.
+ *
+ * Names are compared case-insensitively, through `columnKey`, because that is
+ * how every other column lookup here matches them: "Region" and "region" are
+ * one column, so they cannot both be a column name.
+ */
 export function uniqueHeaders(values: Array<string | null>): string[] {
-  const occurrences = new Map<string, number>();
+  const bases = values.map(
+    (value, index) => value?.trim() || `column_${index + 1}`,
+  );
+  // Every original spelling, so a generated name never lands on one that the
+  // header row already carries further along.
+  const reserved = new Set(bases.map(columnKey));
+  const taken = new Set<string>();
 
-  return values.map((value, index) => {
-    const base = value?.trim() || `column_${index + 1}`;
+  return bases.map((base) => {
     const key = columnKey(base);
-    const occurrence = (occurrences.get(key) ?? 0) + 1;
-    occurrences.set(key, occurrence);
-    return occurrence === 1 ? base : `${base}_${occurrence}`;
+    if (!taken.has(key)) {
+      taken.add(key);
+      return base;
+    }
+    let suffix = 2;
+    let candidate = `${base}_${suffix}`;
+    while (
+      taken.has(columnKey(candidate)) ||
+      reserved.has(columnKey(candidate))
+    ) {
+      suffix += 1;
+      candidate = `${base}_${suffix}`;
+    }
+    taken.add(columnKey(candidate));
+    return candidate;
   });
 }
 

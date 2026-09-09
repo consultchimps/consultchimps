@@ -45,15 +45,17 @@ the same `sheets`, `headerRow`, and `includeHiddenSheets` options. The byte
 surface had readers for Excel Tables and named ranges but none for the
 worksheets themselves.
 
-A workbook description now also reports `uncachedFormulaCells` per worksheet:
-cells in the region an operation would read, its header row included, holding a
-formula the workbook carries no calculated value for, judged by whether a cached
-value element is present rather than by what it holds, so a formula that
-evaluated to an empty string or to zero counts as calculated. That is the same
-definition the values-only conversion uses to decide which formulas it can
-safely replace, now shared between them. Excel writes a formula and its last
-result together, but a file written by a generator, or saved with calculation
-switched off, carries the formula alone, and every reader then sees those cells
-as empty because empty is all the file says. The count is the only way to tell
-them apart. Reading and consolidating are unchanged and still treat such a cell
-as empty; the new field lets a caller notice the condition and decide.
+`readWorkbookWorksheetsBytes` joins it: every selected worksheet, whether or not
+it yielded a table, with the rectangle the read covered and a count of the cells
+in it holding a formula the workbook carries no calculated value for. Excel
+writes a formula and its last result together, but a file written by a generator
+carries the formula alone, and every reader then sees those cells as empty
+because empty is all the file says. The count is read from this package's own
+document model, because the spreadsheet engine drops such a cell while parsing,
+and it is scoped to the rectangle the table reader reported rather than to a
+second header resolution, so it can only describe the read the caller got.
+Whether a cached value is present is decided by the element being there rather
+than by what it holds, so a formula that evaluated to an empty string or to zero
+counts as calculated; that is the definition the values-only conversion already
+used, now shared between them. Reading, consolidating, merging, and splitting
+are unchanged and still treat such a cell as empty.

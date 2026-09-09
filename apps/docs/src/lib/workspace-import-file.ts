@@ -20,6 +20,7 @@ import {
 } from "@consultchimps/db";
 import type { Table } from "@consultchimps/tabular";
 
+import { WORKSPACE_IMPORT_FILES } from "./accepted-files";
 import type {
   ImportSourceDescription,
   ImportTableChoice,
@@ -38,11 +39,6 @@ interface ImportSource {
    * workbook Excel has calculated and saved has none.
    */
   readonly uncachedFormulaCells: number;
-}
-
-/** The file name without the extension the import recognized it by. */
-function withoutExtension(fileName: string): string {
-  return fileName.replace(CSV_NAME, "").replace(WORKBOOK_NAME, "");
 }
 
 function decodeUtf8(bytes: Uint8Array, fileName: string): string {
@@ -112,37 +108,22 @@ async function readSources(
     );
   }
 
-  // Loaded on demand: the workbook readers carry a spreadsheet engine and an
+  // Loaded on demand: the workbook reader carries a spreadsheet engine and an
   // OOXML parser, and a visitor who only opens and saves a workspace should
   // never download either.
-  const { describeWorkbookBytes, readWorkbookTablesBytes } =
+  const { readWorkbookWorksheetsBytes } =
     await import("@consultchimps/xlsx/bytes");
-  const input = { name: fileName, bytes };
-  // Two readers, because they answer two questions and only one of them can
-  // answer the second. The table reader gives the data; the description gives
-  // every worksheet, including the ones that yield no table, and the count of
-  // formula cells the workbook carries no calculated value for. That count
-  // cannot come from the table reader: its spreadsheet engine drops a numeric
-  // formula cell with no cached value while parsing, so by the time a `Table`
-  // exists the condition is gone.
-  const [{ description }, tables] = await Promise.all([
-    describeWorkbookBytes(input),
-    readWorkbookTablesBytes(input),
-  ]);
-  const tableBySheet = new Map<string, Table>();
-  for (const table of tables) {
-    const sheet = table.source?.sheet;
-    // Keyed only by a name the table actually carries. Standing in a "" for a
-    // missing one would put it under a key a worksheet could hold for real.
-    if (sheet !== undefined) {
-      tableBySheet.set(sheet, table);
-    }
-  }
-  const sources = description.sheets
-    .map((sheet) => ({
-      name: sheet.name,
-      table: tableBySheet.get(sheet.name),
-      uncachedFormulaCells: sheet.uncachedFormulaCells,
+  // One reader, so the tables and the formula count describe the same read of
+  // the same worksheet. Asking a second reader for the count would let it
+  // answer about a different region: this package resolves a worksheet's header
+  // two ways, and they disagree on exactly the rows that read as blank, which
+  // is every row holding nothing but uncalculated formulas.
+  const reports = await readWorkbookWorksheetsBytes({ name: fileName, bytes });
+  const sources = reports
+    .map((report) => ({
+      name: report.sheet,
+      table: report.table,
+      uncachedFormulaCells: report.uncachedFormulaCells,
     }))
     // A worksheet with neither data nor uncalculated formulas has nothing to
     // say, so it is left out. One that cannot be imported because of its
@@ -181,7 +162,7 @@ export async function describeImportSources(
   const single = sources.length === 1;
   return sources.map((source) => {
     const suggestedTableName = suggestTableName(
-      single ? withoutExtension(fileName) : source.name,
+      single ? WORKSPACE_IMPORT_FILES.stripExtension(fileName) : source.name,
     );
     return {
       name: source.name,

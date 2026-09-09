@@ -430,6 +430,36 @@ export interface WorkbookExcelTable extends Table {
   excelTableRange: string;
 }
 
+/**
+ * The rectangle a worksheet read actually covered: the header row it keyed on
+ * and the rows and columns it took values from, all one-based except the
+ * columns, which are zero-based as everywhere else in this package.
+ *
+ * It travels with the table so that anything asking a further question about
+ * the same read asks it about the same rectangle. The alternative, resolving
+ * the region a second time somewhere else, is how two answers about one
+ * worksheet start disagreeing.
+ */
+export interface WorksheetRegion {
+  readonly headerRow: number;
+  readonly lastRow: number;
+  readonly startColumn: number;
+  readonly endColumn: number;
+}
+
+/** One worksheet as the table reader saw it, whether or not it yielded a table. */
+export interface WorksheetTableReport {
+  /** The worksheet this came from. */
+  sheet: string;
+  /**
+   * The table, or undefined when the worksheet holds no header row with rows of
+   * values under it, which is the condition `workbookTables` filters on.
+   */
+  table: Table | undefined;
+  /** The rectangle the table was read from, absent when there is no table. */
+  region: WorksheetRegion | undefined;
+}
+
 export interface WorkbookNamedRange extends Table {
   rangeName: string;
   rangeRef: string;
@@ -586,7 +616,7 @@ function worksheetToTable(
   sheetName: string,
   worksheet: XLSX.WorkSheet,
   configuredHeaderRow?: number,
-): Table | undefined {
+): { table: Table; region: WorksheetRegion } | undefined {
   const reference = worksheet["!ref"];
   if (!reference) {
     return undefined;
@@ -644,13 +674,24 @@ function worksheetToTable(
   }
 
   return {
-    columns,
-    rows,
-    sourceRows,
-    source: {
-      file: sourceFile,
-      firstDataRow: headerRowIndex + 2,
-      sheet: sheetName,
+    // The rectangle is exactly the one the rows above were read from, reported
+    // rather than recomputed, so a later question about this read cannot be
+    // asked of a different region.
+    region: {
+      headerRow: headerRowIndex + 1,
+      lastRow: range.e.r + 1,
+      startColumn: range.s.c,
+      endColumn: range.e.c,
+    },
+    table: {
+      columns,
+      rows,
+      sourceRows,
+      source: {
+        file: sourceFile,
+        firstDataRow: headerRowIndex + 2,
+        sheet: sheetName,
+      },
     },
   };
 }
@@ -833,13 +874,19 @@ function lowercaseSet(values: string[] | undefined): Set<string> | undefined {
     : undefined;
 }
 
-export function workbookTables(
+/**
+ * Read every selected worksheet, reporting each one whether or not it yielded a
+ * table, with the rectangle each read covered. `workbookTables` is this list
+ * with the tables taken out of it, so the two can never describe the same
+ * worksheet differently.
+ */
+export function workbookWorksheetReports(
   workbook: XLSX.WorkBook,
   sourceFile: string,
   options: ReadWorkbookOptions = {},
-): Table[] {
+): WorksheetTableReport[] {
   const selectedSheets = lowercaseSet(options.sheets);
-  const tables: Table[] = [];
+  const reports: WorksheetTableReport[] = [];
 
   for (const sheetName of workbook.SheetNames) {
     if (!options.includeHiddenSheets && !isVisibleSheet(workbook, sheetName)) {
@@ -853,17 +900,37 @@ export function workbookTables(
     if (!worksheet) {
       continue;
     }
-    const table = worksheetToTable(
+    const read = worksheetToTable(
       sourceFile,
       sheetName,
       worksheet,
       options.headerRow,
     );
-    if (table) {
-      tables.push(table);
-    }
+    reports.push({
+      sheet: sheetName,
+      table: read?.table,
+      region: read?.region,
+    });
   }
 
+  return reports;
+}
+
+export function workbookTables(
+  workbook: XLSX.WorkBook,
+  sourceFile: string,
+  options: ReadWorkbookOptions = {},
+): Table[] {
+  const tables: Table[] = [];
+  for (const report of workbookWorksheetReports(
+    workbook,
+    sourceFile,
+    options,
+  )) {
+    if (report.table) {
+      tables.push(report.table);
+    }
+  }
   return tables;
 }
 

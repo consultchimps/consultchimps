@@ -120,17 +120,6 @@ export interface WorkbookSheetDescription {
   columns: WorkbookColumnDescription[];
   /** Non-empty rows below the header row. */
   dataRowCount: number;
-  /**
-   * Cells in the region an operation would read, its header row included, that
-   * hold a formula the workbook carries no calculated value for.
-   *
-   * Zero for a workbook Excel has calculated and saved. Anything above zero
-   * means a reader will see those cells as empty, because the value they would
-   * produce is not in the file: the count is the only way to tell that apart
-   * from a genuinely empty cell, and calculating them belongs to Excel rather
-   * than to this package.
-   */
-  uncachedFormulaCells: number;
 }
 
 export interface WorkbookExcelTableDescription {
@@ -365,32 +354,12 @@ function isOccupiedCell(cell: CellModel): boolean {
   );
 }
 
-/**
- * Whether a cell holds a formula the workbook carries no calculated value for.
- *
- * Excel writes a formula and its last calculated result side by side. A file
- * written by a generator, or saved with calculation switched off, carries the
- * formula alone, and the value it would produce exists nowhere in the bytes.
- * Every reader downstream then sees an empty cell, because empty is all the
- * file says, so a caller that needs to tell missing data from absent data can
- * only learn it here.
- *
- * The question is whether a cached value element is there, never what it holds:
- * a formula that evaluated to an empty string, or to zero, has been calculated.
- * That is `hasCachedValueElement`, the same definition the values-only
- * conversion uses to decide which formulas it can safely replace.
- */
-function isUncachedFormula(cell: CellModel): boolean {
-  return cell.formula !== undefined && !cell.hasCachedValue;
-}
-
 const EMPTY_SHEET = {
   columnCount: 0,
   columns: [] as WorkbookColumnDescription[],
   dataRowCount: 0,
   headerRow: undefined,
   rowCount: 0,
-  uncachedFormulaCells: 0,
 } as const;
 
 /**
@@ -473,23 +442,6 @@ async function describeWorksheet(
   const samples = headers.map(() => [] as CellValue[]);
   const seen = headers.map(() => new Set<string>());
   let dataRowCount = 0;
-
-  // The header row, counted before the body, because the claim this count makes
-  // is about the region an operation reads and that region starts at its
-  // headers. A header cell whose formula was never calculated reads as blank,
-  // and a blank header is not a missing value: it is a column that arrives
-  // under an invented name, with a different schema and nothing said about it.
-  // The body loop below starts under the header row, so leaving this to it
-  // would make the scan narrower than the promise.
-  let uncachedFormulaCells = 0;
-  const headerCells = storedRows.find(
-    (row) => row.number === region.headerRow,
-  )?.cells;
-  for (const cell of headerCells ?? []) {
-    if (regionColumns.has(cell.ref.column) && isUncachedFormula(cell)) {
-      uncachedFormulaCells += 1;
-    }
-  }
   let satisfiedColumns = sampleLimit === 0 ? headers.length : 0;
   let rowsSinceYield = 0;
 
@@ -521,14 +473,6 @@ async function describeWorksheet(
       continue;
     }
     dataRowCount += 1;
-    // Counted before the sampling short-circuit below, which stops reading
-    // values once every column has its quota: the condition is about the whole
-    // region, so it has to be counted over the whole region.
-    for (const cell of row.cells) {
-      if (regionColumns.has(cell.ref.column) && isUncachedFormula(cell)) {
-        uncachedFormulaCells += 1;
-      }
-    }
 
     if (satisfiedColumns >= headers.length) {
       continue;
@@ -567,7 +511,6 @@ async function describeWorksheet(
     headerRow: region.headerRow,
     name: sheet.name,
     rowCount,
-    uncachedFormulaCells,
     visibility,
   };
 }

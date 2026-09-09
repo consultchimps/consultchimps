@@ -23,6 +23,7 @@ import {
 } from "@consultchimps/tabular";
 
 import { XLSX_ERRORS } from "./errors.js";
+import type { CellModel, WorksheetModel } from "./model/types.js";
 import {
   MACRO_WORKBOOK_MAIN_CONTENT_TYPE,
   WORKBOOK_MAIN_PART,
@@ -90,6 +91,7 @@ import {
   workbookNamedRanges,
   workbookTables,
   workbookWorksheetRecords,
+  workbookWorksheetReports,
   yieldToEventLoop,
   type ConsolidateWorkbooksMetric,
   type MergeWorkbooksMetric,
@@ -102,6 +104,8 @@ import {
   type WorkbookExcelTable,
   type WorkbookNamedRange,
   type WorksheetRecords,
+  type WorksheetRegion,
+  type WorksheetTableReport,
 } from "./shared.js";
 
 export const UNPROTECT_OPERATION = "sheets.unprotect";
@@ -928,6 +932,119 @@ export async function readWorkbookTablesBytes(
 }
 
 /**
+ * One worksheet as the table reader saw it, with what the reader alone cannot
+ * say about it.
+ */
+export interface WorksheetImportReport extends WorksheetTableReport {
+  /**
+   * Cells the read covered that hold a formula the workbook carries no
+   * calculated value for, counted over the table's own region, or over the
+   * whole worksheet when it yielded no table.
+   *
+   * Zero for a workbook Excel has calculated and saved. Anything above zero
+   * means the reader saw those cells as empty, because the value they would
+   * produce is not in the file.
+   */
+  uncachedFormulaCells: number;
+}
+
+/**
+ * Whether a cell holds a formula the workbook carries no calculated value for.
+ *
+ * Excel writes a formula and its last calculated result side by side. A file
+ * written by a generator, or saved with calculation switched off, carries the
+ * formula alone, and the value it would produce exists nowhere in the bytes.
+ * The question is whether a cached value element is there, never what it holds:
+ * a formula that evaluated to an empty string, or to zero, has been calculated.
+ */
+function isUncachedFormula(cell: CellModel): boolean {
+  return cell.formula !== undefined && !cell.hasCachedValue;
+}
+
+/**
+ * Count the uncalculated formulas inside one read.
+ *
+ * The rectangle comes from the read itself rather than from a second header
+ * resolution, which is the whole point: this package has two ways of deciding
+ * where a worksheet's header is, and they disagree exactly on a row that holds
+ * nothing but uncalculated formulas. Resolving the region again here would let
+ * the count describe a rectangle the caller never read, and refuse a worksheet
+ * for a formula sitting above the table it would actually import.
+ *
+ * A worksheet that yielded no table has no rectangle, so the whole of it is
+ * counted: there is no region to be wrong about, and the count is what explains
+ * why the worksheet looks empty.
+ */
+function countUncachedFormulas(
+  worksheet: WorksheetModel,
+  region: WorksheetRegion | undefined,
+): number {
+  let total = 0;
+  for (const row of worksheet.rows()) {
+    if (
+      region !== undefined &&
+      (row.number < region.headerRow || row.number > region.lastRow)
+    ) {
+      continue;
+    }
+    for (const cell of row.cells) {
+      if (
+        region !== undefined &&
+        (cell.ref.column < region.startColumn ||
+          cell.ref.column > region.endColumn)
+      ) {
+        continue;
+      }
+      if (isUncachedFormula(cell)) {
+        total += 1;
+      }
+    }
+  }
+  return total;
+}
+
+/**
+ * Read every selected worksheet from bytes, reporting each one whether or not
+ * it yielded a table, and how many cells of the read hold a formula the
+ * workbook carries no calculated value for.
+ *
+ * `readWorkbookTablesBytes` is this list with the tables taken out of it, so a
+ * caller that only wants the data can keep asking for the data. A caller that
+ * has to tell a blank cell from a value the workbook never worked out, which no
+ * `Table` can express, asks for this instead: the spreadsheet engine drops a
+ * numeric formula cell with no cached value while parsing, so the count is read
+ * from this package's own document model, over the rectangle the table reader
+ * reported. The consolidation, merge, and split operations are unchanged and go
+ * on treating an uncalculated formula as empty.
+ */
+export async function readWorkbookWorksheetsBytes(
+  input: WorkbookInputBytes,
+  options: ReadWorkbookOptions = {},
+): Promise<WorksheetImportReport[]> {
+  const details = { source: input.name };
+  const reports = workbookWorksheetReports(
+    parseWorkbookBytes(input.bytes, input.name, { details }),
+    input.name,
+    options,
+  );
+  const model = await loadWorkbookModelForDescribe(
+    input.bytes,
+    input.name,
+    details,
+  );
+  return reports.map((report) => {
+    const worksheet = model.worksheet(report.sheet);
+    return {
+      ...report,
+      uncachedFormulaCells:
+        worksheet === undefined
+          ? 0
+          : countUncachedFormulas(worksheet, report.region),
+    };
+  });
+}
+
+/**
  * Read one worksheet as text records, the shape template population and other
  * record-driven operations consume.
  */
@@ -1028,6 +1145,8 @@ export type {
   WorkbookExcelTable,
   WorkbookNamedRange,
   WorksheetRecords,
+  WorksheetRegion,
+  WorksheetTableReport,
 } from "./shared.js";
 export type {
   AllWorksheetSplitSummary,

@@ -42,6 +42,16 @@ describe("parseCsvTable", () => {
     expect(table.rows[1]).toEqual({ Customer: "Beta", Region: "South" });
   });
 
+  it("keeps every column when a generated name matches a later header", () => {
+    // The repeated A used to be renamed A_2, colliding with the real A_2, and
+    // the middle column's values were overwritten by the last column's on the
+    // way into the row object. Nothing said so; the table just lost a column.
+    const table = parseCsvTable("A,A,A_2\n1,2,3\n");
+
+    expect(table.columns).toEqual(["A", "A_3", "A_2"]);
+    expect(table.rows).toEqual([{ A: "1", A_3: "2", A_2: "3" }]);
+  });
+
   it("fills a blank header, numbers a repeated one, and skips blank rows", () => {
     const table = parseCsvTable(
       "Customer,,Region,Region\nAcme,x,North,N\n\n,,,\nBeta,y,South,S\n",

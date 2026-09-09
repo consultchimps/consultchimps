@@ -18,6 +18,35 @@ describe("uniqueHeaders", () => {
       "Amount",
     ]);
   });
+
+  it("does not generate a name the header row already carries", () => {
+    // Counting occurrences left to right renames the second A to A_2 and then
+    // meets the real A_2, and two columns end up with one name. As object keys
+    // that means one column's values silently overwrite another's.
+    const headers = uniqueHeaders(["A", "A", "A_2"]);
+    expect(headers).toEqual(["A", "A_3", "A_2"]);
+    expect(new Set(headers).size).toBe(3);
+  });
+
+  it("keeps a filled-in name clear of a real one that matches it", () => {
+    // The first column to claim a name keeps it, so the blank at index 0 takes
+    // "column_1" and the real header of that name is the one that moves.
+    expect(uniqueHeaders([null, "column_1"])).toEqual([
+      "column_1",
+      "column_1_2",
+    ]);
+    expect(uniqueHeaders(["column_1", null])).toEqual(["column_1", "column_2"]);
+  });
+
+  it("treats names that differ only by case as one name", () => {
+    // The same rule every other column lookup here uses, so a header row cannot
+    // name two columns that a later lookup would not tell apart.
+    expect(uniqueHeaders(["Region", "region", "REGION"])).toEqual([
+      "Region",
+      "region_2",
+      "REGION_3",
+    ]);
+  });
 });
 
 describe("unionTables", () => {
