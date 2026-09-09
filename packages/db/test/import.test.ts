@@ -1,4 +1,7 @@
-import { isConsultChimpsError } from "@consultchimps/core";
+import {
+  isConsultChimpsError,
+  type ConsultChimpsError,
+} from "@consultchimps/core";
 import type { Table, TableRow } from "@consultchimps/tabular";
 import { describe, expect, it } from "vitest";
 
@@ -9,6 +12,7 @@ import {
   importTable,
   importTables,
   inferColumnTypes,
+  isValueConversionError,
   parseCsvTable,
   suggestRecordIdPrefix,
   suggestTableName,
@@ -305,6 +309,103 @@ describe("dates a date column will hold", () => {
     expect(await codeOf(() => database.readRecords("Events"))).toBe(
       "DB_CORRUPT_STORED_VALUE",
     );
+    database.close();
+  });
+});
+
+describe("a value a column will not take", () => {
+  /**
+   * The one expectation all three conversions are held to, so a caller is never
+   * told which type complained without being told where. Written once on
+   * purpose: three copies would let one of them fall behind.
+   */
+  async function expectsTableAndColumn(
+    type: "boolean" | "integer" | "date",
+    value: string,
+    code: string,
+  ): Promise<void> {
+    const database = await Database.create();
+    database.createTable({
+      name: "Customer",
+      columns: [{ name: "Field", type }],
+      foreignKeys: [],
+      recordId: { prefix: "CUST", padding: 4 },
+    });
+
+    let caught: unknown;
+    try {
+      database.insertRecord("Customer", { Field: value });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(isConsultChimpsError(caught)).toBe(true);
+    const failure = caught as ConsultChimpsError;
+    expect(failure.code).toBe(code);
+    // Named where a person would look for it, in the sentence and in the
+    // machine-readable details alike.
+    expect(failure.message).toContain('table "Customer"');
+    expect(failure.message).toContain('column "Field"');
+    expect(failure.details).toMatchObject({
+      column: "Field",
+      table: "Customer",
+    });
+    // And never the offending value, which is imported cell content.
+    expect(failure.message).not.toContain(value);
+    database.close();
+  }
+
+  it("names the table and the column for a date", async () => {
+    await expectsTableAndColumn("date", "01/02/2026", "DB_INVALID_DATE");
+  });
+
+  it("names the table and the column for a boolean", async () => {
+    await expectsTableAndColumn("boolean", "perhaps", "DB_INVALID_BOOLEAN");
+  });
+
+  it("names the table and the column for a number", async () => {
+    await expectsTableAndColumn("integer", "twelve", "DB_INVALID_NUMBER");
+  });
+
+  it("names them for a whole number outside the range stored exactly", async () => {
+    await expectsTableAndColumn(
+      "integer",
+      "9007199254740993",
+      "DB_INVALID_NUMBER",
+    );
+  });
+
+  it("recognises a conversion failure by its marker, not by its code", async () => {
+    // The wrapper above asks this one question. A conversion added later
+    // inherits the context by raising the same marker, rather than by being
+    // added to a list somewhere else.
+    const database = await Database.create();
+    database.createTable({
+      name: "Customer",
+      columns: [{ name: "Field", type: "date" }],
+      foreignKeys: [],
+      recordId: { prefix: "CUST", padding: 4 },
+    });
+    let caught: unknown;
+    try {
+      database.insertRecord("Customer", { Field: "nope" });
+    } catch (error) {
+      caught = error;
+    }
+    expect(isValueConversionError(caught)).toBe(true);
+
+    // A failure that is not about a value is not marked, so the wrapper leaves
+    // it alone rather than dressing it up with a column it has nothing to do
+    // with.
+    let other: unknown;
+    try {
+      database.insertRecord("Customer", { Missing: "x" });
+    } catch (error) {
+      other = error;
+    }
+    expect(isConsultChimpsError(other)).toBe(true);
+    expect((other as ConsultChimpsError).code).toBe("DB_UNKNOWN_COLUMN");
+    expect(isValueConversionError(other)).toBe(false);
     database.close();
   });
 });

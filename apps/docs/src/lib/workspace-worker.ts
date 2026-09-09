@@ -16,6 +16,8 @@
  */
 import { ConsultChimpsError } from "@consultchimps/core";
 
+import type { WorkspaceImportKind } from "./accepted-files";
+
 import type {
   ImportedTableSummary,
   ImportSourceDescription,
@@ -86,11 +88,12 @@ export class WorkspaceClient {
   /** List the tables a `.xlsx`, `.xlsm`, or `.csv` file could contribute. */
   async describeImport(
     fileName: string,
+    kind: WorkspaceImportKind,
     bytes: Uint8Array,
   ): Promise<readonly ImportSourceDescription[]> {
     const buffer = bytes.slice().buffer;
     const event = await this.#run(
-      (id) => ({ type: "describeImport", id, fileName, buffer }),
+      (id) => ({ type: "describeImport", id, fileName, kind, buffer }),
       [buffer],
     );
     if (event.type !== "importSources") {
@@ -102,12 +105,13 @@ export class WorkspaceClient {
   /** Create the chosen tables in the held workspace and fill them. */
   async importFile(
     fileName: string,
+    kind: WorkspaceImportKind,
     bytes: Uint8Array,
     tables: readonly ImportTableChoice[],
   ): Promise<WorkspaceImportResult> {
     const buffer = bytes.slice().buffer;
     const event = await this.#run(
-      (id) => ({ type: "import", id, fileName, buffer, tables }),
+      (id) => ({ type: "import", id, fileName, kind, buffer, tables }),
       [buffer],
     );
     if (event.type !== "imported") {

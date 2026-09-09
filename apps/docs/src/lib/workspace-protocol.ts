@@ -24,6 +24,8 @@
  */
 import type { ColumnType } from "@consultchimps/db";
 
+import type { WorkspaceImportKind } from "./accepted-files";
+
 /**
  * One column of a table in the workspace, as the shell lists it.
  */
@@ -134,6 +136,13 @@ export interface DescribeImportCommand {
   readonly type: "describeImport";
   readonly id: number;
   readonly fileName: string;
+  /**
+   * Which family the file belongs to, decided once by the shared accepted-files
+   * contract where both the media type the browser reported and the name were
+   * available. The worker is handed the answer rather than working it out again
+   * from the name, which is all that reaches it.
+   */
+  readonly kind: WorkspaceImportKind;
   readonly buffer: ArrayBuffer;
 }
 
@@ -146,6 +155,8 @@ export interface ImportCommand {
   readonly type: "import";
   readonly id: number;
   readonly fileName: string;
+  /** The family, as `DescribeImportCommand` explains. */
+  readonly kind: WorkspaceImportKind;
   readonly buffer: ArrayBuffer;
   readonly tables: readonly ImportTableChoice[];
 }

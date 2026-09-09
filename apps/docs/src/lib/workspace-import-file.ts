@@ -20,14 +20,14 @@ import {
 } from "@consultchimps/db";
 import type { Table } from "@consultchimps/tabular";
 
-import { WORKSPACE_IMPORT_FILES } from "./accepted-files";
+import {
+  WORKSPACE_IMPORT_FILES,
+  type WorkspaceImportKind,
+} from "./accepted-files";
 import type {
   ImportSourceDescription,
   ImportTableChoice,
 } from "./workspace-protocol";
-
-const CSV_NAME = /\.csv$/iu;
-const WORKBOOK_NAME = /\.(?:xlsx|xlsm)$/iu;
 
 /** One table a file offers, under the name the file gives it. */
 interface ImportSource {
@@ -85,12 +85,21 @@ function assertCalculated(source: ImportSource, fileName: string): void {
   );
 }
 
-/** Read every table a file offers, in the order the file lists them. */
+/**
+ * Read every table a file offers, in the order the file lists them.
+ *
+ * The kind is given rather than worked out here. The name is all that reaches
+ * this far, and the name is not what decides: a browser that reports `text/csv`
+ * for a file someone called `report` has said what the file is, and the shared
+ * accepted-files contract has already read that. Deciding again from the name
+ * is how a file the picker took became a file the reader refused.
+ */
 async function readSources(
   fileName: string,
+  kind: WorkspaceImportKind,
   bytes: Uint8Array,
 ): Promise<ImportSource[]> {
-  if (CSV_NAME.test(fileName)) {
+  if (kind === "delimited") {
     return [
       {
         name: fileName,
@@ -99,13 +108,6 @@ async function readSources(
         uncachedFormulaCells: 0,
       },
     ];
-  }
-  if (!WORKBOOK_NAME.test(fileName)) {
-    throw new ConsultChimpsError(
-      "WORKSPACE_IMPORT_UNSUPPORTED_FILE",
-      `"${fileName}" is not a file this import reads. Choose an Excel .xlsx or .xlsm workbook, or a .csv file.`,
-      { details: { file: fileName } },
-    );
   }
 
   // Loaded on demand: the workbook reader carries a spreadsheet engine and an
@@ -150,9 +152,10 @@ async function readSources(
  */
 export async function describeImportSources(
   fileName: string,
+  kind: WorkspaceImportKind,
   bytes: Uint8Array,
 ): Promise<ImportSourceDescription[]> {
-  const sources = await readSources(fileName, bytes);
+  const sources = await readSources(fileName, kind, bytes);
   // A file with one table to give is named after the file, because that is the
   // name the visitor chose and the only one they have seen. A worksheet name is
   // used only where there is more than one worksheet to tell apart, which is
@@ -183,11 +186,15 @@ export async function describeImportSources(
  */
 export async function resolveImportRequests(
   fileName: string,
+  kind: WorkspaceImportKind,
   bytes: Uint8Array,
   choices: readonly ImportTableChoice[],
 ): Promise<ImportTableRequest[]> {
   const sources = new Map(
-    (await readSources(fileName, bytes)).map((source) => [source.name, source]),
+    (await readSources(fileName, kind, bytes)).map((source) => [
+      source.name,
+      source,
+    ]),
   );
   return choices.map((choice) => {
     const source = sources.get(choice.source);

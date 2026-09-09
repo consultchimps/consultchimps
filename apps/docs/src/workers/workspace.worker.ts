@@ -18,6 +18,7 @@
 import { Database, importTables } from "@consultchimps/db";
 import { ConsultChimpsError, isConsultChimpsError } from "@consultchimps/core";
 
+import type { WorkspaceImportKind } from "@/lib/accepted-files";
 import { basePath } from "@/lib/shared";
 import type {
   ImportTableChoice,
@@ -141,19 +142,25 @@ function handleClose(id: number): void {
 async function handleDescribeImport(
   id: number,
   fileName: string,
+  kind: WorkspaceImportKind,
   buffer: ArrayBuffer,
 ): Promise<void> {
   // Describing a file touches no workspace, but the page only offers it once
   // one is open, and refusing here keeps that promise true whatever calls it.
   requireDatabase();
   const { describeImportSources } = await import("@/lib/workspace-import-file");
-  const sources = await describeImportSources(fileName, new Uint8Array(buffer));
+  const sources = await describeImportSources(
+    fileName,
+    kind,
+    new Uint8Array(buffer),
+  );
   scope.postMessage({ type: "importSources", id, sources });
 }
 
 async function handleImport(
   id: number,
   fileName: string,
+  kind: WorkspaceImportKind,
   buffer: ArrayBuffer,
   tables: readonly ImportTableChoice[],
 ): Promise<void> {
@@ -161,6 +168,7 @@ async function handleImport(
   const { resolveImportRequests } = await import("@/lib/workspace-import-file");
   const requests = await resolveImportRequests(
     fileName,
+    kind,
     new Uint8Array(buffer),
     tables,
   );
@@ -193,11 +201,17 @@ async function dispatch(command: WorkspaceCommand): Promise<void> {
     case "close":
       return handleClose(command.id);
     case "describeImport":
-      return handleDescribeImport(command.id, command.fileName, command.buffer);
+      return handleDescribeImport(
+        command.id,
+        command.fileName,
+        command.kind,
+        command.buffer,
+      );
     case "import":
       return handleImport(
         command.id,
         command.fileName,
+        command.kind,
         command.buffer,
         command.tables,
       );

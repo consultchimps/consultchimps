@@ -589,6 +589,36 @@ test.describe("/workspace import", () => {
     ).toHaveValue("Regions");
   });
 
+  test("imports a file the browser named, not the file name", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await page.getByTestId("workspace-new").click();
+
+    // No extension on the name, and a media type the browser supplied. The
+    // picker accepted this before and the reader then refused it, because they
+    // decided what the file was in two different ways.
+    await page.getByTestId("workspace-import-input").setInputFiles({
+      name: "report",
+      mimeType: "text/csv",
+      buffer: Buffer.from("Customer,Region\nAcme,North\n", "utf8"),
+    });
+
+    await expect(page.getByTestId("workspace-import-form")).toBeVisible();
+    await expect(
+      importRow(page, 0).getByTestId("workspace-import-name"),
+    ).toHaveValue("report");
+    await page.getByTestId("workspace-import-run").click();
+
+    await expect(page.getByTestId("workspace-notice")).toHaveText(
+      "Imported 1 table with 1 row",
+    );
+    await expect(page.getByTestId("workspace-table-columns")).toHaveText(
+      "Customer (text), Region (text)",
+    );
+  });
+
   test("reports a workbook that holds nothing to import", async ({ page }) => {
     await forceDownloadFallback(page);
     await page.goto("/workspace");

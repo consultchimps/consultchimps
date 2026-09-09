@@ -23,7 +23,11 @@ import {
   secondaryButtonClass,
   sectionClass,
 } from "@/components/tool-kit";
-import { WORKSPACE_IMPORT_FILES } from "@/lib/accepted-files";
+import {
+  WORKSPACE_IMPORT_FILES,
+  workspaceImportKind,
+  type WorkspaceImportKind,
+} from "@/lib/accepted-files";
 import type {
   ImportSourceDescription,
   ImportTableChoice,
@@ -41,6 +45,12 @@ const DEFAULT_PADDING = "4";
 /** The file the visitor chose, held so import can send the same bytes back. */
 interface ChosenFile {
   readonly name: string;
+  /**
+   * Which family it belongs to, settled here where the browser's media type is
+   * still available, and carried from here on. Nothing downstream sees the
+   * `File`, so nothing downstream can decide this again.
+   */
+  readonly kind: WorkspaceImportKind;
   readonly bytes: Uint8Array;
   readonly sources: readonly ImportSourceDescription[];
 }
@@ -176,10 +186,22 @@ export function WorkspaceImport({
         onBusy("reading");
         setError(null);
         try {
-          const [first] = await readUploads(
-            files,
-            WORKSPACE_IMPORT_FILES.accepts,
-          );
+          // The kind and the acceptance are one question, asked once. Picking
+          // the file by its kind is what makes them the same question.
+          let chosen: { file: File; kind: WorkspaceImportKind } | undefined;
+          for (const candidate of files) {
+            const kind = workspaceImportKind(candidate);
+            if (kind !== undefined) {
+              chosen = { file: candidate, kind };
+              break;
+            }
+          }
+          if (chosen === undefined) {
+            throw new Error(
+              `That file is not ${WORKSPACE_IMPORT_FILES.description}, so nothing was read`,
+            );
+          }
+          const [first] = await readUploads([chosen.file], () => true);
           if (first === undefined) {
             throw new Error(
               `That file is not ${WORKSPACE_IMPORT_FILES.description}, so nothing was read`,
@@ -187,9 +209,15 @@ export function WorkspaceImport({
           }
           const sources = await client().describeImport(
             first.name,
+            chosen.kind,
             first.bytes,
           );
-          setFile({ name: first.name, bytes: first.bytes, sources });
+          setFile({
+            name: first.name,
+            kind: chosen.kind,
+            bytes: first.bytes,
+            sources,
+          });
           setChoices(initialChoices(sources));
         } catch (caught) {
           setFile(null);
@@ -233,7 +261,12 @@ export function WorkspaceImport({
       onBusy("importing");
       setError(null);
       try {
-        const result = await client().importFile(file.name, file.bytes, tables);
+        const result = await client().importFile(
+          file.name,
+          file.kind,
+          file.bytes,
+          tables,
+        );
         const rows = result.tables.reduce(
           (total, table) => total + table.rowCount,
           0,

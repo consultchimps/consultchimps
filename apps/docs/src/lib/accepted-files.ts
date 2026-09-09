@@ -140,16 +140,66 @@ export const PDF_FILES = createAcceptedFileKind({
  * as its header. A browser rarely reports a media type for `.csv`, and the ones
  * it does report disagree, so the predicate leans on the extension here too.
  */
+/** Delimited text a workspace import reads, the other half of what it takes. */
+export const DELIMITED_TEXT_FILES = createAcceptedFileKind({
+  description: "a .csv file",
+  extensions: [".csv"],
+  mediaTypes: ["text/csv"],
+  pluralDescription: ".csv files",
+});
+
+/**
+ * The two families a workspace import can read. The order is the order they are
+ * tried in, and it is fixed so the answer does not depend on how the list was
+ * written: a file the browser calls a workbook is a workbook.
+ */
+const WORKSPACE_IMPORT_KINDS = [
+  { files: WORKBOOK_FILES, kind: "workbook" },
+  { files: DELIMITED_TEXT_FILES, kind: "delimited" },
+] as const;
+
+/** Which family a file belongs to, for an import that reads more than one. */
+export type WorkspaceImportKind =
+  (typeof WORKSPACE_IMPORT_KINDS)[number]["kind"];
+
+/**
+ * Everything a workspace import takes, built from the two families above rather
+ * than from a third list of its own.
+ *
+ * Deriving it is what keeps `accepts` here and `workspaceImportKind` below
+ * answering the same question: the predicate is "one of these media types, or
+ * one of these extensions", so the union of the lists accepts exactly what one
+ * of the parts accepts. Written out by hand a third time, the two could drift,
+ * and a file this picker took would be one the reader then refused.
+ */
 export const WORKSPACE_IMPORT_FILES = createAcceptedFileKind({
   description: "an Excel .xlsx or .xlsm workbook, or a .csv file",
-  extensions: [".xlsx", ".xlsm", ".csv"],
-  mediaTypes: [
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.ms-excel.sheet.macroEnabled.12",
-    "text/csv",
-  ],
+  extensions: WORKSPACE_IMPORT_KINDS.flatMap((entry) => [
+    ...entry.files.extensions,
+  ]),
+  mediaTypes: WORKSPACE_IMPORT_KINDS.flatMap((entry) => [
+    ...entry.files.mediaTypes,
+  ]),
   pluralDescription: "Excel .xlsx or .xlsm workbooks and .csv files",
 });
+
+/**
+ * Which family a chosen file belongs to, or undefined when it belongs to
+ * neither.
+ *
+ * The one place the question is answered. A file's kind was decided twice
+ * before: here, by media type or extension, and again by the reader, from the
+ * name alone. So a file the browser called `text/csv` but the person had named
+ * `report` was taken by the picker and refused by the reader. Deciding once,
+ * where both rules live, is what stops one layer accepting what the next will
+ * not.
+ */
+export function workspaceImportKind(
+  file: File,
+): WorkspaceImportKind | undefined {
+  return WORKSPACE_IMPORT_KINDS.find((entry) => entry.files.accepts(file))
+    ?.kind;
+}
 
 /**
  * Workspace database files. A workspace is a single SQLite file the browser

@@ -10,9 +10,11 @@ import {
 import {
   assertRecordIdConfig,
   assertSafeIdentifier,
+  COLUMN_TYPES,
   cellFromSqlValue,
   formatRecordId,
   identifierKey,
+  isValueConversionError,
   quoteIdentifier,
   sameIdentifier,
   sqlStorageClass,
@@ -40,13 +42,9 @@ interface StoredDefinition {
   recordId: RecordIdConfig;
 }
 
-const VALID_COLUMN_TYPES: ReadonlySet<string> = new Set([
-  "text",
-  "integer",
-  "real",
-  "boolean",
-  "date",
-]);
+// Read from the one list the type is built from, so the two cannot disagree
+// about which kinds exist.
+const VALID_COLUMN_TYPES: ReadonlySet<string> = new Set(COLUMN_TYPES);
 
 // Parse and validate one registry definition. A damaged or externally edited
 // file can hold malformed JSON or valid JSON of the wrong shape, so both become
@@ -669,6 +667,11 @@ export class Database {
   // Convert one cell for storage, adding table and column context to a
   // conversion error while keeping the offending value (imported cell content)
   // out of it.
+  //
+  // Every write of a cell value goes through here, and every conversion failure
+  // is recognised by the one marker the conversion raises rather than by a list
+  // of codes kept in step by hand, so a column type added later cannot reach a
+  // caller saying only which type complained.
   #convertCell(
     type: ColumnDefinition["type"],
     value: CellValue,
@@ -678,11 +681,7 @@ export class Database {
     try {
       return sqlValueFromCell(type, value);
     } catch (error) {
-      if (
-        isConsultChimpsError(error) &&
-        (error.code === "DB_INVALID_BOOLEAN" ||
-          error.code === "DB_INVALID_NUMBER")
-      ) {
+      if (isValueConversionError(error)) {
         throw new ConsultChimpsError(
           error.code,
           `${error.message} (table "${tableName}", column "${columnName}")`,

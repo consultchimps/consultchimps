@@ -1,4 +1,4 @@
-import { ConsultChimpsError } from "@consultchimps/core";
+import { ConsultChimpsError, isConsultChimpsError } from "@consultchimps/core";
 import type { CellValue } from "@consultchimps/tabular";
 
 import type { SqlValueType } from "./engine.js";
@@ -19,6 +19,23 @@ import type { SqlValueType } from "./engine.js";
  */
 
 /**
+ * Every supported column value kind, in one list.
+ *
+ * The type below is derived from it, and the check that reads a stored schema
+ * back reads the same list, so a kind added here is a kind both of them know
+ * about. Kept as two lists, one of them would eventually stop matching the
+ * other, and a column type this package supports would be rejected as unknown
+ * on the way back in.
+ */
+export const COLUMN_TYPES = [
+  "text",
+  "integer",
+  "real",
+  "boolean",
+  "date",
+] as const;
+
+/**
  * The supported column value kinds, each mapped to a SQLite storage class.
  *
  * A `date` column holds ISO 8601 text and nothing else: a calendar date
@@ -27,7 +44,7 @@ import type { SqlValueType } from "./engine.js";
  * stored, because a column that claims a spelling and holds another is a column
  * nothing can read back reliably. `isIsoDateText` is the rule.
  */
-export type ColumnType = "text" | "integer" | "real" | "boolean" | "date";
+export type ColumnType = (typeof COLUMN_TYPES)[number];
 
 /** A user-defined column. The Record ID column is reserved and never declared here. */
 export interface ColumnDefinition {
@@ -65,6 +82,46 @@ export interface TableSchema {
   columns: ColumnDefinition[];
   foreignKeys: ForeignKey[];
   recordId: RecordIdConfig;
+}
+
+/**
+ * The detail every failure to convert one cell value carries.
+ *
+ * The wrapper that adds the table and column to such a failure used to name the
+ * codes it knew about, so a conversion added later fell straight through it and
+ * reached the caller saying only which type had complained. A list of codes kept
+ * in step by hand is a list that stops being in step. This is the one question
+ * that wrapper asks instead, and `valueConversionError` is the only way to
+ * answer yes to it.
+ */
+const VALUE_CONVERSION_DETAIL = "valueConversion";
+
+/**
+ * Raise a failure to read one cell value into a column. The public code stays
+ * whatever the caller passes; the marker is what makes it recognisable as a
+ * conversion failure rather than a programming error.
+ */
+function valueConversionError(
+  code: string,
+  message: string,
+  details: Record<string, unknown>,
+): ConsultChimpsError {
+  return new ConsultChimpsError(code, message, {
+    details: { ...details, [VALUE_CONVERSION_DETAIL]: true },
+  });
+}
+
+/**
+ * Whether a failure came from reading a cell value into a column, and so has a
+ * table and a column that would tell a person where to look.
+ */
+export function isValueConversionError(
+  error: unknown,
+): error is ConsultChimpsError {
+  return (
+    isConsultChimpsError(error) &&
+    error.details?.[VALUE_CONVERSION_DETAIL] === true
+  );
 }
 
 /** The reserved column that holds every record's stable Record ID. */
@@ -552,10 +609,10 @@ function booleanToSqlValue(value: Exclude<CellValue, null>): SqlValueType {
     if (value === 1) {
       return 1;
     }
-    throw new ConsultChimpsError(
+    throw valueConversionError(
       "DB_INVALID_BOOLEAN",
       "A boolean column received a number that is not 0 or 1.",
-      { details: { type: "boolean" } },
+      { type: "boolean" },
     );
   }
   const normalized = value.trim().toLowerCase();
@@ -571,18 +628,18 @@ function booleanToSqlValue(value: Exclude<CellValue, null>): SqlValueType {
   // The offending value is deliberately left out of the message and details:
   // it is imported cell content and may be confidential. The caller adds the
   // table and column context.
-  throw new ConsultChimpsError(
+  throw valueConversionError(
     "DB_INVALID_BOOLEAN",
     "A boolean column received a value that is not one of true, false, yes, no, 1, or 0.",
-    { details: { type: "boolean" } },
+    { type: "boolean" },
   );
 }
 
 // The offending value is always left out of these errors: it is imported cell
 // content and may be confidential; the caller adds table and column context.
 function invalidNumber(message: string, integer: boolean): ConsultChimpsError {
-  return new ConsultChimpsError("DB_INVALID_NUMBER", message, {
-    details: { type: integer ? "integer" : "real" },
+  return valueConversionError("DB_INVALID_NUMBER", message, {
+    type: integer ? "integer" : "real",
   });
 }
 
@@ -677,10 +734,10 @@ function dateToSqlValue(value: Exclude<CellValue, null>): SqlValueType {
   if (!isIsoDateText(text)) {
     // The offending value is deliberately left out: it is imported cell content
     // and may be confidential. The caller adds the table and column context.
-    throw new ConsultChimpsError(
+    throw valueConversionError(
       "DB_INVALID_DATE",
       "A date column received a value that is not an ISO 8601 date such as 2026-01-31 or 2026-01-31T09:30:00Z.",
-      { details: { type: "date" } },
+      { type: "date" },
     );
   }
   return text;
