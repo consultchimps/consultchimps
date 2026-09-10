@@ -19,7 +19,9 @@ import {
   Database,
   identifierKey,
   importTables,
+  sameIdentifier,
   RECORD_ID_COLUMN,
+  type TableSchema,
 } from "@consultchimps/db";
 import { isConsultChimpsError } from "@consultchimps/core";
 import type { CellValue } from "@consultchimps/tabular";
@@ -27,6 +29,7 @@ import type { CellValue } from "@consultchimps/tabular";
 import type { WorkspaceImportKind } from "@/lib/accepted-files";
 import { basePath } from "@/lib/shared";
 import { HeldWorkspace } from "@/lib/workspace-generation";
+import { referenceLabel } from "@/lib/workspace-labels";
 import {
   WORKSPACE_REFERENCE_LIMIT,
   type ImportTableChoice,
@@ -34,6 +37,7 @@ import {
   type WorkspaceCommand,
   type WorkspaceEvent,
   type WorkspaceReference,
+  type WorkspaceReferenceSource,
   type WorkspaceSummary,
   type WorkspaceTable,
 } from "@/lib/workspace-protocol";
@@ -205,52 +209,73 @@ async function handleImport(
  * ------------------------------------------------------------------------- */
 
 /**
- * The options a foreign-key column offers. The label is the referenced record's
- * first text column, which is the closest thing the schema has to a name, with
- * the Record ID kept alongside it: two customers can share a name, and the
- * value being stored is the Record ID, so showing it is what makes the choice
- * unambiguous. A column with no text to show falls back to the Record ID alone.
+ * The column of a table whose value names a record.
+ *
+ * A foreign-key column holds Record IDs, so it names nothing; the first
+ * ordinary text column is the readable one. Null when the table has none, and
+ * its records are then named by their Record ID alone.
  */
-function referenceOptions(
-  current: Database,
-  tableName: string,
-): {
-  references: WorkspaceReference[];
-  truncated: boolean;
-} {
-  const schema = current.getTableSchema(tableName);
+function labelColumnOf(schema: TableSchema): string | null {
   const foreignKeyColumns = new Set(
     schema.foreignKeys.map((foreignKey) => identifierKey(foreignKey.column)),
   );
-  // A foreign key column holds Record IDs, so it names nothing; the first
-  // ordinary text column is the readable one.
-  const labelColumn = schema.columns.find(
-    (column) =>
-      column.type === "text" &&
-      !foreignKeyColumns.has(identifierKey(column.name)),
+  return (
+    schema.columns.find(
+      (column) =>
+        column.type === "text" &&
+        !foreignKeyColumns.has(identifierKey(column.name)),
+    )?.name ?? null
   );
-  // Read only the two columns an option needs, and one record past the cap:
-  // that single extra row says whether the table holds more than is offered,
-  // without counting or materialising the rest of a large referenced table.
+}
+
+/**
+ * Where a foreign-key column's options come from. See `WorkspaceReferenceSource`
+ * for the rule; this is the half of it the worker owns.
+ *
+ * A table that refers to itself is not read at all: its rows are the ones being
+ * sent, and the grid keeps them live, so a snapshot here would be a second copy
+ * that goes stale the moment a record is renamed on screen.
+ */
+function referenceSource(
+  current: Database,
+  onScreen: TableSchema,
+  referencedTable: string,
+): WorkspaceReferenceSource {
+  if (sameIdentifier(referencedTable, onScreen.name)) {
+    return {
+      kind: "onScreen",
+      table: onScreen.name,
+      labelColumn: labelColumnOf(onScreen),
+    };
+  }
+  const schema = current.getTableSchema(referencedTable);
+  const labelColumn = labelColumnOf(schema);
+  // Read only the columns an option needs, and one record past the cap: that
+  // single extra row says whether the table holds more than is offered, without
+  // counting or materialising the rest of a large referenced table.
   const rows = current.readRecords(schema.name, {
-    columns: labelColumn === undefined ? [] : [labelColumn.name],
+    columns: labelColumn === null ? [] : [labelColumn],
     limit: WORKSPACE_REFERENCE_LIMIT + 1,
   });
-  const references = rows
+  const records = rows
     .slice(0, WORKSPACE_REFERENCE_LIMIT)
     .map((row): WorkspaceReference => {
       const value = String(row[RECORD_ID_COLUMN]);
-      const label =
-        labelColumn === undefined ? null : (row[labelColumn.name] ?? null);
       return {
         value,
-        label:
-          typeof label === "string" && label.trim() !== ""
-            ? `${label} (${value})`
-            : value,
+        label: referenceLabel(
+          value,
+          labelColumn === null ? null : row[labelColumn],
+        ),
       };
     });
-  return { references, truncated: rows.length > references.length };
+  return {
+    kind: "snapshot",
+    table: schema.name,
+    labelColumn,
+    records,
+    truncated: rows.length > records.length,
+  };
 }
 
 function handleReadTable(id: number, name: string, generation: number): void {
@@ -265,10 +290,7 @@ function handleReadTable(id: number, name: string, generation: number): void {
   );
   // One lookup per referenced table, not per column, so two foreign keys onto
   // the same table read it once.
-  const optionsByTable = new Map<
-    string,
-    { references: WorkspaceReference[]; truncated: boolean }
-  >();
+  const sourceByTable = new Map<string, WorkspaceReferenceSource>();
   const columns = schema.columns.map((column): WorkspaceColumn => {
     const referencesTable = referencedBy.get(identifierKey(column.name));
     if (referencesTable === undefined) {
@@ -277,21 +299,19 @@ function handleReadTable(id: number, name: string, generation: number): void {
         type: column.type,
         nullable: column.nullable !== false,
         references: null,
-        referencesTruncated: false,
       };
     }
     const key = identifierKey(referencesTable);
-    let options = optionsByTable.get(key);
-    if (options === undefined) {
-      options = referenceOptions(current, referencesTable);
-      optionsByTable.set(key, options);
+    let source = sourceByTable.get(key);
+    if (source === undefined) {
+      source = referenceSource(current, schema, referencesTable);
+      sourceByTable.set(key, source);
     }
     return {
       name: column.name,
       type: column.type,
       nullable: column.nullable !== false,
-      references: options.references,
-      referencesTruncated: options.truncated,
+      references: source,
     };
   });
 

@@ -33,6 +33,21 @@ const region: TableSchema = {
   recordId: { prefix: "REG", padding: 4 },
 };
 
+/**
+ * A table with a foreign key back to itself, whose first ordinary text column
+ * is what names a record. Editing that column changes what every cell pointing
+ * at the record shows, which no other table's edit can do.
+ */
+const employee: TableSchema = {
+  name: "Employee",
+  columns: [
+    { name: "name", type: "text", nullable: false },
+    { name: "manager", type: "text" },
+  ],
+  foreignKeys: [{ column: "manager", referencesTable: "Employee" }],
+  recordId: { prefix: "EMP", padding: 4 },
+};
+
 const customer: TableSchema = {
   name: "Customer",
   columns: [
@@ -53,8 +68,11 @@ async function workspaceFixture(customerName = "Acme"): Promise<Buffer> {
   const database = await Database.create();
   database.createTable(region);
   database.createTable(customer);
+  database.createTable(employee);
   database.insertRecord("Region", { name: "North" });
   database.insertRecord("Region", { name: "South" });
+  database.insertRecord("Employee", { name: "Ada", manager: null });
+  database.insertRecord("Employee", { name: "Grace", manager: "EMP-0001" });
   database.insertRecord("Customer", {
     name: customerName,
     region: "REG-0001",
@@ -457,7 +475,7 @@ test.describe("/workspace record grid", () => {
     await expect(page.getByTestId("workspace-table-select")).toBeDisabled();
 
     // Once it lands, editing is offered again.
-    await expect(page.getByTestId("workspace-table")).toHaveCount(3, {
+    await expect(page.getByTestId("workspace-table")).toHaveCount(4, {
       timeout: 30_000,
     });
     await typeInCell(page, "CUST-0001", "name", "Acme Holdings");
@@ -471,26 +489,26 @@ test.describe("/workspace record grid", () => {
     await page.goto("/workspace");
     await openWorkspace(page, await workspaceFixture());
 
-    // The grid is showing Customer, and knows of Customer and Region only.
+    // The grid is showing Customer, and knows only the tables the file held.
     await expect(page.getByTestId("workspace-table-select")).toHaveValue(
       "Customer",
     );
     await expect(
       page.getByTestId("workspace-table-select").locator("option"),
-    ).toHaveCount(2);
+    ).toHaveCount(3);
 
     await page
       .getByTestId("workspace-import-input")
       .setInputFiles(await supplierWorkbook());
     await expect(page.getByTestId("workspace-import-form")).toBeVisible();
     await page.getByTestId("workspace-import-run").click();
-    await expect(page.getByTestId("workspace-table")).toHaveCount(3);
+    await expect(page.getByTestId("workspace-table")).toHaveCount(4);
 
     // The switcher reads the shell's summary, which the import replaced, so the
     // new table is there without the grid asking anyone for a second listing.
     await expect(
       page.getByTestId("workspace-table-select").locator("option"),
-    ).toHaveCount(3);
+    ).toHaveCount(4);
     await page.getByTestId("workspace-table-select").selectOption("Supplier");
 
     // Located by column rather than by Record ID: what the import numbers the
@@ -610,6 +628,105 @@ test.describe("/workspace record grid", () => {
     );
     await expect(page.getByTestId("workspace-confirm")).not.toContainText(
       "an edit is still being applied",
+    );
+  });
+
+  test("renames a record everywhere it is referred to, without a reload", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await openWorkspace(page, await workspaceFixture());
+    await page.getByTestId("workspace-table-select").selectOption("Employee");
+
+    // The manager column points back at this same table, so what it shows is
+    // read from the rows on screen rather than from a listing taken when the
+    // table was read.
+    await expect(cellOf(page, "EMP-0002", "manager")).toHaveText(
+      "Ada (EMP-0001)",
+    );
+
+    // Renaming the record the other row points at is the case a captured
+    // listing gets wrong: the worker accepts and stores it, nothing else on
+    // screen changes, and a plain edit does not move the generation, so nothing
+    // would ever re-read it.
+    await typeInCell(page, "EMP-0001", "name", "Ada Lovelace");
+    await expect(cellOf(page, "EMP-0001", "name")).toHaveText("Ada Lovelace");
+    await expect(cellOf(page, "EMP-0002", "manager")).toHaveText(
+      "Ada Lovelace (EMP-0001)",
+    );
+
+    // And the picker offers the new name, because it and the cell read the one
+    // source rather than two that can drift apart.
+    await editCell(cellOf(page, "EMP-0002", "manager"), async () => {
+      await expect(
+        page.locator(".tabulator-edit-list-item", {
+          hasText: "Ada Lovelace (EMP-0001)",
+        }),
+      ).toBeVisible({ timeout: STEP_TIMEOUT });
+      await page.keyboard.press("Escape");
+    });
+
+    // It is the workspace that changed, not just the screen.
+    const saved = await downloadedWorkspace(page);
+    await openWorkspace(page, saved);
+    await page.getByTestId("workspace-table-select").selectOption("Employee");
+    await expect(cellOf(page, "EMP-0002", "manager")).toHaveText(
+      "Ada Lovelace (EMP-0001)",
+    );
+  });
+
+  test("leaves a reference to another table alone when this one is edited", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await openWorkspace(page, await workspaceFixture());
+
+    // Customer's region points at Region, which is not on screen and so cannot
+    // change while this table is: its labels are read once and hold.
+    await expect(cellOf(page, "CUST-0001", "region")).toHaveText(
+      "North (REG-0001)",
+    );
+    await typeInCell(page, "CUST-0001", "name", "Acme Holdings");
+    await expect(cellOf(page, "CUST-0001", "region")).toHaveText(
+      "North (REG-0001)",
+    );
+    await expect(cellOf(page, "CUST-0002", "region")).toHaveText(
+      "South (REG-0002)",
+    );
+  });
+
+  test("re-reads a reference to another table after an import", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await openWorkspace(page, await workspaceFixture());
+
+    // Rename a region, which is the label source for Customer's region column,
+    // while Region is the table on screen.
+    await page.getByTestId("workspace-table-select").selectOption("Region");
+    await typeInCell(page, "REG-0001", "name", "Northern");
+    await expect(cellOf(page, "REG-0001", "name")).toHaveText("Northern");
+
+    // Switching back re-reads Customer, so its snapshot of Region is the one
+    // taken now.
+    await page.getByTestId("workspace-table-select").selectOption("Customer");
+    await expect(cellOf(page, "CUST-0001", "region")).toHaveText(
+      "Northern (REG-0001)",
+    );
+
+    // An import moves the generation, which re-reads the table on screen and
+    // with it the labels it holds for tables that are not.
+    await page
+      .getByTestId("workspace-import-input")
+      .setInputFiles(await supplierWorkbook());
+    await expect(page.getByTestId("workspace-import-form")).toBeVisible();
+    await page.getByTestId("workspace-import-run").click();
+    await expect(page.getByTestId("workspace-table")).toHaveCount(4);
+    await expect(cellOf(page, "CUST-0001", "region")).toHaveText(
+      "Northern (REG-0001)",
     );
   });
 });

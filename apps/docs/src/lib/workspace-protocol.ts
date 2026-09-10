@@ -331,19 +331,63 @@ export interface WorkspaceReference {
   readonly label: string;
 }
 
+/**
+ * Where a foreign-key column's options and labels come from, and for how long
+ * they are good.
+ *
+ * A label is a record's name read from another row, so it goes stale when that
+ * row is edited. Saying when it can go stale is the whole of getting this right,
+ * and there are exactly two cases:
+ *
+ * - `onScreen`: the referenced table is the one being shown. Its rows are in
+ *   the grid, and they change under the visitor's hands, so there is no
+ *   snapshot to go stale: the labels and the picker's options are read from
+ *   those rows each time they are needed. Editing the column that names a
+ *   record changes what every cell pointing at it shows, at once.
+ * - `snapshot`: the referenced table is not the one being shown, so nothing on
+ *   this screen can change it. It can only change by the visitor switching to
+ *   it, which re-reads, or by an import, which moves the generation and
+ *   re-reads. The records below are therefore valid for exactly the generation
+ *   they were read at, which is the generation the whole `WorkspaceTable`
+ *   carries.
+ *
+ * Every other value on a `WorkspaceColumn` is a snapshot of that same
+ * generation for the same reason: only an import can add a table or a column,
+ * and it moves the generation.
+ */
+export type WorkspaceReferenceSource =
+  | {
+      readonly kind: "onScreen";
+      /** The referenced table, which is this table. */
+      readonly table: string;
+      /**
+       * The column of it whose value names a record, or null when it has no
+       * ordinary text column and records are named by their Record ID alone.
+       */
+      readonly labelColumn: string | null;
+    }
+  | {
+      readonly kind: "snapshot";
+      readonly table: string;
+      readonly labelColumn: string | null;
+      /**
+       * The records that may be pointed at, at most
+       * `WORKSPACE_REFERENCE_LIMIT` of them, as they stood at this table's
+       * generation.
+       */
+      readonly records: readonly WorkspaceReference[];
+      /** Whether the referenced table holds more records than `records` lists. */
+      readonly truncated: boolean;
+    };
+
 /** A column as the grid needs it: enough to render it and choose an editor. */
 export interface WorkspaceColumn {
   readonly name: string;
   readonly type: ColumnType;
   /** Whether the column accepts an empty cell. */
   readonly nullable: boolean;
-  /**
-   * For a foreign-key column, the records it may point at, at most
-   * `WORKSPACE_REFERENCE_LIMIT` of them. Null for every other column.
-   */
-  readonly references: readonly WorkspaceReference[] | null;
-  /** Whether the referenced table holds more records than `references` lists. */
-  readonly referencesTruncated: boolean;
+  /** For a foreign-key column, where its options come from. Null for the rest. */
+  readonly references: WorkspaceReferenceSource | null;
 }
 
 /** One table of the workspace: its columns and all of its rows. */

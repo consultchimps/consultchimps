@@ -48,9 +48,12 @@ import type {
   MarkWorkspaceChanged,
   ReportPendingEdits,
 } from "@/components/workspace-tool";
+import { referenceLabel } from "@/lib/workspace-labels";
 import {
+  WORKSPACE_REFERENCE_LIMIT,
   WORKSPACE_STALE_READ,
   type WorkspaceColumn,
+  type WorkspaceReference,
   type WorkspaceSummary,
   type WorkspaceTable,
 } from "@/lib/workspace-protocol";
@@ -104,6 +107,76 @@ function asText(value: CellValue | undefined): string {
 }
 
 /**
+ * The rows the grid is showing, as the database last confirmed them.
+ *
+ * This is what a table referring to itself reads its labels from. Not the
+ * snapshot the table was read with, which stops being true the moment a record
+ * is renamed on screen, and not what Tabulator holds, which can carry a value
+ * the worker has not accepted yet.
+ */
+export interface LiveRecords {
+  /** Every Record ID, in the order the rows are shown. */
+  ids: () => readonly string[];
+  /** One confirmed value, or undefined when the record is not on screen. */
+  value: (recordId: string, column: string) => CellValue | undefined;
+}
+
+/**
+ * What a foreign-key column offers and what it shows, from one place.
+ *
+ * The picker's options and the cell's label are the same question asked twice,
+ * so they are answered by one object. Wiring them to two sources is how a cell
+ * comes to show a name the picker no longer offers.
+ */
+interface ReferenceSource {
+  /** The records the picker offers, at most `WORKSPACE_REFERENCE_LIMIT`. */
+  options: () => readonly WorkspaceReference[];
+  /** How a stored Record ID reads in a cell. */
+  label: (value: string) => string;
+  /** Whether more records exist than the picker can offer. */
+  truncated: () => boolean;
+}
+
+function referenceSource(
+  references: NonNullable<WorkspaceColumn["references"]>,
+  live: LiveRecords,
+): ReferenceSource {
+  if (references.kind === "onScreen") {
+    // Read each time it is asked, never captured: these rows change under the
+    // visitor's hands, and an edit to the naming column has to show in every
+    // cell pointing at that record at once.
+    const { labelColumn } = references;
+    const label = (value: string): string =>
+      referenceLabel(
+        value,
+        labelColumn === null ? null : live.value(value, labelColumn),
+      );
+    return {
+      options: () =>
+        live
+          .ids()
+          .slice(0, WORKSPACE_REFERENCE_LIMIT)
+          .map((value) => ({ value, label: label(value) })),
+      label,
+      truncated: () => live.ids().length > WORKSPACE_REFERENCE_LIMIT,
+    };
+  }
+  // A table that is not on screen cannot change while this one is shown, so its
+  // records are read once and hold for this generation. Both answers come from
+  // that one array.
+  const { records, truncated } = references;
+  const labels = new Map(
+    records.map((reference) => [reference.value, reference.label]),
+  );
+  return {
+    options: () => records,
+    // A Record ID past the cap has no label to show, so it shows as itself.
+    label: (value) => labels.get(value) ?? value,
+    truncated: () => truncated,
+  };
+}
+
+/**
  * The editor a column gets. Each is Tabulator's own: the point is to hand the
  * visitor an input that suits the column, not to police what they put in it.
  *
@@ -115,6 +188,7 @@ function asText(value: CellValue | undefined): string {
 function gridColumn(
   column: WorkspaceColumn,
   editable: () => boolean,
+  live: LiveRecords,
 ): ColumnDefinition {
   const base: ColumnDefinition = {
     title: column.name,
@@ -127,14 +201,15 @@ function gridColumn(
   // A foreign key stores the referenced Record ID and shows a readable label.
   // The list editor searches the labels and writes the id behind them.
   if (column.references !== null) {
-    const labels = new Map(
-      column.references.map((reference) => [reference.value, reference.label]),
-    );
+    const source = referenceSource(column.references, live);
     return {
       ...base,
       editor: "list",
-      editorParams: {
-        values: column.references.map((reference) => ({
+      // A function, so the options are built when the editor opens rather than
+      // when the grid was. Tabulator calls it for each edit; the published
+      // types describe only the plain object it also accepts.
+      editorParams: (() => ({
+        values: source.options().map((reference) => ({
           label: reference.label,
           value: reference.value,
         })),
@@ -144,14 +219,14 @@ function gridColumn(
         // Past the option cap the list cannot name every record, so a Record ID
         // can still be typed. Whether it exists is the database's answer, not
         // this editor's.
-        freetext: column.referencesTruncated,
+        freetext: source.truncated(),
         placeholderEmpty: "No matching record",
         itemFormatter: labelElement,
-      },
+      })) as unknown as ColumnDefinition["editorParams"],
       formatter: (cell: CellComponent) => {
         const value = cell.getValue() as CellValue | undefined;
         const text = asText(value);
-        return textElement(labels.get(text) ?? text);
+        return textElement(text === "" ? "" : source.label(text));
       },
     };
   }
@@ -180,6 +255,7 @@ function gridColumn(
 function gridColumns(
   table: WorkspaceTable,
   editable: () => boolean,
+  live: LiveRecords,
 ): ColumnDefinition[] {
   return [
     {
@@ -190,7 +266,7 @@ function gridColumns(
         "Assigned once when the record is created, and never changes",
       width: 150,
     },
-    ...table.columns.map((column) => gridColumn(column, editable)),
+    ...table.columns.map((column) => gridColumn(column, editable, live)),
   ];
 }
 
@@ -356,13 +432,39 @@ export function WorkspaceGrid({
     let instance: Tabulator | null = null;
     let destroyed = false;
 
-    // The last value the database confirmed for each record, which is what a
-    // refused edit reverts to. Reverting to the cell's previous value would be
-    // wrong the moment two edits to one cell overlap: the second one's
-    // "previous" is the first one's unstored text.
+    // The last value the database confirmed for each record.
+    //
+    // The rows this is built from are a snapshot of one generation, and this is
+    // what carries them forward: an accepted edit updates it, so it stays the
+    // truth for as long as the grid is showing that generation. Everything in
+    // here that has to be current reads it rather than the rows.
+    //
+    // It is what a refused edit reverts to as well. Reverting to the cell's
+    // previous value would be wrong the moment two edits to one cell overlap:
+    // the second one's "previous" is the first one's unstored text.
     const committed = new Map<string, TableRow>(
       data.rows.map((row) => [asText(row[RECORD_ID_COLUMN]), { ...row }]),
     );
+    // What a table referring to itself reads its labels from. `committed` is
+    // insertion ordered, which is row order, and holds what the database
+    // confirmed, so a label changes exactly when the edit behind it was
+    // accepted.
+    const live: LiveRecords = {
+      ids: () => [...committed.keys()],
+      value: (recordId, columnName) => committed.get(recordId)?.[columnName],
+    };
+    // The columns whose value names a record of this same table. Editing one
+    // changes what every foreign-key cell pointing at that record shows, and
+    // nothing else on screen would say so.
+    const namingColumns = new Set(
+      data.columns.flatMap((column) =>
+        column.references?.kind === "onScreen" &&
+        column.references.labelColumn !== null
+          ? [column.references.labelColumn]
+          : [],
+      ),
+    );
+
     // Edits are numbered per cell so a reply that has been overtaken by a newer
     // edit to the same cell reports its outcome without touching the grid.
     const latest = new Map<string, number>();
@@ -370,6 +472,33 @@ export function WorkspaceGrid({
     // Putting a value back is itself a cell change, so the edit handler ignores
     // anything written while this is raised.
     let applying = 0;
+
+    // Set when a naming column was edited while an editor was open, so the
+    // refresh below can wait for it rather than pull the editor's element out
+    // from under it and take the edit in progress with it.
+    let labelsStale = false;
+
+    /**
+     * Show the labels again after the record they name was renamed.
+     *
+     * Only the cells have to be told: the picker builds its options when it
+     * opens, so it is never stale. A rendered cell keeps whatever the formatter
+     * last returned, and nothing about a row pointing at the renamed record has
+     * itself changed, so nothing would redraw it.
+     */
+    const refreshLabels = (): void => {
+      if (destroyed || instance === null) {
+        return;
+      }
+      if (editingRef.current !== null) {
+        labelsStale = true;
+        return;
+      }
+      labelsStale = false;
+      for (const row of instance.getRows()) {
+        row.reformat();
+      }
+    };
 
     // Tell the shell how many edits are on their way, before the command is
     // sent and after it is answered. Never clamped below zero, so an edit that
@@ -447,6 +576,11 @@ export function WorkspaceGrid({
           if (row !== undefined) {
             row[column] = stored;
           }
+          // A record's name is what other rows show for it, so renaming one
+          // changes cells this edit never touched.
+          if (namingColumns.has(column)) {
+            refreshLabels();
+          }
           // The worker took it, so the workspace differs from its file. The
           // shell owns that flag; this is the one place the grid touches it, and
           // only here, after the reply, never on the way out. A refused edit
@@ -480,9 +614,9 @@ export function WorkspaceGrid({
       }
       instance = new TabulatorFull(element, {
         // Copies, because Tabulator writes into the row objects it is given and
-        // these are the baseline a refused edit reverts to.
+        // `committed` above is built from the same rows.
         data: data.rows.map((row) => ({ ...row })),
-        columns: gridColumns(data, () => !lockedRef.current),
+        columns: gridColumns(data, () => !lockedRef.current, live),
         // A field is a column name and nothing else. Tabulator otherwise reads
         // a dot in a field as a path into nested data, so a legal column such
         // as "billing.address" would render blank and its edits would go to a
@@ -515,11 +649,20 @@ export function WorkspaceGrid({
       instance.on("cellEditing", (cell: CellComponent) => {
         editingRef.current = cell;
       });
+      // Registered after `persist`, so by the time these run the edit has been
+      // handed on and the editor is closed: a refresh that was waiting for it
+      // can go ahead.
       instance.on("cellEdited", () => {
         editingRef.current = null;
+        if (labelsStale) {
+          refreshLabels();
+        }
       });
       instance.on("cellEditCancelled", () => {
         editingRef.current = null;
+        if (labelsStale) {
+          refreshLabels();
+        }
       });
     })();
 
@@ -530,8 +673,16 @@ export function WorkspaceGrid({
     };
   }, [data, getClient, markChanged, onEditsPending, onError]);
 
+  // Only a snapshot can be short of records: a table referring to itself offers
+  // the rows on screen, and the note below says so only when there are more of
+  // those than the picker takes.
   const truncated =
-    data?.columns.filter((column) => column.referencesTruncated) ?? [];
+    data?.columns.filter((column) =>
+      column.references?.kind === "snapshot"
+        ? column.references.truncated
+        : column.references?.kind === "onScreen" &&
+          data.rows.length > WORKSPACE_REFERENCE_LIMIT,
+    ) ?? [];
 
   return (
     <section className={sectionClass} data-testid="workspace-grid-section">
