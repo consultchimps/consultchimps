@@ -20,6 +20,7 @@ import {
   hasCachedValueElement,
   parseAttributes,
   setAttribute,
+  writeAttribute,
 } from "./xml.js";
 import {
   decodeCell,
@@ -179,7 +180,7 @@ export class WorksheetCell {
     // including the ones that renumber rows, a position that cannot shift.
     this.openTag =
       written === undefined
-        ? setAttribute(element.openTag, "r", reference)
+        ? writeAttribute(element.openTag, "r", reference)
         : element.openTag;
     this.selfClosing = element.selfClosing;
     this.body = element.selfClosing
@@ -269,7 +270,7 @@ export class WorksheetCell {
     }
     this.row = row;
     this.reference = encodeCell(this.column, row);
-    this.openTag = setAttribute(this.openTag, "r", this.reference);
+    this.openTag = writeAttribute(this.openTag, "r", this.reference);
   }
 
   /**
@@ -352,7 +353,7 @@ export class WorksheetRow {
     // moves when the rows before it do.
     this.openTag =
       written === undefined
-        ? setAttribute(element.openTag, "r", String(number))
+        ? writeAttribute(element.openTag, "r", String(number))
         : element.openTag;
     this.selfClosing = element.selfClosing;
     this.closeTag = element.selfClosing ? "" : `</${element.name}>`;
@@ -417,7 +418,7 @@ export class WorksheetRow {
       return;
     }
     this.number = number;
-    this.openTag = setAttribute(this.openTag, "r", String(number));
+    this.openTag = writeAttribute(this.openTag, "r", String(number));
     for (const cell of this.cells) {
       cell.moveToRow(number);
     }

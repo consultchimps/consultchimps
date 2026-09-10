@@ -51,6 +51,15 @@ export interface ImportTableOptions {
 
 /** One table to create in a single import. */
 export interface ImportTableRequest extends ImportTableOptions {
+  /**
+   * The source. Its `columns` must not repeat a name exactly: a row is an
+   * object keyed by column name, so a repeated name is a column no row can
+   * answer, and the import refuses it with
+   * `DB_IMPORT_DUPLICATE_SOURCE_COLUMN`. Names that differ only in case, or in
+   * the characters the identifier fold ignores, are distinct properties and are
+   * numbered instead, which `ImportedTable.renamedColumns` reports. Every
+   * reader in this workspace already makes its headers unique.
+   */
   readonly table: Table;
 }
 
@@ -518,6 +527,11 @@ export function suggestRecordIdPrefix(tableName: string): string {
  * Build the schema an import would create, without creating it. The Record ID
  * column is never declared: it is generated, so an input that already carries
  * one contributes no column here.
+ *
+ * A source the import would refuse is refused here too, with the same error: a
+ * preview that answered where the import raises would describe a table nobody
+ * can create. A source whose only column is the Record ID is one of those, and
+ * the reason this is a refusal rather than an empty schema.
  */
 export function importedTableSchema(
   table: Table,
@@ -550,14 +564,52 @@ interface PlannedTable {
  * under a different name from the one that would be stored.
  */
 function planImport(table: Table, options: ImportTableOptions): PlannedTable {
+  assertDistinctSourceColumns(table.columns);
   const { renamedColumns, table: prepared } = prepareForImport(table);
   const inferred = inferColumnTypes(prepared);
-  return {
-    inferred,
-    renamedColumns,
-    schema: schemaFromColumns(inferred, options),
-    table: prepared,
-  };
+  const schema = schemaFromColumns(inferred, options);
+  // In the plan, not beside it. Every one of these ran only on the way to
+  // creating a table, so a preview described a schema the import would have
+  // refused: no columns of its own, a name the engine will not take, a Record
+  // ID configuration that cannot number anything. What the preview shows is
+  // now what the import will accept, because there is one place that decides.
+  assertSafeIdentifier(schema.name, "table");
+  assertRecordIdConfig(schema.name, schema.recordId);
+  assertImportColumns(schema.name, schema.columns);
+  return { inferred, renamedColumns, schema, table: prepared };
+}
+
+/**
+ * Refuse a source whose column list repeats a name exactly.
+ *
+ * A `Table` row is an object keyed by column name, so a list such as
+ * `["Amount", "Amount"]` describes two columns that one row can only answer
+ * once: the second read returns the first column's value, and the import
+ * stores it twice under two names, manufacturing a duplicate out of a source
+ * that never had one. Nothing in the file can say what the second column held,
+ * so the answer is a refusal rather than a guess.
+ *
+ * The test is on the exact name, because that is what a row is keyed by. Names
+ * that differ only in case or in the characters the identifier fold ignores are
+ * two distinct properties carrying two distinct values, and numbering the
+ * second one stores both: that is a rename, which is reported, not an
+ * ambiguity. Every reader in this workspace already makes its headers unique by
+ * the folded key, which is stricter, so a repeated name reaches this only from a
+ * `Table` a caller built.
+ */
+function assertDistinctSourceColumns(columns: readonly string[]): void {
+  const first = new Map<string, number>();
+  columns.forEach((column, index) => {
+    const at = first.get(column);
+    if (at !== undefined) {
+      throw new ConsultChimpsError(
+        "DB_IMPORT_DUPLICATE_SOURCE_COLUMN",
+        `The source lists the column "${column}" twice, at positions ${at + 1} and ${index + 1}, so there is no way to tell what the second one holds. Give the columns different names and import it again.`,
+        { details: { column, positions: [at + 1, index + 1] } },
+      );
+    }
+    first.set(column, index);
+  });
 }
 
 function schemaFromColumns(
@@ -606,9 +658,12 @@ function assertImportColumns(
 /**
  * Import several tables into a workspace as one unit.
  *
- * Every name, Record ID configuration, and column list is checked first, so the
- * usual failures (a name that is already taken, an empty prefix) are reported
- * before anything is written. What follows runs inside a single transaction:
+ * Every source, name, Record ID configuration, and column list is checked
+ * first, so the usual failures (a name that is already taken, an empty prefix,
+ * a source with nothing to create, a column name listed twice) are reported
+ * before anything is written. All but the one that needs the workspace live in
+ * the plan `importedTableSchema` answers with, so a preview refuses what the
+ * import refuses. What follows runs inside a single transaction:
  * either every table in the call is created and filled, or the workspace is
  * left exactly as it was. A half-finished import, where a first sheet landed
  * and a second failed, is the one outcome a person cannot easily undo, so it is
@@ -647,8 +702,6 @@ export function importTables(
     // Table and column names are matched the way SQLite matches them, never by
     // a fresh case-insensitive comparison, so "Customer" and "customer" are one
     // name here exactly as they are in the engine.
-    assertSafeIdentifier(schema.name, "table");
-    assertRecordIdConfig(schema.name, schema.recordId);
     const key = identifierKey(schema.name);
     const existing = taken.get(key);
     if (existing !== undefined) {
@@ -659,7 +712,6 @@ export function importTables(
       );
     }
     taken.set(key, schema.name);
-    assertImportColumns(schema.name, schema.columns);
     planned.push({
       inferred,
       renamedColumns,
@@ -694,7 +746,10 @@ export function importTables(
   );
 }
 
-/** Import one table into a workspace. The single-table form of `importTables`. */
+/**
+ * Import one table into a workspace. The single-table form of `importTables`,
+ * with the same refusals, including a source whose columns repeat a name.
+ */
 export function importTable(
   database: Database,
   table: Table,

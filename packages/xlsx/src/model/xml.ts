@@ -177,6 +177,30 @@ export function addAttribute(
 }
 
 /**
+ * Make an opening tag carry this attribute value, whether or not it already
+ * has the attribute: the value is replaced where it is written, and the
+ * attribute is added before the closing bracket where it is not. Existing
+ * attributes are matched on local name, as everywhere here, while a new one is
+ * written under the name given; the value is written as given, the same as both
+ * helpers this is built from.
+ *
+ * This is the helper for "the tag says this afterwards", which is what a write
+ * back of an inferred position needs. `setAttribute` answers the narrower
+ * question - change what is already written - and returns the tag untouched
+ * when there is nothing to change, which reads as success at a call site that
+ * meant to materialise a value and leaves the value implicit instead.
+ */
+export function writeAttribute(
+  tagText: string,
+  localName: string,
+  value: string,
+): string {
+  return getAttribute(tagText, localName) === undefined
+    ? addAttribute(tagText, localName, value)
+    : setAttribute(tagText, localName, value);
+}
+
+/**
  * Read the opening tag that starts at `start`, skipping quoted attribute
  * values so a `>` inside one does not end the tag early.
  */

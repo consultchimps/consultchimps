@@ -374,10 +374,27 @@ written. A Record ID column in the input is left out rather than refused, since
 identifiers are always generated, so a table read back out of a database can be
 imported again as a copy.
 
+A source's `columns` must not repeat a name exactly. A `Table` row is an object
+keyed by column name, so a list such as `["Amount", "Amount"]` describes a
+second column no row can answer: reading it returns the first column's value,
+and the import would store that value twice under two names. There is nothing in
+the source that says what the second column held, so it is refused with
+`DB_IMPORT_DUPLICATE_SOURCE_COLUMN` rather than guessed at. Names that differ
+only in case, or in the characters the identifier fold ignores, are two
+properties carrying two values: those are numbered and reported in
+`renamedColumns`, not refused. Every reader here already makes its headers
+unique, so this concerns tables a caller builds itself.
+
 `importedTableSchema` returns the `TableSchema` an import would create without
-creating it, and `@consultchimps/db/schema` publishes the schema model on its
-own, with no database engine behind it, for a caller that only needs the
-identifier rules (`identifierKey`, `sameIdentifier`, `assertSafeIdentifier`,
+creating it, and refuses exactly what the import refuses: a source with no
+columns of its own, one whose only column is the Record ID, one that repeats a
+column name, a table name the engine will not take, and a Record ID
+configuration that cannot number anything all raise from the preview as well,
+because both halves ask the same plan. Only the checks that need the workspace,
+such as a name it already holds, wait for the import itself.
+`@consultchimps/db/schema` publishes the schema model on its own, with no
+database engine behind it, for a caller that only needs the identifier rules
+(`identifierKey`, `sameIdentifier`, `assertSafeIdentifier`,
 `MAX_RECORD_ID_PADDING`).
 
 ### Configure sql.js in a browser worker

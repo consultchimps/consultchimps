@@ -39,6 +39,23 @@ column that claims a spelling holds it and an empty cell is findable as empty.
 This is a behaviour change: a date column that previously accepted any text now
 accepts only a date.
 
+A source whose columns repeat a name exactly is refused with
+`DB_IMPORT_DUPLICATE_SOURCE_COLUMN`. A `Table` row is an object keyed by column
+name, so the second `Amount` in `["Amount", "Amount"]` is a column no row can
+answer: the remap read the one property twice and stored the same value under
+two names, manufacturing a duplicate the source never had. Names differing only
+in case, or in what the identifier fold ignores, are two properties carrying two
+values and are still numbered and reported, not refused. Every reader here makes
+its headers unique, so this reaches only a `Table` a caller built.
+
+`importedTableSchema` now refuses what the import refuses. The column, table
+name and Record ID checks ran beside the shared plan rather than inside it, so a
+source with no columns, or one whose only column is the Record ID, previewed as
+a schema with no columns while the import raised `DB_IMPORT_NO_COLUMNS` and
+created nothing, and a preview would describe a table under a name the engine
+will not take. They live in the plan now; only the checks that need the
+workspace, such as a name it already holds, still belong to the import.
+
 A column name is derived in the same step that numbers repeated ones, so it is
 inside the identifier limit by construction: a header too long to be a name is
 shortened at a whole-character boundary with room left for the number a
@@ -93,6 +110,19 @@ error while the same damage in the package surfaced as `XLSX_READ_FAILED`. Both
 now go through one translation: a failed read reports `XLSX_READ_FAILED` naming
 the workbook and, where the failure belongs to a worksheet, that worksheet, with
 the parser's own complaint as the error's `cause`.
+
+A row or cell that carries no `r` attribute keeps its place through an edit.
+Both are optional in the format: such a row or cell sits where document order
+puts it. The model infers the position and writes it back, because an implicit
+position is only true of the document it was read from, but it wrote it with the
+helper that updates an attribute already there, which returns the tag unchanged
+when there is none. The number therefore existed in memory and never in the
+output: filtering an Excel Table compacted the rows above such a row while it
+stayed implicit, so it serialised directly under the shortened table and Excel
+read it as a different row. The write back now uses a helper whose contract is
+the operation it needed - the tag carries this value afterwards, whether or not
+it had the attribute - and the tests assert the serialised tag rather than the
+parsed model.
 
 `uniqueHeaders` in `@consultchimps/tabular` now decides uniqueness against the
 whole header row: every original spelling is reserved before any suffix is

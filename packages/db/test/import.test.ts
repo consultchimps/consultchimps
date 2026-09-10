@@ -968,3 +968,118 @@ describe("importTables", () => {
     reopened.close();
   });
 });
+
+describe("what a preview and an import agree about", () => {
+  const OPTIONS = { name: "Empty", recordId: { prefix: "E", padding: 4 } };
+
+  /** The code each half answers with, so the two can be compared as one. */
+  async function codesFor(
+    table: Table,
+  ): Promise<{ preview: string | undefined; imported: string | undefined }> {
+    const database = await Database.create();
+    const preview = await codeOf(() => importedTableSchema(table, OPTIONS));
+    const imported = await codeOf(() => importTable(database, table, OPTIONS));
+    // Nothing was created whatever the answer was.
+    expect(database.getSchema()).toEqual([]);
+    database.close();
+    return { preview, imported };
+  }
+
+  it("refuses a source with no columns the same way twice", async () => {
+    const { preview, imported } = await codesFor({ columns: [], rows: [] });
+
+    expect(preview).toBe("DB_IMPORT_NO_COLUMNS");
+    expect(imported).toBe(preview);
+  });
+
+  it("refuses a source whose only column is the Record ID the same way", async () => {
+    // The Record ID is generated, so a column called one contributes nothing:
+    // the schema this would create has no columns of its own.
+    const { preview, imported } = await codesFor({
+      columns: ["record_id"],
+      rows: [{ record_id: "CUST-0001" }],
+    });
+
+    expect(preview).toBe("DB_IMPORT_NO_COLUMNS");
+    expect(imported).toBe(preview);
+  });
+
+  it("refuses a column listed twice under the same name, the same way", async () => {
+    // A row is an object keyed by column name, so one property answers both
+    // reads: importing this would store the first column's value twice.
+    const row: TableRow = Object.create(null);
+    row["Amount"] = 10;
+    const { preview, imported } = await codesFor({
+      columns: ["Amount", "Amount"],
+      rows: [row],
+    });
+
+    expect(preview).toBe("DB_IMPORT_DUPLICATE_SOURCE_COLUMN");
+    expect(imported).toBe(preview);
+  });
+
+  it("numbers two columns that differ only in case, and keeps both values", async () => {
+    // These are two properties carrying two values, so nothing is ambiguous
+    // and nothing is lost: the second is renamed, which is reported, and both
+    // values are stored. Refusing it would refuse a source the row can answer.
+    const row: TableRow = Object.create(null);
+    row["Amount"] = 10;
+    row["amount"] = 20;
+    const database = await Database.create();
+    const imported = importTable(
+      database,
+      { columns: ["Amount", "amount"], rows: [row] },
+      { name: "Amounts", recordId: { prefix: "A", padding: 4 } },
+    );
+    const stored = databaseTableToTable(database, "Amounts");
+    database.close();
+
+    const names = imported.columns.map((entry) => entry.name);
+    expect(new Set(names).size).toBe(2);
+    expect(imported.renamedColumns).toHaveLength(1);
+    expect(
+      names
+        .map((name) => stored.rows[0]?.[name])
+        .sort((a, b) => Number(a) - Number(b)),
+    ).toEqual([10, 20]);
+  });
+
+  it("refuses a table name the engine will not take, the same way", async () => {
+    const database = await Database.create();
+    const table: Table = { columns: ["Amount"], rows: [{ Amount: 1 }] };
+    const options = { name: "   ", recordId: { prefix: "A", padding: 4 } };
+    const preview = await codeOf(() => importedTableSchema(table, options));
+    const imported = await codeOf(() => importTable(database, table, options));
+    database.close();
+
+    expect(preview).toBe("DB_INVALID_IDENTIFIER");
+    expect(imported).toBe(preview);
+  });
+
+  it("refuses a Record ID configuration it cannot number with, the same way", async () => {
+    const database = await Database.create();
+    const table: Table = { columns: ["Amount"], rows: [{ Amount: 1 }] };
+    const options = { name: "Amounts", recordId: { prefix: "  ", padding: 4 } };
+    const preview = await codeOf(() => importedTableSchema(table, options));
+    const imported = await codeOf(() => importTable(database, table, options));
+    database.close();
+
+    expect(preview).toBeDefined();
+    expect(imported).toBe(preview);
+  });
+
+  it("never trips on the columns a reader produces", async () => {
+    // Readers make their headers unique before anything reaches the import, so
+    // a file that repeats a header arrives as distinct columns.
+    const table = parseCsvTable("Amount,Amount,amount\n1,2,3\n");
+
+    expect(new Set(table.columns).size).toBe(table.columns.length);
+    const database = await Database.create();
+    const imported = importTable(database, table, {
+      name: "Amounts",
+      recordId: { prefix: "A", padding: 4 },
+    });
+    database.close();
+    expect(imported.columns).toHaveLength(3);
+  });
+});
