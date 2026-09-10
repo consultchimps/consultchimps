@@ -8,6 +8,7 @@
  * style points at. It reads nothing else: styles.xml is never rewritten, which
  * is what lets it travel through an edit byte-identical.
  */
+import { MILLISECONDS_PER_DAY } from "./calendar.js";
 import { decodeXmlText, editElements, getAttribute } from "./xml.js";
 
 /**
@@ -18,9 +19,6 @@ import { decodeXmlText, editElements, getAttribute } from "./xml.js";
 const BUILTIN_DATE_FORMAT_IDS = new Set([
   14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47,
 ]);
-
-/** Milliseconds in one day, the unit an Excel serial counts. */
-const MILLISECONDS_PER_DAY = 86_400_000;
 
 /**
  * Whether a custom format code describes a date or a time. Quoted literals and

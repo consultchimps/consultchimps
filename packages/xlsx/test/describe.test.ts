@@ -948,18 +948,27 @@ describe("dates a workbook stores as numbers", () => {
   function datedWorkbook(date1904 = false): Uint8Array {
     const shift = date1904 ? 1462 : 0;
     const sheet: XLSX.WorkSheet = {
-      "!ref": "A1:D2",
+      "!ref": "A1:E2",
       A1: { t: "s", v: "Customer" },
       B1: { t: "s", v: "Opened" },
       C1: { t: "s", v: "Stamped" },
-      D1: { t: "s", v: "Reference" },
+      D1: { t: "s", v: "Closed" },
+      E1: { t: "s", v: "Reference" },
       A2: { t: "s", v: "Acme" },
       // 1 January 2024, and the same day at 18:00.
       B2: { t: "n", v: 45292 - shift, z: "yyyy-mm-dd" },
       C2: { t: "n", v: 45292.75 - shift, z: "yyyy-mm-dd hh:mm:ss" },
+      // The last fraction of that day, which rounds into the next one. The
+      // carry is arithmetic, so it has to land on the same day in every zone
+      // just as the plain serials do.
+      D2: {
+        t: "n",
+        v: 45292 - shift + 86_399_999.6 / 86_400_000,
+        z: "yyyy-mm-dd hh:mm:ss",
+      },
       // A plain number wearing no date format stays a number, whatever it
       // would decode to if it were read as a serial.
-      D2: { t: "n", v: 45292 - shift },
+      E2: { t: "n", v: 45292 - shift },
     };
     return new Uint8Array(
       XLSX.write(
@@ -999,9 +1008,81 @@ describe("dates a workbook stores as numbers", () => {
         Customer: "Acme",
         Opened: "2024-01-01T00:00:00.000Z",
         Stamped: "2024-01-01T18:00:00.000Z",
+        Closed: "2024-01-02T00:00:00.000Z",
         Reference: 45292,
       })),
     );
+  });
+
+  it("carries a rounded fraction into the next day", async () => {
+    // 23:59:59.9996 on 1 January is midnight on the 2nd once it is written to
+    // the millisecond. Rounding the fraction after the hour, minute and second
+    // were already decided had nowhere to carry, so the value read as the
+    // second before, on the day before.
+    const almost = 45292 + 86_399_999.6 / 86_400_000;
+    const sheet: XLSX.WorkSheet = {
+      "!ref": "A1:B4",
+      A1: { t: "s", v: "Case" },
+      B1: { t: "s", v: "Stamped" },
+      A2: { t: "s", v: "R-1" },
+      B2: { t: "n", v: almost, z: "yyyy-mm-dd hh:mm:ss" },
+      A3: { t: "s", v: "R-2" },
+      // Midnight itself, which has nothing to carry.
+      B3: { t: "n", v: 45293, z: "yyyy-mm-dd hh:mm:ss" },
+      A4: { t: "s", v: "R-3" },
+      // Half a millisecond short of a second, which rounds within the day.
+      B4: {
+        t: "n",
+        v: 45292 + 86_399_998.6 / 86_400_000,
+        z: "yyyy-mm-dd hh:mm:ss",
+      },
+    };
+    const [table] = await readWorkbookTablesBytes({
+      name: "carry.xlsx",
+      bytes: new Uint8Array(
+        XLSX.write(
+          { SheetNames: ["Data"], Sheets: { Data: sheet } },
+          { bookType: "xlsx", type: "array" },
+        ) as ArrayBuffer,
+      ),
+    });
+
+    expect(table?.rows).toEqual([
+      { Case: "R-1", Stamped: "2024-01-02T00:00:00.000Z" },
+      { Case: "R-2", Stamped: "2024-01-02T00:00:00.000Z" },
+      { Case: "R-3", Stamped: "2024-01-01T23:59:59.999Z" },
+    ]);
+  });
+
+  it("carries the same way in the 1904 date system", async () => {
+    const sheet: XLSX.WorkSheet = {
+      "!ref": "A1:B2",
+      A1: { t: "s", v: "Case" },
+      B1: { t: "s", v: "Stamped" },
+      A2: { t: "s", v: "R-1" },
+      B2: {
+        t: "n",
+        v: 45292 - 1462 + 86_399_999.6 / 86_400_000,
+        z: "yyyy-mm-dd hh:mm:ss",
+      },
+    };
+    const [table] = await readWorkbookTablesBytes({
+      name: "carry-1904.xlsx",
+      bytes: new Uint8Array(
+        XLSX.write(
+          {
+            SheetNames: ["Data"],
+            Sheets: { Data: sheet },
+            Workbook: { WBProps: { date1904: true } },
+          },
+          { bookType: "xlsx", type: "array" },
+        ) as ArrayBuffer,
+      ),
+    });
+
+    expect(table?.rows).toEqual([
+      { Case: "R-1", Stamped: "2024-01-02T00:00:00.000Z" },
+    ]);
   });
 
   it("keeps a serial that names no calendar day as the number it is", async () => {
@@ -1043,6 +1124,7 @@ describe("dates a workbook stores as numbers", () => {
         Customer: "Acme",
         Opened: "2024-01-01T00:00:00.000Z",
         Stamped: "2024-01-01T18:00:00.000Z",
+        Closed: "2024-01-02T00:00:00.000Z",
         Reference: 45292 - 1462,
       })),
     );

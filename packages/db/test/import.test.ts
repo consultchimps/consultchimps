@@ -234,6 +234,19 @@ describe("suggestTableName and suggestRecordIdPrefix", () => {
 });
 
 describe("dates a date column will hold", () => {
+  it("takes every year four digits can spell, and no more", () => {
+    // The range a date is written in, pinned from this side. The xlsx package
+    // spells the dates it reads out of a workbook with four year digits and
+    // refuses a value whose year falls outside them, so that a value it writes
+    // is a value this column will hold. These are the same two numbers, named
+    // here so neither package can move its end of the range quietly.
+    expect(typeOfColumn(["0000-01-01T00:30:00.000Z"])).toBe("date");
+    expect(typeOfColumn(["9999-12-31T23:59:59.999Z"])).toBe("date");
+    // The expanded form ISO 8601 uses beyond four digits is not read here.
+    expect(typeOfColumn(["+010000-01-01T00:00:00.000Z"])).toBe("text");
+    expect(typeOfColumn(["10000-01-01T00:00:00.000Z"])).toBe("text");
+  });
+
   it("stores what inference judged, without the spaces around it", async () => {
     const database = await Database.create();
 

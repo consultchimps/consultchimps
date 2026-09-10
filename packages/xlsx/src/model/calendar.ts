@@ -19,7 +19,7 @@
 
 /** A moment named by its calendar components, exactly as they were written. */
 export interface CalendarParts {
-  /** The year as written, from 0 to 9999. Never remapped. */
+  /** The year as written, from 0000 to 9999. Never remapped. */
   readonly year: number;
   /** 1 to 12. */
   readonly month: number;
@@ -31,7 +31,24 @@ export interface CalendarParts {
   readonly millisecond: number;
 }
 
-const MILLISECONDS_PER_DAY = 86_400_000;
+/** Milliseconds in a day. The unit every conversion here counts in. */
+export const MILLISECONDS_PER_DAY = 86_400_000;
+
+/**
+ * How many digits a year is written with, and therefore which years exist here.
+ *
+ * ISO 8601 writes a year outside four digits only in its expanded form, with a
+ * sign and six digits, and nothing downstream reads that form: not the `date`
+ * column in `@consultchimps/db`, whose grammar spells a year `\d{4}`, and not
+ * a split's output filename. So the range is 0000 to 9999, and it is one number
+ * rather than two: the bound below and the width `calendarIsoText` pads to are
+ * the same digit count, so a value this module spells is a value that grammar
+ * accepts. Both ends are named in a test on either side of that seam, so
+ * neither package can move its end of the range quietly.
+ */
+const YEAR_DIGITS = 4;
+const MIN_YEAR = 0;
+const MAX_YEAR = 10 ** YEAR_DIGITS - 1;
 
 /** Days in a month of the proleptic Gregorian calendar. */
 const MONTH_LENGTHS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
@@ -52,8 +69,8 @@ const MONTH_LENGTHS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
 export function isComponentsInRange(parts: CalendarParts): boolean {
   return (
     Number.isInteger(parts.year) &&
-    parts.year >= 0 &&
-    parts.year <= 9999 &&
+    parts.year >= MIN_YEAR &&
+    parts.year <= MAX_YEAR &&
     Number.isInteger(parts.month) &&
     parts.month >= 1 &&
     parts.month <= 12 &&
@@ -76,11 +93,7 @@ export function isComponentsInRange(parts: CalendarParts): boolean {
 }
 
 /** Whether that day exists in that month of that year. */
-export function isRealCalendarDay(
-  year: number,
-  month: number,
-  day: number,
-): boolean {
+function isRealCalendarDay(year: number, month: number, day: number): boolean {
   if (month < 1 || month > 12 || day < 1) {
     return false;
   }
@@ -115,10 +128,7 @@ function daysFromCivil(year: number, month: number, day: number): number {
  * moment moves back by it, because a written offset says how far ahead of UTC
  * the clock that wrote it was.
  */
-export function calendarEpochMs(
-  parts: CalendarParts,
-  offsetMinutes = 0,
-): number {
+function calendarEpochMs(parts: CalendarParts, offsetMinutes = 0): number {
   return (
     daysFromCivil(parts.year, parts.month, parts.day) * MILLISECONDS_PER_DAY +
     (parts.hour * 3600 + parts.minute * 60 + parts.second) * 1000 +
@@ -148,6 +158,69 @@ export function utcCalendarParts(value: Date): CalendarParts {
   };
 }
 
+/**
+ * The moment these components name, once the offset the text wrote is applied,
+ * or undefined when they name none.
+ *
+ * Three things have to hold, and the third is the one that is easy to miss.
+ * The components have to be in range; the day has to be one the calendar has;
+ * and the *result* has to be in range too. An offset moves the moment, and it
+ * can move it out of the years that can be written: `9999-12-31T23:30:00-01:00`
+ * is a perfectly good timestamp whose UTC face is the year 10000, which
+ * `calendarIsoText` cannot spell and no reader downstream accepts. Judging only
+ * what was written would hand the formatter a value it has no spelling for, so
+ * the adjusted components go through the same rule.
+ *
+ * `new Date` is reached only with a number here, which has no interpretation to
+ * do; a moment too far out even for that comes back as an invalid date, whose
+ * components are not integers and fail the same rule.
+ */
+export function calendarMoment(
+  parts: CalendarParts,
+  offsetMinutes: number,
+): Date | undefined {
+  if (
+    !isComponentsInRange(parts) ||
+    !isRealCalendarDay(parts.year, parts.month, parts.day)
+  ) {
+    return undefined;
+  }
+  const moment = new Date(calendarEpochMs(parts, offsetMinutes));
+  return isComponentsInRange(utcCalendarParts(moment)) ? moment : undefined;
+}
+
+/** A time of day, and the whole days it carries into. */
+export interface TimeOfDay {
+  /** Whole days the milliseconds covered, which is 1 when they rounded up. */
+  readonly days: number;
+  readonly hour: number;
+  readonly minute: number;
+  readonly second: number;
+  readonly millisecond: number;
+}
+
+/**
+ * Split a whole number of milliseconds into a time of day and the days it
+ * carries.
+ *
+ * Taking a whole number and dividing it is what keeps a carry honest. Rounding
+ * a fraction into a millisecond field after the hour, minute and second have
+ * already been decided cannot carry: 23:59:59 and a fraction that rounds to a
+ * full second has to become 00:00:00 of the next day, and a field that is
+ * clamped instead reports the second before, on the day before.
+ */
+export function timeOfDayFromMilliseconds(milliseconds: number): TimeOfDay {
+  const days = Math.floor(milliseconds / MILLISECONDS_PER_DAY);
+  const intoDay = milliseconds - days * MILLISECONDS_PER_DAY;
+  return {
+    days,
+    hour: Math.floor(intoDay / 3_600_000),
+    minute: Math.floor(intoDay / 60_000) % 60,
+    second: Math.floor(intoDay / 1000) % 60,
+    millisecond: intoDay % 1000,
+  };
+}
+
 function pad(value: number, width: number): string {
   return String(value).padStart(width, "0");
 }
@@ -163,7 +236,7 @@ function pad(value: number, width: number): string {
  * spelling in a `date` column.
  */
 export function calendarIsoText(parts: CalendarParts): string {
-  return `${pad(parts.year, 4)}-${pad(parts.month, 2)}-${pad(parts.day, 2)}T${pad(
+  return `${pad(parts.year, YEAR_DIGITS)}-${pad(parts.month, 2)}-${pad(parts.day, 2)}T${pad(
     parts.hour,
     2,
   )}:${pad(parts.minute, 2)}:${pad(parts.second, 2)}.${pad(

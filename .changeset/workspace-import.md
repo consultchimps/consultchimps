@@ -159,6 +159,22 @@ to 23 hours and 0 to 59 minutes. Text that names no moment is carried as the
 text the cell holds, unconverted, the way every other unconvertible cell is;
 nothing is guessed and nothing is normalised.
 
+Two edges of that reading are held to the same rule. A written offset moves the
+moment it names, and it can move it out of the years that can be written:
+`9999-12-31T23:30:00-01:00` is a good timestamp whose UTC face is the year
+10000, which ISO 8601 spells only in an expanded form that neither a `date`
+column nor an output filename reads. The range rule now judges the adjusted
+moment as well as the components as written, and a value that leaves the range
+is carried as its text. The range is 0000 to 9999, the years four digits spell,
+which is exactly what `isIsoDateText` accepts; both ends are named in a test on
+either side of that seam.
+
+And a serial's time of day is rounded as one value before it is split, not field
+by field afterwards. A serial naming 23:59:59.9996 rounds to a whole day, which
+carries into midnight of the next day; rounded after the second had already been
+decided, the carry had nowhere to go, the fraction was clamped to 999
+milliseconds, and the value read as the second before, on the day before.
+
 One spelling of a date, `calendarIsoText`, is now shared by the worksheet
 readers, the document model and the split's group keys, so a value read from a
 cell and the key that names the output workbook it lands in cannot describe one

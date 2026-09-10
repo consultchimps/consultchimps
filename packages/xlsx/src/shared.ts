@@ -29,6 +29,8 @@ import { XLSX_ERRORS } from "./errors.js";
 import {
   calendarIsoText,
   isComponentsInRange,
+  MILLISECONDS_PER_DAY,
+  timeOfDayFromMilliseconds,
   utcCalendarParts,
   type CalendarParts,
 } from "./model/calendar.js";
@@ -537,16 +539,11 @@ export async function parseExcelTableDefinitions(
   }
 }
 
-/** The calendar components a serial decodes to, in the engine's spelling. */
+/** The calendar day a whole serial decodes to, in the engine's spelling. */
 interface SerialDateParts {
   y: number;
   m: number;
   d: number;
-  H: number;
-  M: number;
-  S: number;
-  /** Fraction of a second, from 0 up to but not including 1. */
-  u: number;
 }
 
 /**
@@ -591,19 +588,33 @@ function workbookDateSystem(workbook: XLSX.WorkBook): boolean {
  * the same workbook read through the model spell a date with the same
  * characters rather than with two rules that could drift apart.
  *
+ * The time of day is rounded as one value and split afterwards, not decomposed
+ * and then rounded field by field. A serial naming 23:59:59.9996 rounds to a
+ * whole day: split from the rounded whole, that carries into midnight of the
+ * next day, which is the moment the serial names. Rounded after the second was
+ * already decided, the carry had nowhere to go, so the fraction was clamped and
+ * the value read as the second before, on the day before. The engine is
+ * therefore asked only which calendar day a *whole* serial names, and this no
+ * longer rests on its fraction never reaching a full second.
+ *
  * A serial the engine cannot decode into components in range, such as the
  * day-zero serial 0, comes back undefined and the caller keeps the number.
  * Serial 60 is decoded rather than refused: the 1900 system deliberately
  * reproduces a spreadsheet-era bug in which 29 February 1900 exists, and that
- * is the day Excel shows for it. That is why the components are only checked
- * for range here, and the stricter "is this a day the calendar has" rule
- * belongs to the text path, whose input is not Excel's own arithmetic.
+ * is the day Excel shows for it, and the day count is what carries that bug. It
+ * is why the components are only checked for range here, and the stricter "is
+ * this a day the calendar has" rule belongs to the text path, whose input is
+ * not Excel's own arithmetic.
  */
 function workbookDateText(
   serial: number,
   date1904: boolean,
 ): string | undefined {
-  const decoded = SSF.parse_date_code(serial, { date1904 });
+  const wholeDays = Math.floor(serial);
+  const time = timeOfDayFromMilliseconds(
+    Math.round((serial - wholeDays) * MILLISECONDS_PER_DAY),
+  );
+  const decoded = SSF.parse_date_code(wholeDays + time.days, { date1904 });
   if (!decoded) {
     return undefined;
   }
@@ -611,12 +622,10 @@ function workbookDateText(
     year: decoded.y,
     month: decoded.m,
     day: decoded.d,
-    hour: decoded.H,
-    minute: decoded.M,
-    second: decoded.S,
-    // Clamped rather than allowed to carry: a fraction that rounds to a whole
-    // second would otherwise write ".1000" where a millisecond field belongs.
-    millisecond: Math.min(999, Math.round((decoded.u || 0) * 1000)),
+    hour: time.hour,
+    minute: time.minute,
+    second: time.second,
+    millisecond: time.millisecond,
   };
   return isComponentsInRange(parts) ? calendarIsoText(parts) : undefined;
 }
@@ -633,10 +642,13 @@ function workbookDateText(
  *
  * The UTC face is the one read, because a moment composed from a workbook's
  * epoch and whole days wears the calendar date on that face and the local face
- * is that shifted by wherever the reader is sitting.
+ * is that shifted by wherever the reader is sitting. A face outside the years
+ * that can be written has no spelling, so it comes back undefined and the
+ * caller falls through, the same rule the two paths above follow.
  */
-function parsedDateText(value: Date): string {
-  return calendarIsoText(utcCalendarParts(value));
+function parsedDateText(value: Date): string | undefined {
+  const parts = utcCalendarParts(value);
+  return isComponentsInRange(parts) ? calendarIsoText(parts) : undefined;
 }
 
 /**
@@ -674,7 +686,10 @@ function cellToPrimitive(
   }
 
   if (cell.v instanceof Date) {
-    return parsedDateText(cell.v);
+    const parsed = parsedDateText(cell.v);
+    if (parsed !== undefined) {
+      return parsed;
+    }
   }
 
   if (
@@ -708,7 +723,10 @@ function cellToDisplayText(
   }
 
   if (cell.v instanceof Date) {
-    return parsedDateText(cell.v);
+    const parsed = parsedDateText(cell.v);
+    if (parsed !== undefined) {
+      return parsed;
+    }
   }
 
   if (typeof cell.v === "boolean") {

@@ -347,6 +347,47 @@ describe("model: cell values", () => {
     expect(await datedInUtc("2024-02-29")).toBe("2024-02-29T00:00:00.000Z");
   });
 
+  it("refuses a moment whose offset moves it past the years it can write", async () => {
+    // Both are good timestamps. Their UTC faces are the year 10000 and the
+    // year before 0000, and ISO 8601 writes neither without an expanded year
+    // that nothing downstream reads: not the `date` column in
+    // `@consultchimps/db`, whose grammar spells a year with four digits, and
+    // not a split's output filename. Judging only the components as written
+    // would have handed the formatter a value it has no spelling for.
+    expect(await datedInUtc("9999-12-31T23:30:00-01:00")).toBe(
+      "9999-12-31T23:30:00-01:00",
+    );
+    expect(await datedInUtc("0000-01-01T00:30:00+01:00")).toBe(
+      "0000-01-01T00:30:00+01:00",
+    );
+    // The same boundary days, with no offset to move them, still read as
+    // dates, and so does an offset that stays inside the range.
+    expect(await datedInUtc("9999-12-31T23:30:00")).toBe(
+      "9999-12-31T23:30:00.000Z",
+    );
+    expect(await datedInUtc("0000-01-01T00:30:00")).toBe(
+      "0000-01-01T00:30:00.000Z",
+    );
+    expect(await datedInUtc("0001-01-01T00:30:00+01:00")).toBe(
+      "0000-12-31T23:30:00.000Z",
+    );
+  });
+
+  it("keys a cell it could not read by the text, not by a broken date", async () => {
+    // The key becomes an output workbook's filename, so a value that has no
+    // spelling must not reach it as one.
+    const model = await datedModel("9999-12-31T23:30:00-01:00");
+    const key = inZone("UTC", () =>
+      normalizeSplitValue(
+        model.worksheet(CORPUS_SHEET)!.cellValue({ row: 4, column: 3 }),
+        true,
+      ),
+    );
+
+    expect(key?.display).toBe("9999-12-31T23:30:00-01:00");
+    expect(key?.key).toBe("string:9999-12-31T23:30:00-01:00");
+  });
+
   it("keys a date cell for a split the way the cell reads", async () => {
     // The group key becomes an output workbook's name, so it has to be the
     // same characters the cell reads as, in every zone.

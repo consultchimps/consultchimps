@@ -22,12 +22,7 @@ import {
   setAttribute,
   writeAttribute,
 } from "./xml.js";
-import {
-  calendarEpochMs,
-  isComponentsInRange,
-  isRealCalendarDay,
-  type CalendarParts,
-} from "./calendar.js";
+import { calendarMoment, type CalendarParts } from "./calendar.js";
 import {
   decodeCell,
   encodeCell,
@@ -461,10 +456,13 @@ const CELL_DATE_TEXT =
  *
  * What counts as a moment: month 1 to 12, a day that exists in that month of
  * that year, hour 0 to 23, minute and second 0 to 59, and, where a zone is
- * written, an offset of 0 to 23 hours and 0 to 59 minutes. Hour 24 as the end
- * of a day and second 60 as a leap second are ISO 8601 and are refused here,
- * because a worksheet writes neither and accepting them would mean deciding
- * which day carries a leap second.
+ * written, an offset of 0 to 23 hours and 0 to 59 minutes. The moment the
+ * offset produces has to be writable too, which `calendarMoment` decides:
+ * `9999-12-31T23:30:00-01:00` is a good timestamp whose UTC face is the year
+ * 10000, and there is no spelling for that. Hour 24 as the end of a day and
+ * second 60 as a leap second are ISO 8601 and are refused here, because a
+ * worksheet writes neither and accepting them would mean deciding which day
+ * carries a leap second.
  *
  * Text that names no moment comes back undefined and the caller keeps the text
  * the cell holds. That is not a guess: a value that is not a date is carried as
@@ -492,13 +490,6 @@ function worksheetDateValue(text: string): Date | undefined {
     // the text does not name.
     millisecond: Number(fraction.slice(0, 3).padEnd(3, "0") || "0"),
   };
-  if (
-    !isComponentsInRange(parts) ||
-    !isRealCalendarDay(parts.year, parts.month, parts.day)
-  ) {
-    return undefined;
-  }
-
   const offsetHour = written["offsetHour"];
   const offsetMinute = written["offsetMinute"];
   let offsetMinutes = 0;
@@ -512,7 +503,7 @@ function worksheetDateValue(text: string): Date | undefined {
       (written["offsetSign"] === "-" ? -1 : 1) * (hours * 60 + minutes);
   }
 
-  return new Date(calendarEpochMs(parts, offsetMinutes));
+  return calendarMoment(parts, offsetMinutes);
 }
 
 function splitCells(rowNumber: number, inner: string): CellSegment[] {
