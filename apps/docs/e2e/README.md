@@ -71,6 +71,19 @@ command when `out/` is missing.
   worker's import commands open to check that New, Open, and Save are disabled
   while a file is being read and while an import runs, and refuse a worksheet
   whose formulas the workbook carries no calculated value for.
+- `workspace-grid.spec.ts`: showing a table's records in the grid, switching
+  between tables, editing text, number, and foreign-key cells and finding those
+  edits in the saved and reopened file, and having an impossible value and an
+  emptied non-nullable column both refused, reverted, and explained. The Record
+  ID column offers no editor by click or by tab, and a column name with a dot in
+  it is addressed as the column it is rather than as a path into nested data.
+  The rest covers where the grid meets the shell: an edit marks the workspace
+  unsaved so New asks first, a saved edit makes it ask nothing, editing is
+  locked while an import is in flight, and a table imported after the grid was
+  already up appears in its switcher and is editable there. Its workspace
+  fixture is built in Node with `@consultchimps/db` and opened through the
+  page's own file input, so the spec exercises the grid without waiting on
+  import.
 - `tools-navigation.spec.ts`: the `/tools` index, the sub-bar tabs, the
   tool-named "Try ... online" button each guide gains from the tool registry,
   and the single button a guide shared by two operations offers.
@@ -209,6 +222,22 @@ button all render `workspace-confirm` instead of leaving, with
 It is an inline section rather than a `window.confirm`, so it is asserted like
 any other part of the page. A source the import cannot read renders
 `workspace-import-blocked` in its row and refuses the tick.
+
+The record grid renders `workspace-grid-section`, holding
+`workspace-table-select` (the table switcher, disabled while the shell is busy),
+`workspace-grid-loading` while a table is being read, `workspace-grid-empty`
+when the workspace has no tables, the grid itself under `workspace-grid`, and
+`workspace-grid-reference-note` when a foreign-key picker lists only the first
+records of a large related table. A refused edit is explained in
+`workspace-grid-error`, with `workspace-grid-error-dismiss` to put it away: the
+grid explains its own refusals rather than writing to `workspace-error`, because
+each belongs to the cell it names and is cleared only by a later attempt on that
+cell or by that button. Inside the grid the identifiers are Tabulator's own: a
+row carries `data-record-id` with its Record ID, and a cell carries
+`tabulator-field` with its column name, so a cell is addressed by record and
+column rather than by position. Editing a cell is retried as a whole
+interaction, because a grid that renders rows as they are needed can move an
+element under a click.
 
 `createWorkbookUpload` accepts `{ formula }` in place of a cell value, which
 writes `<f>` with no `<v>`: a formula the workbook carries no calculated value
