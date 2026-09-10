@@ -58,10 +58,61 @@ export interface ExcelTableFixture {
   readonly ref: string;
 }
 
+/**
+ * A cell holding a formula that the workbook carries no calculated value for,
+ * which is what a generator writes when it has no calculation engine. Excel
+ * would write the formula and its last result side by side; here the result
+ * exists nowhere in the file, so every reader sees an empty cell.
+ */
+export interface UncalculatedFormulaCell {
+  readonly formula: string;
+}
+
+/**
+ * A cell holding an error value: `#REF!`, `#DIV/0!` and their kind, which the
+ * format stores as `t="e"`. A reader built on a spreadsheet engine sees the
+ * internal code Excel numbers the error by, not the text the cell shows, so
+ * such a cell arrives as an ordinary-looking number.
+ */
+export interface ErrorValueCell {
+  /** The error as the cell shows it, such as `#REF!`. */
+  readonly error: string;
+}
+
+/**
+ * A cell holding a date the way Excel holds one: a count of days from the
+ * workbook's epoch, wearing a date number format. The number alone says
+ * nothing, so the format is what makes it a date; the styles part below
+ * declares the one format these fixtures use.
+ */
+export interface DateSerialCell {
+  /** Days from 30 December 1899, which is serial 45292 for 1 January 2024. */
+  readonly serial: number;
+}
+
+/**
+ * A cell that declares itself a date and writes ISO 8601 text, which the format
+ * allows and Excel opens. It wears no number format, so the only thing saying
+ * it is a date is the declaration.
+ */
+export interface DeclaredDateCell {
+  /** ISO 8601, as the format writes it: a date, or a date and a time. */
+  readonly date: string;
+}
+
+/** One cell of a worksheet fixture. */
+export type WorksheetCellFixture =
+  | number
+  | string
+  | UncalculatedFormulaCell
+  | ErrorValueCell
+  | DateSerialCell
+  | DeclaredDateCell;
+
 /** One worksheet: a name and its rows, top-left aligned at A1. */
 export interface WorksheetFixture {
   readonly name: string;
-  readonly rows: ReadonlyArray<ReadonlyArray<number | string>>;
+  readonly rows: ReadonlyArray<ReadonlyArray<WorksheetCellFixture>>;
   /**
    * How Excel presents the tab. Absent means visible. `veryHidden` is the
    * state only the VBA editor can reverse, which the workbook part spells
@@ -149,6 +200,21 @@ function worksheetXml(
       const cellXml = cells
         .map((value, columnIndex) => {
           const address = `${columnLetter(columnIndex)}${reference}`;
+          if (typeof value === "object") {
+            if ("formula" in value) {
+              // A formula with no <v> beside it: the value it would produce is
+              // not in the file.
+              return `<c r="${address}"><f>${escapeXml(value.formula)}</f></c>`;
+            }
+            if ("error" in value) {
+              return `<c r="${address}" t="e"><v>${escapeXml(value.error)}</v></c>`;
+            }
+            if ("date" in value) {
+              return `<c r="${address}" t="d"><v>${escapeXml(value.date)}</v></c>`;
+            }
+            // Style 1 is the date format the styles part declares.
+            return `<c r="${address}" s="1"><v>${value.serial}</v></c>`;
+          }
           return typeof value === "number"
             ? `<c r="${address}"><v>${value}</v></c>`
             : `<c r="${address}" t="inlineStr"><is><t xml:space="preserve">${escapeXml(value)}</t></is></c>`;
@@ -224,7 +290,7 @@ export async function createWorkbookUpload(
     : "";
   archive.file(
     "[Content_Types].xml",
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${vbaDefault}<Override PartName="/xl/workbook.xml" ContentType="${macroEnabled ? MACRO_WORKBOOK_MAIN_CONTENT_TYPE : WORKBOOK_MAIN_CONTENT_TYPE}"/>${overrides}</Types>`,
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${vbaDefault}<Override PartName="/xl/workbook.xml" ContentType="${macroEnabled ? MACRO_WORKBOOK_MAIN_CONTENT_TYPE : WORKBOOK_MAIN_CONTENT_TYPE}"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${overrides}</Types>`,
   );
 
   archive.file(
@@ -268,7 +334,15 @@ export async function createWorkbookUpload(
     .join("");
   archive.file(
     "xl/_rels/workbook.xml.rels",
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relationships}${macroRelationship}</Relationships>`,
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relationships}${macroRelationship}<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`,
+  );
+
+  // Two cell formats: 0 is General, and 1 is Excel's built-in date format 14.
+  // A date-serial cell points at 1, which is the only thing that tells a reader
+  // its number is a date rather than a quantity.
+  archive.file(
+    "xl/styles.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs></styleSheet>`,
   );
 
   for (const [index, sheet] of sheets.entries()) {

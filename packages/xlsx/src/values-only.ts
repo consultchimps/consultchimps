@@ -1,3 +1,4 @@
+import { hasCachedValueElement } from "./model/xml.js";
 import { WorkbookPackage } from "./package/index.js";
 
 const CELL_PATTERN =
@@ -6,8 +7,6 @@ const CELL_FORMULA_PATTERN =
   /<(?:[A-Za-z_][\w.-]*:)?f\b[^>]*(?:\/\s*>|>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?f\s*>)/gu;
 const TABLE_FORMULA_PATTERN =
   /<(?:[A-Za-z_][\w.-]*:)?(?:calculatedColumnFormula|totalsRowFormula)\b[^>]*(?:\/\s*>|>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?(?:calculatedColumnFormula|totalsRowFormula)\s*>)/gu;
-const CACHED_VALUE_PATTERN =
-  /<(?:[A-Za-z_][\w.-]*:)?(?:v|is)\b[^>]*(?:\/\s*>|>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?(?:v|is)\s*>)/u;
 const CELL_REFERENCE_PATTERN = /\br=(?:"([^"]+)"|'([^']+)')/u;
 const WORKSHEET_PART_PATTERN = /^xl\/worksheets\/[^/]+\.xml$/iu;
 const TABLE_PART_PATTERN = /^xl\/tables\/[^/]+\.xml$/iu;
@@ -42,7 +41,7 @@ function removeWorksheetFormulas(
 
     CELL_FORMULA_PATTERN.lastIndex = 0;
     formulasConverted += 1;
-    if (!CACHED_VALUE_PATTERN.test(cellXml)) {
+    if (!hasCachedValueElement(cellXml)) {
       const reference = CELL_REFERENCE_PATTERN.exec(cellXml);
       formulasWithoutCachedValues.push({
         cell: reference?.[1] ?? reference?.[2] ?? "unknown cell",

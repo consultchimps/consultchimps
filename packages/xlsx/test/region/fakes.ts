@@ -116,6 +116,9 @@ export class FakeWorksheetModel implements WorksheetModel {
         const column = firstColumn + columnOffset;
         cells.set(column, {
           formula: cell.formula,
+          // These fakes describe cells that carry a value, so a cached value is
+          // present whenever there is one to cache.
+          hasCachedValue: cell.text !== undefined,
           ref: { column, row },
           styleIndex: cell.styleIndex,
           type: cell.type,

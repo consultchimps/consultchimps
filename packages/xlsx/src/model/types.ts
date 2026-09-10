@@ -51,6 +51,13 @@ export interface CellModel {
   readonly styleIndex?: number | undefined;
   readonly value?: string | undefined;
   readonly formula?: CellFormula | undefined;
+  /**
+   * Whether the cell carries a cached value element at all, which is a
+   * different question from what `value` holds. A formula that evaluated to an
+   * empty string has a cached value and an empty `value`; a formula nothing has
+   * calculated has neither. Only this can tell them apart.
+   */
+  readonly hasCachedValue: boolean;
 }
 
 export interface RowModel {

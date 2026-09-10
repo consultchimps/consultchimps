@@ -16,7 +16,8 @@ export {
   DELETED_REFERENCE,
   type CellReference,
 } from "./references.js";
-export { excelSerialToDate, isDateFormatCode, StyleTable } from "./styles.js";
+export { isDateFormatCode, StyleTable } from "./styles.js";
+export { serialMoment } from "./calendar.js";
 export {
   WorksheetCell,
   WorksheetModel,

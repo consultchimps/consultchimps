@@ -42,7 +42,8 @@ import {
   type RelocationCounters,
   type WorksheetHost,
 } from "./worksheet-model.js";
-import { excelSerialToDate, StyleTable } from "./styles.js";
+import { serialMoment } from "./calendar.js";
+import { StyleTable } from "./styles.js";
 import {
   addAttribute,
   decodeXmlText,
@@ -410,8 +411,8 @@ export class WorkbookModel implements WorkbookModelContract, WorksheetHost {
     return this.#styles.isDateStyle(styleIndex);
   }
 
-  serialToDate(serial: number): Date {
-    return excelSerialToDate(serial, this.#usesDate1904());
+  serialToDate(serial: number): Date | undefined {
+    return serialMoment(serial, this.#usesDate1904());
   }
 
   /** Whether the workbook counts days from 1904 rather than 1900. */

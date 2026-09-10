@@ -15,11 +15,13 @@
  * wasm from our own origin, never a CDN, is the local-first rule in
  * docs/adr/0003 Decision 2.
  */
-import { Database } from "@consultchimps/db";
+import { Database, importTables } from "@consultchimps/db";
 import { ConsultChimpsError, isConsultChimpsError } from "@consultchimps/core";
 
+import type { WorkspaceImportKind } from "@/lib/accepted-files";
 import { basePath } from "@/lib/shared";
 import type {
+  ImportTableChoice,
   WorkspaceCommand,
   WorkspaceEvent,
   WorkspaceSummary,
@@ -47,10 +49,35 @@ const engineConfig = {
 let database: Database | null = null;
 
 function summarize(current: Database): WorkspaceSummary {
+  const schema = current.getSchema();
   return {
-    tableCount: current.getSchema().length,
+    tableCount: schema.length,
     schemaFormatVersion: current.schemaFormatVersion(),
+    // Counted in the engine rather than by reading the rows, so listing a large
+    // workspace stays cheap.
+    tables: schema.map((table) => ({
+      name: table.name,
+      rowCount: current.countRecords(table.name),
+      recordIdPrefix: table.recordId.prefix,
+      recordIdPadding: table.recordId.padding,
+      columns: table.columns.map((column) => ({
+        name: column.name,
+        type: column.type,
+      })),
+    })),
   };
+}
+
+// Every command that acts on a workspace needs one to be open, and says so the
+// same way.
+function requireDatabase(): Database {
+  if (database === null) {
+    throw new ConsultChimpsError(
+      "WORKSPACE_NONE_OPEN",
+      "There is no workspace open yet. Start a new workspace or open one first.",
+    );
+  }
+  return database;
 }
 
 // Replace the held workspace, closing the previous one first so its sql.js
@@ -89,13 +116,7 @@ async function handleOpen(id: number, buffer: ArrayBuffer): Promise<void> {
 }
 
 function handleSerialize(id: number): void {
-  if (database === null) {
-    throw new ConsultChimpsError(
-      "WORKSPACE_NONE_OPEN",
-      "There is no workspace to save yet. Start a new workspace or open one first.",
-    );
-  }
-  const bytes = database.serialize();
+  const bytes = requireDatabase().serialize();
   // Copy into an exactly sized buffer so the transfer moves only the workspace
   // bytes, never a larger pool the view might sit inside, and so the worker's
   // own database keeps a live buffer to serialize again.
@@ -113,6 +134,63 @@ function handleClose(id: number): void {
   scope.postMessage({ type: "closed", id });
 }
 
+/* ---------------------------------------------------------------------------
+ * Import. The file is read here and the tables are created by the library, so
+ * the worker only carries bytes between the two.
+ * ------------------------------------------------------------------------ */
+
+async function handleDescribeImport(
+  id: number,
+  fileName: string,
+  kind: WorkspaceImportKind,
+  buffer: ArrayBuffer,
+): Promise<void> {
+  // Describing a file touches no workspace, but the page only offers it once
+  // one is open, and refusing here keeps that promise true whatever calls it.
+  requireDatabase();
+  const { describeImportSources } = await import("@/lib/workspace-import-file");
+  const sources = await describeImportSources(
+    fileName,
+    kind,
+    new Uint8Array(buffer),
+  );
+  scope.postMessage({ type: "importSources", id, sources });
+}
+
+async function handleImport(
+  id: number,
+  fileName: string,
+  kind: WorkspaceImportKind,
+  buffer: ArrayBuffer,
+  tables: readonly ImportTableChoice[],
+): Promise<void> {
+  const current = requireDatabase();
+  const { resolveImportRequests } = await import("@/lib/workspace-import-file");
+  const requests = await resolveImportRequests(
+    fileName,
+    kind,
+    new Uint8Array(buffer),
+    tables,
+  );
+  // One call for every chosen table, so a failure part way through leaves the
+  // workspace exactly as it was rather than half imported.
+  const imported = importTables(current, requests);
+  scope.postMessage({
+    type: "imported",
+    id,
+    summary: summarize(current),
+    tables: imported.map((table) => ({
+      name: table.name,
+      rowCount: table.rowCount,
+      recordIdPrefix: table.recordId.prefix,
+      firstRecordId: table.firstRecordId,
+      lastRecordId: table.lastRecordId,
+      ignoredColumns: table.ignoredColumns,
+      renamedColumns: table.renamedColumns,
+    })),
+  });
+}
+
 async function dispatch(command: WorkspaceCommand): Promise<void> {
   switch (command.type) {
     case "create":
@@ -123,6 +201,21 @@ async function dispatch(command: WorkspaceCommand): Promise<void> {
       return handleSerialize(command.id);
     case "close":
       return handleClose(command.id);
+    case "describeImport":
+      return handleDescribeImport(
+        command.id,
+        command.fileName,
+        command.kind,
+        command.buffer,
+      );
+    case "import":
+      return handleImport(
+        command.id,
+        command.fileName,
+        command.kind,
+        command.buffer,
+        command.tables,
+      );
   }
 }
 

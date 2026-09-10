@@ -26,7 +26,7 @@ import {
 import { type CellValue, uniqueHeaders } from "@consultchimps/tabular";
 
 import { XLSX_ERRORS } from "../errors.js";
-import { WorkbookModel } from "../model/index.js";
+import type { WorkbookModel } from "../model/index.js";
 import type {
   CellModel,
   CellRange,
@@ -46,6 +46,7 @@ import {
   yieldToEventLoop,
   type ReadWorkbookOptions,
 } from "../shared.js";
+import type { WorkbookRead } from "./read-model.js";
 
 /**
  * The hard ceiling on per-column sample values. ADR 0002 requires samples to
@@ -155,26 +156,6 @@ export interface WorkbookDescription {
 export interface WorkbookDescriptionOutcome {
   description: WorkbookDescription;
   result: OperationResult<DescribeWorkbookMetric>;
-}
-
-/**
- * Load the document model, reporting an unreadable package as the stable read
- * error every other workbook reader raises.
- */
-export async function loadWorkbookModelForDescribe(
-  bytes: Uint8Array,
-  source: string,
-  details: Record<string, unknown>,
-): Promise<WorkbookModel> {
-  try {
-    return await WorkbookModel.load(bytes);
-  } catch (error) {
-    throw new ConsultChimpsError(
-      XLSX_ERRORS.XLSX_READ_FAILED,
-      `Could not read workbook: ${source}`,
-      { cause: error, details },
-    );
-  }
 }
 
 /**
@@ -712,11 +693,12 @@ export function workbookDescriptionResult(
  * is actually collected rather than observed after the answer is already built.
  */
 export async function describeWorkbookModel(
-  workbook: WorkbookModel,
+  read: WorkbookRead,
   source: string,
   options: DescribeWorkbookOptions = {},
   outputContext: AbortOutputContext = "files",
 ): Promise<WorkbookDescriptionOutcome> {
+  const workbook = read.workbook;
   throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
   // Options are validated before any worksheet is read, so a bad option is
   // refused the same way whatever the workbook contains.
@@ -730,7 +712,10 @@ export async function describeWorkbookModel(
       await yieldToEventLoop();
     }
     throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
-    const worksheet = workbook.worksheet(sheet.name);
+    // Through the read rather than the model: parsing a worksheet part happens
+    // here, on first access, so this is where a malformed row or cell reference
+    // becomes the same read failure the eager load would have raised.
+    const worksheet = read.worksheet(sheet.name);
     sheets.push(
       worksheet
         ? await describeWorksheet(

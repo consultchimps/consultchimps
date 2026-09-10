@@ -16,11 +16,24 @@
  */
 import { ConsultChimpsError } from "@consultchimps/core";
 
+import type { WorkspaceImportKind } from "./accepted-files";
+
 import type {
+  ImportedTableSummary,
+  ImportSourceDescription,
+  ImportTableChoice,
   WorkspaceCommand,
   WorkspaceEvent,
   WorkspaceSummary,
 } from "./workspace-protocol";
+
+/** What an import created, as the page reports it. */
+export interface WorkspaceImportResult {
+  /** The workspace as it now stands, table listing included. */
+  readonly summary: WorkspaceSummary;
+  /** The tables this import created. */
+  readonly tables: readonly ImportedTableSummary[];
+}
 
 /** Raised when the worker cannot start, so no command can be served. */
 export const WORKSPACE_WORKER_UNAVAILABLE = "WORKSPACE_WORKER_UNAVAILABLE";
@@ -64,6 +77,47 @@ export class WorkspaceClient {
       throw this.#unexpected(event);
     }
     return new Uint8Array(event.buffer);
+  }
+
+  /* -------------------------------------------------------------------------
+   * Import. Both commands carry the file, so the worker holds no state between
+   * choosing a file and importing from it. A copy is taken and its buffer
+   * transferred, so the caller's `bytes` stay valid and can be sent again.
+   * ---------------------------------------------------------------------- */
+
+  /** List the tables a `.xlsx`, `.xlsm`, or `.csv` file could contribute. */
+  async describeImport(
+    fileName: string,
+    kind: WorkspaceImportKind,
+    bytes: Uint8Array,
+  ): Promise<readonly ImportSourceDescription[]> {
+    const buffer = bytes.slice().buffer;
+    const event = await this.#run(
+      (id) => ({ type: "describeImport", id, fileName, kind, buffer }),
+      [buffer],
+    );
+    if (event.type !== "importSources") {
+      throw this.#unexpected(event);
+    }
+    return event.sources;
+  }
+
+  /** Create the chosen tables in the held workspace and fill them. */
+  async importFile(
+    fileName: string,
+    kind: WorkspaceImportKind,
+    bytes: Uint8Array,
+    tables: readonly ImportTableChoice[],
+  ): Promise<WorkspaceImportResult> {
+    const buffer = bytes.slice().buffer;
+    const event = await this.#run(
+      (id) => ({ type: "import", id, fileName, kind, buffer, tables }),
+      [buffer],
+    );
+    if (event.type !== "imported") {
+      throw this.#unexpected(event);
+    }
+    return { summary: event.summary, tables: event.tables };
   }
 
   /** Release the held workspace. */
