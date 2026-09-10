@@ -21,8 +21,13 @@
  * - A `ConsultChimpsError` cannot be structure-cloned as itself, so a failure
  *   travels as its message and code and is rebuilt on the main thread, exactly
  *   as the operation worker does it.
+ *
+ * The types the grid commands carry are the library's own (`ColumnType`,
+ * `CellValue`), not restatements of them, so a column kind the database gains
+ * is a compile error here rather than a shape that quietly stops matching.
  */
 import type { ColumnType } from "@consultchimps/db";
+import type { CellValue, TableRow } from "@consultchimps/tabular";
 
 import type { WorkspaceImportKind } from "./accepted-files";
 
@@ -54,6 +59,13 @@ export interface WorkspaceTableSummary {
  * engine. It grows as later work exposes more of the schema.
  */
 export interface WorkspaceSummary {
+  /**
+   * Which database the worker holds. It moves on every create, open, close, and
+   * import, and the grid quotes it back on every read and write so the worker
+   * can refuse one meant for a workspace it no longer has. See
+   * `WORKSPACE_STALE_EDIT`.
+   */
+  readonly generation: number;
   /** The number of user tables in the workspace. An empty workspace has none. */
   readonly tableCount: number;
   /** The schema format version stored in the file, for display and support. */
@@ -173,7 +185,10 @@ export type WorkspaceCommand =
   | SerializeWorkspaceCommand
   | CloseWorkspaceCommand
   | DescribeImportCommand
-  | ImportCommand;
+  | ImportCommand
+  // The record-grid commands, declared at the foot of this file.
+  | ReadWorkspaceTableCommand
+  | UpdateWorkspaceCellCommand;
 
 /**
  * The worker holds a workspace after a create or open. The summary lets the
@@ -260,4 +275,176 @@ export type WorkspaceEvent =
   | WorkspaceClosedEvent
   | WorkspaceErrorEvent
   | WorkspaceImportSourcesEvent
-  | WorkspaceImportedEvent;
+  | WorkspaceImportedEvent
+  // The record-grid events, declared at the foot of this file.
+  | WorkspaceTableEvent
+  | WorkspaceCellUpdatedEvent;
+
+/* -------------------------------------------------------------------------
+ * Record grid
+ *
+ * Everything below serves the grid: read one table's schema and rows, and
+ * persist one cell edit. The grid holds no engine of its own, so a cell it
+ * shows was read here and a cell it changes is written here. Which tables it
+ * may show is not asked for separately: that is the workspace summary the shell
+ * already holds, so the listing and the rows cannot disagree about what exists.
+ *
+ * A cell edit is deliberately one command per cell rather than a batched row
+ * save. The database is the source of truth for whether a value is acceptable,
+ * so the grid needs the answer for the cell the visitor just left, and it needs
+ * it before they judge the next one.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The most records a foreign-key column offers as pickable options. A workspace
+ * table can hold far more rows than anyone can scroll, and every option is
+ * built, cloned across the worker boundary, and held by the editor, so the list
+ * is capped rather than allowed to grow with the referenced table. Beyond the
+ * cap the column stays editable by typing a Record ID, and the database is what
+ * decides whether that Record ID exists.
+ */
+export const WORKSPACE_REFERENCE_LIMIT = 500;
+
+/**
+ * Raised when a command names a workspace the worker no longer holds.
+ *
+ * The rows a grid shows came from one database. Creating, opening, or closing a
+ * workspace replaces that database, and the commands already in the queue do not
+ * know it: a cell edit posted after an open would otherwise be applied to the
+ * new database, against a table and Record ID that mean something else there, or
+ * to a record that happens to carry the same Record ID. Every read and write
+ * therefore names the workspace it belongs to, and the worker refuses the ones
+ * that do not match instead of applying them somewhere they were never meant to
+ * go. The page disables editing while it is busy, which is why a visitor should
+ * never meet this; the check is what makes that true rather than likely.
+ */
+export const WORKSPACE_STALE_EDIT = "WORKSPACE_STALE_EDIT";
+
+/** The read equivalent: the rows asked for belong to a replaced workspace. */
+export const WORKSPACE_STALE_READ = "WORKSPACE_STALE_READ";
+
+/** One option a foreign-key column offers: what is stored, and what is shown. */
+export interface WorkspaceReference {
+  /** The referenced Record ID, which is the value the cell stores. */
+  readonly value: string;
+  /** The readable label shown in the cell and in the picker. */
+  readonly label: string;
+}
+
+/**
+ * Where a foreign-key column's options and labels come from, and for how long
+ * they are good.
+ *
+ * A label is a record's name read from another row, so it goes stale when that
+ * row is edited. Saying when it can go stale is the whole of getting this right,
+ * and there are exactly two cases:
+ *
+ * - `onScreen`: the referenced table is the one being shown. Its rows are in
+ *   the grid, and they change under the visitor's hands, so there is no
+ *   snapshot to go stale: the labels and the picker's options are read from
+ *   those rows each time they are needed. Editing the column that names a
+ *   record changes what every cell pointing at it shows, at once.
+ * - `snapshot`: the referenced table is not the one being shown, so nothing on
+ *   this screen can change it. It can only change by the visitor switching to
+ *   it, which re-reads, or by an import, which moves the generation and
+ *   re-reads. The records below are therefore valid for exactly the generation
+ *   they were read at, which is the generation the whole `WorkspaceTable`
+ *   carries.
+ *
+ * Every other value on a `WorkspaceColumn` is a snapshot of that same
+ * generation for the same reason: only an import can add a table or a column,
+ * and it moves the generation.
+ */
+export type WorkspaceReferenceSource =
+  | {
+      readonly kind: "onScreen";
+      /** The referenced table, which is this table. */
+      readonly table: string;
+      /**
+       * The column of it whose value names a record, or null when it has no
+       * ordinary text column and records are named by their Record ID alone.
+       */
+      readonly labelColumn: string | null;
+    }
+  | {
+      readonly kind: "snapshot";
+      readonly table: string;
+      readonly labelColumn: string | null;
+      /**
+       * The records that may be pointed at, at most
+       * `WORKSPACE_REFERENCE_LIMIT` of them, as they stood at this table's
+       * generation.
+       */
+      readonly records: readonly WorkspaceReference[];
+      /** Whether the referenced table holds more records than `records` lists. */
+      readonly truncated: boolean;
+    };
+
+/** A column as the grid needs it: enough to render it and choose an editor. */
+export interface WorkspaceColumn {
+  readonly name: string;
+  readonly type: ColumnType;
+  /** Whether the column accepts an empty cell. */
+  readonly nullable: boolean;
+  /** For a foreign-key column, where its options come from. Null for the rest. */
+  readonly references: WorkspaceReferenceSource | null;
+}
+
+/** One table of the workspace: its columns and all of its rows. */
+export interface WorkspaceTable {
+  /** Which database these rows came from. See `WORKSPACE_STALE_EDIT`. */
+  readonly generation: number;
+  /** The table name as the schema declares it, not as it was asked for. */
+  readonly name: string;
+  /** The user columns, in schema order. The Record ID is not among them. */
+  readonly columns: readonly WorkspaceColumn[];
+  /**
+   * Every record in insertion order, keyed by column name, each carrying its
+   * Record ID under `RECORD_ID_COLUMN`.
+   */
+  readonly rows: readonly TableRow[];
+}
+
+/** Read one table's columns and rows, from the workspace `generation` names. */
+export interface ReadWorkspaceTableCommand {
+  readonly type: "readTable";
+  readonly id: number;
+  readonly name: string;
+  readonly generation: number;
+}
+
+/**
+ * Write one cell, found by its Record ID rather than by any position, so a
+ * sorted, filtered, or concurrently reloaded grid can never write to the wrong
+ * record, and named against the workspace the row was read from, so a replaced
+ * database can never be written to by an edit meant for the previous one.
+ */
+export interface UpdateWorkspaceCellCommand {
+  readonly type: "updateCell";
+  readonly id: number;
+  readonly generation: number;
+  readonly table: string;
+  readonly recordId: string;
+  readonly column: string;
+  readonly value: CellValue;
+}
+
+/** One table's columns and rows. */
+export interface WorkspaceTableEvent {
+  readonly type: "table";
+  readonly id: number;
+  readonly table: WorkspaceTable;
+}
+
+/**
+ * A cell was written. The value is what the database now holds, read back
+ * through its declared type, which is not always the value that was sent: the
+ * text "yes" in a boolean column comes back as `true`. The grid shows this
+ * rather than what the visitor typed, so the cell never disagrees with the file
+ * that will be saved.
+ */
+export interface WorkspaceCellUpdatedEvent {
+  readonly type: "cellUpdated";
+  readonly id: number;
+  readonly value: CellValue;
+}

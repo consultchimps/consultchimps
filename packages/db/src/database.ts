@@ -35,6 +35,30 @@ export interface InsertedRecord {
   rowId: number;
 }
 
+/** The outcome of updating a record: which record was written, and what it now holds. */
+export interface UpdatedRecord {
+  /** The Record ID of the updated record, as it is stored. */
+  recordId: string;
+  /**
+   * The values now stored for the columns that were written, read back and
+   * coerced to their declared types. A caller that displays the record can show
+   * what the database kept rather than what it sent, which differ whenever a
+   * value was converted (the text "yes" into a boolean column, say).
+   */
+  values: Record<string, CellValue>;
+}
+
+/** Narrow what `Database.readRecords` reads. Omit either field for all. */
+export interface ReadRecordsOptions {
+  /**
+   * Columns to read besides the Record ID, which is always read first. Names
+   * match case-insensitively; an unknown or repeated name is refused.
+   */
+  readonly columns?: readonly string[];
+  /** Read at most this many records, in storage order. Zero reads none. */
+  readonly limit?: number;
+}
+
 /** The stored shape of a table definition in the registry. */
 interface StoredDefinition {
   columns: ColumnDefinition[];
@@ -664,6 +688,192 @@ export class Database {
     };
   }
 
+  /**
+   * Update an existing record, found by its Record ID. The values are keyed by
+   * column name and go through the same conversion as an insert, so a value
+   * that does not fit the column's declared type is refused here rather than
+   * stored in a shape the read side would later call corrupt. The Record ID is
+   * assigned once and cannot be among them.
+   *
+   * Passing no values checks that the record exists and writes nothing, which
+   * is what "update these zero columns" means; it is not an error.
+   */
+  updateRecord(
+    tableName: string,
+    recordId: string,
+    values: Readonly<Record<string, CellValue>>,
+  ): UpdatedRecord {
+    const { name, definition } = this.#requireDefinition(tableName);
+    // Columns are matched case-insensitively, like SQLite identifiers.
+    const columnByName = new Map(
+      definition.columns.map((column) => [identifierKey(column.name), column]),
+    );
+
+    const updateColumns: ColumnDefinition[] = [];
+    const updateValues: SqlValueType[] = [];
+    const providedColumns = new Set<string>();
+    for (const [key, value] of Object.entries(values)) {
+      // The storage trigger refuses this too, but the caller deserves a stable
+      // code and a sentence rather than a raw engine abort.
+      if (sameIdentifier(key, RECORD_ID_COLUMN)) {
+        throw new ConsultChimpsError(
+          "DB_RECORD_ID_IMMUTABLE",
+          `The Record ID for "${name}" is assigned once and cannot be changed.`,
+          { details: { table: name } },
+        );
+      }
+      const column = columnByName.get(identifierKey(key));
+      if (column === undefined) {
+        throw new ConsultChimpsError(
+          "DB_UNKNOWN_COLUMN",
+          `The table "${name}" has no column "${key}".`,
+          { details: { table: name, column: key } },
+        );
+      }
+      // Two keys that resolve to the same column (differing only by case) would
+      // both land in the SET clause, where the last one silently wins; reject
+      // the ambiguity instead, exactly as an insert does.
+      const columnKey = identifierKey(column.name);
+      if (providedColumns.has(columnKey)) {
+        throw new ConsultChimpsError(
+          "DB_DUPLICATE_UPDATE_COLUMN",
+          `The update for "${name}" gives the column "${column.name}" more than once.`,
+          { details: { table: name, column: column.name } },
+        );
+      }
+      providedColumns.add(columnKey);
+      updateColumns.push(column);
+      updateValues.push(
+        this.#convertCell(column.type, value, name, column.name),
+      );
+    }
+
+    // An UPDATE that matches no row is not an error in SQL, so a stale or
+    // mistyped Record ID would otherwise report success having changed nothing.
+    // The Record ID is data, not an identifier, so it is matched exactly.
+    const storedId = this.#sql.selectValue(
+      `SELECT ${quoteIdentifier(RECORD_ID_COLUMN)} FROM ${quoteIdentifier(name)} WHERE ${quoteIdentifier(RECORD_ID_COLUMN)} = ?;`,
+      [recordId],
+    );
+    if (typeof storedId !== "string") {
+      throw new ConsultChimpsError(
+        "DB_RECORD_NOT_FOUND",
+        `The table "${name}" has no record with the Record ID "${recordId}".`,
+        { details: { table: name, recordId } },
+      );
+    }
+
+    if (updateColumns.length > 0) {
+      const assignments = updateColumns
+        .map((column) => `${quoteIdentifier(column.name)} = ?`)
+        .join(", ");
+      try {
+        this.#sql.run(
+          `UPDATE ${quoteIdentifier(name)} SET ${assignments} WHERE ${quoteIdentifier(RECORD_ID_COLUMN)} = ?;`,
+          [...updateValues, storedId],
+        );
+      } catch (error) {
+        throw translateConstraintError(error, name);
+      }
+    }
+
+    return {
+      recordId: storedId,
+      values: this.#readColumns(name, storedId, updateColumns),
+    };
+  }
+
+  // Read the given columns of one record back through the declared-type
+  // conversion, so the caller is told what is stored rather than what it sent.
+  /**
+   * Resolve the columns a read asked for, in the order asked. Names match
+   * case-insensitively like every other identifier here. The Record ID column
+   * is always read, so naming it is allowed and changes nothing; an unknown
+   * column or one named twice is refused, since either means the caller and
+   * the schema disagree.
+   */
+  #selectColumns(
+    tableName: string,
+    definition: StoredDefinition,
+    requested: readonly string[],
+  ): ColumnDefinition[] {
+    const byKey = new Map(
+      definition.columns.map((column) => [identifierKey(column.name), column]),
+    );
+    const selected: ColumnDefinition[] = [];
+    const seen = new Set<string>();
+    for (const key of requested) {
+      // Resolve the declared name first, so the Record ID takes part in
+      // duplicate tracking like any other column even though it is never
+      // added to the projection (it is always read).
+      let resolved: string;
+      let column: ColumnDefinition | undefined;
+      if (sameIdentifier(key, RECORD_ID_COLUMN)) {
+        resolved = RECORD_ID_COLUMN;
+      } else {
+        column = byKey.get(identifierKey(key));
+        if (column === undefined) {
+          throw new ConsultChimpsError(
+            "DB_UNKNOWN_COLUMN",
+            `The table "${tableName}" has no column "${key}".`,
+            { details: { table: tableName, column: key } },
+          );
+        }
+        resolved = column.name;
+      }
+      const columnKey = identifierKey(resolved);
+      if (seen.has(columnKey)) {
+        throw new ConsultChimpsError(
+          "DB_DUPLICATE_READ_COLUMN",
+          `The read from "${tableName}" names the column "${resolved}" more than once.`,
+          { details: { table: tableName, column: resolved } },
+        );
+      }
+      seen.add(columnKey);
+      if (column !== undefined) {
+        selected.push(column);
+      }
+    }
+    return selected;
+  }
+
+  #readColumns(
+    tableName: string,
+    recordId: string,
+    columns: readonly ColumnDefinition[],
+  ): Record<string, CellValue> {
+    const values: Record<string, CellValue> = {};
+    if (columns.length === 0) {
+      return values;
+    }
+    const selectList = columns
+      .map((column) => quoteIdentifier(column.name))
+      .join(", ");
+    const rows = this.#sql.select(
+      `SELECT ${selectList} FROM ${quoteIdentifier(tableName)} WHERE ${quoteIdentifier(RECORD_ID_COLUMN)} = ?;`,
+      [recordId],
+    );
+    const row = rows[0];
+    if (row === undefined) {
+      throw new ConsultChimpsError(
+        "DB_RECORD_NOT_FOUND",
+        `The table "${tableName}" has no record with the Record ID "${recordId}".`,
+        { details: { table: tableName, recordId } },
+      );
+    }
+    for (const column of columns) {
+      // Own-property read, for the same reason readRecords takes one: a column
+      // named like an Object.prototype member must never pick up an inherited
+      // value. "__proto__" is refused as a column name, so assigning declared
+      // names to this plain object is safe.
+      const stored = Object.prototype.hasOwnProperty.call(row, column.name)
+        ? (row[column.name] as SqlValueType)
+        : null;
+      values[column.name] = cellFromSqlValue(column.type, stored);
+    }
+    return values;
+  }
+
   // Convert one cell for storage, adding table and column context to a
   // conversion error while keeping the offending value (imported cell content)
   // out of it.
@@ -748,15 +958,31 @@ export class Database {
    * column, with values coerced to their declared types. Rows come back ordered
    * by internal rowid, which is insertion order.
    */
-  readRecords(tableName: string): TableRow[] {
-    const { definition } = this.#requireDefinition(tableName);
+  readRecords(tableName: string, options: ReadRecordsOptions = {}): TableRow[] {
+    const { name, definition } = this.#requireDefinition(tableName);
+    const columns =
+      options.columns === undefined
+        ? definition.columns
+        : this.#selectColumns(name, definition, options.columns);
+    const limit = options.limit;
+    // Safe integer, not merely integer: 1e20 passes Number.isInteger but is
+    // past what SQLite accepts as a LIMIT, and the raw engine error would
+    // otherwise escape in place of the stable one.
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 0)) {
+      throw new ConsultChimpsError(
+        "DB_INVALID_LIMIT",
+        `A record limit for "${name}" must be a whole number from zero up to the safe integer range, not ${String(limit)}.`,
+        { details: { table: name, limit } },
+      );
+    }
     const columnNames = [
       RECORD_ID_COLUMN,
-      ...definition.columns.map((column) => column.name),
+      ...columns.map((column) => column.name),
     ];
     const selectList = columnNames.map(quoteIdentifier).join(", ");
     const rows = this.#sql.select(
-      `SELECT ${selectList} FROM ${quoteIdentifier(tableName)} ORDER BY rowid;`,
+      `SELECT ${selectList} FROM ${quoteIdentifier(name)} ORDER BY rowid${limit === undefined ? "" : " LIMIT ?"};`,
+      limit === undefined ? [] : [limit],
     );
     return rows.map((row) => {
       // The Record ID is a stored text value like any other, so validate it the
@@ -771,7 +997,7 @@ export class Database {
         );
       }
       const output: TableRow = { [RECORD_ID_COLUMN]: storedId };
-      for (const column of definition.columns) {
+      for (const column of columns) {
         // Own-property read so a column named like an Object.prototype member
         // never picks up an inherited value; "__proto__" is refused as a column
         // name, so assigning declared names to this plain object is safe.
