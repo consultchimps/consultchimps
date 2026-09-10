@@ -228,10 +228,14 @@ The record grid renders `workspace-grid-section`, holding
 `workspace-grid-loading` while a table is being read, `workspace-grid-empty`
 when the workspace has no tables, the grid itself under `workspace-grid`, and
 `workspace-grid-reference-note` when a foreign-key picker lists only the first
-records of a large related table. Inside the grid the identifiers are
-Tabulator's own: a row carries `data-record-id` with its Record ID, and a cell
-carries `tabulator-field` with its column name, so a cell is addressed by record
-and column rather than by position. Editing a cell is retried as a whole
+records of a large related table. A refused edit is explained in
+`workspace-grid-error`, with `workspace-grid-error-dismiss` to put it away: the
+grid explains its own refusals rather than writing to `workspace-error`, because
+each belongs to the cell it names and is cleared only by a later attempt on that
+cell or by that button. Inside the grid the identifiers are Tabulator's own: a
+row carries `data-record-id` with its Record ID, and a cell carries
+`tabulator-field` with its column name, so a cell is addressed by record and
+column rather than by position. Editing a cell is retried as a whole
 interaction, because a grid that renders rows as they are needed can move an
 element under a click.
 

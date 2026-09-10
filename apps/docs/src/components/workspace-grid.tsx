@@ -43,11 +43,25 @@
 
 import "tabulator-tables/dist/css/tabulator.min.css";
 
-import { describeFailure, sectionClass } from "@/components/tool-kit";
+import {
+  compactButtonClass,
+  describeFailure,
+  noticeClass,
+  sectionClass,
+} from "@/components/tool-kit";
 import type {
   MarkWorkspaceChanged,
   ReportPendingEdits,
 } from "@/components/workspace-tool";
+import {
+  cellKey,
+  failureReport,
+  NO_FAILURES,
+  tableKey,
+  withFailure,
+  withoutFailure,
+  type CellFailures,
+} from "@/lib/workspace-cell-errors";
 import { referenceLabel } from "@/lib/workspace-labels";
 import {
   WORKSPACE_REFERENCE_LIMIT,
@@ -299,8 +313,6 @@ export interface WorkspaceGridProps {
    * that reads it, not a second idea of unsaved kept here.
    */
   readonly onEditsPending: ReportPendingEdits;
-  /** Where a refusal is shown. Called with null once an edit succeeds. */
-  readonly onError: (message: string | null) => void;
   /**
    * The workspace as the shell knows it. This is the only place the grid learns
    * which tables it may show and which database they belong to, so a table an
@@ -324,7 +336,6 @@ export function WorkspaceGrid({
   locked,
   markChanged,
   onEditsPending,
-  onError,
   summary,
 }: WorkspaceGridProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -343,6 +354,10 @@ export function WorkspaceGrid({
   // is the summary's answer, and this is honoured only while it names one.
   const [chosen, setChosen] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<LoadedTable | null>(null);
+  // What has been refused and not yet dealt with, kept by the thing it is about
+  // rather than as one slot the next success would clear. See
+  // `lib/workspace-cell-errors`.
+  const [failures, setFailures] = useState<CellFailures>(NO_FAILURES);
 
   const generation = summary.generation;
   // The one table listing. An import adds to it and a new workspace replaces it,
@@ -364,9 +379,13 @@ export function WorkspaceGrid({
     void getClient()
       .readTable(selected, generation)
       .then((table) => {
-        if (!cancelled) {
-          setLoaded({ table: selected, generation, data: table });
+        if (cancelled) {
+          return;
         }
+        setLoaded({ table: selected, generation, data: table });
+        // The read this table was waiting on succeeded, so whatever was
+        // standing about reading it is answered.
+        setFailures((previous) => withoutFailure(previous, tableKey(selected)));
       })
       .catch((caught: unknown) => {
         if (cancelled) {
@@ -382,12 +401,14 @@ export function WorkspaceGrid({
         ) {
           return;
         }
-        onError(describeFailure(caught));
+        setFailures((previous) =>
+          withFailure(previous, tableKey(selected), describeFailure(caught)),
+        );
       });
     return () => {
       cancelled = true;
     };
-  }, [generation, getClient, onError, selected]);
+  }, [generation, getClient, selected]);
 
   // A grid that goes away with edits still in flight must not leave the shell
   // holding for answers nothing is waiting on any more.
@@ -536,9 +557,14 @@ export function WorkspaceGrid({
       // land after a save has taken its snapshot, and the file would not hold
       // what the grid shows.
       if (lockedRef.current) {
+        const column = cell.getField();
         restore(cell, recordId);
-        onError(
-          "That edit was not made because the workspace was busy. Make it again now the workspace is ready",
+        setFailures((previous) =>
+          withFailure(
+            previous,
+            cellKey(data.name, recordId, column),
+            "That edit was not made because the workspace was busy. Make it again now the workspace is ready",
+          ),
         );
         return;
       }
@@ -581,16 +607,30 @@ export function WorkspaceGrid({
           if (namingColumns.has(column)) {
             refreshLabels();
           }
+          // This cell is dealt with, so what was standing about it goes. Only
+          // this cell's: a refusal somewhere else is still true and still the
+          // only thing saying why that cell reads as it does.
+          setFailures((previous) =>
+            withoutFailure(previous, cellKey(data.name, recordId, column)),
+          );
           // The worker took it, so the workspace differs from its file. The
           // shell owns that flag; this is the one place the grid touches it, and
           // only here, after the reply, never on the way out. A refused edit
           // falls to the catch below and marks nothing. No summary is passed:
           // an edit changes what a table holds, not which tables exist.
           markChanged();
-          onError(null);
         })
         .catch((caught: unknown) => {
-          onError(describeFailure(caught));
+          // Against the cell it was about, which is what stops the next
+          // success elsewhere erasing it. A stale-generation refusal and a
+          // value the database will not hold arrive here alike.
+          setFailures((previous) =>
+            withFailure(
+              previous,
+              cellKey(data.name, recordId, column),
+              describeFailure(caught),
+            ),
+          );
         })
         .finally(() => {
           // Released whatever became of it, and after the branches above: an
@@ -671,11 +711,16 @@ export function WorkspaceGrid({
       editingRef.current = null;
       instance?.destroy();
     };
-  }, [data, getClient, markChanged, onEditsPending, onError]);
+  }, [data, getClient, markChanged, onEditsPending]);
 
   // Only a snapshot can be short of records: a table referring to itself offers
   // the rows on screen, and the note below says so only when there are more of
   // those than the picker takes.
+  // Everything standing, newest in full. The cells it names are above it, which
+  // is the other half of why the grid explains its own refusals rather than
+  // handing them to a slot at the foot of the page.
+  const report = failureReport(failures);
+
   const truncated =
     data?.columns.filter((column) =>
       column.references?.kind === "snapshot"
@@ -744,6 +789,26 @@ export function WorkspaceGrid({
         data-testid="workspace-grid"
         ref={containerRef}
       />
+
+      {report === null ? null : (
+        <div className="mt-4">
+          <pre
+            aria-live="polite"
+            className={`${noticeClass} mt-0`}
+            data-testid="workspace-grid-error"
+          >
+            {report}
+          </pre>
+          <button
+            className={`${compactButtonClass} mt-2`}
+            data-testid="workspace-grid-error-dismiss"
+            onClick={() => setFailures(NO_FAILURES)}
+            type="button"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {truncated.length > 0 ? (
         <p

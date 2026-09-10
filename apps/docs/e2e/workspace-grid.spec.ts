@@ -387,28 +387,47 @@ test.describe("/workspace record grid", () => {
     // A whole-number column cannot hold 1.5. Nothing in the page decides that:
     // the library refuses the write, and the grid puts the stored value back.
     await typeInCell(page, "CUST-0001", "headcount", "1.5");
-    await expect(page.getByTestId("workspace-error")).toContainText(
+    await expect(page.getByTestId("workspace-grid-error")).toContainText(
       "not a whole number",
     );
-    await expect(page.getByTestId("workspace-error")).toContainText(
+    await expect(page.getByTestId("workspace-grid-error")).toContainText(
       'column "headcount"',
     );
     await expect(cellOf(page, "CUST-0001", "headcount")).toHaveText("15");
 
     // Emptying a column the schema declares non-nullable is refused the same
-    // way, and leaves the stored value in place.
+    // way, and leaves the stored value in place. Both refusals stand: the
+    // newest in full, the other counted.
     await typeInCell(page, "CUST-0001", "name", "");
-    await expect(page.getByTestId("workspace-error")).toContainText(
+    await expect(page.getByTestId("workspace-grid-error")).toContainText(
       "was left empty",
+    );
+    await expect(page.getByTestId("workspace-grid-error")).toContainText(
+      "1 other edit was refused as well",
     );
     await expect(cellOf(page, "CUST-0001", "name")).toHaveText("Acme");
 
-    // The refusals reached the page, not the file: the saved workspace still
-    // holds the value that was accepted.
+    // Putting one of them right takes its explanation away and brings the other
+    // back in full, because each belongs to the cell it named.
+    await typeInCell(page, "CUST-0001", "name", "Acme Two");
+    await expect(page.getByTestId("workspace-grid-error")).toContainText(
+      "not a whole number",
+    );
+    await expect(page.getByTestId("workspace-grid-error")).not.toContainText(
+      "other edit was refused",
+    );
+
+    // And the visitor can put the rest away.
+    await page.getByTestId("workspace-grid-error-dismiss").click();
+    await expect(page.getByTestId("workspace-grid-error")).toHaveCount(0);
+
+    // The refusals reached the page, not the file: what the saved workspace
+    // holds is the values that were accepted, the 15 and the name that replaced
+    // the empty one, and neither of the two that were refused.
     const saved = await downloadedWorkspace(page);
     await openWorkspace(page, saved);
     await expect(cellOf(page, "CUST-0001", "headcount")).toHaveText("15");
-    await expect(cellOf(page, "CUST-0001", "name")).toHaveText("Acme");
+    await expect(cellOf(page, "CUST-0001", "name")).toHaveText("Acme Two");
   });
 
   test("reports an edit to the shell, so leaving asks first", async ({
@@ -528,7 +547,7 @@ test.describe("/workspace record grid", () => {
       await input.press("Enter", { timeout: STEP_TIMEOUT });
     });
     await expect(supplierName).toHaveText("Acme Supplies");
-    await expect(page.getByTestId("workspace-error")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-grid-error")).toHaveCount(0);
     await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
   });
 
@@ -727,6 +746,39 @@ test.describe("/workspace record grid", () => {
     await expect(page.getByTestId("workspace-table")).toHaveCount(4);
     await expect(cellOf(page, "CUST-0001", "region")).toHaveText(
       "Northern (REG-0001)",
+    );
+  });
+
+  test("keeps a refused edit explained when another one succeeds", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    // Held so both edits are in flight together, which is the only way their
+    // replies can arrive in an order that matters.
+    await delayWorkerCommands(page, ["updateCell"], 1_500);
+    await page.goto("/workspace");
+    await openWorkspace(page, await workspaceFixture());
+
+    // An invalid value first, then a valid one in a different cell. The second
+    // is accepted and the first refused, and it is the second that answers
+    // last: with one slot for the explanation, the acceptance would clear the
+    // refusal and leave a cell snapped back with nothing saying why.
+    await typeInCell(page, "CUST-0001", "headcount", "1.5");
+    await typeInCell(page, "CUST-0002", "name", "Globex Two");
+
+    await expect(page.getByTestId("workspace-unsaved")).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(cellOf(page, "CUST-0002", "name")).toHaveText("Globex Two");
+    await expect(cellOf(page, "CUST-0001", "headcount")).toHaveText("12");
+    await expect(page.getByTestId("workspace-grid-error")).toContainText(
+      "not a whole number",
+    );
+
+    // It survives the save too, since nothing about saving answers it.
+    await downloadedWorkspace(page);
+    await expect(page.getByTestId("workspace-grid-error")).toContainText(
+      "not a whole number",
     );
   });
 });

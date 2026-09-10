@@ -1031,14 +1031,16 @@ export function WorkspaceTool() {
       {/* The grid keeps no flag the shell already keeps: which tables exist and
           which database they belong to are both read from the summary, editing
           is locked by the shell's own busy and confirming state, and an edit
-          that lands reports it through the one marker. */}
+          that lands reports it through the one marker. It does keep its own
+          refusals, because those belong to the cells they name rather than to
+          the page, and a slot shared with this component's own failures is one
+          each would clear from under the other. */}
       {hasWorkspace ? (
         <WorkspaceGrid
           getClient={client}
           locked={isBusy || confirming}
           markChanged={markChanged}
           onEditsPending={reportPendingEdits}
-          onError={setError}
           summary={workspace.summary}
         />
       ) : null}
