@@ -137,7 +137,7 @@ export default function HomePage() {
                 <span className="tool-card__number">
                   Tool {String(index + 1).padStart(2, "0")}
                 </span>
-                <div>
+                <div className="tool-card__body">
                   <span className="tool-card__icon">
                     <Icon className="size-5" />
                   </span>
