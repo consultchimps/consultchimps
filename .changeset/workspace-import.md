@@ -148,6 +148,22 @@ cell carries a time, so a date column reads one way down its length and a value
 the workbook holds as a date stays distinguishable from text somebody typed.
 `@consultchimps/db` accepts that spelling in a `date` column.
 
+A `t="d"` cell, which writes its date as ISO 8601 text, is now read into
+components, judged as one value, and converted by arithmetic. It used to reach
+`Date.UTC`, which carries rules of its own: a year from 0 to 99 is remapped into
+the twentieth century, so `0099-01-01` read back as 1999, and an out-of-range
+field is normalised rather than refused, so `2024-13-01` read back as
+January 2025. A month is now 1 to 12, a day has to exist in that month of that
+year, hour is 0 to 23 and minute and second 0 to 59, and a written offset is 0
+to 23 hours and 0 to 59 minutes. Text that names no moment is carried as the
+text the cell holds, unconverted, the way every other unconvertible cell is;
+nothing is guessed and nothing is normalised.
+
+One spelling of a date, `calendarIsoText`, is now shared by the worksheet
+readers, the document model and the split's group keys, so a value read from a
+cell and the key that names the output workbook it lands in cannot describe one
+cell two ways.
+
 The blast radius is every consumer that reads a cell through these readers:
 `readWorkbookTables`, `readWorkbookWorksheets`, the Excel Table and named-range
 readers, worksheet records, consolidation, and the split, whose group keys

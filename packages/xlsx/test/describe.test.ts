@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 
 import { XLSX_ERRORS } from "../src/errors.js";
-import { inZoneAsync, ZONES } from "./zones.js";
+import { forEachZone, ZONES } from "./zones.js";
 import {
   describeWorkbookBytes,
   readWorkbookExcelTablesBytes,
@@ -976,17 +976,15 @@ describe("dates a workbook stores as numbers", () => {
   async function firstRowPerZone(
     bytes: Uint8Array,
   ): Promise<Array<Record<string, unknown> | undefined>> {
-    return await Promise.all(
-      ZONES.map((zone) =>
-        inZoneAsync(zone, async () => {
-          const [table] = await readWorkbookTablesBytes({
-            name: "dates.xlsx",
-            bytes,
-          });
-          return table?.rows[0];
-        }),
-      ),
-    );
+    // One zone at a time: the zone is one process-wide value, so two readings
+    // in flight together would each restore the other's zone.
+    return await forEachZone(async () => {
+      const [table] = await readWorkbookTablesBytes({
+        name: "dates.xlsx",
+        bytes,
+      });
+      return table?.rows[0];
+    });
   }
 
   it("reads a date-formatted serial the same way in every time zone", async () => {

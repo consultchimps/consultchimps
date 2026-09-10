@@ -163,7 +163,12 @@ describe("boundaries: operations and regions never touch ZIP", () => {
  * compares against - the inspection decodes a defined name's reference before
  * matching a worksheet name - without rewriting anything.
  */
-const XML_MUTATION_HELPERS = ["editElements", "setAttribute", "addAttribute"];
+const XML_MUTATION_HELPERS = [
+  "editElements",
+  "setAttribute",
+  "addAttribute",
+  "writeAttribute",
+];
 
 describe("boundaries: operations never rewrite XML", () => {
   it("no file under src/operations/ imports an XML mutation helper", () => {

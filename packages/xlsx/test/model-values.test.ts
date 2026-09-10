@@ -19,7 +19,9 @@ import {
   StyleTable,
   WorkbookModel,
 } from "../src/model/index.js";
+import { calendarIsoText, utcCalendarParts } from "../src/model/calendar.js";
 import { WorkbookPackage } from "../src/package/index.js";
+import { normalizeSplitValue } from "../src/region/values.js";
 import {
   buildCorpusWorkbook,
   CORPUS_PARTS,
@@ -250,34 +252,47 @@ describe("model: cell values", () => {
     ).toBe(20);
   });
 
+  /** The corpus with one cell replaced by a `t="d"` cell holding this text. */
+  async function datedModel(text: string): Promise<WorkbookModel> {
+    const workbookPackage = await WorkbookPackage.load(
+      await buildCorpusWorkbook({ shape: "range" }),
+    );
+    workbookPackage.writeText(
+      CORPUS_PARTS.dataSheet,
+      workbookPackage
+        .requireText(CORPUS_PARTS.dataSheet)
+        .replace(
+          '<c r="D4"><v>10</v></c>',
+          `<c r="D4" t="d"><v>${text}</v></c>`,
+        ),
+    );
+    return WorkbookModel.fromPackage(workbookPackage);
+  }
+
+  /** That cell's value, read in each zone and spelled the one way. */
+  async function dated(text: string): Promise<string[]> {
+    const model = await datedModel(text);
+    return ZONES.map((zone) =>
+      inZone(zone, () => {
+        const value = model
+          .worksheet(CORPUS_SHEET)!
+          .cellValue({ row: 4, column: 3 });
+        return value instanceof Date
+          ? calendarIsoText(utcCalendarParts(value))
+          : String(value);
+      }),
+    );
+  }
+
+  /** The same, read once, in UTC. */
+  async function datedInUtc(text: string): Promise<string> {
+    return (await dated(text))[0] as string;
+  }
+
   it("reads a date cell the same way in every time zone", async () => {
     // A `t="d"` cell writes ISO 8601 with no zone on it, so `new Date(text)`
     // read it as a moment in the host's zone: the same cell was 18:00 in UTC,
     // 14:00 in UTC+4, and the next calendar day west of UTC.
-    const dated = async (text: string): Promise<string[]> => {
-      const workbookPackage = await WorkbookPackage.load(
-        await buildCorpusWorkbook({ shape: "range" }),
-      );
-      workbookPackage.writeText(
-        CORPUS_PARTS.dataSheet,
-        workbookPackage
-          .requireText(CORPUS_PARTS.dataSheet)
-          .replace(
-            '<c r="D4"><v>10</v></c>',
-            `<c r="D4" t="d"><v>${text}</v></c>`,
-          ),
-      );
-      const model = WorkbookModel.fromPackage(workbookPackage);
-      return ZONES.map((zone) =>
-        inZone(zone, () => {
-          const value = model
-            .worksheet(CORPUS_SHEET)!
-            .cellValue({ row: 4, column: 3 });
-          return value instanceof Date ? value.toISOString() : String(value);
-        }),
-      );
-    };
-
     // A date and a time, a date on its own, and text that already carries a
     // zone and is therefore a moment rather than a calendar face.
     expect(await dated("2024-01-01T18:00:00")).toEqual(
@@ -289,8 +304,65 @@ describe("model: cell values", () => {
     expect(await dated("2024-01-01T18:00:00Z")).toEqual(
       ZONES.map(() => "2024-01-01T18:00:00.000Z"),
     );
+    // A written offset says how far ahead of UTC the clock that wrote it was.
+    expect(await dated("2024-01-01T18:00:00+04:00")).toEqual(
+      ZONES.map(() => "2024-01-01T14:00:00.000Z"),
+    );
     // Text that is not a date at all is still handed back as text.
     expect(await dated("not a date")).toEqual(ZONES.map(() => "not a date"));
+  });
+
+  it("reads an early year as the year that was written", async () => {
+    // The defect this pins down: a date constructor remaps a year from 0 to 99
+    // into the twentieth century, so 0099 came back as 1999 and nothing said
+    // so. The components are converted by arithmetic instead.
+    expect(new Date(Date.UTC(99, 0, 1)).getUTCFullYear()).toBe(1999);
+
+    expect(await datedInUtc("0099-01-01")).toBe("0099-01-01T00:00:00.000Z");
+    expect(await datedInUtc("0001-01-01")).toBe("0001-01-01T00:00:00.000Z");
+  });
+
+  it("keeps text that names no moment as the text it is", async () => {
+    // A date constructor normalises an out-of-range field rather than refusing
+    // it: month 13 becomes January of the next year, and 30 February becomes
+    // the first days of March. Neither is what the cell says. A value that is
+    // not a date is carried as the text the file holds, the same way every
+    // other unconvertible cell is, so nothing is invented and nothing is lost.
+    expect(new Date(Date.UTC(2024, 12, 1)).toISOString()).toBe(
+      "2025-01-01T00:00:00.000Z",
+    );
+
+    for (const text of [
+      "2024-13-01",
+      "2024-00-01",
+      "2024-02-30",
+      "2023-02-29",
+      "2024-01-01T24:00:00",
+      "2024-01-01T23:59:60",
+      "2024-01-01T18:00:00+24:00",
+    ]) {
+      expect(await datedInUtc(text)).toBe(text);
+    }
+    // The day the calendar does have, in the year that has it.
+    expect(await datedInUtc("2024-02-29")).toBe("2024-02-29T00:00:00.000Z");
+  });
+
+  it("keys a date cell for a split the way the cell reads", async () => {
+    // The group key becomes an output workbook's name, so it has to be the
+    // same characters the cell reads as, in every zone.
+    const model = await datedModel("2024-01-01T18:00:00");
+    const keys = ZONES.map((zone) =>
+      inZone(
+        zone,
+        () =>
+          normalizeSplitValue(
+            model.worksheet(CORPUS_SHEET)!.cellValue({ row: 4, column: 3 }),
+            true,
+          )?.key,
+      ),
+    );
+
+    expect(keys).toEqual(ZONES.map(() => "date:2024-01-01T18:00:00.000Z"));
   });
 
   it("reports a headerless table's header row as 0", async () => {

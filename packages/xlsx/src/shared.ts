@@ -26,6 +26,12 @@ import {
   readExcelTableDefinitions,
 } from "./excel-tables.js";
 import { XLSX_ERRORS } from "./errors.js";
+import {
+  calendarIsoText,
+  isComponentsInRange,
+  utcCalendarParts,
+  type CalendarParts,
+} from "./model/calendar.js";
 import { preserveWorkbookWithFilteredExcelTable } from "./preserve-table-split.js";
 import type { AllWorksheetSplitMetric } from "./split/all-worksheet.js";
 import { splitOutputFilenames } from "./split/names.js";
@@ -531,7 +537,7 @@ export async function parseExcelTableDefinitions(
   }
 }
 
-/** The calendar components a serial decodes to. */
+/** The calendar components a serial decodes to, in the engine's spelling. */
 interface SerialDateParts {
   y: number;
   m: number;
@@ -564,10 +570,6 @@ function workbookDateSystem(workbook: XLSX.WorkBook): boolean {
   return workbook.Workbook?.WBProps?.date1904 === true;
 }
 
-function pad(value: number, width: number): string {
-  return String(value).padStart(width, "0");
-}
-
 /**
  * The ISO 8601 text for a date-formatted serial.
  *
@@ -584,35 +586,57 @@ function pad(value: number, width: number): string {
  * as a different calendar day in every time zone. This is a function of the
  * workbook, so every reader in every zone gets the same characters.
  *
- * One shape, always the full timestamp, whether or not the cell carries a
- * time. A date column then reads the same way down its whole length rather
- * than changing shape at the first cell that happens to carry an hour, and the
- * `WORKBOOK_DATE_TEXT` rule above can still tell a value the workbook holds as
- * a date from ordinary text somebody typed, which a bare `2024-01-01` could
- * not. `@consultchimps/db` accepts both spellings in a `date` column, so the
- * choice costs a consumer nothing.
+ * The spelling comes from `calendarIsoText`, which is also what the document
+ * model's dates are read back as, so a workbook read through this reader and
+ * the same workbook read through the model spell a date with the same
+ * characters rather than with two rules that could drift apart.
  *
- * A serial the engine cannot decode into a calendar day, such as the day-zero
- * serial 0, comes back undefined and the caller keeps the number. Serial 60 is
- * decoded rather than refused: the 1900 system deliberately reproduces a
- * spreadsheet-era bug in which 29 February 1900 exists, and that is the day
- * Excel shows for it.
+ * A serial the engine cannot decode into components in range, such as the
+ * day-zero serial 0, comes back undefined and the caller keeps the number.
+ * Serial 60 is decoded rather than refused: the 1900 system deliberately
+ * reproduces a spreadsheet-era bug in which 29 February 1900 exists, and that
+ * is the day Excel shows for it. That is why the components are only checked
+ * for range here, and the stricter "is this a day the calendar has" rule
+ * belongs to the text path, whose input is not Excel's own arithmetic.
  */
 function workbookDateText(
   serial: number,
   date1904: boolean,
 ): string | undefined {
-  const parts = SSF.parse_date_code(serial, { date1904 });
-  if (!parts || parts.m < 1 || parts.m > 12 || parts.d < 1 || parts.d > 31) {
+  const decoded = SSF.parse_date_code(serial, { date1904 });
+  if (!decoded) {
     return undefined;
   }
-  // Clamped rather than allowed to carry: a fraction that rounds to a whole
-  // second would otherwise write ".1000" where a millisecond field belongs.
-  const milliseconds = Math.min(999, Math.round((parts.u || 0) * 1000));
-  return `${pad(parts.y, 4)}-${pad(parts.m, 2)}-${pad(parts.d, 2)}T${pad(
-    parts.H,
-    2,
-  )}:${pad(parts.M, 2)}:${pad(parts.S, 2)}.${pad(milliseconds, 3)}Z`;
+  const parts: CalendarParts = {
+    year: decoded.y,
+    month: decoded.m,
+    day: decoded.d,
+    hour: decoded.H,
+    minute: decoded.M,
+    second: decoded.S,
+    // Clamped rather than allowed to carry: a fraction that rounds to a whole
+    // second would otherwise write ".1000" where a millisecond field belongs.
+    millisecond: Math.min(999, Math.round((decoded.u || 0) * 1000)),
+  };
+  return isComponentsInRange(parts) ? calendarIsoText(parts) : undefined;
+}
+
+/**
+ * The same spelling for a moment that arrived already parsed.
+ *
+ * Unreachable from this package's own reading: `parseWorkbookBytes` keeps
+ * serials, so no cell it produces carries a `Date`. It is here so a cell from a
+ * workbook somebody else parsed with `cellDates` cannot fall through to
+ * `String(v)` and arrive as a platform date string, and it goes through
+ * `calendarIsoText` like everything else rather than through `toISOString`, so
+ * there is one spelling of a date in this package and not two.
+ *
+ * The UTC face is the one read, because a moment composed from a workbook's
+ * epoch and whole days wears the calendar date on that face and the local face
+ * is that shifted by wherever the reader is sitting.
+ */
+function parsedDateText(value: Date): string {
+  return calendarIsoText(utcCalendarParts(value));
 }
 
 /**
@@ -650,10 +674,7 @@ function cellToPrimitive(
   }
 
   if (cell.v instanceof Date) {
-    // This reader keeps serials, so it produces none. The branch is here so a
-    // cell from a workbook somebody else parsed with `cellDates` cannot fall
-    // through to `String(v)` and arrive as a platform date string.
-    return cell.v.toISOString();
+    return parsedDateText(cell.v);
   }
 
   if (
@@ -687,7 +708,7 @@ function cellToDisplayText(
   }
 
   if (cell.v instanceof Date) {
-    return cell.v.toISOString();
+    return parsedDateText(cell.v);
   }
 
   if (typeof cell.v === "boolean") {

@@ -23,6 +23,12 @@ import {
   writeAttribute,
 } from "./xml.js";
 import {
+  calendarEpochMs,
+  isComponentsInRange,
+  isRealCalendarDay,
+  type CalendarParts,
+} from "./calendar.js";
+import {
   decodeCell,
   encodeCell,
   relocateFormulaRows,
@@ -433,44 +439,80 @@ export class WorksheetRow {
 }
 
 /**
- * ISO 8601 as OOXML writes a `t="d"` cell, with no zone on it: a date, or a
- * date and a time, and optionally a fraction of a second.
+ * ISO 8601 as OOXML writes a `t="d"` cell: a date, optionally a time, and
+ * optionally a zone, which the format leaves off far more often than it writes.
  */
-const UNZONED_ISO_DATE =
-  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3})\d*)?)?)?$/u;
+const CELL_DATE_TEXT =
+  /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})(?:[T ](?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2})(?:\.(?<fraction>\d+))?)?)?(?:(?<zulu>[Zz])|(?<offsetSign>[+-])(?<offsetHour>\d{2}):(?<offsetMinute>\d{2}))?$/u;
 
 /**
  * The date a `t="d"` cell holds, as a `Date` whose UTC face is the calendar
- * date and time the cell wrote.
+ * date and time the cell wrote, or undefined when the text names no moment.
  *
- * A cell's date text carries no zone, so `new Date(text)` read it as a moment
- * in the host's zone and `toISOString()` then subtracted the host offset: the
- * same cell became 18:00 in UTC and 14:00 in UTC+4, and west of UTC the
- * calendar day moved forward. The components are read and composed with
- * `Date.UTC` instead, so the value is a function of the text alone, exactly as
- * `excelSerialToDate` is a function of the serial alone.
+ * The text is read into components, the components are judged as one value,
+ * and only then is the moment computed, by arithmetic. Nothing here is handed
+ * to a date constructor to interpret, because both of the constructors carry
+ * rules that rewrite what they are given rather than refuse it:
+ * `new Date(text)` reads an unzoned time in the host's zone, so the same cell
+ * became 18:00 in UTC and 14:00 in UTC+4, and `Date.UTC` remaps a year from 0
+ * to 99 into the twentieth century and normalises month 13 into January of the
+ * next year. A year of 0099 has to read back as 0099, and a month of 13 must
+ * not read back as a date at all.
  *
- * Text that does carry a zone is already an unambiguous moment, and is left to
- * the platform parser. Anything neither of those describes has no date in it,
- * and the caller keeps the text.
+ * What counts as a moment: month 1 to 12, a day that exists in that month of
+ * that year, hour 0 to 23, minute and second 0 to 59, and, where a zone is
+ * written, an offset of 0 to 23 hours and 0 to 59 minutes. Hour 24 as the end
+ * of a day and second 60 as a leap second are ISO 8601 and are refused here,
+ * because a worksheet writes neither and accepting them would mean deciding
+ * which day carries a leap second.
+ *
+ * Text that names no moment comes back undefined and the caller keeps the text
+ * the cell holds. That is not a guess: a value that is not a date is carried as
+ * what the file says it is, the same way every other unconvertible cell is, and
+ * the alternative - failing the whole read - would stop a split over one cell
+ * in a column nobody grouped by.
  */
 function worksheetDateValue(text: string): Date | undefined {
-  const trimmed = text.trim();
-  const parts = UNZONED_ISO_DATE.exec(trimmed);
-  const parsed = parts
-    ? new Date(
-        Date.UTC(
-          Number(parts[1]),
-          Number(parts[2]) - 1,
-          Number(parts[3]),
-          Number(parts[4] ?? "0"),
-          Number(parts[5] ?? "0"),
-          Number(parts[6] ?? "0"),
-          Number((parts[7] ?? "").padEnd(3, "0") || "0"),
-        ),
-      )
-    : new Date(trimmed);
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+  const matched = CELL_DATE_TEXT.exec(text.trim());
+  if (!matched) {
+    return undefined;
+  }
+  // Named rather than numbered, so adding a group cannot silently repair the
+  // pairing of every read below it.
+  const written = matched.groups as Record<string, string | undefined>;
+  const fraction = written["fraction"] ?? "";
+  const parts: CalendarParts = {
+    year: Number(written["year"]),
+    month: Number(written["month"]),
+    day: Number(written["day"]),
+    hour: Number(written["hour"] ?? "0"),
+    minute: Number(written["minute"] ?? "0"),
+    second: Number(written["second"] ?? "0"),
+    // Truncated rather than rounded: a rounded 999.6 would carry into a second
+    // the text does not name.
+    millisecond: Number(fraction.slice(0, 3).padEnd(3, "0") || "0"),
+  };
+  if (
+    !isComponentsInRange(parts) ||
+    !isRealCalendarDay(parts.year, parts.month, parts.day)
+  ) {
+    return undefined;
+  }
+
+  const offsetHour = written["offsetHour"];
+  const offsetMinute = written["offsetMinute"];
+  let offsetMinutes = 0;
+  if (offsetHour !== undefined && offsetMinute !== undefined) {
+    const hours = Number(offsetHour);
+    const minutes = Number(offsetMinute);
+    if (hours > 23 || minutes > 59) {
+      return undefined;
+    }
+    offsetMinutes =
+      (written["offsetSign"] === "-" ? -1 : 1) * (hours * 60 + minutes);
+  }
+
+  return new Date(calendarEpochMs(parts, offsetMinutes));
 }
 
 function splitCells(rowNumber: number, inner: string): CellSegment[] {
