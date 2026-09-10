@@ -185,6 +185,17 @@ export type MarkWorkspaceChanged = (summary?: WorkspaceSummary) => void;
 export type ReportPendingEdits = (count: number) => void;
 
 /**
+ * Report that a cell is open for editing, from the moment it opens until it
+ * commits or cancels.
+ *
+ * A draft in an input element is work no one else knows about: nothing has been
+ * sent, so nothing has an answer to wait for. The shell holds for it so that
+ * the ways of leaving that never blur an editor, the Back button and closing
+ * the tab, are not the ways that lose it.
+ */
+export type ReportOpenEditor = (open: boolean) => void;
+
+/**
  * The one command in flight, or null while the page is idle.
  *
  * There is a single busy state for the whole page, not one per section, because
@@ -226,6 +237,7 @@ export function WorkspaceTool() {
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingAction>(null);
   const [editsInFlight, setEditsInFlight] = useState(0);
+  const [editorOpen, setEditorOpen] = useState(false);
   const router = useRouter();
 
   const client = useCallback((): WorkspaceClient => {
@@ -351,6 +363,7 @@ export function WorkspaceTool() {
     unsavedChanges: hasUnsavedChanges,
     importing: busy === "importing",
     editsInFlight,
+    editorOpen,
   };
   const mustHold = mustHoldWorkspace(holdState);
 
@@ -366,6 +379,12 @@ export function WorkspaceTool() {
    * anyway, because that is a fact about React's scheduling rather than about
    * this page, and the cost of being wrong about it is a silently discarded
    * edit.
+   *
+   * An open editor needs no such treatment. Opening one is its own click, so a
+   * render always separates it from the click that navigates, and the closing
+   * happens on the blur that click causes: being a moment late to release a
+   * hold only ever holds, which is the safe direction, and the sentence shown
+   * is derived from the rendered state and so still describes what is true.
    */
   const holdsNow = useCallback(
     (): boolean => mustHoldRef.current || editsInFlightRef.current > 0,
@@ -379,6 +398,16 @@ export function WorkspaceTool() {
   const reportPendingEdits = useCallback<ReportPendingEdits>((count) => {
     editsInFlightRef.current = count;
     setEditsInFlight(count);
+  }, []);
+
+  /**
+   * Count a cell open for editing. State alone, no ref: this has to reach the
+   * rendered hold state, because the guard it exists for is the `beforeunload`
+   * listener below, which can only be installed while the editor is open. A
+   * listener that is decided on at unload time is one that was never there.
+   */
+  const reportOpenEditor = useCallback<ReportOpenEditor>((open) => {
+    setEditorOpen(open);
   }, []);
 
   // The question exists only while its reason does. A save made while it is on
@@ -1041,6 +1070,7 @@ export function WorkspaceTool() {
           locked={isBusy || confirming}
           markChanged={markChanged}
           onEditsPending={reportPendingEdits}
+          onEditorOpen={reportOpenEditor}
           summary={workspace.summary}
         />
       ) : null}

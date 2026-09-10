@@ -238,6 +238,17 @@ async function delayWorkerCommands(
   );
 }
 
+/** Press Back the way the shell's guard sees it, with nothing blurred first. */
+async function pressBack(page: Page): Promise<void> {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        window.addEventListener("popstate", () => resolve(), { once: true });
+        window.history.back();
+      }),
+  );
+}
+
 async function downloadedWorkspace(page: Page): Promise<Buffer> {
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("workspace-save-as").click();
@@ -789,5 +800,75 @@ test.describe("/workspace record grid", () => {
     await expect(page.getByTestId("workspace-grid-error")).toContainText(
       "not a whole number",
     );
+  });
+
+  test("holds the page while a cell is open for editing", async ({ page }) => {
+    await forceDownloadFallback(page);
+    // Somewhere to come from, so the shell has an entry it can guard.
+    await page.goto("/tools");
+    await page.getByRole("link", { name: "Workspace", exact: true }).click();
+    await openWorkspace(page, await workspaceFixture());
+
+    // Nothing sent and nothing unsaved: what is at stake is only what is in the
+    // input element, and until now nothing outside the grid knew it was there.
+    await expect(page.getByTestId("workspace-unsaved")).toHaveCount(0);
+    const beforeEditing = await page.evaluate(() => window.history.length);
+
+    await typeWithoutCommitting(cellOf(page, "CUST-0001", "name"), "Acme Two");
+
+    // The shell arms a spare history entry whenever it is holding, from the
+    // same rendered state that installs the browser's own warning before the
+    // tab closes or reloads. That warning is the guard this is really about and
+    // the one no test can open, so the entry is how its presence is asserted:
+    // an editor being open is now enough for the shell to be holding.
+    await expect
+      .poll(() => page.evaluate(() => window.history.length))
+      .toBe(beforeEditing + 1);
+  });
+
+  test("holds a link out of the page for work an editor still holds", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await openWorkspace(page, await workspaceFixture());
+
+    await typeWithoutCommitting(cellOf(page, "CUST-0001", "name"), "Acme Two");
+    await page.getByTestId("guide-link").click();
+
+    // Held, and the page not left. Which reason it names depends on how far the
+    // work got: clicking the link blurs the editor, which commits the draft, so
+    // by the time the click is handled this is an edit on its way rather than
+    // one still being typed. Either way it is the same hold, asked once.
+    await expect(page.getByTestId("workspace-confirm")).toBeVisible();
+    await expect(page).toHaveURL(/\/workspace$/u);
+
+    await page.getByTestId("workspace-confirm-cancel").click();
+    await expect(cellOf(page, "CUST-0001", "name")).toHaveText("Acme Two");
+  });
+
+  test("stops holding once the editor is closed with Escape", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await openWorkspace(page, await workspaceFixture());
+
+    // Opened and abandoned. Tabulator reports the cancel like any other, so the
+    // hold is released through the one handler and nothing is left waiting on a
+    // draft that no longer exists.
+    await typeWithoutCommitting(cellOf(page, "CUST-0001", "name"), "Acme Two");
+    await page.keyboard.press("Escape");
+    await expect(
+      cellOf(page, "CUST-0001", "name").locator("input"),
+    ).toHaveCount(0);
+    await expect(cellOf(page, "CUST-0001", "name")).toHaveText("Acme");
+    await expect(page.getByTestId("workspace-unsaved")).toHaveCount(0);
+
+    // With nothing at stake the page is left without a question, which is what
+    // says the hold was released rather than merely hidden.
+    await page.getByTestId("guide-link").click();
+    await expect(page).toHaveURL(/\/docs\/libraries/u);
+    await expect(page.getByTestId("workspace-confirm")).toHaveCount(0);
   });
 });

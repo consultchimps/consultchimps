@@ -51,6 +51,7 @@ import {
 } from "@/components/tool-kit";
 import type {
   MarkWorkspaceChanged,
+  ReportOpenEditor,
   ReportPendingEdits,
 } from "@/components/workspace-tool";
 import {
@@ -316,6 +317,14 @@ export interface WorkspaceGridProps {
    */
   readonly onEditsPending: ReportPendingEdits;
   /**
+   * Whether a cell is open for editing. What is typed into an editor and not
+   * committed exists only in that input element, so this is the only way the
+   * shell can know there is anything to lose. Reported from the moment the
+   * editor opens, which is coarser than waiting for a keystroke and cannot miss
+   * one; see `WorkspaceHoldState`.
+   */
+  readonly onEditorOpen: ReportOpenEditor;
+  /**
    * The workspace as the shell knows it. This is the only place the grid learns
    * which tables it may show and which database they belong to, so a table an
    * import has just created appears here the moment the shell hears about it,
@@ -337,6 +346,7 @@ export function WorkspaceGrid({
   getClient,
   locked,
   markChanged,
+  onEditorOpen,
   onEditsPending,
   summary,
 }: WorkspaceGridProps) {
@@ -426,14 +436,26 @@ export function WorkspaceGrid({
     };
   }, [generation, getClient, selected]);
 
-  // A grid that goes away with edits still in flight must not leave the shell
-  // holding for answers nothing is waiting on any more.
+  // A grid that goes away with edits still in flight, or with an editor open,
+  // must not leave the shell holding for work that went with it.
+  //
+  // For an open editor this is the last resort, not the usual path: Tabulator
+  // reports a cancel whenever an editor goes, including when the grid it is in
+  // is torn down, so a table switch or a new workspace releases the hold
+  // through the same handler a visitor's Escape does. What is left is the page
+  // itself going, which reports nothing, and this covers it.
+  //
+  // Deliberately not in the effect that builds the grid, which runs again
+  // whenever the rows change. Releasing there would be a second answer to the
+  // same question, and the one place the two differ is a rebuild caused by the
+  // very navigation the hold exists to guard.
   useEffect(
     () => () => {
       inFlightRef.current = 0;
       onEditsPending(0);
+      onEditorOpen(false);
     },
-    [onEditsPending],
+    [onEditorOpen, onEditsPending],
   );
 
   // The lock is a ref so the grid does not have to be rebuilt to honour it, and
@@ -442,6 +464,8 @@ export function WorkspaceGrid({
   useEffect(() => {
     lockedRef.current = locked;
     if (locked) {
+      // Cancelling dispatches Tabulator's own cancel event, so the editor is
+      // reported closed through the one handler rather than here as well.
       editingRef.current?.cancelEdit();
       editingRef.current = null;
     }
@@ -710,22 +734,22 @@ export function WorkspaceGrid({
       // already open rather than let it commit after the page has moved on.
       instance.on("cellEditing", (cell: CellComponent) => {
         editingRef.current = cell;
+        onEditorOpen(true);
       });
-      // Registered after `persist`, so by the time these run the edit has been
-      // handed on and the editor is closed: a refresh that was waiting for it
-      // can go ahead.
-      instance.on("cellEdited", () => {
+      // Every way an editor closes: committed, cancelled with Escape, or
+      // cancelled by the lock engaging, which Tabulator reports as a cancel
+      // like any other. Registered after `persist`, so by the time these run
+      // the edit has been handed on and the editor is closed: a refresh that
+      // was waiting for it can go ahead.
+      const closed = (): void => {
         editingRef.current = null;
+        onEditorOpen(false);
         if (labelsStale) {
           refreshLabels();
         }
-      });
-      instance.on("cellEditCancelled", () => {
-        editingRef.current = null;
-        if (labelsStale) {
-          refreshLabels();
-        }
-      });
+      };
+      instance.on("cellEdited", closed);
+      instance.on("cellEditCancelled", closed);
     })();
 
     return () => {
@@ -733,7 +757,7 @@ export function WorkspaceGrid({
       editingRef.current = null;
       instance?.destroy();
     };
-  }, [data, getClient, markChanged, onEditsPending]);
+  }, [data, getClient, markChanged, onEditorOpen, onEditsPending]);
 
   // Only a snapshot can be short of records: a table referring to itself offers
   // the rows on screen, and the note below says so only when there are more of

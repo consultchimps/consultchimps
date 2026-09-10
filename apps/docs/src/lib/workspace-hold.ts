@@ -29,11 +29,28 @@ export interface WorkspaceHoldState {
   readonly importing: boolean;
   /** Cell edits sent to the worker that have not come back. */
   readonly editsInFlight: number;
+  /**
+   * A cell is open for editing.
+   *
+   * Held from the moment the editor opens rather than from the first keystroke,
+   * which is a deliberate choice of the coarser rule. Holding on open cannot
+   * miss a keystroke: there is no event to observe, no editor type to get
+   * wrong, and no editor added later that fires something unexpected. Holding
+   * on the first change would be finer, and being wrong about it loses a draft
+   * with no warning, which is the failure this exists to remove.
+   *
+   * It costs almost nothing, because an editor commits or cancels when it loses
+   * focus, and every click inside the page moves focus before the click is
+   * handled. What it covers is the ways of leaving that never blur anything:
+   * the Back button, and closing or reloading the tab, where the browser's own
+   * warning has to be installed before the leaving starts.
+   */
+  readonly editorOpen: boolean;
 }
 
 /** One thing the workspace holds that no file does. */
 export type WorkspaceHoldReason =
-  "unsavedChanges" | "importing" | "editInFlight";
+  "unsavedChanges" | "importing" | "editInFlight" | "editorOpen";
 
 /**
  * How each reason is worded, once, as a clause that reads inside a sentence.
@@ -58,6 +75,9 @@ const REASON_CLAUSES: Readonly<Record<WorkspaceHoldReason, string>> = {
   // the edit would land, and the workspace holding it would be discarded a
   // moment later without a word.
   editInFlight: "an edit is still being applied",
+  // An edit that has been typed and not committed exists only in an input
+  // element. Nothing has been sent, so nothing else knows about it at all.
+  editorOpen: "a cell is still open for editing",
 };
 
 /**
@@ -82,6 +102,11 @@ export function workspaceHoldReasons(
   }
   if (state.editsInFlight > 0) {
     reasons.push("editInFlight");
+  }
+  // Last, because it is the least far along: the others are work the workspace
+  // or the worker already has, and this is work that is still only on screen.
+  if (state.editorOpen) {
+    reasons.push("editorOpen");
   }
   return reasons;
 }

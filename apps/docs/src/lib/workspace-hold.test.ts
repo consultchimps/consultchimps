@@ -12,6 +12,7 @@ const nothingAtStake: WorkspaceHoldState = {
   unsavedChanges: false,
   importing: false,
   editsInFlight: 0,
+  editorOpen: false,
 };
 
 describe("mustHoldWorkspace", () => {
@@ -51,11 +52,21 @@ describe("mustHoldWorkspace", () => {
     );
   });
 
+  it("holds for a cell that is open for editing", () => {
+    // What is typed and not committed exists only in an input element, so
+    // nothing else knows there is anything to lose. This is held from the
+    // moment the editor opens, which cannot miss a keystroke.
+    expect(mustHoldWorkspace({ ...nothingAtStake, editorOpen: true })).toBe(
+      true,
+    );
+  });
+
   it("holds while any one reason stands, whatever the others say", () => {
     const reasons: ReadonlyArray<keyof WorkspaceHoldState> = [
       "unsavedChanges",
       "importing",
       "editsInFlight",
+      "editorOpen",
     ];
     for (const reason of reasons) {
       const state: WorkspaceHoldState = {
@@ -69,6 +80,7 @@ describe("mustHoldWorkspace", () => {
         unsavedChanges: true,
         importing: true,
         editsInFlight: 2,
+        editorOpen: true,
       }),
     ).toBe(true);
   });
@@ -79,6 +91,35 @@ const CASES: ReadonlyArray<
   readonly [string, WorkspaceHoldState, readonly string[], string]
 > = [
   ["nothing at stake", nothingAtStake, [], ""],
+  [
+    "a cell open for editing alone",
+    { ...nothingAtStake, editorOpen: true },
+    ["editorOpen"],
+    "A cell is still open for editing.",
+  ],
+  [
+    "a cell open for editing over unsaved changes",
+    { ...nothingAtStake, unsavedChanges: true, editorOpen: true },
+    ["unsavedChanges", "editorOpen"],
+    "This workspace has changes that have not been saved to a file and a cell is still open for editing.",
+  ],
+  [
+    "a cell open for editing while another edit is in flight",
+    { ...nothingAtStake, editsInFlight: 1, editorOpen: true },
+    ["editInFlight", "editorOpen"],
+    "An edit is still being applied and a cell is still open for editing.",
+  ],
+  [
+    "all four at once",
+    {
+      unsavedChanges: true,
+      importing: true,
+      editsInFlight: 3,
+      editorOpen: true,
+    },
+    ["unsavedChanges", "importing", "editInFlight", "editorOpen"],
+    "This workspace has changes that have not been saved to a file, an import is still running, an edit is still being applied, and a cell is still open for editing.",
+  ],
   [
     "unsaved changes alone",
     { ...nothingAtStake, unsavedChanges: true },
@@ -116,8 +157,13 @@ const CASES: ReadonlyArray<
     "An import is still running and an edit is still being applied.",
   ],
   [
-    "all three at once",
-    { unsavedChanges: true, importing: true, editsInFlight: 3 },
+    "all three of the sent kinds at once",
+    {
+      ...nothingAtStake,
+      unsavedChanges: true,
+      importing: true,
+      editsInFlight: 3,
+    },
     ["unsavedChanges", "importing", "editInFlight"],
     "This workspace has changes that have not been saved to a file, an import is still running, and an edit is still being applied.",
   ],
@@ -157,6 +203,9 @@ describe("workspaceHoldSentence", () => {
       }
       if (reasons.includes("editInFlight")) {
         expect(sentence).toContain("an edit is still being applied");
+      }
+      if (reasons.includes("editorOpen")) {
+        expect(sentence).toContain("a cell is still open for editing");
       }
     }
   });
