@@ -50,9 +50,11 @@ import {
   sectionClass,
 } from "@/components/tool-kit";
 import type {
-  MarkWorkspaceChanged,
-  ReportOpenEditor,
-  ReportPendingEdits,
+  ReportEditorClosed,
+  ReportEditorOpened,
+  ReportEditSent,
+  ReportEditSettled,
+  ReportGridDetached,
 } from "@/components/workspace-tool";
 import {
   answerFailure,
@@ -79,7 +81,7 @@ import { isConsultChimpsError } from "@consultchimps/core";
 import { RECORD_ID_COLUMN } from "@consultchimps/db";
 import type { CellValue, TableRow } from "@consultchimps/tabular";
 import { Table2 } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type {
   CellComponent,
   ColumnDefinition,
@@ -295,27 +297,32 @@ export interface WorkspaceGridProps {
    */
   readonly getClient: () => WorkspaceClient;
   /**
-   * Whether the shell is holding the workspace still: any lifecycle or import
-   * command is in flight, or a confirmation is waiting for an answer. While it
-   * is, the grid opens no editor, cancels one that is open, and refuses an edit
-   * that commits in the same instant, so a visitor is never invited to make an
-   * edit the worker would refuse and none can slip in between a save's snapshot
-   * and its notice. The grid keeps no notion of busy of its own.
+   * Whether a command is in flight, so the workspace is being held still.
+   * While it is, the grid opens no editor, cancels one that is open, and
+   * refuses an edit that commits in the same instant, so a visitor is never
+   * invited to make an edit the worker would refuse and none can slip in
+   * between a save's snapshot and its notice. The grid keeps no notion of busy
+   * of its own.
+   *
+   * A confirmation waiting for an answer deliberately does not lock: it is an
+   * inline question rather than a modal, and locking for it cancelled the very
+   * editor the question had been raised about, which is #174.
    */
   readonly locked: boolean;
   /**
-   * The shell's single unsaved-changes setter, called once per edit the worker
-   * accepted and never for one it refused. The grid tracks no dirtiness itself.
+   * An edit has been sent to the worker. It is only unsaved once the worker
+   * accepts it, so between sending and the reply the workspace still reads as
+   * clean; this is what lets the shell hold New, Open, and leaving for an edit
+   * that is still on its way. The shell counts them, so the grid keeps no
+   * count of its own.
    */
-  readonly markChanged: MarkWorkspaceChanged;
+  readonly onEditSent: ReportEditSent;
   /**
-   * How many edits have been sent to the worker and not answered. An edit is
-   * only unsaved once it is accepted, so between sending and the reply the
-   * workspace still reads as clean; this is what lets the shell hold New, Open,
-   * and leaving for an edit that is still on its way. It is the shell's guard
-   * that reads it, not a second idea of unsaved kept here.
+   * That edit came back, and whether the worker took it. One report for both,
+   * so the shell marks the workspace unsaved and releases the edit's hold in
+   * one move and the hold cannot lapse between them.
    */
-  readonly onEditsPending: ReportPendingEdits;
+  readonly onEditSettled: ReportEditSettled;
   /**
    * Whether a cell is open for editing. What is typed into an editor and not
    * committed exists only in that input element, so this is the only way the
@@ -323,7 +330,25 @@ export interface WorkspaceGridProps {
    * editor opens, which is coarser than waiting for a keystroke and cannot miss
    * one; see `WorkspaceHoldState`.
    */
-  readonly onEditorOpen: ReportOpenEditor;
+  readonly onEditorOpened: ReportEditorOpened;
+  /**
+   * That editor closed, and whether this grid closed it on its way out.
+   *
+   * A visitor's Escape and a teardown reach Tabulator as the same cancel, and
+   * they mean opposite things to a confirmation waiting for an answer, so the
+   * one thing that can tell them apart says which it was.
+   */
+  readonly onEditorClosed: ReportEditorClosed;
+  /**
+   * The grid is going away, taking whatever it was holding with it.
+   *
+   * Its own report rather than an editor-closed and a zeroed count, because
+   * those are indistinguishable from a visitor pressing Escape, and the shell
+   * has to tell them apart: a teardown caused by the very navigation a
+   * confirmation is standing in front of must not be able to answer it. See the
+   * #174 rule in `lib/workspace-state`.
+   */
+  readonly onDetached: ReportGridDetached;
   /**
    * The workspace as the shell knows it. This is the only place the grid learns
    * which tables it may show and which database they belong to, so a table an
@@ -345,9 +370,11 @@ interface LoadedTable {
 export function WorkspaceGrid({
   getClient,
   locked,
-  markChanged,
-  onEditorOpen,
-  onEditsPending,
+  onDetached,
+  onEditorClosed,
+  onEditorOpened,
+  onEditSent,
+  onEditSettled,
   summary,
 }: WorkspaceGridProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -356,16 +383,6 @@ export function WorkspaceGrid({
   const lockedRef = useRef(locked);
   // The cell whose editor is open, so the lock can close it.
   const editingRef = useRef<CellComponent | null>(null);
-  // Edits sent and not answered. It lives here rather than inside the effect
-  // that builds the grid, so switching tables while one is in flight does not
-  // lose count of it.
-  //
-  // Deliberately not scoped to a generation, unlike everything else here: it
-  // counts commands the worker still owes a reply to, and a command outlives
-  // the workspace it was sent to. Each one releases its own on settling,
-  // whether it was accepted, refused, or refused as stale, so the count comes
-  // back to zero without anything resetting it.
-  const inFlightRef = useRef(0);
   const selectId = useId();
 
   // Which table the visitor picked. A preference, not a fact: which tables exist
@@ -445,23 +462,27 @@ export function WorkspaceGrid({
   // through the same handler a visitor's Escape does. What is left is the page
   // itself going, which reports nothing, and this covers it.
   //
+  // Reported as a detach rather than as an editor closing and a count going to
+  // zero, because the shell has to be able to tell this from a visitor pressing
+  // Escape: a teardown is the navigation's own doing and may not answer the
+  // confirmation that navigation raised.
+  //
   // Deliberately not in the effect that builds the grid, which runs again
   // whenever the rows change. Releasing there would be a second answer to the
   // same question, and the one place the two differ is a rebuild caused by the
   // very navigation the hold exists to guard.
-  useEffect(
-    () => () => {
-      inFlightRef.current = 0;
-      onEditsPending(0);
-      onEditorOpen(false);
-    },
-    [onEditorOpen, onEditsPending],
-  );
+  useEffect(() => () => onDetached(), [onDetached]);
 
   // The lock is a ref so the grid does not have to be rebuilt to honour it, and
   // an effect so an editor already open is closed rather than left to commit
   // after the page has taken its snapshot.
-  useEffect(() => {
+  //
+  // A layout effect, not a passive one: the ref is a mirror of the shell's one
+  // derived answer, not a second opinion about it, and a mirror that updates
+  // after the paint is a mirror that is wrong for a frame. The refusal in
+  // `persist` and the `editable` callback both read it, so a frame of lag is a
+  // frame in which an edit the page has already decided to refuse is accepted.
+  useLayoutEffect(() => {
     lockedRef.current = locked;
     if (locked) {
       // Cancelling dispatches Tabulator's own cancel event, so the editor is
@@ -561,15 +582,6 @@ export function WorkspaceGrid({
       }
     };
 
-    // Tell the shell how many edits are on their way, before the command is
-    // sent and after it is answered. Never clamped below zero, so an edit that
-    // outlives the grid it was made in cannot drive the count negative and
-    // release a hold something else is waiting on.
-    const countInFlight = (delta: number): void => {
-      inFlightRef.current = Math.max(0, inFlightRef.current + delta);
-      onEditsPending(inFlightRef.current);
-    };
-
     // Put a cell back to the last value the database confirmed. A record with
     // no baseline is left alone rather than blanked, so a missing entry could
     // never turn a refusal into data loss.
@@ -622,11 +634,13 @@ export function WorkspaceGrid({
       const raw = cell.getValue() as CellValue | undefined;
       const value: CellValue = raw === "" || raw === undefined ? null : raw;
 
-      // Counted before the command is posted, and while still inside the event
+      // Reported before the command is posted, and while still inside the event
       // that committed the edit. The editor commits on blur, so a click on New
       // or Open is what commits the edit it is about to replace, and the shell
       // has to be holding by the time that click is handled.
-      countInFlight(1);
+      onEditSent();
+      // What became of it, for the one report that settles it below.
+      let accepted = false;
       void client
         .updateCell({
           // The workspace these rows came from. The worker refuses the edit if
@@ -659,11 +673,10 @@ export function WorkspaceGrid({
             ),
           );
           // The worker took it, so the workspace differs from its file. The
-          // shell owns that flag; this is the one place the grid touches it, and
-          // only here, after the reply, never on the way out. A refused edit
-          // falls to the catch below and marks nothing. No summary is passed:
-          // an edit changes what a table holds, not which tables exist.
-          markChanged();
+          // shell owns that flag; the grid only says what happened, and only
+          // here, after the reply, never on the way out. A refused edit falls
+          // to the catch below and settles as refused.
+          accepted = true;
         })
         .catch((caught: unknown) => {
           // Against the cell it was about, which is what stops the next
@@ -679,10 +692,11 @@ export function WorkspaceGrid({
           );
         })
         .finally(() => {
-          // Released whatever became of it, and after the branches above: an
-          // accepted edit has already marked the workspace unsaved, so the
-          // shell's hold never lapses between the two reasons for it.
-          countInFlight(-1);
+          // One report for both outcomes, after the branches above have said
+          // which it was. The shell marks the workspace unsaved and releases
+          // this edit's hold in the one move, so the hold never lapses between
+          // the two reasons for it.
+          onEditSettled(accepted);
           if (destroyed || latest.get(key) !== mine) {
             return;
           }
@@ -734,16 +748,31 @@ export function WorkspaceGrid({
       // already open rather than let it commit after the page has moved on.
       instance.on("cellEditing", (cell: CellComponent) => {
         editingRef.current = cell;
-        onEditorOpen(true);
+        onEditorOpened();
       });
-      // Every way an editor closes: committed, cancelled with Escape, or
-      // cancelled by the lock engaging, which Tabulator reports as a cancel
-      // like any other. Registered after `persist`, so by the time these run
-      // the edit has been handed on and the editor is closed: a refresh that
-      // was waiting for it can go ahead.
+      // Every way an editor closes: committed, cancelled with Escape, cancelled
+      // by the lock engaging, and this grid being destroyed, all of which
+      // Tabulator reports as a cancel alike. Registered after `persist`, so by
+      // the time these run the edit has been handed on and the editor is
+      // closed: a refresh that was waiting for it can go ahead.
+      //
+      // `destroyed` is what separates the last of those from the rest, and it
+      // is why the report carries it. An editor that went because this grid was
+      // torn down is the navigation's own doing and may not answer a standing
+      // confirmation; a visitor's Escape is an answer. Only the grid knows
+      // which happened, so only the grid can say. See the #174 rule in
+      // `lib/workspace-state`.
+      //
+      // A rebuild for new rows destroys the instance too, and reports the same
+      // cause, which is deliberate but not free: the draft really has gone, so a
+      // question standing over it would go on naming a cell that is no longer
+      // there. It cannot arise as things stand, because every change of rows
+      // comes from a command, and a command voids the drafts on its way through.
+      // Splitting the two would need this grid to know it is unmounting, which
+      // is the one thing this cleanup cannot tell.
       const closed = (): void => {
         editingRef.current = null;
-        onEditorOpen(false);
+        onEditorClosed(destroyed);
         if (labelsStale) {
           refreshLabels();
         }
@@ -757,7 +786,14 @@ export function WorkspaceGrid({
       editingRef.current = null;
       instance?.destroy();
     };
-  }, [data, getClient, markChanged, onEditorOpen, onEditsPending]);
+  }, [
+    data,
+    getClient,
+    onEditorClosed,
+    onEditorOpened,
+    onEditSent,
+    onEditSettled,
+  ]);
 
   // Only a snapshot can be short of records: a table referring to itself offers
   // the rows on screen, and the note below says so only when there are more of

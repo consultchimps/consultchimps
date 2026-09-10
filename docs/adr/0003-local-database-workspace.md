@@ -224,6 +224,151 @@ always use the generated identifier; existing domain codes live in ordinary
 columns and are not made the key, which keeps one identity mechanism to reason
 about.
 
+## Decision 9: the workspace page state model
+
+The workspace page has four ways of losing work (New, Open, a link out of the
+page, and the Back button), four reasons to hold on to it (unsaved changes, an
+import in flight, a cell edit in flight, a cell open for editing), one worker
+that runs one command at a time, and an inline confirmation standing in front of
+all of it. Build items 4 and 5 grew those a piece at a time, and nearly every
+review finding across them was the same shape: a guard keyed on one condition
+when the invariant spanned several, or bookkeeping consumed on one path only.
+Issue #174 is the first where no single piece was wrong on its own. A Back press
+with a cell open for editing raised the confirmation, the confirmation locked
+the grid, the lock cancelled the editor, the cancel released the hold, and the
+rule that a question must not outlive its reason then dismissed the question the
+navigation itself had raised. The draft went with no warning.
+
+**Decision: one explicit state model for the page, as a pure reducer with a
+total transition table, with every guard and every sentence derived from the
+state and from nothing else.** It lives in
+`apps/docs/src/lib/workspace-state.ts` and is the opener of the Excel-grade grid
+work, which adds interactions to a page whose states must already be written
+down.
+
+### The state
+
+The state is one record. Its tag is `activity`, which says which single command
+is in flight: `ready`, `creating`, `opening`, `reading` (describing a chosen
+import file), `importing`, or `saving` (carrying the mode the visitor asked
+for). A seventh, `leaving`, is not a command but the page on its way out once
+the visitor has answered for the workspace: the browser's own warning and the
+Back guard's spare entry both stand down there, which is the whole of what that
+answer does, so a reply landing during the navigation cannot put the warning
+back or push an entry into a page that is already going. Such a reply is still
+answered rather than dropped, and what the workspace holds is untouched, so the
+reasons stay the one honest account of what is at stake. It is idle in every
+other respect, and anything the visitor does ends it: a navigation the router
+resolves back to this same route never unmounts the page, and a page left
+disabled there would be a live workspace nobody could save. Nothing about the
+workspace is rewritten on the way out either. What changes is that a page the
+visitor has answered for holds nothing, so an unsaved workspace is still unsaved
+if the page turns out to be staying or is handed back from the browser's cache,
+rather than reading as saved when it is not.
+
+The rest is data on the state: the held workspace (its summary, the file it came
+from, and whether it has changes no file has) or null for closed; whether a cell
+is open for editing; how many cell edits are in flight; the pending question;
+how many spare history entries the Back guard is holding; and the one thing the
+page has to say, as a notice or a failure.
+
+Three of those placements were argued rather than assumed.
+
+The pending confirmation is data, not an activity of its own, because it
+composes with one: a link clicked while an import runs is held, and the import
+goes on running underneath the question until it lands, which the page's own
+tests pin. It carries the intent that raised it and the reasons that were at
+stake when it was raised.
+
+The spare history entries are state rather than a derived answer, because what
+the page believes about history has to come from what happened to history. A
+save clears the hold and cannot remove an entry the browser already holds, so
+the count outlives its reason and moves only on a real history event.
+
+The File System Access handle stays outside the state, as a ref. It is an opaque
+browser object, no answer is derived from it, and where a save actually landed
+is reported back as an event.
+
+### The transition
+
+`workspaceStep(state, event)` returns the next state and, where the page must go
+and do something, one described effect: create, run the open picker, save, leave
+(retiring the spare entries), push a spare history entry, or take over a click.
+Describing the effects rather than performing them is what keeps the model pure
+and puts the navigation guards in the table where a test can read them.
+
+The table is total. Every event is answered in every activity, and where an
+event cannot arrive (a worker reply for a command that is not running) or is
+deliberately refused (a stale click on a disabled button, a second command while
+one is in flight), the state is returned unchanged and by identity. There is no
+fall-through and no implicit case: the review findings this model replaces all
+lived in the gaps of a table nobody had written down, so the table being total
+is the deliverable, and a unit test crosses every activity with every event to
+keep it that way.
+
+### The derived answers
+
+Whether editing is locked, whether the page is holding and for which reasons,
+whether the browser's own unload warning is installed, whether a spare history
+entry should be armed, which buttons are live, which one shows a spinner, what
+the confirmation says, and the busy value the import section reads are all
+functions of the state. No component may compute any of them from anything else:
+a condition worked out in a component is a second reading of a state that
+already has one, and two readings drift. The reasons and their wording stay in
+`workspace-hold.ts`, which the model projects the state into.
+
+### The rule from #174
+
+A pending confirmation is answered by the visitor, or by an event that removes
+all of its reasons from outside the navigation. It is never answered by a side
+effect of the navigation that raised it. Two halves make that true.
+
+Structurally, editing is locked by the activity alone. A standing question does
+not lock the grid, so the model never commands an editor closed while a question
+is up, and an editor that closes then can only be the visitor's own doing. That
+removes the cause rather than special-casing the Back button.
+
+Explicitly, a question is dismissed only by the event that took its last live
+reason away, and only when that event was not a teardown. A teardown is the grid
+unmounting, which is now its own reported event rather than the zeroed counts it
+used to report; an editor the grid closed on its way out, which it reports as
+such because Tabulator cannot tell a destroyed instance from a visitor's Escape
+and only the grid knows which happened; or an editor closing while editing was
+locked, which is a close the model asked for. Once a teardown has taken the
+reasons, no later event can take a last one away either, so only the visitor can
+answer. What the question says then falls back to the reasons captured when it
+was raised, because a teardown takes the bookkeeping away without making the
+work safe.
+
+The dismissal reads the live reasons rather than the captured ones. A link held
+while an import runs, where the import then lands, has a captured set that is
+empty and a workspace that is now unsaved: dismissing there would leave the
+visitor on the page with work at stake and a click that silently did nothing.
+The case that must still dismiss, an import that fails under a question raised
+by a held link, does, because a worker reply is an answer from outside.
+
+### Consequences
+
+- Editing is not locked while a confirmation stands, so an open editor survives
+  the question. That is the #174 fix.
+- Confirming a leave releases every reason to hold, not the unsaved flag alone,
+  so the browser's own warning does not ask a second time, in its own words, for
+  the navigation the visitor has just approved. Released where the guards are
+  asked, not by rewriting what the workspace holds, so the facts stay true
+  underneath.
+- A Back press that finds a spare entry with nothing at stake retires what is
+  left and lets the navigation through, rather than being spent on nothing. A
+  press that appears to do nothing is the dead press the link guard already
+  refuses to leave behind.
+- The page has one announcement slot rather than a notice and a failure that
+  each cleared the other.
+- Save as spins its own button rather than the one beside it, because the saving
+  activity carries the mode it was asked for and the spinner is derived from the
+  whole of it.
+- Later build items add states and events to this table rather than flags beside
+  it. The OPFS autosave mirror of decision 1 brings its own (mirroring, a
+  recovery offered, a conflict) and is designed with the item that builds it.
+
 ## Deferred decisions
 
 Settled when the build item that needs them is designed, so each can be

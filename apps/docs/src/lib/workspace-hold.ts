@@ -124,7 +124,20 @@ export function mustHoldWorkspace(state: WorkspaceHoldState): boolean {
  * yet and the badge that means exactly that is not showing.
  */
 export function workspaceHoldHeading(state: WorkspaceHoldState): string {
-  return workspaceHoldReasons(state).includes("unsavedChanges")
+  return workspaceHoldHeadingFor(workspaceHoldReasons(state));
+}
+
+/**
+ * The same heading, over reasons that are already in hand.
+ *
+ * A standing confirmation keeps the reasons it was raised about, so that a
+ * teardown which takes the bookkeeping away cannot leave the question with
+ * nothing to say. See `questionView` in `workspace-state`.
+ */
+export function workspaceHoldHeadingFor(
+  reasons: readonly WorkspaceHoldReason[],
+): string {
+  return reasons.includes("unsavedChanges")
     ? "Unsaved changes"
     : "Work not saved yet";
 }
@@ -136,9 +149,14 @@ export function workspaceHoldHeading(state: WorkspaceHoldState): string {
  * mentioned one of them would be describing half of what is at stake.
  */
 export function workspaceHoldSentence(state: WorkspaceHoldState): string {
-  const clauses = workspaceHoldReasons(state).map(
-    (reason) => REASON_CLAUSES[reason],
-  );
+  return workspaceHoldSentenceFor(workspaceHoldReasons(state));
+}
+
+/** The same sentence, over reasons that are already in hand. */
+export function workspaceHoldSentenceFor(
+  reasons: readonly WorkspaceHoldReason[],
+): string {
+  const clauses = reasons.map((reason) => REASON_CLAUSES[reason]);
   const [first, ...rest] = clauses;
   if (first === undefined) {
     return "";
