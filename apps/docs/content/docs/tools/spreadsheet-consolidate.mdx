@@ -196,6 +196,14 @@ and row. Neither is converted, for two different reasons:
   coercion. Drop the coercion for that canonical column and the value carries
   through.
 
+A date Excel stores is a calendar moment with no time zone on it, and it is
+written out as one: the same workbook produces the same text on a machine set to
+UTC, to UTC+4, or to UTC-7. That was not always true. Up to and including
+version 0.12.0 the reader turned such a date into a JavaScript date and the
+document model assembled one in the host's time zone, so a split named its
+date-valued outputs after a different calendar day in every zone, and east of
+UTC that day was the one before the one in the cell.
+
 ### Draft a mapping from the headers you have
 
 `--suggest-map` writes a draft mapping built from the headers the run read,

@@ -13,6 +13,7 @@ import {
   buildCorpusWorkbook,
   calcChainReferences,
   conditionalFormattingSqref,
+  CORPUS_IMPLICIT_ROW,
   CORPUS_PARTS,
   CORPUS_SHEET,
   dataValidationSqref,
@@ -20,6 +21,7 @@ import {
   mergedCellReferences,
   readPackagePart,
   worksheetCellFormula,
+  worksheetCellReferences,
   worksheetCellValue,
   worksheetRowNumbers,
 } from "./corpus/fixtures.js";
@@ -264,6 +266,95 @@ describe("model: relocating an Excel Table's rows", () => {
 
     expect(tableXml).toContain('ref="A3:F10"');
     expect(report.adjusted.tableRefs).toBe(0);
+  });
+
+  it("keeps a row that carries no number where it was", async () => {
+    // The format leaves `r` optional on both `<row>` and `<c>`: such a row sits
+    // where document order puts it. The model infers the position and writes it
+    // back, because an implicit position is only true of the document it was
+    // read from - once the rows above it move, the same bytes mean a different
+    // row. This asserts the SERIALISED tag, not the parsed model: a write back
+    // that produced the right number in memory and left the attribute off the
+    // output would move this row four rows up in Excel and say nothing.
+    const source = await buildCorpusWorkbook({
+      shape: "table",
+      formulas: "structured",
+      implicitRow: true,
+    });
+    const model = await WorkbookModel.load(source);
+    const table = model.tableDefinitions[0]!;
+
+    // The table compacts onto rows 4 to 7; nothing below it is asked to move.
+    model.relocateRows(
+      CORPUS_SHEET,
+      RowRelocation.explicit([
+        [4, 4],
+        [5, null],
+        [6, 5],
+        [7, null],
+        [8, null],
+        [9, 6],
+        [10, 7],
+      ]),
+      [table],
+    );
+    const dataXml = await readPackagePart(
+      await model.save(),
+      CORPUS_PARTS.dataSheet,
+    );
+
+    expect(worksheetRowNumbers(dataXml)).toEqual([
+      1,
+      3,
+      4,
+      5,
+      6,
+      7,
+      CORPUS_IMPLICIT_ROW,
+      12,
+    ]);
+    // Its cells carry their references too, for the same reason.
+    expect(worksheetCellReferences(dataXml)).toContain(
+      `A${CORPUS_IMPLICIT_ROW}`,
+    );
+    expect(worksheetCellReferences(dataXml)).toContain(
+      `B${CORPUS_IMPLICIT_ROW}`,
+    );
+    expect(worksheetCellValue(dataXml, `B${CORPUS_IMPLICIT_ROW}`)).toBe("1");
+  });
+
+  it("moves a row that carries no number, and says where it went", async () => {
+    const source = await buildCorpusWorkbook({
+      shape: "table",
+      formulas: "structured",
+      implicitRow: true,
+    });
+    const model = await WorkbookModel.load(source);
+    const table = model.tableDefinitions[0]!;
+
+    // The same compaction, with the implicit row asked to follow the table up.
+    model.relocateRows(
+      CORPUS_SHEET,
+      RowRelocation.explicit([
+        [4, 4],
+        [5, null],
+        [6, 5],
+        [7, null],
+        [8, null],
+        [9, 6],
+        [10, 7],
+        [CORPUS_IMPLICIT_ROW, 8],
+      ]),
+      [table],
+    );
+    const dataXml = await readPackagePart(
+      await model.save(),
+      CORPUS_PARTS.dataSheet,
+    );
+
+    expect(worksheetRowNumbers(dataXml)).toEqual([1, 3, 4, 5, 6, 7, 8, 12]);
+    expect(worksheetCellReferences(dataXml)).toContain("A8");
+    expect(worksheetCellValue(dataXml, "B8")).toBe("1");
   });
 
   it("refuses a relocation that would reorder rows", async () => {

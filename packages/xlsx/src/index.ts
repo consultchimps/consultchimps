@@ -40,9 +40,19 @@ import {
 } from "./bytes.js";
 
 import { XLSX_ERRORS } from "./errors.js";
+import { WorkbookRead } from "./operations/read-model.js";
+import {
+  readWorksheetReports,
+  type WorksheetImportReport,
+} from "./operations/worksheets.js";
+
+// The worksheet report types beside the file surface that returns them, so a
+// caller of readWorkbookWorksheets can name its result from the same entry
+// point; the byte surface exports the same three.
+export type { WorksheetImportReport } from "./operations/worksheets.js";
+export type { WorksheetRegion, WorksheetTableReport } from "./shared.js";
 import {
   describeWorkbookModel,
-  loadWorkbookModelForDescribe,
   MAX_COLUMN_SAMPLE_VALUES,
   type DescribeWorkbookMetric,
   type DescribeWorkbookOptions,
@@ -81,6 +91,7 @@ import {
   MERGE_OPERATION,
   parseExcelTableDefinitions,
   parseWorkbookBytes,
+  readWorkbookDates,
   preservedSplitTemplateBytes,
   refuseMappingWithSuggestion,
   resolveSplitSource,
@@ -344,8 +355,34 @@ export async function readWorkbookTables(
   options: ReadWorkbookOptions = {},
 ): Promise<Table[]> {
   const absolutePath = path.resolve(filePath);
-  const { workbook } = await readWorkbookFile(absolutePath);
-  return workbookTables(workbook, path.basename(absolutePath), options);
+  const { bytes, workbook } = await readWorkbookFile(absolutePath);
+  return workbookTables(
+    workbook,
+    await readWorkbookDates(bytes, absolutePath, { filePath: absolutePath }),
+    path.basename(absolutePath),
+    options,
+  );
+}
+
+/**
+ * Read every visible worksheet that holds data, with the rectangle each read
+ * covered and the cells in it holding a formula the workbook carries no
+ * calculated value for.
+ *
+ * `readWorkbookTables` is this list with the tables taken out of it. The file
+ * twin of `readWorkbookWorksheetsBytes`: both adapt their input and hand the
+ * same operation the same bytes, so neither can answer differently.
+ */
+export async function readWorkbookWorksheets(
+  filePath: string,
+  options: ReadWorkbookOptions = {},
+): Promise<WorksheetImportReport[]> {
+  const absolutePath = path.resolve(filePath);
+  return readWorksheetReports(
+    await readWorkbookBytes(absolutePath),
+    path.basename(absolutePath),
+    options,
+  );
 }
 
 export async function readWorksheetRecords(
@@ -353,10 +390,14 @@ export async function readWorksheetRecords(
   options: ReadWorksheetRecordsOptions,
 ): Promise<WorksheetRecords> {
   const absolutePath = path.resolve(filePath);
-  const { workbook } = await readWorkbookFile(absolutePath, {
+  const { bytes, workbook } = await readWorkbookFile(absolutePath, {
     cellText: true,
   });
-  return workbookWorksheetRecords(workbook, options);
+  return workbookWorksheetRecords(
+    workbook,
+    await readWorkbookDates(bytes, absolutePath, { filePath: absolutePath }),
+    options,
+  );
 }
 
 export async function readWorkbookExcelTables(
@@ -370,6 +411,7 @@ export async function readWorkbookExcelTables(
   });
   return workbookExcelTables(
     workbook,
+    await readWorkbookDates(bytes, absolutePath, { filePath: absolutePath }),
     definitions,
     path.basename(absolutePath),
     options,
@@ -381,10 +423,15 @@ export async function readWorkbookNamedRanges(
   options: ReadWorkbookNamedRangesOptions = {},
 ): Promise<WorkbookNamedRange[]> {
   const absolutePath = path.resolve(filePath);
-  const { workbook } = await readWorkbookFile(absolutePath, {
+  const { bytes, workbook } = await readWorkbookFile(absolutePath, {
     cellText: true,
   });
-  return workbookNamedRanges(workbook, path.basename(absolutePath), options);
+  return workbookNamedRanges(
+    workbook,
+    await readWorkbookDates(bytes, absolutePath, { filePath: absolutePath }),
+    path.basename(absolutePath),
+    options,
+  );
 }
 
 /**
@@ -408,12 +455,11 @@ export async function describeWorkbook(
   // caring, and a large valid workbook would be loaded in full for nothing.
   throwIfAborted(options.signal, INSPECT_OPERATION);
   const absolutePath = path.resolve(filePath);
-  const workbook = await loadWorkbookModelForDescribe(
-    await readWorkbookBytes(absolutePath),
-    absolutePath,
-    { filePath: absolutePath },
-  );
-  return describeWorkbookModel(workbook, path.basename(absolutePath), options);
+  const read = await WorkbookRead.load(await readWorkbookBytes(absolutePath), {
+    source: absolutePath,
+    details: { filePath: absolutePath },
+  });
+  return describeWorkbookModel(read, path.basename(absolutePath), options);
 }
 
 export async function writeTable(

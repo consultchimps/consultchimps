@@ -61,7 +61,7 @@ describe("WorkspaceClient.terminate", () => {
   it("fails queued commands without starting a worker again", async () => {
     const client = new WorkspaceClient();
     const pending = client.create();
-    const queued = client.listTables();
+    const queued = client.readTable("Customer", 1);
     await settle();
     expect(SilentWorker.created).toHaveLength(1);
 

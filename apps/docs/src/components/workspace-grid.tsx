@@ -34,11 +34,12 @@
 import "tabulator-tables/dist/css/tabulator.min.css";
 
 import { describeFailure, sectionClass } from "@/components/tool-kit";
+import type { MarkWorkspaceChanged } from "@/components/workspace-tool";
 import {
   WORKSPACE_STALE_READ,
   type WorkspaceColumn,
+  type WorkspaceSummary,
   type WorkspaceTable,
-  type WorkspaceTables,
 } from "@/lib/workspace-protocol";
 import type { WorkspaceClient } from "@/lib/workspace-worker";
 import { isConsultChimpsError } from "@consultchimps/core";
@@ -188,32 +189,45 @@ export interface WorkspaceGridProps {
    */
   readonly getClient: () => WorkspaceClient;
   /**
-   * Whether the page is in the middle of a workspace command (new, open, or
-   * save). While it is, the grid refuses to open an editor and cancels one that
-   * is open, so a visitor is never invited to make an edit that the worker would
-   * refuse, and no edit can slip in between a save's snapshot and its notice.
+   * Whether the shell is holding the workspace still: any lifecycle or import
+   * command is in flight, or a confirmation is waiting for an answer. While it
+   * is, the grid opens no editor, cancels one that is open, and refuses an edit
+   * that commits in the same instant, so a visitor is never invited to make an
+   * edit the worker would refuse and none can slip in between a save's snapshot
+   * and its notice. The grid keeps no notion of busy of its own.
    */
   readonly locked: boolean;
+  /**
+   * The shell's single unsaved-changes setter, called once per edit the worker
+   * accepted and never for one it refused. The grid tracks no dirtiness itself.
+   */
+  readonly markChanged: MarkWorkspaceChanged;
   /** Where a refusal is shown. Called with null once an edit succeeds. */
   readonly onError: (message: string | null) => void;
+  /**
+   * The workspace as the shell knows it. This is the only place the grid learns
+   * which tables it may show and which database they belong to, so a table an
+   * import has just created appears here the moment the shell hears about it,
+   * and the generation the worker checks can never disagree with the listing.
+   */
+  readonly summary: WorkspaceSummary;
 }
 
-/** What the last completed read produced, and which table it was for. */
+/** What the last completed read produced, and what it was a read of. */
 interface LoadedTable {
   readonly table: string;
+  /** The workspace it came from, so a read of a replaced one is recognised. */
+  readonly generation: number;
   /** The table, or null when the read was refused. */
   readonly data: WorkspaceTable | null;
 }
 
-/**
- * Mount this with a key that changes whenever a workspace is created or opened.
- * Every piece of state here belongs to one database, so a new one gets a new
- * component rather than a reset path that has to remember each field.
- */
 export function WorkspaceGrid({
   getClient,
   locked,
+  markChanged,
   onError,
+  summary,
 }: WorkspaceGridProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   // Read by Tabulator's editable callback whenever an editor is about to open,
@@ -223,61 +237,43 @@ export function WorkspaceGrid({
   const editingRef = useRef<CellComponent | null>(null);
   const selectId = useId();
 
-  const [workspace, setWorkspace] = useState<WorkspaceTables | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
+  // Which table the visitor picked. A preference, not a fact: which tables exist
+  // is the summary's answer, and this is honoured only while it names one.
+  const [chosen, setChosen] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<LoadedTable | null>(null);
 
-  const tables = workspace?.tables ?? null;
+  const generation = summary.generation;
+  // The one table listing. An import adds to it and a new workspace replaces it,
+  // without the grid asking anyone a second time.
+  const tables = summary.tables.map((table) => table.name);
+  // Derived, not stored: a pick the workspace no longer has (a different file
+  // was opened) falls back to the first, with no reset path to remember.
+  const selected =
+    chosen !== null && tables.includes(chosen) ? chosen : (tables[0] ?? null);
 
-  // Which tables the workspace holds. Read once: this component belongs to one
-  // database, and no path in this page adds or drops a table.
+  // The selected table's columns and rows, re-read whenever the workspace moves
+  // on: a create, an open, and an import all move the generation, and an import
+  // can have added rows to the very table on screen.
   useEffect(() => {
-    let cancelled = false;
-    void getClient()
-      .listTables()
-      .then((listing) => {
-        if (cancelled) {
-          return;
-        }
-        setWorkspace(listing);
-        setSelected(listing.tables[0] ?? null);
-      })
-      .catch((caught: unknown) => {
-        if (cancelled) {
-          return;
-        }
-        setWorkspace({ generation: 0, tables: [] });
-        onError(describeFailure(caught));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [getClient, onError]);
-
-  // The selected table's columns and rows. The reply records which table it was
-  // for, so one that arrives after the visitor switched away is recognised as
-  // stale below rather than rendered under the wrong heading.
-  useEffect(() => {
-    if (workspace === null || selected === null) {
+    if (selected === null) {
       return;
     }
-    const generation = workspace.generation;
     let cancelled = false;
     void getClient()
       .readTable(selected, generation)
       .then((table) => {
         if (!cancelled) {
-          setLoaded({ table: selected, data: table });
+          setLoaded({ table: selected, generation, data: table });
         }
       })
       .catch((caught: unknown) => {
         if (cancelled) {
           return;
         }
-        setLoaded({ table: selected, data: null });
-        // A read refused because the workspace was replaced is not something to
-        // report: the page has already opened another one, and this component is
-        // being replaced along with it. Anything else is a real failure.
+        setLoaded({ table: selected, generation, data: null });
+        // A read refused because the workspace moved on is not worth reporting:
+        // a newer summary is already on its way here with the read that replaces
+        // this one. Anything else is a real failure.
         if (
           isConsultChimpsError(caught) &&
           caught.code === WORKSPACE_STALE_READ
@@ -289,7 +285,7 @@ export function WorkspaceGrid({
     return () => {
       cancelled = true;
     };
-  }, [getClient, onError, selected, workspace]);
+  }, [generation, getClient, onError, selected]);
 
   // The lock is a ref so the grid does not have to be rebuilt to honour it, and
   // an effect so an editor already open is closed rather than left to commit
@@ -305,9 +301,12 @@ export function WorkspaceGrid({
   // Derived rather than stored, so switching tables needs no state reset: the
   // grid shows a table only while it is the selected one, and is reading until
   // an answer for that table has come back.
-  const showing = loaded !== null && loaded.table === selected;
+  const showing =
+    loaded !== null &&
+    loaded.table === selected &&
+    loaded.generation === generation;
   const data = showing ? loaded.data : null;
-  const loading = tables === null || (selected !== null && !showing);
+  const loading = selected !== null && !showing;
 
   // Build the grid for the table now loaded, and tear it down when the table
   // changes or the component unmounts.
@@ -398,6 +397,12 @@ export function WorkspaceGrid({
           if (row !== undefined) {
             row[column] = stored;
           }
+          // The worker took it, so the workspace differs from its file. The
+          // shell owns that flag; this is the one place the grid touches it, and
+          // only here, after the reply, never on the way out. A refused edit
+          // falls to the catch below and marks nothing. No summary is passed:
+          // an edit changes what a table holds, not which tables exist.
+          markChanged();
           onError(null);
         })
         .catch((caught: unknown) => {
@@ -469,7 +474,7 @@ export function WorkspaceGrid({
       editingRef.current = null;
       instance?.destroy();
     };
-  }, [data, getClient, onError]);
+  }, [data, getClient, markChanged, onError]);
 
   const truncated =
     data?.columns.filter((column) => column.referencesTruncated) ?? [];
@@ -484,7 +489,7 @@ export function WorkspaceGrid({
           />
           <h2 className="text-xl font-bold tracking-[-0.03em]">Records</h2>
         </div>
-        {tables !== null && tables.length > 0 ? (
+        {tables.length > 0 ? (
           <label className="flex items-center gap-2 text-sm" htmlFor={selectId}>
             Table
             <select
@@ -492,7 +497,7 @@ export function WorkspaceGrid({
               data-testid="workspace-table-select"
               disabled={locked}
               id={selectId}
-              onChange={(event) => setSelected(event.target.value)}
+              onChange={(event) => setChosen(event.target.value)}
               value={selected ?? ""}
             >
               {tables.map((name) => (
@@ -505,7 +510,7 @@ export function WorkspaceGrid({
         ) : null}
       </div>
 
-      {tables !== null && tables.length === 0 ? (
+      {tables.length === 0 ? (
         <p
           className="mt-4 text-sm text-fd-muted-foreground"
           data-testid="workspace-grid-empty"

@@ -19,9 +19,6 @@ const BUILTIN_DATE_FORMAT_IDS = new Set([
   14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47,
 ]);
 
-/** Milliseconds in one day, the unit an Excel serial counts. */
-const MILLISECONDS_PER_DAY = 86_400_000;
-
 /**
  * Whether a custom format code describes a date or a time. Quoted literals and
  * bracketed sections are removed first so `0.00" months"` and `[$-409]` do not
@@ -95,31 +92,4 @@ export class StyleTable {
     const custom = this.#customFormatCodes.get(formatId);
     return custom === undefined ? false : isDateFormatCode(custom);
   }
-}
-
-/**
- * Convert an Excel date serial to a `Date`.
- *
- * The components are assembled in local time, matching what the spreadsheet
- * reader the split engine used to call handed back. Group keys derive from
- * `toISOString()`, so changing the construction here would silently rename
- * every date-valued output workbook.
- */
-export function excelSerialToDate(serial: number, date1904: boolean): Date {
-  const epoch = date1904
-    ? Date.UTC(1904, 0, 1)
-    : // The 1900 system counts a day that never existed (29 February 1900),
-      // which an epoch of 30 December 1899 absorbs for every later serial.
-      Date.UTC(1899, 11, 30);
-  const instant = new Date(epoch + Math.round(serial * MILLISECONDS_PER_DAY));
-
-  return new Date(
-    instant.getUTCFullYear(),
-    instant.getUTCMonth(),
-    instant.getUTCDate(),
-    instant.getUTCHours(),
-    instant.getUTCMinutes(),
-    instant.getUTCSeconds(),
-    instant.getUTCMilliseconds(),
-  );
 }

@@ -26,6 +26,14 @@ import {
   readExcelTableDefinitions,
 } from "./excel-tables.js";
 import { XLSX_ERRORS } from "./errors.js";
+import {
+  calendarIsoText,
+  isComponentsInRange,
+  utcCalendarParts,
+} from "./model/calendar.js";
+import type { WorkbookModel } from "./model/index.js";
+import type { WorksheetModel } from "./model/types.js";
+import { WorkbookRead } from "./operations/read-model.js";
 import { preserveWorkbookWithFilteredExcelTable } from "./preserve-table-split.js";
 import type { AllWorksheetSplitMetric } from "./split/all-worksheet.js";
 import { splitOutputFilenames } from "./split/names.js";
@@ -177,10 +185,11 @@ function tableSourceRowNumber(table: Table, index: number): number {
 
 /**
  * The exact shape `cellToPrimitive` writes for a cell the workbook stores as a
- * real date, and nothing a person types into a cell: the reader parses with
- * `cellDates`, so such a cell arrives as a JavaScript date rendered in full ISO
- * 8601. Matching it is how a date coercion can tell "the workbook already holds
- * this as a date" from ordinary text it should try to parse.
+ * real date, and nothing a person types into a cell: `workbookDateText` writes
+ * the full ISO 8601 timestamp for every such cell, whether or not it carries a
+ * time. Matching it is how a date coercion can tell "the workbook already holds
+ * this as a date" from ordinary text it should try to parse, which is also why
+ * the shape stays one shape.
  */
 const WORKBOOK_DATE_TEXT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 
@@ -430,6 +439,36 @@ export interface WorkbookExcelTable extends Table {
   excelTableRange: string;
 }
 
+/**
+ * The rectangle a worksheet read actually covered: the header row it keyed on
+ * and the rows and columns it took values from, all one-based except the
+ * columns, which are zero-based as everywhere else in this package.
+ *
+ * It travels with the table so that anything asking a further question about
+ * the same read asks it about the same rectangle. The alternative, resolving
+ * the region a second time somewhere else, is how two answers about one
+ * worksheet start disagreeing.
+ */
+export interface WorksheetRegion {
+  readonly headerRow: number;
+  readonly lastRow: number;
+  readonly startColumn: number;
+  readonly endColumn: number;
+}
+
+/** One worksheet as the table reader saw it, whether or not it yielded a table. */
+export interface WorksheetTableReport {
+  /** The worksheet this came from. */
+  sheet: string;
+  /**
+   * The table, or undefined when the worksheet holds no header row with rows of
+   * values under it, which is the condition `workbookTables` filters on.
+   */
+  table: Table | undefined;
+  /** The rectangle the table was read from, absent when there is no table. */
+  region: WorksheetRegion | undefined;
+}
+
 export interface WorkbookNamedRange extends Table {
   rangeName: string;
   rangeRef: string;
@@ -454,7 +493,12 @@ export function parseWorkbookBytes(
 ): XLSX.WorkBook {
   try {
     return XLSX.read(workbookBytes, {
-      cellDates: true,
+      // The serial is kept rather than turned into a `Date`. A `Date` has a
+      // local face as well as a UTC one, and which of them is the workbook's
+      // depends on how the engine composed it, so text built from one is text
+      // built on somebody else's convention. Which cells are dates, and what
+      // they hold, is the document model's answer: see `WorkbookDates`.
+      cellDates: false,
       cellText: options.cellText ?? false,
       dense: false,
       type: "array",
@@ -494,27 +538,218 @@ export async function parseExcelTableDefinitions(
   }
 }
 
-function cellToPrimitive(cell: XLSX.CellObject | undefined): CellValue {
+/**
+ * What a worksheet holds in the cells it declares or formats as dates, read
+ * from the document model.
+ *
+ * The engine cannot answer this. A worksheet may say a cell is a date in two
+ * ways: by wearing a date number format, or by declaring `t="d"` and writing
+ * ISO 8601 text. Reading with `cellDates` off, which is what keeps a serial a
+ * serial, turns the second kind into a plain number and drops the declaration
+ * entirely: measured on this engine, `<c t="d"><v>2024-01-01</v></c>` arrives
+ * as the number 45292 with no field left saying what it was. So the reader
+ * asked the style alone, and an unstyled date cell became an integer, in the
+ * table and in the schema an import inferred from it. Reading with `cellDates`
+ * on keeps the declaration but hands back the engine's own parse of the text,
+ * which remaps a year of 0099 to 1999 and normalises a month of 13 into
+ * January of the next year: two defects the model refuses.
+ *
+ * So the model answers, for both kinds. It is the reader that sees the
+ * declared type, it owns the style table, and its values come through the one
+ * calendar route. The engine keeps the work it is good at: the used range, the
+ * header row, and every cell that is not a date.
+ */
+export interface WorkbookDates {
+  /** The dates one worksheet holds. */
+  forSheet(sheet: string): SheetDates;
+}
+
+/**
+ * What the model read in a date cell, and how the cell said it was one.
+ *
+ * The two ways differ in what the engine makes of the cell, so they differ in
+ * how far this has to override it. A cell wearing a date format is a number the
+ * engine formats correctly for display and reports as a serial: its stored
+ * value comes from here, and its displayed text is the engine's, which is the
+ * text the worksheet shows. A cell that declares `t="d"` is one the engine has
+ * already turned into a serial, so both its value and its displayed text come
+ * from here; the engine's display for it is that serial, which is a number
+ * nobody wrote.
+ */
+interface CellDate {
+  /**
+   * One of the two answers a date cell has: the canonical timestamp, or the
+   * cell's own text where that names no moment. Never blank - a cell holding
+   * nothing is not a date cell, and `WorksheetModel.cellValue` reads it as no
+   * value at all, so it never reaches this map and the reader's ordinary blank
+   * rule answers for it.
+   */
+  readonly value: string;
+  readonly declared: boolean;
+}
+
+/** A worksheet's date cells, by row and column. */
+type WorksheetDates = ReadonlyMap<string, CellDate>;
+
+/**
+ * One worksheet's dates, asked for the way the engine indexes its cells: a
+ * zero-based row, as `getCell` takes, rather than the one-based row a worksheet
+ * writes. Converting here means no reader has to remember which of the two it
+ * is holding.
+ */
+export type SheetDates = (
+  rowIndex: number,
+  columnIndex: number,
+) => CellDate | undefined;
+
+function dateKey(row: number, column: number): string {
+  return `${row},${column}`;
+}
+
+/**
+ * Collect a worksheet's date cells in one pass.
+ *
+ * A cell is a date when it declares itself one or when its style says so; both
+ * questions are the model's, and the value is the model's too, so the reader
+ * has one rule and one spelling rather than a second set of its own. A cell
+ * the model reads as text - a `t="d"` cell whose text names no moment - is
+ * kept as that text, because that is what the file says it is.
+ */
+function collectWorksheetDates(
+  model: WorkbookModel,
+  worksheet: WorksheetModel | undefined,
+): WorksheetDates {
+  const dates = new Map<string, CellDate>();
+  if (!worksheet) {
+    return dates;
+  }
+  for (const row of worksheet.rows()) {
+    for (const cell of row.cells) {
+      const declared = cell.type === DECLARED_DATE_TYPE;
+      if (!declared && !model.isDateStyle(cell.styleIndex)) {
+        continue;
+      }
+      const value = worksheet.cellValue(cell.ref);
+      if (value instanceof Date) {
+        dates.set(dateKey(cell.ref.row, cell.ref.column), {
+          declared,
+          value: calendarIsoText(utcCalendarParts(value)),
+        });
+      } else if (declared && typeof value === "string") {
+        dates.set(dateKey(cell.ref.row, cell.ref.column), {
+          declared,
+          value,
+        });
+      }
+    }
+  }
+  return dates;
+}
+
+/** The OOXML cell type a worksheet declares a date with. */
+const DECLARED_DATE_TYPE = "d";
+
+/**
+ * The dates a workbook's bytes hold, for a reader that has bytes rather than a
+ * loaded model. The worksheets are parsed on demand, so a reader that touches
+ * one worksheet pays for one.
+ */
+export async function readWorkbookDates(
+  bytes: Uint8Array,
+  source: string,
+  details: Record<string, unknown>,
+): Promise<WorkbookDates> {
+  return workbookDatesFrom(await WorkbookRead.load(bytes, { source, details }));
+}
+
+/**
+ * The dates a workbook holds, read once per worksheet and only when a reader
+ * asks for that worksheet.
+ */
+export function workbookDatesFrom(read: WorkbookRead): WorkbookDates {
+  const bySheet = new Map<string, WorksheetDates>();
+  return {
+    forSheet(sheet) {
+      return (rowIndex, columnIndex) => {
+        let dates = bySheet.get(sheet);
+        if (dates === undefined) {
+          dates = collectWorksheetDates(read.workbook, read.worksheet(sheet));
+          bySheet.set(sheet, dates);
+        }
+        return dates.get(dateKey(rowIndex + 1, columnIndex));
+      };
+    },
+  };
+}
+
+/**
+ * The same spelling for a moment that arrived already parsed.
+ *
+ * Unreachable from this package's own reading: `parseWorkbookBytes` keeps
+ * serials, so no cell it produces carries a `Date`. It is here so a cell from a
+ * workbook somebody else parsed with `cellDates` cannot fall through to
+ * `String(v)` and arrive as a platform date string, and it goes through
+ * `calendarIsoText` like everything else rather than through `toISOString`, so
+ * there is one spelling of a date in this package and not two.
+ *
+ * The UTC face is the one read, because a moment composed from a workbook's
+ * epoch and whole days wears the calendar date on that face and the local face
+ * is that shifted by wherever the reader is sitting. A face outside the years
+ * that can be written has no spelling, so it comes back undefined and the
+ * caller falls through, the same rule the two paths above follow.
+ */
+function parsedDateText(value: Date): string | undefined {
+  const parts = utcCalendarParts(value);
+  return isComponentsInRange(parts) ? calendarIsoText(parts) : undefined;
+}
+
+function cellToPrimitive(
+  cell: XLSX.CellObject | undefined,
+  date: CellDate | undefined,
+): CellValue {
+  // A date the model read is the stored value, whether or not the engine saw a
+  // cell here at all: a `t="d"` cell whose text names no moment reaches the
+  // engine as nothing, and the text is what the file holds.
+  if (date !== undefined) {
+    return date.value;
+  }
   if (!cell || cell.v === null || cell.v === undefined) {
     return null;
   }
 
   if (cell.v instanceof Date) {
-    return cell.v.toISOString();
+    const parsed = parsedDateText(cell.v);
+    if (parsed !== undefined) {
+      return parsed;
+    }
   }
 
-  if (
-    typeof cell.v === "string" ||
-    typeof cell.v === "number" ||
-    typeof cell.v === "boolean"
-  ) {
+  if (typeof cell.v === "number") {
+    // A cell cannot hold one of these; the engine makes them out of text it
+    // could not read, such as the spaces in a declared date cell. Blank is what
+    // the cell holds, and blank is what every other reader here calls it.
+    return Number.isFinite(cell.v) ? cell.v : null;
+  }
+
+  if (typeof cell.v === "string" || typeof cell.v === "boolean") {
     return cell.v;
   }
 
   return String(cell.w ?? cell.v);
 }
 
-function cellToDisplayText(cell: XLSX.CellObject | undefined): string {
+function cellToDisplayText(
+  cell: XLSX.CellObject | undefined,
+  date: CellDate | undefined,
+): string {
+  // A cell that declares itself a date goes before the cached display text,
+  // because that text is the serial the engine made of it rather than anything
+  // the worksheet shows. A cell that only wears a date format does not: the
+  // engine formats it the way the worksheet does, and displayed text is what
+  // this reader promises.
+  if (date?.declared === true) {
+    return String(date.value);
+  }
   if (!cell || cell.v === null || cell.v === undefined) {
     return "";
   }
@@ -524,7 +759,16 @@ function cellToDisplayText(cell: XLSX.CellObject | undefined): string {
   }
 
   if (cell.v instanceof Date) {
-    return cell.v.toISOString();
+    const parsed = parsedDateText(cell.v);
+    if (parsed !== undefined) {
+      return parsed;
+    }
+  }
+
+  if (date !== undefined) {
+    // No cached display text: the stored date beats the raw serial, which is a
+    // number nobody wrote into the cell.
+    return String(date.value);
   }
 
   if (typeof cell.v === "boolean") {
@@ -546,6 +790,7 @@ function getCell(
 function findHeaderRow(
   worksheet: XLSX.WorkSheet,
   range: XLSX.Range,
+  dates: SheetDates,
   configuredRow?: number,
 ): number | undefined {
   if (configuredRow !== undefined) {
@@ -565,7 +810,12 @@ function findHeaderRow(
       columnIndex <= range.e.c;
       columnIndex += 1
     ) {
-      if (cellToPrimitive(getCell(worksheet, rowIndex, columnIndex)) !== null) {
+      if (
+        cellToPrimitive(
+          getCell(worksheet, rowIndex, columnIndex),
+          dates(rowIndex, columnIndex),
+        ) !== null
+      ) {
         return rowIndex;
       }
     }
@@ -585,15 +835,21 @@ function worksheetToTable(
   sourceFile: string,
   sheetName: string,
   worksheet: XLSX.WorkSheet,
+  dates: SheetDates,
   configuredHeaderRow?: number,
-): Table | undefined {
+): { table: Table; region: WorksheetRegion } | undefined {
   const reference = worksheet["!ref"];
   if (!reference) {
     return undefined;
   }
 
   const range = XLSX.utils.decode_range(reference);
-  const headerRowIndex = findHeaderRow(worksheet, range, configuredHeaderRow);
+  const headerRowIndex = findHeaderRow(
+    worksheet,
+    range,
+    dates,
+    configuredHeaderRow,
+  );
   if (
     headerRowIndex === undefined ||
     headerRowIndex < range.s.r ||
@@ -610,6 +866,7 @@ function worksheetToTable(
   ) {
     const value = cellToPrimitive(
       getCell(worksheet, headerRowIndex, columnIndex),
+      dates(headerRowIndex, columnIndex),
     );
     rawHeaders.push(value === null ? null : String(value));
   }
@@ -624,7 +881,10 @@ function worksheetToTable(
     rowIndex += 1
   ) {
     const values = columns.map((_, index) =>
-      cellToPrimitive(getCell(worksheet, rowIndex, range.s.c + index)),
+      cellToPrimitive(
+        getCell(worksheet, rowIndex, range.s.c + index),
+        dates(rowIndex, range.s.c + index),
+      ),
     );
 
     if (values.every((value) => value === null || value === "")) {
@@ -644,13 +904,24 @@ function worksheetToTable(
   }
 
   return {
-    columns,
-    rows,
-    sourceRows,
-    source: {
-      file: sourceFile,
-      firstDataRow: headerRowIndex + 2,
-      sheet: sheetName,
+    // The rectangle is exactly the one the rows above were read from, reported
+    // rather than recomputed, so a later question about this read cannot be
+    // asked of a different region.
+    region: {
+      headerRow: headerRowIndex + 1,
+      lastRow: range.e.r + 1,
+      startColumn: range.s.c,
+      endColumn: range.e.c,
+    },
+    table: {
+      columns,
+      rows,
+      sourceRows,
+      source: {
+        file: sourceFile,
+        firstDataRow: headerRowIndex + 2,
+        sheet: sheetName,
+      },
     },
   };
 }
@@ -659,6 +930,7 @@ function excelTableToTable(
   sourceFile: string,
   definition: ExcelTableDefinition,
   worksheet: XLSX.WorkSheet,
+  dates: SheetDates,
 ): WorkbookExcelTable | undefined {
   let range: XLSX.Range;
   try {
@@ -709,7 +981,10 @@ function excelTableToTable(
     rowIndex += 1
   ) {
     const values = columns.map((_, index) =>
-      cellToPrimitive(getCell(worksheet, rowIndex, range.s.c + index)),
+      cellToPrimitive(
+        getCell(worksheet, rowIndex, range.s.c + index),
+        dates(rowIndex, range.s.c + index),
+      ),
     );
 
     if (values.every((value) => value === null || value === "")) {
@@ -765,6 +1040,7 @@ function namedRangeToTable(
   sheetName: string,
   rangeRef: string,
   worksheet: XLSX.WorkSheet,
+  dates: SheetDates,
 ): WorkbookNamedRange | undefined {
   let range: XLSX.Range;
   try {
@@ -786,7 +1062,10 @@ function namedRangeToTable(
     columnIndex <= range.e.c;
     columnIndex += 1
   ) {
-    const value = cellToPrimitive(getCell(worksheet, range.s.r, columnIndex));
+    const value = cellToPrimitive(
+      getCell(worksheet, range.s.r, columnIndex),
+      dates(range.s.r, columnIndex),
+    );
     rawHeaders.push(value === null ? null : String(value));
   }
   const columns = uniqueHeaders(rawHeaders);
@@ -795,7 +1074,10 @@ function namedRangeToTable(
   const sourceRows: number[] = [];
   for (let rowIndex = range.s.r + 1; rowIndex <= range.e.r; rowIndex += 1) {
     const values = columns.map((_, index) =>
-      cellToPrimitive(getCell(worksheet, rowIndex, range.s.c + index)),
+      cellToPrimitive(
+        getCell(worksheet, rowIndex, range.s.c + index),
+        dates(rowIndex, range.s.c + index),
+      ),
     );
     if (values.every((value) => value === null || value === "")) {
       continue;
@@ -833,13 +1115,20 @@ function lowercaseSet(values: string[] | undefined): Set<string> | undefined {
     : undefined;
 }
 
-export function workbookTables(
+/**
+ * Read every selected worksheet, reporting each one whether or not it yielded a
+ * table, with the rectangle each read covered. `workbookTables` is this list
+ * with the tables taken out of it, so the two can never describe the same
+ * worksheet differently.
+ */
+export function workbookWorksheetReports(
   workbook: XLSX.WorkBook,
+  workbookDates: WorkbookDates,
   sourceFile: string,
   options: ReadWorkbookOptions = {},
-): Table[] {
+): WorksheetTableReport[] {
   const selectedSheets = lowercaseSet(options.sheets);
-  const tables: Table[] = [];
+  const reports: WorksheetTableReport[] = [];
 
   for (const sheetName of workbook.SheetNames) {
     if (!options.includeHiddenSheets && !isVisibleSheet(workbook, sheetName)) {
@@ -851,24 +1140,60 @@ export function workbookTables(
 
     const worksheet = workbook.Sheets[sheetName];
     if (!worksheet) {
-      continue;
+      // The workbook lists this worksheet and the engine produced nothing for
+      // it, which it does silently: a cell it cannot parse, such as a declared
+      // date holding no text at all, takes the whole part with it. Skipping
+      // would drop a worksheet from every list this feeds - the tables, the
+      // sheets an import offers - and say nothing, which is the one outcome a
+      // reader must never produce. The document model reads such a worksheet;
+      // until this reader takes its cells from there, the honest answer is to
+      // stop and name it.
+      throw new ConsultChimpsError(
+        XLSX_ERRORS.XLSX_READ_FAILED,
+        `Worksheet "${sheetName}" is listed in ${sourceFile} but could not be read from it, so what it holds is unknown.`,
+        { details: { source: sourceFile, worksheet: sheetName } },
+      );
     }
-    const table = worksheetToTable(
+    const read = worksheetToTable(
       sourceFile,
       sheetName,
       worksheet,
+      workbookDates.forSheet(sheetName),
       options.headerRow,
     );
-    if (table) {
-      tables.push(table);
-    }
+    reports.push({
+      sheet: sheetName,
+      table: read?.table,
+      region: read?.region,
+    });
   }
 
+  return reports;
+}
+
+export function workbookTables(
+  workbook: XLSX.WorkBook,
+  workbookDates: WorkbookDates,
+  sourceFile: string,
+  options: ReadWorkbookOptions = {},
+): Table[] {
+  const tables: Table[] = [];
+  for (const report of workbookWorksheetReports(
+    workbook,
+    workbookDates,
+    sourceFile,
+    options,
+  )) {
+    if (report.table) {
+      tables.push(report.table);
+    }
+  }
   return tables;
 }
 
 export function workbookExcelTables(
   workbook: XLSX.WorkBook,
+  workbookDates: WorkbookDates,
   definitions: ExcelTableDefinition[],
   sourceFile: string,
   options: ReadWorkbookExcelTablesOptions = {},
@@ -901,7 +1226,12 @@ export function workbookExcelTables(
     if (!worksheet) {
       continue;
     }
-    const table = excelTableToTable(sourceFile, definition, worksheet);
+    const table = excelTableToTable(
+      sourceFile,
+      definition,
+      worksheet,
+      workbookDates.forSheet(definition.sheet),
+    );
     if (table) {
       tables.push(table);
     }
@@ -912,6 +1242,7 @@ export function workbookExcelTables(
 
 export function workbookNamedRanges(
   workbook: XLSX.WorkBook,
+  workbookDates: WorkbookDates,
   sourceFile: string,
   options: ReadWorkbookNamedRangesOptions = {},
 ): WorkbookNamedRange[] {
@@ -959,6 +1290,7 @@ export function workbookNamedRanges(
       parsed.sheet,
       parsed.range,
       worksheet,
+      workbookDates.forSheet(parsed.sheet),
     );
     if (table) {
       ranges.push(table);
@@ -970,6 +1302,7 @@ export function workbookNamedRanges(
 
 export function workbookWorksheetRecords(
   workbook: XLSX.WorkBook,
+  workbookDates: WorkbookDates,
   options: ReadWorksheetRecordsOptions,
 ): WorksheetRecords {
   const requestedWorksheet = options.worksheet?.trim();
@@ -1011,7 +1344,13 @@ export function workbookWorksheetRecords(
   }
 
   const range = XLSX.utils.decode_range(reference);
-  const headerRowIndex = findHeaderRow(worksheet, range, options.headerRow);
+  const dates = workbookDates.forSheet(worksheetName);
+  const headerRowIndex = findHeaderRow(
+    worksheet,
+    range,
+    dates,
+    options.headerRow,
+  );
   if (headerRowIndex === undefined || headerRowIndex > range.e.r) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_INVALID_HEADER_ROW,
@@ -1033,6 +1372,7 @@ export function workbookWorksheetRecords(
   ) {
     const header = cellToDisplayText(
       getCell(worksheet, headerRowIndex, columnIndex),
+      dates(headerRowIndex, columnIndex),
     ).trim();
     if (!header) {
       throw new ConsultChimpsError(
@@ -1079,8 +1419,11 @@ export function workbookWorksheetRecords(
     const cells = columns.map((_, columnOffset) =>
       getCell(worksheet, rowIndex, range.s.c + columnOffset),
     );
-    const isEmpty = cells.every((cell) => {
-      const value = cellToPrimitive(cell);
+    const isEmpty = cells.every((cell, columnOffset) => {
+      const value = cellToPrimitive(
+        cell,
+        dates(rowIndex, range.s.c + columnOffset),
+      );
       return value === null || value === "";
     });
     if (isEmpty) {
@@ -1090,7 +1433,10 @@ export function workbookWorksheetRecords(
 
     const row: Record<string, string> = {};
     columns.forEach((column, columnOffset) => {
-      row[column] = cellToDisplayText(cells[columnOffset]);
+      row[column] = cellToDisplayText(
+        cells[columnOffset],
+        dates(rowIndex, range.s.c + columnOffset),
+      );
     });
     rows.push(row);
     sourceRows.push(rowIndex + 1);
@@ -1287,6 +1633,14 @@ export async function resolveSplitSource(
     cellText: options.range !== undefined,
     details: context.details,
   });
+  // The dates come from the document model, which is the only reader that sees
+  // a cell declare itself a date rather than only wear a date format.
+  const dates = workbookDatesFrom(
+    await WorkbookRead.load(workbookBytes, {
+      source: context.label,
+      details: context.details ?? { source: context.label },
+    }),
+  );
   const sheets = options.sheet ? [options.sheet] : undefined;
 
   let definitions: ExcelTableDefinition[] = [];
@@ -1302,6 +1656,7 @@ export async function resolveSplitSource(
     );
     availableExcelTables = workbookExcelTables(
       workbook,
+      dates,
       definitions,
       context.file,
       { includeHiddenSheets: options.includeHiddenSheets, sheets },
@@ -1312,7 +1667,7 @@ export async function resolveSplitSource(
         options.table?.toLocaleLowerCase(),
     );
   } else if (options.range) {
-    availableNamedRanges = workbookNamedRanges(workbook, context.file, {
+    availableNamedRanges = workbookNamedRanges(workbook, dates, context.file, {
       includeHiddenSheets: options.includeHiddenSheets,
       sheets,
     });
@@ -1322,7 +1677,7 @@ export async function resolveSplitSource(
         options.range?.toLocaleLowerCase(),
     );
   } else {
-    tables = workbookTables(workbook, context.file, {
+    tables = workbookTables(workbook, dates, context.file, {
       headerRow: options.headerRow,
       includeHiddenSheets: options.includeHiddenSheets,
       sheets,

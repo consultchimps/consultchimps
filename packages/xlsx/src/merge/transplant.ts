@@ -39,13 +39,13 @@ import { ConsultChimpsError } from "@consultchimps/core";
 import { XLSX_ERRORS } from "../errors.js";
 import { readExcelTableDefinitionsFrom } from "../excel-tables.js";
 import {
-  addAttribute,
   decodeXmlText,
   editElements,
   findElement,
   findElements,
   getAttribute,
   setAttribute,
+  writeAttribute,
 } from "../model/xml.js";
 import {
   MACRO_WORKBOOK_MAIN_CONTENT_TYPE,
@@ -897,9 +897,12 @@ function transplantWorksheet(
 /** Give a copied Excel Table part its new workbook-unique name and id. */
 function renameTablePart(xml: string, name: string, id: number): string {
   return editElements(xml, "table", (element, text) => {
-    let openTag = setAttribute(element.openTag, "id", String(id));
-    openTag = setAttribute(openTag, "name", escapeXmlAttribute(name));
-    openTag = setAttribute(openTag, "displayName", escapeXmlAttribute(name));
+    // The part carries this name afterwards, whichever of the three it
+    // arrived with: leaving one behind would put two tables with one name in
+    // the output workbook, which Excel reads as a damaged file.
+    let openTag = writeAttribute(element.openTag, "id", String(id));
+    openTag = writeAttribute(openTag, "name", escapeXmlAttribute(name));
+    openTag = writeAttribute(openTag, "displayName", escapeXmlAttribute(name));
     return `${openTag}${text.slice(element.openTag.length)}`;
   });
 }
@@ -1062,10 +1065,7 @@ function requestFullCalculation(output: WorkbookPackage): void {
   }
   const existing = findElement(xml, "calcPr");
   if (existing) {
-    const openTag =
-      getAttribute(existing.openTag, "fullCalcOnLoad") === undefined
-        ? addAttribute(existing.openTag, "fullCalcOnLoad", "1")
-        : setAttribute(existing.openTag, "fullCalcOnLoad", "1");
+    const openTag = writeAttribute(existing.openTag, "fullCalcOnLoad", "1");
     output.writeText(
       WORKBOOK_PART,
       `${xml.slice(0, existing.start)}${openTag}${xml.slice(

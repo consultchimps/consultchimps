@@ -17,9 +17,12 @@ import {
   findElement,
   findElements,
   getAttribute,
+  hasCachedValueElement,
   parseAttributes,
   setAttribute,
+  writeAttribute,
 } from "./xml.js";
+import { calendarMoment, type CalendarParts } from "./calendar.js";
 import {
   decodeCell,
   encodeCell,
@@ -123,7 +126,8 @@ export interface WorksheetHost {
   /** Whether a cell style formats its number as a date. */
   isDateStyle(styleIndex: number | undefined): boolean;
   /** Convert an Excel date serial to a `Date` in the workbook's date system. */
-  serialToDate(serial: number): Date;
+  /** The moment a serial names, or undefined when it names none. */
+  serialToDate(serial: number): Date | undefined;
 }
 
 interface CellSegment {
@@ -146,24 +150,40 @@ export class WorksheetCell {
   body: string;
   readonly closeTag: string;
 
-  constructor(text: string) {
+  /**
+   * @param impliedColumn Where document order puts this cell when it carries no
+   *   reference of its own: the previous cell's column plus one, or A for the
+   *   first cell of a row.
+   * @param impliedRow The row this cell was found in, for the same case.
+   */
+  constructor(text: string, impliedColumn: number, impliedRow: number) {
     const element = findElement(text, "c");
     if (!element) {
       throw new Error("Encountered an invalid worksheet cell element.");
     }
-    const reference = getAttribute(element.openTag, "r");
-    if (!reference) {
-      throw new Error("Encountered a worksheet cell without a reference.");
+    const written = getAttribute(element.openTag, "r");
+    // The reference is optional in the format: a cell without one sits where
+    // document order puts it. A reference that is present but unreadable is a
+    // different thing, and stays an error.
+    const decoded = written === undefined ? undefined : decodeCell(written);
+    if (written !== undefined && !decoded) {
+      throw new Error(`Encountered an invalid cell reference: ${written}`);
     }
-    const decoded = decodeCell(reference);
-    if (!decoded) {
-      throw new Error(`Encountered an invalid cell reference: ${reference}`);
-    }
+    const reference = written ?? encodeCell(impliedColumn, impliedRow);
 
     this.reference = reference;
-    this.column = decoded.column;
-    this.row = decoded.row;
-    this.openTag = element.openTag;
+    this.column = decoded?.column ?? impliedColumn;
+    this.row = decoded?.row ?? impliedRow;
+    // Written back explicitly rather than left implicit. An implicit position
+    // is only meaningful in the document it was read from: once a later edit
+    // adds or removes a row or a cell before it, the same bytes mean a
+    // different cell. Making it explicit here costs the exact bytes of a
+    // worksheet that omitted an optional attribute, and buys every consumer,
+    // including the ones that renumber rows, a position that cannot shift.
+    this.openTag =
+      written === undefined
+        ? writeAttribute(element.openTag, "r", reference)
+        : element.openTag;
     this.selfClosing = element.selfClosing;
     this.body = element.selfClosing
       ? ""
@@ -201,6 +221,16 @@ export class WorksheetCell {
           .join("");
   }
 
+  /**
+   * Whether a cached value element is present, whatever it holds. `valueText`
+   * cannot answer this: it returns `""` for `<v></v>` and `undefined` for a
+   * self-closing `<v/>`, so neither an empty result nor an absent one can be
+   * told from the other by looking at the text.
+   */
+  get hasCachedValue(): boolean {
+    return hasCachedValueElement(this.body);
+  }
+
   get formula(): CellFormula | undefined {
     const element = findElement(this.body, "f");
     if (!element) {
@@ -231,6 +261,7 @@ export class WorksheetCell {
       styleIndex: styleIndex === undefined ? undefined : Number(styleIndex),
       value: this.valueText,
       formula: this.formula,
+      hasCachedValue: this.hasCachedValue,
     };
   }
 
@@ -241,7 +272,7 @@ export class WorksheetCell {
     }
     this.row = row;
     this.reference = encodeCell(this.column, row);
-    this.openTag = setAttribute(this.openTag, "r", this.reference);
+    this.openTag = writeAttribute(this.openTag, "r", this.reference);
   }
 
   /**
@@ -298,23 +329,40 @@ export class WorksheetRow {
   readonly segments: CellSegment[];
   #cellIndex: Map<number, WorksheetCell> | undefined;
 
-  constructor(text: string) {
+  /**
+   * @param impliedNumber The row number document order gives this row when it
+   *   carries none of its own: the previous row's number plus one, or 1 for the
+   *   first row of the sheet.
+   */
+  constructor(text: string, impliedNumber: number) {
     const element = findElement(text, "row");
     if (!element) {
       throw new Error("Encountered an invalid worksheet row element.");
     }
-    const number = Number(getAttribute(element.openTag, "r"));
+    // The row number is optional in the format, the same way a cell reference
+    // is. A number that is present but not a positive whole one is malformed
+    // and stays an error.
+    const written = getAttribute(element.openTag, "r");
+    const number = written === undefined ? impliedNumber : Number(written);
     if (!Number.isInteger(number) || number < 1) {
-      throw new Error("Encountered a worksheet row without a row number.");
+      throw new Error(
+        `Encountered a worksheet row with an invalid row number: ${String(written)}`,
+      );
     }
 
     this.number = number;
-    this.openTag = element.openTag;
+    // Made explicit for the reason the cell above gives: an implicit number
+    // moves when the rows before it do.
+    this.openTag =
+      written === undefined
+        ? writeAttribute(element.openTag, "r", String(number))
+        : element.openTag;
     this.selfClosing = element.selfClosing;
     this.closeTag = element.selfClosing ? "" : `</${element.name}>`;
     this.segments = element.selfClosing
       ? []
       : splitCells(
+          number,
           text.slice(
             element.innerStart - element.start,
             element.innerEnd - element.start,
@@ -372,7 +420,7 @@ export class WorksheetRow {
       return;
     }
     this.number = number;
-    this.openTag = setAttribute(this.openTag, "r", String(number));
+    this.openTag = writeAttribute(this.openTag, "r", String(number));
     for (const cell of this.cells) {
       cell.moveToRow(number);
     }
@@ -386,9 +434,162 @@ export class WorksheetRow {
   }
 }
 
-function splitCells(inner: string): CellSegment[] {
+/**
+ * ISO 8601 as OOXML writes a `t="d"` cell: a date, optionally a time, and
+ * optionally a zone, which the format leaves off far more often than it writes.
+ *
+ * The separator and the zulu marker are matched in either case. ISO 8601 and
+ * the XSD `dateTime` the format names both write them upper case, and RFC 3339
+ * allows either; a generator that wrote `t` or `z` meant a date, and reading it
+ * as one loses nothing. A space in place of the `T` is the same liberty.
+ *
+ * The offset is `±hh:mm` and nothing else. `+hh` and `+hhmm` are ISO 8601 but
+ * not the profile this format names, and every offset either standard writes
+ * with minutes is accepted, so the narrower grammar refuses only forms a
+ * worksheet does not produce.
+ *
+ * The fraction is matched at any length and judged below: three digits is what
+ * a moment here carries, and more than three is only accepted when the digits
+ * past the third are zeros, which lose nothing by going.
+ */
+const CELL_DATE_TEXT =
+  /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})(?:[Tt ](?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2})(?:\.(?<fraction>\d+))?)?)?(?:(?<zulu>[Zz])|(?<offsetSign>[+-])(?<offsetHour>\d{2}):(?<offsetMinute>\d{2}))?$/u;
+
+/** How many fractional-second digits a moment carries. */
+const FRACTION_DIGITS = 3;
+
+/**
+ * The milliseconds a written fraction names, or undefined when it names a
+ * finer moment than one can hold.
+ *
+ * A fraction of `.1234` is not `.123`. Slicing it made two timestamps a
+ * quarter of a millisecond apart read as one, which changed the value on the
+ * way in and let a split gather rows that were not together. Digits past the
+ * third are therefore only accepted when they are zeros, which say nothing the
+ * first three do not; anything finer is a value this cannot carry, and the
+ * module's rule for that is to carry the text instead.
+ */
+function fractionMilliseconds(fraction: string): number | undefined {
+  if (fraction === "") {
+    return 0;
+  }
+  const beyond = fraction.slice(FRACTION_DIGITS);
+  if (beyond !== "" && !/^0+$/u.test(beyond)) {
+    return undefined;
+  }
+  return Number(
+    fraction.slice(0, FRACTION_DIGITS).padEnd(FRACTION_DIGITS, "0"),
+  );
+}
+
+/**
+ * The date a `t="d"` cell holds, as a `Date` whose UTC face is the calendar
+ * date and time the cell wrote, or undefined when the text names no moment.
+ *
+ * The text is read into components, the components are judged as one value,
+ * and only then is the moment computed, by arithmetic. Nothing here is handed
+ * to a date constructor to interpret, because both of the constructors carry
+ * rules that rewrite what they are given rather than refuse it:
+ * `new Date(text)` reads an unzoned time in the host's zone, so the same cell
+ * became 18:00 in UTC and 14:00 in UTC+4, and `Date.UTC` remaps a year from 0
+ * to 99 into the twentieth century and normalises month 13 into January of the
+ * next year. A year of 0099 has to read back as 0099, and a month of 13 must
+ * not read back as a date at all.
+ *
+ * The whole contract, because this text is the one input here that arrives
+ * from outside and every one of its shapes has to have an answer. There are
+ * three: it *formats* as the canonical timestamp, it is *carried as the text*
+ * the cell holds, or - for no input - it fails the read. Nothing refuses.
+ *
+ * ```text
+ * INPUT                                   ANSWER
+ * 2024-01-01                              formats, at midnight
+ * 2024-01-01T18:00:00                     formats
+ * 2024-01-01 18:00:00  (space separator)  formats
+ * 2024-01-01t18:00:00  (lower case t)     formats
+ * 2024-01-01T18:00                        formats, at second zero
+ * 2024-01-01T18:00:00.1 .12 .123          formats
+ * 2024-01-01T18:00:00.1230000             formats, the zeros lose nothing
+ * 2024-01-01T18:00:00.1234 (any finer)    text: finer than a moment carries
+ * ...Z  ...z  ...+00:00                   formats, as UTC
+ * ...+05:30  ...-07:00                    formats, moved by the offset
+ * ...-00:00                               formats, as an offset of zero
+ * ...+05  ...+0530  (no colon)            text: not the profile's offset form
+ * ...+24:00  ...+05:60                    text: no such offset
+ * "  2024-01-01  " (surrounding space)    formats, the space is trimmed
+ * +002024-01-01  -002024-01-01            text: expanded years are not read
+ * 0000-01-01  0001-01-01  9999-12-31      formats
+ * 10000-01-01                             text: past the years that can be
+ *                                         written
+ * 9999-12-31T23:30:00-01:00               text: its UTC face is the year 10000
+ * 2024-01-01T24:00:00                     text: hour 24 is the end of a day,
+ *                                         which a worksheet does not write
+ * 2024-01-01T23:59:60                     text: a leap second, which would
+ *                                         mean deciding which day carries one
+ * 2024-00-01  2024-13-01                  text: no such month
+ * 2024-01-00  2024-02-30  2023-02-29      text: no such day
+ * 2024-02-29  (a leap year)               formats
+ * 2024-04-31  (a 30-day month)            text: no such day
+ * ""  or "   "  (an empty cell)          blank: no value at all, as for every
+ *                                         other cell holding only spaces
+ * 2024-01-01 is the day  (a date and more) text: the whole value is judged
+ * ```
+ *
+ * The judging behind those rows: month 1 to 12, a day that exists in that
+ * month of that year, hour 0 to 23, minute and second 0 to 59, a fraction no
+ * finer than a millisecond, and, where a zone is written, an offset of 0 to 23
+ * hours and 0 to 59 minutes. The moment the offset produces has to be writable
+ * too, which `calendarMoment` decides.
+ *
+ * Text that names no moment comes back undefined and the caller keeps the text
+ * the cell holds. That is not a guess: a value that is not a date is carried as
+ * what the file says it is, the same way every other unconvertible cell is, and
+ * the alternative - failing the whole read - would stop a split over one cell
+ * in a column nobody grouped by.
+ */
+function worksheetDateValue(text: string): Date | undefined {
+  const matched = CELL_DATE_TEXT.exec(text.trim());
+  if (!matched) {
+    return undefined;
+  }
+  // Named rather than numbered, so adding a group cannot silently repair the
+  // pairing of every read below it.
+  const written = matched.groups as Record<string, string | undefined>;
+  const millisecond = fractionMilliseconds(written["fraction"] ?? "");
+  if (millisecond === undefined) {
+    return undefined;
+  }
+  const parts: CalendarParts = {
+    year: Number(written["year"]),
+    month: Number(written["month"]),
+    day: Number(written["day"]),
+    hour: Number(written["hour"] ?? "0"),
+    minute: Number(written["minute"] ?? "0"),
+    second: Number(written["second"] ?? "0"),
+    millisecond,
+  };
+  const offsetHour = written["offsetHour"];
+  const offsetMinute = written["offsetMinute"];
+  let offsetMinutes = 0;
+  if (offsetHour !== undefined && offsetMinute !== undefined) {
+    const hours = Number(offsetHour);
+    const minutes = Number(offsetMinute);
+    if (hours > 23 || minutes > 59) {
+      return undefined;
+    }
+    offsetMinutes =
+      (written["offsetSign"] === "-" ? -1 : 1) * (hours * 60 + minutes);
+  }
+
+  return calendarMoment(parts, offsetMinutes);
+}
+
+function splitCells(rowNumber: number, inner: string): CellSegment[] {
   const segments: CellSegment[] = [];
   let cursor = 0;
+  // Where the next cell sits if it does not say: the first column, then one
+  // past whatever the last cell turned out to occupy.
+  let impliedColumn = 0;
 
   for (const element of findElements(inner, "c")) {
     if (element.start > cursor) {
@@ -397,10 +598,13 @@ function splitCells(inner: string): CellSegment[] {
         text: inner.slice(cursor, element.start),
       });
     }
-    segments.push({
-      cell: new WorksheetCell(inner.slice(element.start, element.end)),
-      text: "",
-    });
+    const cell = new WorksheetCell(
+      inner.slice(element.start, element.end),
+      impliedColumn,
+      rowNumber,
+    );
+    impliedColumn = cell.column + 1;
+    segments.push({ cell, text: "" });
     cursor = element.end;
   }
   if (cursor < inner.length) {
@@ -470,6 +674,9 @@ export class WorksheetModel implements WorksheetModelContract {
     const inner = worksheetXml.slice(sheetData.innerStart, sheetData.innerEnd);
     const segments: RowSegment[] = [];
     let cursor = 0;
+    // Where the next row sits if it does not say: the first row, then one past
+    // whatever the last row turned out to be.
+    let impliedRowNumber = 1;
     for (const element of findElements(inner, "row")) {
       if (element.start > cursor) {
         segments.push({
@@ -477,10 +684,12 @@ export class WorksheetModel implements WorksheetModelContract {
           text: inner.slice(cursor, element.start),
         });
       }
-      segments.push({
-        row: new WorksheetRow(inner.slice(element.start, element.end)),
-        text: "",
-      });
+      const row = new WorksheetRow(
+        inner.slice(element.start, element.end),
+        impliedRowNumber,
+      );
+      impliedRowNumber = row.number + 1;
+      segments.push({ row, text: "" });
       cursor = element.end;
     }
     if (cursor < inner.length) {
@@ -541,10 +750,15 @@ export class WorksheetModel implements WorksheetModelContract {
     switch (getAttribute(cell.openTag, "t")) {
       case "b":
         return text.trim() === "1" || text.trim().toLowerCase() === "true";
-      case "d": {
-        const parsed = new Date(text);
-        return Number.isNaN(parsed.getTime()) ? text : parsed;
-      }
+      case "d":
+        // Blank first, the same rule the numeric branch below applies: a cell
+        // holding nothing, or nothing but spaces, holds no value at all. This
+        // branch used to skip it and hand back the empty text, which is a
+        // value, so an empty declared date above a worksheet's real header
+        // counted as content and the header row was found one row too early.
+        return text.trim() === ""
+          ? undefined
+          : (worksheetDateValue(text) ?? text);
       case "s":
       case "str":
       case "inlineStr":
@@ -560,11 +774,19 @@ export class WorksheetModel implements WorksheetModelContract {
           return trimmed;
         }
         const styleIndex = getAttribute(cell.openTag, "s");
-        return this.#host.isDateStyle(
-          styleIndex === undefined ? undefined : Number(styleIndex),
-        )
-          ? this.#host.serialToDate(numeric)
-          : numeric;
+        if (
+          !this.#host.isDateStyle(
+            styleIndex === undefined ? undefined : Number(styleIndex),
+          )
+        ) {
+          return numeric;
+        }
+        // A serial that names no moment that can be written is carried as the
+        // number it is, the same decision the text path makes for text that
+        // names none. Handing back a moment nothing could spell is how a cell
+        // holding 1e100 came to be keyed by the same characters as every other
+        // one, and a split gathered them into a single output.
+        return this.#host.serialToDate(numeric) ?? numeric;
       }
     }
   }

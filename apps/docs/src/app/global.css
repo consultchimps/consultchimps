@@ -233,7 +233,6 @@ kbd {
   display: flex;
   min-height: 18rem;
   flex-direction: column;
-  justify-content: space-between;
   overflow: hidden;
   padding: 1.5rem;
   border: 1px solid var(--color-fd-border);
@@ -265,6 +264,19 @@ kbd {
   border-color: color-mix(in srgb, var(--color-fd-primary) 45%, transparent);
   box-shadow: 0 22px 52px hsl(15 10% 11% / 12%);
   transform: translateY(-5px) rotate(-0.25deg);
+}
+
+/*
+  The body starts under the number and fills the rest of the card, so every
+  card in a row shows its icon and title at the same height whatever the
+  length of its description; the link is pushed to the bottom edge so the
+  row shares one baseline for it too.
+*/
+.tool-card__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  margin-top: 1.25rem;
 }
 
 .tool-card__number {
@@ -305,7 +317,8 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
-  margin-top: 1.5rem;
+  margin-top: auto;
+  padding-top: 1.5rem;
   color: var(--color-fd-primary);
   font-family: var(--font-consult-mono), monospace;
   font-size: 0.75rem;

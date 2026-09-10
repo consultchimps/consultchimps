@@ -8,10 +8,13 @@ import {
   type SqlValueType,
 } from "./engine.js";
 import {
+  assertRecordIdConfig,
   assertSafeIdentifier,
+  COLUMN_TYPES,
   cellFromSqlValue,
   formatRecordId,
   identifierKey,
+  isValueConversionError,
   quoteIdentifier,
   sameIdentifier,
   sqlStorageClass,
@@ -19,6 +22,7 @@ import {
   type ColumnDefinition,
   type RecordIdConfig,
   type TableSchema,
+  MAX_RECORD_ID_PADDING,
   METADATA_TABLE,
   RECORD_ID_COLUMN,
   SCHEMA_FORMAT_VERSION,
@@ -55,10 +59,6 @@ export interface ReadRecordsOptions {
   readonly limit?: number;
 }
 
-// A generous but bounded cap on Record ID zero-padding, so a mistaken
-// configuration cannot drive String.padStart into an enormous allocation.
-const MAX_RECORD_ID_PADDING = 64;
-
 /** The stored shape of a table definition in the registry. */
 interface StoredDefinition {
   columns: ColumnDefinition[];
@@ -66,13 +66,9 @@ interface StoredDefinition {
   recordId: RecordIdConfig;
 }
 
-const VALID_COLUMN_TYPES: ReadonlySet<string> = new Set([
-  "text",
-  "integer",
-  "real",
-  "boolean",
-  "date",
-]);
+// Read from the one list the type is built from, so the two cannot disagree
+// about which kinds exist.
+const VALID_COLUMN_TYPES: ReadonlySet<string> = new Set(COLUMN_TYPES);
 
 // Parse and validate one registry definition. A damaged or externally edited
 // file can hold malformed JSON or valid JSON of the wrong shape, so both become
@@ -506,7 +502,7 @@ export class Database {
   createTable(schema: TableSchema): void {
     assertSafeIdentifier(schema.name, "table");
     this.#assertTableAbsent(schema.name);
-    this.#validateRecordIdConfig(schema.name, schema.recordId);
+    assertRecordIdConfig(schema.name, schema.recordId);
 
     const seenColumns = new Set<string>();
     for (const column of schema.columns) {
@@ -609,27 +605,6 @@ export class Database {
       `INSERT INTO ${quoteIdentifier(TABLE_REGISTRY_TABLE)} (name, definition, next_counter) VALUES (?, ?, ?);`,
       [schema.name, JSON.stringify(definition), 1],
     );
-  }
-
-  #validateRecordIdConfig(table: string, config: RecordIdConfig): void {
-    if (config.prefix.trim() === "") {
-      throw new ConsultChimpsError(
-        "DB_INVALID_RECORD_ID_CONFIG",
-        `The Record ID prefix for "${table}" cannot be empty.`,
-        { details: { table } },
-      );
-    }
-    if (
-      !Number.isInteger(config.padding) ||
-      config.padding < 0 ||
-      config.padding > MAX_RECORD_ID_PADDING
-    ) {
-      throw new ConsultChimpsError(
-        "DB_INVALID_RECORD_ID_CONFIG",
-        `The Record ID padding for "${table}" must be a whole number from 0 to ${MAX_RECORD_ID_PADDING}.`,
-        { details: { table, padding: config.padding } },
-      );
-    }
   }
 
   /**
@@ -902,6 +877,11 @@ export class Database {
   // Convert one cell for storage, adding table and column context to a
   // conversion error while keeping the offending value (imported cell content)
   // out of it.
+  //
+  // Every write of a cell value goes through here, and every conversion failure
+  // is recognised by the one marker the conversion raises rather than by a list
+  // of codes kept in step by hand, so a column type added later cannot reach a
+  // caller saying only which type complained.
   #convertCell(
     type: ColumnDefinition["type"],
     value: CellValue,
@@ -911,11 +891,7 @@ export class Database {
     try {
       return sqlValueFromCell(type, value);
     } catch (error) {
-      if (
-        isConsultChimpsError(error) &&
-        (error.code === "DB_INVALID_BOOLEAN" ||
-          error.code === "DB_INVALID_NUMBER")
-      ) {
+      if (isValueConversionError(error)) {
         throw new ConsultChimpsError(
           error.code,
           `${error.message} (table "${tableName}", column "${columnName}")`,
@@ -1032,6 +1008,22 @@ export class Database {
       }
       return output;
     });
+  }
+
+  /**
+   * How many records a table holds. Counted in the engine rather than by
+   * reading the rows, so a summary of a large workspace does not materialize
+   * every record just to show a number.
+   */
+  countRecords(tableName: string): number {
+    // Resolves the declared spelling and raises DB_TABLE_NOT_FOUND for an
+    // unknown table, so a count cannot be taken against a name the registry
+    // does not carry.
+    const { name } = this.#requireDefinition(tableName);
+    const value = this.#sql.selectValue(
+      `SELECT count(*) FROM ${quoteIdentifier(name)};`,
+    );
+    return typeof value === "number" ? value : Number(value);
   }
 
   /** The ordered column names of a table, Record ID first. */

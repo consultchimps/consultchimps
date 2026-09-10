@@ -52,6 +52,38 @@ command when `out/` is missing.
   deck, naming the output, downloading it, reporting a placeholder no column
   feeds, refusing a template that is not a presentation, and inspecting a
   template's placeholders with their occurrence counts on the chosen slide.
+- `workspace.spec.ts`: reaching `/workspace` from the header, starting an empty
+  workspace, saving it to a `.sqlite` file, reopening exactly those bytes, and
+  reporting a file that is not a readable database or not a workspace type.
+- `workspace-import.spec.ts`: importing one worksheet of a two-sheet workbook
+  and a `.csv` into an open workspace, checking the table listing that follows
+  (row counts, Record ID prefixes, and the inferred column types), keeping both
+  tables across a save and a reopen, refusing a table name the workspace already
+  reads as the same name, and reporting a file with nothing to import. It also
+  covers the shell's unsaved-changes guard, because import is the first command
+  that can leave a workspace holding work no file has: New and Open ask before
+  replacing an imported workspace and leave it untouched until the loss is
+  confirmed, they ask nothing once it has been saved, and a link out of the page
+  and the Back button are both held the same way. The guard covers an import
+  still in flight as well as unsaved changes, so a link click during one is held
+  even from a clean workspace, and the spare history entry the Back guard relies
+  on is armed again after an earlier press spent it. Further tests hold the
+  worker's import commands open to check that New, Open, and Save are disabled
+  while a file is being read and while an import runs, and refuse a worksheet
+  whose formulas the workbook carries no calculated value for.
+- `workspace-grid.spec.ts`: showing a table's records in the grid, switching
+  between tables, editing text, number, and foreign-key cells and finding those
+  edits in the saved and reopened file, and having an impossible value and an
+  emptied non-nullable column both refused, reverted, and explained. The Record
+  ID column offers no editor by click or by tab, and a column name with a dot in
+  it is addressed as the column it is rather than as a path into nested data.
+  The rest covers where the grid meets the shell: an edit marks the workspace
+  unsaved so New asks first, a saved edit makes it ask nothing, editing is
+  locked while an import is in flight, and a table imported after the grid was
+  already up appears in its switcher and is editable there. Its workspace
+  fixture is built in Node with `@consultchimps/db` and opened through the
+  page's own file input, so the spec exercises the grid without waiting on
+  import.
 - `tools-navigation.spec.ts`: the `/tools` index, the sub-bar tabs, the
   tool-named "Try ... online" button each guide gains from the tool registry,
   and the single button a guide shared by two operations offers.
@@ -170,6 +202,54 @@ ms preview debounce, so they are safe to assert. A finished deck is withdrawn on
 the same rule: changing any option removes `results-section` entirely, because a
 worksheet change can produce a deck with the identical filename from different
 rows.
+
+The workspace page is not an operation, so it renders none of the shell
+identifiers above. It starts with `workspace-actions` (`workspace-new`,
+`workspace-open`, and the fallback `file-input` for browsers without the File
+System Access API), then either `workspace-empty` or `workspace-summary`. The
+summary holds `workspace-file-name`, `workspace-table-count`, `workspace-save`,
+and `workspace-save-as`, and lists what the workspace holds: one
+`workspace-table` per table carrying `workspace-table-name`,
+`workspace-table-rows`, `workspace-table-prefix`, and `workspace-table-columns`,
+with `workspace-tables-empty` in their place while there are none.
+`workspace-unsaved` is the badge shown while the workspace holds changes no file
+has, and `workspace-notice` and `workspace-error` report the outcome of the last
+command.
+
+While that badge is showing, New, Open, a link out of the page, and the Back
+button all render `workspace-confirm` instead of leaving, with
+`workspace-confirm-discard` and `workspace-confirm-cancel` as its two answers.
+It is an inline section rather than a `window.confirm`, so it is asserted like
+any other part of the page. A source the import cannot read renders
+`workspace-import-blocked` in its row and refuses the tick.
+
+The record grid renders `workspace-grid-section`, holding
+`workspace-table-select` (the table switcher, disabled while the shell is busy),
+`workspace-grid-loading` while a table is being read, `workspace-grid-empty`
+when the workspace has no tables, the grid itself under `workspace-grid`, and
+`workspace-grid-reference-note` when a foreign-key picker lists only the first
+records of a large related table. Inside the grid the identifiers are
+Tabulator's own: a row carries `data-record-id` with its Record ID, and a cell
+carries `tabulator-field` with its column name, so a cell is addressed by record
+and column rather than by position. Editing a cell is retried as a whole
+interaction, because a grid that renders rows as they are needed can move an
+element under a click.
+
+`createWorkbookUpload` accepts `{ formula }` in place of a cell value, which
+writes `<f>` with no `<v>`: a formula the workbook carries no calculated value
+for. A spreadsheet engine will not produce that shape, which is exactly why the
+fixture has to.
+
+Import is its own section, `workspace-import`, with `workspace-import-choose`
+and the hidden `workspace-import-input` behind it. A chosen file renders
+`workspace-import-form`, one `workspace-import-source` per worksheet (each with
+`workspace-import-source-name`, `workspace-import-selected`,
+`workspace-import-name`, `workspace-import-prefix`, and
+`workspace-import-padding`), then `workspace-import-run` and
+`workspace-import-cancel`. `workspace-import-problem` holds the one reason Run
+is held back, and `workspace-import-error` a refusal from the worker. Because
+both the page and the import section render a file input, scope the workspace
+one to `workspace-import-input` rather than the bare `file-input` helper.
 
 The preview and results panels also carry accessible names, so
 `getByRole("region", { name: "Results" })` works where a role-based query reads

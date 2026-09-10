@@ -13,12 +13,12 @@
  * same template therefore contribute one set of styles, not two.
  */
 import {
-  addAttribute,
   decodeXmlText,
   findElement,
   findElements,
   getAttribute,
   setAttribute,
+  writeAttribute,
 } from "../model/xml.js";
 import { escapeXmlAttribute } from "./ooxml.js";
 
@@ -69,13 +69,6 @@ function sectionItems(xml: string, container: string, child: string): string[] {
   return findElements(inner, child).map((item) =>
     inner.slice(item.start, item.end),
   );
-}
-
-/** Set an attribute, adding it when the element does not declare one. */
-function withAttribute(tag: string, name: string, value: string): string {
-  return getAttribute(tag, name) === undefined
-    ? addAttribute(tag, name, value)
-    : setAttribute(tag, name, value);
 }
 
 /** Replace an element's opening tag, keeping its body and closing tag. */
@@ -255,7 +248,7 @@ export class MergedStyles {
 
     const numberFormatId = Number(getAttribute(openTag, "numFmtId") ?? "0");
     if (Number.isInteger(numberFormatId) && numberFormatId !== 0) {
-      rewritten = withAttribute(
+      rewritten = writeAttribute(
         rewritten,
         "numFmtId",
         String(this.#remapNumberFormat(source, numberFormatId)),
@@ -283,7 +276,7 @@ export class MergedStyles {
     if (isCellXf) {
       const xfId = Number(getAttribute(openTag, "xfId") ?? "0");
       if (Number.isInteger(xfId) && xfId !== 0) {
-        rewritten = withAttribute(
+        rewritten = writeAttribute(
           rewritten,
           "xfId",
           String(this.#remapCellStyleXf(source, xfId)),
@@ -350,7 +343,9 @@ export class MergedStyles {
       ).toLocaleLowerCase();
       if (name !== "" && !this.#cellStyleNames.has(name)) {
         this.#cellStyles.push(
-          setAttribute(declaration, "xfId", String(target)),
+          // The declaration points at the interned style afterwards, whether
+          // or not it arrived pointing anywhere.
+          writeAttribute(declaration, "xfId", String(target)),
         );
         this.#cellStyleNames.add(name);
         this.#changed = true;

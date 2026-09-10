@@ -28,9 +28,13 @@ import {
   WORKBOOK_MAIN_PART,
   WorkbookPackage,
 } from "./package/index.js";
+import { WorkbookRead } from "./operations/read-model.js";
+import {
+  readWorksheetReports,
+  type WorksheetImportReport,
+} from "./operations/worksheets.js";
 import {
   describeWorkbookModel,
-  loadWorkbookModelForDescribe,
   MAX_COLUMN_SAMPLE_VALUES,
   type DescribeWorkbookMetric,
   type DescribeWorkbookOptions,
@@ -72,6 +76,7 @@ import {
   MERGE_OPERATION,
   parseExcelTableDefinitions,
   parseWorkbookBytes,
+  readWorkbookDates,
   preservedSplitTemplateBytes,
   refuseMappingWithSuggestion,
   resolveSplitSource,
@@ -733,6 +738,9 @@ export async function consolidateWorkbooksBytes(
         parseWorkbookBytes(input.bytes, input.name, {
           details: { source: input.name },
         }),
+        await readWorkbookDates(input.bytes, input.name, {
+          source: input.name,
+        }),
         input.name,
         options,
       ),
@@ -905,6 +913,49 @@ export async function mergeWorkbooksBytes(
 }
 
 /**
+ * Read every visible worksheet that holds data as a `Table`, from bytes.
+ *
+ * The byte twin of `readWorkbookTables`: same selection options, same header
+ * resolution, same `Table` shape, with blank and repeated headers filled in and
+ * numbered rather than refused. The byte surface had readers for Excel Tables
+ * and named ranges but none for the worksheets themselves, so a browser caller
+ * that wanted a worksheet's data had to take the record reader's display text
+ * instead of the stored values.
+ */
+export async function readWorkbookTablesBytes(
+  input: WorkbookInputBytes,
+  options: ReadWorkbookOptions = {},
+): Promise<Table[]> {
+  return workbookTables(
+    parseWorkbookBytes(input.bytes, input.name, {
+      details: { source: input.name },
+    }),
+    await readWorkbookDates(input.bytes, input.name, { source: input.name }),
+    input.name,
+    options,
+  );
+}
+
+/**
+ * Read every selected worksheet from bytes, reporting each one whether or not
+ * it yielded a table, and how many cells of the read hold a formula the
+ * workbook carries no calculated value for.
+ *
+ * `readWorkbookTablesBytes` is this list with the tables taken out of it, so a
+ * caller that only wants the data can keep asking for the data. A caller that
+ * has to tell a blank cell from a value the workbook never worked out, which no
+ * `Table` can express, asks for this instead. The consolidation, merge, and
+ * split operations are unchanged and go on treating an uncalculated formula as
+ * empty.
+ */
+export async function readWorkbookWorksheetsBytes(
+  input: WorkbookInputBytes,
+  options: ReadWorkbookOptions = {},
+): Promise<WorksheetImportReport[]> {
+  return readWorksheetReports(input.bytes, input.name, options);
+}
+
+/**
  * Read one worksheet as text records, the shape template population and other
  * record-driven operations consume.
  */
@@ -917,6 +968,7 @@ export async function readWorksheetRecordsBytes(
       cellText: true,
       details: { source: input.name },
     }),
+    await readWorkbookDates(input.bytes, input.name, { source: input.name }),
     options,
   );
 }
@@ -940,7 +992,13 @@ export async function readWorkbookExcelTablesBytes(
     input.name,
     details,
   );
-  return workbookExcelTables(workbook, definitions, input.name, options);
+  return workbookExcelTables(
+    workbook,
+    await readWorkbookDates(input.bytes, input.name, details),
+    definitions,
+    input.name,
+    options,
+  );
 }
 
 /**
@@ -956,6 +1014,7 @@ export async function readWorkbookNamedRangesBytes(
       cellText: true,
       details: { source: input.name },
     }),
+    await readWorkbookDates(input.bytes, input.name, { source: input.name }),
     input.name,
     options,
   );
@@ -975,10 +1034,11 @@ export async function describeWorkbookBytes(
   options: DescribeWorkbookOptions = {},
 ): Promise<WorkbookDescriptionOutcome> {
   throwIfAborted(options.signal, INSPECT_OPERATION, "memory");
-  const workbook = await loadWorkbookModelForDescribe(input.bytes, input.name, {
+  const read = await WorkbookRead.load(input.bytes, {
     source: input.name,
+    details: { source: input.name },
   });
-  return describeWorkbookModel(workbook, input.name, options, "memory");
+  return describeWorkbookModel(read, input.name, options, "memory");
 }
 
 export { XLSX_ERRORS, type XlsxErrorCode } from "./errors.js";
@@ -1005,7 +1065,10 @@ export type {
   WorkbookExcelTable,
   WorkbookNamedRange,
   WorksheetRecords,
+  WorksheetRegion,
+  WorksheetTableReport,
 } from "./shared.js";
+export type { WorksheetImportReport } from "./operations/worksheets.js";
 export type {
   AllWorksheetSplitSummary,
   SplitOutputDetail,

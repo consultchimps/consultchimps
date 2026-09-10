@@ -5,6 +5,8 @@ import {
   PDF_FILES,
   PRESENTATION_FILES,
   WORKBOOK_FILES,
+  WORKSPACE_IMPORT_FILES,
+  workspaceImportKind,
   type AcceptedFileKind,
 } from "./accepted-files";
 
@@ -119,5 +121,56 @@ describe("accepted workbooks", () => {
   it("does not accept a presentation or a PDF", () => {
     expect(WORKBOOK_FILES.accepts(pickedFile("deck.pptx"))).toBe(false);
     expect(WORKBOOK_FILES.accepts(pickedFile("report.pdf"))).toBe(false);
+  });
+});
+
+describe("which family a workspace import reads a file as", () => {
+  const CSV = "text/csv";
+  const SPREADSHEET =
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+  it("takes the browser's word when the name carries no extension", () => {
+    // The case that used to split the two layers apart: the picker accepted
+    // this file and the reader then refused it, because the reader read only
+    // the name.
+    expect(workspaceImportKind(pickedFile("report", CSV))).toBe("delimited");
+    expect(workspaceImportKind(pickedFile("report", SPREADSHEET))).toBe(
+      "workbook",
+    );
+  });
+
+  it("takes the name when the browser reports no type at all", () => {
+    expect(workspaceImportKind(pickedFile("customers.csv"))).toBe("delimited");
+    expect(workspaceImportKind(pickedFile("clients.xlsx"))).toBe("workbook");
+    expect(workspaceImportKind(pickedFile("clients.xlsm"))).toBe("workbook");
+  });
+
+  it("belongs to no family when neither rule claims it", () => {
+    expect(workspaceImportKind(pickedFile("deck.pptx"))).toBeUndefined();
+    expect(workspaceImportKind(pickedFile("report.pdf"))).toBeUndefined();
+    expect(
+      workspaceImportKind(pickedFile("notes", "text/plain")),
+    ).toBeUndefined();
+  });
+
+  it("accepts exactly the files one of its families accepts", () => {
+    // The property that keeps the picker and the reader from drifting: what the
+    // import as a whole takes is what one of its parts takes, never a third
+    // list written out beside them.
+    for (const file of [
+      pickedFile("report", CSV),
+      pickedFile("report", SPREADSHEET),
+      pickedFile("customers.csv"),
+      pickedFile("clients.xlsx"),
+      pickedFile("clients.xlsm"),
+      pickedFile("deck.pptx"),
+      pickedFile("report.pdf"),
+      pickedFile("notes", "text/plain"),
+      pickedFile("nameless"),
+    ]) {
+      expect(WORKSPACE_IMPORT_FILES.accepts(file)).toBe(
+        workspaceImportKind(file) !== undefined,
+      );
+    }
   });
 });

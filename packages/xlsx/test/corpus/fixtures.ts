@@ -47,6 +47,13 @@ export interface CorpusWorkbookOptions {
   summarySheet?: boolean | undefined;
   /** A second data block below the region, at Data!A12. */
   footerBlock?: boolean | undefined;
+  /**
+   * A row that carries no `r` attribute, and cells that carry no `r` either,
+   * directly below the totals row. The format leaves both optional: such a row
+   * sits where document order puts it, which is one past the row before it.
+   * Requires the totals row, so the row it means is always `CORPUS_IMPLICIT_ROW`.
+   */
+  implicitRow?: boolean | undefined;
   /** A `hidden` worksheet that also carries the split column, and a `veryHidden` one. */
   hiddenSheets?: boolean | undefined;
   /** Emit `xl/calcChain.xml`. Defaults to true whenever formulas are present. */
@@ -99,6 +106,12 @@ export const CORPUS_LAST_DATA_ROW = 9;
 export const CORPUS_TOTALS_ROW = 10;
 /** Worksheet row holding the footer / second data block, when one is present. */
 export const CORPUS_FOOTER_ROW = 12;
+
+/**
+ * The row the `implicitRow` fixture means: one past the totals row, which is
+ * what document order gives a `<row>` carrying no number of its own.
+ */
+export const CORPUS_IMPLICIT_ROW = 11;
 /** Sum of every `Amount` in the corpus, cached by the aggregate formulas. */
 export const CORPUS_TOTAL_AMOUNT = 210;
 /** Worksheet holding the split region. */
@@ -184,6 +197,7 @@ interface ResolvedOptions {
   dependents: boolean;
   footerBlock: boolean;
   formulas: CorpusFormulaFlavor;
+  implicitRow: boolean;
   hiddenSheets: boolean;
   macro: boolean;
   numberFormat: boolean;
@@ -255,8 +269,8 @@ class RelationshipTable {
   }
 }
 
-function cellXml(spec: CellSpec): string {
-  const attributes = [`r="${spec.ref}"`];
+function cellXml(spec: CellSpec, implicit = false): string {
+  const attributes = implicit ? [] : [`r="${spec.ref}"`];
   if (spec.style !== undefined) {
     attributes.push(`s="${spec.style}"`);
   }
@@ -275,13 +289,25 @@ function cellXml(spec: CellSpec): string {
   if (spec.value !== undefined) {
     children.push(`<v>${escapeXml(spec.value)}</v>`);
   }
+  const written = attributes.length === 0 ? "" : ` ${attributes.join(" ")}`;
   return children.length === 0
-    ? `<c ${attributes.join(" ")}/>`
-    : `<c ${attributes.join(" ")}>${children.join("")}</c>`;
+    ? `<c${written}/>`
+    : `<c${written}>${children.join("")}</c>`;
 }
 
-function rowXml(rowNumber: number, cells: CellSpec[]): string {
-  return `<row r="${rowNumber}">${cells.map(cellXml).join("")}</row>`;
+/**
+ * One row. `implicit` omits the row's `r` and every cell's `r`, which the
+ * format allows: the row and its cells then sit where document order puts them.
+ */
+function rowXml(
+  rowNumber: number,
+  cells: CellSpec[],
+  implicit = false,
+): string {
+  const inner = cells.map((cell) => cellXml(cell, implicit)).join("");
+  return implicit
+    ? `<row>${inner}</row>`
+    : `<row r="${rowNumber}">${inner}</row>`;
 }
 
 function resolveOptions(options: CorpusWorkbookOptions): ResolvedOptions {
@@ -298,6 +324,12 @@ function resolveOptions(options: CorpusWorkbookOptions): ResolvedOptions {
       "The uncachedFormula fixture lives on the Summary worksheet; enable summarySheet.",
     );
   }
+  const totalsRow = options.totalsRow ?? options.shape === "table";
+  if ((options.implicitRow ?? false) && !totalsRow) {
+    throw new Error(
+      "The implicit row sits directly below the totals row, so the number document order gives it is only fixed when the totals row is there; enable totalsRow.",
+    );
+  }
   const pivot = options.pivot ?? false;
   if (pivot && !summarySheet) {
     throw new Error(
@@ -312,6 +344,7 @@ function resolveOptions(options: CorpusWorkbookOptions): ResolvedOptions {
     dependents: options.dependents ?? true,
     footerBlock: options.footerBlock ?? true,
     formulas,
+    implicitRow: options.implicitRow ?? false,
     hiddenSheets: options.hiddenSheets ?? true,
     macro: options.macro ?? false,
     numberFormat: options.numberFormat ?? false,
@@ -319,7 +352,7 @@ function resolveOptions(options: CorpusWorkbookOptions): ResolvedOptions {
     shape: options.shape,
     sharedFormula: options.sharedFormula ?? false,
     summarySheet,
-    totalsRow: options.totalsRow ?? options.shape === "table",
+    totalsRow,
     uncachedFormula,
   };
 }
@@ -484,6 +517,23 @@ function buildDataSheet(
     );
   }
 
+  if (resolved.implicitRow) {
+    rows.push(
+      rowXml(
+        CORPUS_IMPLICIT_ROW,
+        [
+          {
+            ref: `A${CORPUS_IMPLICIT_ROW}`,
+            type: "s",
+            value: String(strings.index("Implicit note")),
+          },
+          { ref: `B${CORPUS_IMPLICIT_ROW}`, value: "1" },
+        ],
+        true,
+      ),
+    );
+  }
+
   if (resolved.footerBlock) {
     rows.push(
       rowXml(CORPUS_FOOTER_ROW, [
@@ -506,9 +556,11 @@ function buildDataSheet(
 
   const lastRow = resolved.footerBlock
     ? CORPUS_FOOTER_ROW
-    : resolved.totalsRow
-      ? CORPUS_TOTALS_ROW
-      : CORPUS_LAST_DATA_ROW;
+    : resolved.implicitRow
+      ? CORPUS_IMPLICIT_ROW
+      : resolved.totalsRow
+        ? CORPUS_TOTALS_ROW
+        : CORPUS_LAST_DATA_ROW;
   const sections: string[] = [
     `<dimension ref="A1:I${lastRow}"/>`,
     '<sheetViews><sheetView workbookViewId="0"/></sheetViews>',

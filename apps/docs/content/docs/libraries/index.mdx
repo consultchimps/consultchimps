@@ -320,6 +320,122 @@ const table = databaseTableToTable(database, "Customer");
 addRecordsFromTable(database, "Customer", table);
 ```
 
+### Import a table of values
+
+The import half is pure and runtime-neutral, so the same call creates the same
+tables from a browser worker or from a terminal. `inferColumnTypes` decides each
+column's type from its own values, and `importTable` creates the table and fills
+it, generating a Record ID for every row:
+
+```ts
+import {
+  importTable,
+  inferColumnTypes,
+  parseCsvTable,
+  suggestRecordIdPrefix,
+  suggestTableName,
+} from "@consultchimps/db";
+import { readWorkbookTables } from "@consultchimps/xlsx";
+
+// A worksheet, or comma-separated text read as a Table of text values.
+const [worksheet] = await readWorkbookTables("customers.xlsx");
+const orders = parseCsvTable("Reference,Quantity\n007,3\n008,11\n");
+
+// What the types would be, before anything is created.
+console.log(inferColumnTypes(orders));
+// [{ name: "Reference", type: "text", valueCount: 2 },
+//  { name: "Quantity", type: "integer", valueCount: 2 }]
+
+const name = suggestTableName("Customer List"); // "Customer_List"
+const imported = importTable(database, worksheet, {
+  name,
+  recordId: { prefix: suggestRecordIdPrefix(name), padding: 4 },
+});
+console.log(imported.rowCount, imported.firstRecordId); // 2 "CL-0001"
+```
+
+A column takes a type only when every value that is not blank fits it:
+
+| Type      | When                                                               |
+| --------- | ------------------------------------------------------------------ |
+| `boolean` | every value is true, false, yes, or no, in any case                |
+| `date`    | every value is an ISO 8601 date or timestamp naming a real instant |
+| `integer` | every value is a whole number that reads back unchanged, and fits  |
+| `real`    | every value is a number that reads back unchanged                  |
+| `text`    | anything else, and a column with no values in it                   |
+
+Nothing is guessed, and nothing is quietly rounded. Both numeric rules run the
+same test: the text has to read back as the number it wrote. So a padded
+reference code (`007`), an exponent form (`1e5`), a grouped number (`1,000`), a
+whole number past the range stored exactly, and a decimal carrying more digits
+than a number can hold (`0.12345678901234567890`) all stay text, as do a value
+that overflows to infinity and one that underflows to zero. A whole number also
+has to fit the range an integer column stores exactly, which is the narrower of
+the two.
+
+A timestamp is judged as one value rather than part by part, so `24:00` is the
+end of a day but `24:30` is nothing, `:60` is a leap second only at `23:59`, and
+an offset of `+99:99` is not an offset. A `date` column holds that spelling and
+no other: `isIsoDateText` is the rule, and it is the same rule inference used to
+decide the column was a date, so `insertRecord` refuses anything else rather
+than storing text a later read cannot trust. Surrounding spaces are removed
+before the value is judged and stored, so `" 2026-01-31 "` is stored as
+`2026-01-31`, and a cell holding nothing but spaces is stored as no value at
+all. A text column keeps its content exactly as it was read. A date written any
+other way (`01/02/2026`) stays text, because there is no way to tell a January
+date from a February one without guessing a convention the file never stated. So
+does a column whose values disagree: `1` beside `yes` is text.
+
+`parseCsvTable` follows RFC 4180 and states its whole contract in the module's
+documentation: what it accepts, what it refuses with a stable error code (text
+after a closing quote, an unclosed quoted value, a value no header names), and
+what it tolerates on purpose (a quote that does not start a field, a short row,
+a trailing separator, a blank row).
+
+Column names are derived in the same step that numbers repeated ones, so a name
+is inside the limit by construction. A header longer than a column name may be
+is shortened first, at a whole-character boundary and with room left for the
+number a duplicate may need, and the numbering then runs over names that already
+fit. Headers that differed only past the cut collide and are numbered. No value
+is lost: every column is still stored, and `ImportedTable.renamedColumns`
+reports each header that ended up under a different name, so the change is
+visible rather than silent. Shortening the header and then checking the limit
+would be two steps in two layers, and two copies of a 200-character header would
+fail between them, over a column name nobody can edit.
+
+`importTables` creates several tables in one call, which is what a multi-sheet
+workbook needs. Names, Record ID prefixes, and column names are all checked
+first, and the creation and the rows then run inside a single transaction, so a
+failure part way through leaves the database exactly as it was rather than half
+imported. A table name that the database already reads as the same name, under
+the case-insensitive rules SQLite applies, is refused before anything is
+written. A Record ID column in the input is left out rather than refused, since
+identifiers are always generated, so a table read back out of a database can be
+imported again as a copy.
+
+A source's `columns` must not repeat a name exactly. A `Table` row is an object
+keyed by column name, so a list such as `["Amount", "Amount"]` describes a
+second column no row can answer: reading it returns the first column's value,
+and the import would store that value twice under two names. There is nothing in
+the source that says what the second column held, so it is refused with
+`DB_IMPORT_DUPLICATE_SOURCE_COLUMN` rather than guessed at. Names that differ
+only in case, or in the characters the identifier fold ignores, are two
+properties carrying two values: those are numbered and reported in
+`renamedColumns`, not refused. Every reader here already makes its headers
+unique, so this concerns tables a caller builds itself.
+
+`importedTableSchema` returns the `TableSchema` an import would create without
+creating it, and refuses exactly what the import refuses: a source with no
+columns of its own, one whose only column is the Record ID, one that repeats a
+column name, a table name the engine will not take, and a Record ID
+configuration that cannot number anything all raise from the preview as well,
+because both halves ask the same plan. Only the checks that need the workspace,
+such as a name it already holds, wait for the import itself.
+`@consultchimps/db/schema` publishes the schema model on its own, with no
+database engine behind it, for a caller that only needs the identifier rules
+(`identifierKey`, `sameIdentifier`, `assertSafeIdentifier`,
+`MAX_RECORD_ID_PADDING`).
+
 ### Configure sql.js in a browser worker
 
 In Node the WebAssembly binary resolves beside the installed package, so no
@@ -359,18 +475,24 @@ const namedRanges = await readWorkbookNamedRanges("clients.xlsx");
 ```
 
 `readWorkbookTables` accepts the consolidator's selection options: `sheets`, a
-one-based `headerRow`, and `includeHiddenSheets`. `readWorksheetRecords` selects
-one `worksheet` and a `headerRow`; the Excel Table and named-range readers
-filter by `sheets` plus `tables` or `names`. The `writeTable` counterpart writes
-one in-memory `Table` to a new formatted workbook.
+one-based `headerRow`, and `includeHiddenSheets`. `readWorkbookTablesBytes` is
+its byte-level twin, for a browser that holds the workbook's bytes rather than a
+path. `readWorksheetRecords` selects one `worksheet` and a `headerRow`; the
+Excel Table and named-range readers filter by `sheets` plus `tables` or `names`.
+The `writeTable` counterpart writes one in-memory `Table` to a new formatted
+workbook.
 
 ## Inspect a workbook before operating on it
 
 `describeWorkbook` reports what is in a file without creating anything:
-worksheets with their visibility and dimensions, the header row each operation
-would actually use, Excel Tables, named ranges, and a bounded sample of every
-column's values. Use it to confirm a workbook's shape, or to build a picker for
-the sheets and columns another operation will act on.
+worksheets with their visibility and dimensions, the header row the region
+resolver picks (the one a split keys on), Excel Tables, named ranges, and a
+bounded sample of every column's values. The table readers resolve a header
+separately and skip a row that carries no readable value, so on a worksheet
+whose first used row holds only uncalculated formulas the two differ; where that
+matters, read the region back from `readWorkbookWorksheetsBytes` rather than
+from the description. Use it to confirm a workbook's shape, or to build a picker
+for the sheets and columns another operation will act on.
 
 ```ts
 import { describeWorkbook } from "@consultchimps/xlsx";
@@ -409,6 +531,97 @@ other reader here; naming a worksheet the workbook does not have is refused with
 
 `describeWorkbookBytes` is the byte-level twin and produces a structurally
 identical description for the same workbook.
+
+### Notice cells a table cannot represent
+
+Two kinds of cell reach a `Table` as something they are not.
+
+Excel writes a formula and its last calculated result side by side, but a file
+written by a generator, or saved with calculation switched off, carries the
+formula alone. Every reader then sees those cells as **empty**, because empty is
+all the file says, and a table read from that worksheet has holes where the
+numbers belong.
+
+An error cell reaches it as a **number**. `#REF!`, `#DIV/0!` and their kind are
+stored as `t="e"`, and the spreadsheet engine reports the internal code Excel
+numbers each error by, so a `#REF!` arrives as `23` and a `#DIV/0!` as `7`. That
+is worse than a hole: a column of amounts still infers a numeric type, and
+nothing downstream can tell those codes from data.
+
+`readWorkbookWorksheetsBytes` reports each selected worksheet, whether or not it
+yielded a table, with the rectangle the read covered and the count of each kind
+inside it:
+
+```ts
+import { readWorkbookWorksheetsBytes } from "@consultchimps/xlsx/bytes";
+
+for (const worksheet of await readWorkbookWorksheetsBytes({
+  name: file.name,
+  bytes,
+})) {
+  if (worksheet.uncachedFormulaCells > 0) {
+    // Calculating them belongs to Excel: open the workbook, let it calculate,
+    // and save it again.
+    console.log(`${worksheet.sheet} has values the file does not carry`);
+  }
+  if (worksheet.errorCells > 0) {
+    // What a broken formula was meant to say is not in the file at all: fix or
+    // clear the errors in Excel and save it again.
+    console.log(`${worksheet.sheet} has values that are errors`);
+  }
+}
+```
+
+`readWorkbookWorksheets` is the file twin: both surfaces hand the same operation
+the same bytes, so neither can answer differently about the same workbook.
+
+A cell a worksheet stores as a date reads as ISO 8601 text, and that text is a
+function of the workbook alone. A worksheet says a cell is a date in two ways,
+and both are read: a count of days from the workbook's epoch wearing a date
+number format, which is what Excel writes, and a cell that declares `t="d"` and
+writes ISO 8601 text, which the format allows and other generators use. The
+declared type is enough on its own; a cell that declares itself a date and wears
+no format is still a date, and reads as one.
+
+Neither carries a time zone, so the reader decodes what the workbook holds into
+calendar components and writes them out. No `Date` takes part: a `Date` has a
+local face as well as a UTC one, and text built from the local face makes the
+same workbook read as a different calendar day in every time zone. The same
+workbook therefore reads identically on a machine set to UTC, to UTC+4, or to
+UTC-7, which is what a group key, an output filename, and a stored date all
+need. A declared date whose text names no moment is carried as that text rather
+than converted.
+
+The text is always the full timestamp, `2024-01-01T00:00:00.000Z`, whether or
+not the cell carries a time, so a date column reads the same way down its whole
+length. `@consultchimps/db` accepts that spelling and the bare `2024-01-01` in a
+`date` column, so either travels.
+
+A moment carries a millisecond, and a declared date written finer than that is
+carried as its text rather than shortened to fit: `18:00:00.1234` and
+`18:00:00.1239` are not the same instant, and reading both as `18:00:00.123`
+would change what the cell says and let a split gather rows that are not
+together. Digits past the third that are zeros lose nothing and are accepted.
+The same rule covers every other shape the text can take, and the whole list is
+enumerated in the reader itself, beside the grammar.
+
+Both counts are read from the package's own document model, because the
+spreadsheet engine behind the table readers drops a numeric formula cell with no
+cached value while parsing and flattens an error into that code, and they are
+scoped in one walk to the rectangle the table reader reported, so they describe
+the read you got rather than a region resolved a second time. A cached value
+counts as present when the element is there, whatever it holds, so a formula
+that evaluated to an empty string or to zero has been calculated; an error
+counts whether somebody typed it in or a formula left it there.
+`readWorkbookTablesBytes` is this list with the tables taken out of it, and the
+consolidation, merge, and split operations are unchanged: they go on treating an
+uncalculated formula as an empty cell and an error as the code it is stored as.
+
+A worksheet part is parsed the first time something asks for it, so a malformed
+row or cell reference surfaces long after the workbook opened. Whichever step it
+comes from, it is reported as `XLSX_READ_FAILED`, naming the workbook and, when
+the failure belongs to a worksheet, that worksheet; the parser's own complaint
+is the error's `cause`.
 
 ## Remove worksheet and workbook protection
 

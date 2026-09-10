@@ -8,15 +8,22 @@ export {
   type SqlValueType,
 } from "./engine.js";
 export {
+  assertRecordIdConfig,
   assertSafeIdentifier,
   cellFromSqlValue,
   formatRecordId,
   identifierKey,
+  isIsoDateText,
+  isValueConversionError,
   quoteIdentifier,
   sameIdentifier,
   sqlStorageClass,
   sqlValueFromCell,
+  truncateIdentifier,
+  COLUMN_TYPES,
   DEFAULT_RECORD_ID_SEPARATOR,
+  MAX_IDENTIFIER_LENGTH,
+  MAX_RECORD_ID_PADDING,
   METADATA_TABLE,
   RECORD_ID_COLUMN,
   RESERVED_TABLE_PREFIX,
@@ -35,3 +42,17 @@ export {
   type UpdatedRecord,
 } from "./database.js";
 export { addRecordsFromTable, databaseTableToTable } from "./bridge.js";
+export { parseCsvTable, type ParseCsvOptions } from "./csv.js";
+export {
+  importTable,
+  importTables,
+  importedTableSchema,
+  inferColumnTypes,
+  suggestRecordIdPrefix,
+  suggestTableName,
+  type ImportTableOptions,
+  type ImportTableRequest,
+  type ImportedTable,
+  type InferredColumn,
+  type RenamedColumn,
+} from "./import.js";

@@ -17,14 +17,26 @@
 import { ConsultChimpsError } from "@consultchimps/core";
 import type { CellValue } from "@consultchimps/tabular";
 
+import type { WorkspaceImportKind } from "./accepted-files";
+
 import type {
+  ImportedTableSummary,
+  ImportSourceDescription,
+  ImportTableChoice,
   UpdateWorkspaceCellCommand,
   WorkspaceCommand,
   WorkspaceEvent,
   WorkspaceSummary,
   WorkspaceTable,
-  WorkspaceTables,
 } from "./workspace-protocol";
+
+/** What an import created, as the page reports it. */
+export interface WorkspaceImportResult {
+  /** The workspace as it now stands, table listing included. */
+  readonly summary: WorkspaceSummary;
+  /** The tables this import created. */
+  readonly tables: readonly ImportedTableSummary[];
+}
 
 /**
  * One cell edit: which workspace, which record, which column, and the new
@@ -82,6 +94,47 @@ export class WorkspaceClient {
     return new Uint8Array(event.buffer);
   }
 
+  /* -------------------------------------------------------------------------
+   * Import. Both commands carry the file, so the worker holds no state between
+   * choosing a file and importing from it. A copy is taken and its buffer
+   * transferred, so the caller's `bytes` stay valid and can be sent again.
+   * ---------------------------------------------------------------------- */
+
+  /** List the tables a `.xlsx`, `.xlsm`, or `.csv` file could contribute. */
+  async describeImport(
+    fileName: string,
+    kind: WorkspaceImportKind,
+    bytes: Uint8Array,
+  ): Promise<readonly ImportSourceDescription[]> {
+    const buffer = bytes.slice().buffer;
+    const event = await this.#run(
+      (id) => ({ type: "describeImport", id, fileName, kind, buffer }),
+      [buffer],
+    );
+    if (event.type !== "importSources") {
+      throw this.#unexpected(event);
+    }
+    return event.sources;
+  }
+
+  /** Create the chosen tables in the held workspace and fill them. */
+  async importFile(
+    fileName: string,
+    kind: WorkspaceImportKind,
+    bytes: Uint8Array,
+    tables: readonly ImportTableChoice[],
+  ): Promise<WorkspaceImportResult> {
+    const buffer = bytes.slice().buffer;
+    const event = await this.#run(
+      (id) => ({ type: "import", id, fileName, kind, buffer, tables }),
+      [buffer],
+    );
+    if (event.type !== "imported") {
+      throw this.#unexpected(event);
+    }
+    return { summary: event.summary, tables: event.tables };
+  }
+
   /** Release the held workspace. */
   async close(): Promise<void> {
     const event = await this.#run((id) => ({ type: "close", id }));
@@ -95,20 +148,10 @@ export class WorkspaceClient {
    *
    * These share the queue above, so a table read cannot overtake a cell edit
    * that is still in the engine, and a workspace opened while an edit is in
-   * flight cannot swap the database underneath it.
+   * flight cannot swap the database underneath it. Which tables exist is not
+   * asked here: that is the workspace summary every create, open, and import
+   * already reports.
    * --------------------------------------------------------------------- */
-
-  /**
-   * Name the tables the held workspace contains, ordered by name, along with
-   * the generation every later read and write must quote back.
-   */
-  async listTables(): Promise<WorkspaceTables> {
-    const event = await this.#run((id) => ({ type: "listTables", id }));
-    if (event.type !== "tables") {
-      throw this.#unexpected(event);
-    }
-    return { generation: event.generation, tables: event.tables };
-  }
 
   /**
    * Read one table's columns and every row it holds, from the workspace

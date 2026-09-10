@@ -2,6 +2,8 @@ import { Database, type TableSchema } from "@consultchimps/db";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 
+import { createWorkbookUpload, type UploadFile } from "./fixtures";
+
 /**
  * The record grid on /workspace: view a table, edit it, have an impossible
  * value refused, and find the surviving edits in the saved file.
@@ -133,6 +135,54 @@ async function typeInCell(
     await input.fill(value, { timeout: STEP_TIMEOUT });
     await input.press("Enter", { timeout: STEP_TIMEOUT });
   });
+}
+
+/**
+ * A workbook to import, so a table can appear after the grid is already up. The
+ * file and its worksheet are named alike, because what the import calls the
+ * table it creates is its own business and this spec is not the place to pin
+ * that rule down.
+ */
+function supplierWorkbook(): Promise<UploadFile> {
+  return createWorkbookUpload("Supplier.xlsx", [
+    {
+      name: "Supplier",
+      rows: [
+        ["Name", "Region"],
+        ["Acme Supply", "North"],
+      ],
+    },
+  ]);
+}
+
+/**
+ * Hold the worker's import commands, so the page can be inspected while one is
+ * genuinely in flight. The same stand-in the import spec uses, and for the same
+ * reason: a real import finishes in milliseconds, and making the fixture slow
+ * enough to observe would trade one timing assumption for a worse one.
+ */
+async function delayWorkerImports(page: Page, ms: number): Promise<void> {
+  await page.addInitScript((delay: number) => {
+    const post = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (
+      this: Worker,
+      message: unknown,
+      transfer?: unknown,
+    ): void {
+      const type = (message as { type?: string } | null)?.type;
+      if (type === "describeImport" || type === "import") {
+        window.setTimeout(() => {
+          (post as (m: unknown, t?: unknown) => void).call(
+            this,
+            message,
+            transfer,
+          );
+        }, delay);
+        return;
+      }
+      (post as (m: unknown, t?: unknown) => void).call(this, message, transfer);
+    } as typeof Worker.prototype.postMessage;
+  }, ms);
 }
 
 async function downloadedWorkspace(page: Page): Promise<Buffer> {
@@ -306,5 +356,126 @@ test.describe("/workspace record grid", () => {
     await openWorkspace(page, saved);
     await expect(cellOf(page, "CUST-0001", "headcount")).toHaveText("15");
     await expect(cellOf(page, "CUST-0001", "name")).toHaveText("Acme");
+  });
+
+  test("reports an edit to the shell, so leaving asks first", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await openWorkspace(page, await workspaceFixture());
+
+    // Nothing is unsaved until an edit lands, so New goes straight through.
+    await expect(page.getByTestId("workspace-unsaved")).toHaveCount(0);
+
+    await typeInCell(page, "CUST-0001", "name", "Acme Holdings");
+    // The grid keeps no flag of its own: this is the shell's, set by the one
+    // marker the grid calls when the worker accepts an edit.
+    await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
+
+    await page.getByTestId("workspace-new").click();
+    await expect(page.getByTestId("workspace-confirm")).toBeVisible();
+
+    // Cancelling leaves the workspace and the edit exactly where they were.
+    await page.getByTestId("workspace-confirm-cancel").click();
+    await expect(page.getByTestId("workspace-confirm")).toHaveCount(0);
+    await expect(cellOf(page, "CUST-0001", "name")).toHaveText("Acme Holdings");
+    await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
+  });
+
+  test("asks nothing after an edit that has been saved", async ({ page }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await openWorkspace(page, await workspaceFixture());
+
+    await typeInCell(page, "CUST-0001", "headcount", "15");
+    await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
+
+    // Saving is what clears the flag, and it is cleared in the shell, not by
+    // the grid noticing anything.
+    await downloadedWorkspace(page);
+    await expect(page.getByTestId("workspace-unsaved")).toHaveCount(0);
+
+    await page.getByTestId("workspace-new").click();
+    await expect(page.getByTestId("workspace-confirm")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-tables-empty")).toBeVisible();
+  });
+
+  test("locks editing while an import is in flight", async ({ page }) => {
+    await forceDownloadFallback(page);
+    await delayWorkerImports(page, 2_000);
+    await page.goto("/workspace");
+    await openWorkspace(page, await workspaceFixture());
+
+    await page
+      .getByTestId("workspace-import-input")
+      .setInputFiles(await supplierWorkbook());
+    await expect(page.getByTestId("workspace-import-form")).toBeVisible();
+    await page.getByTestId("workspace-import-run").click();
+
+    // The import is now in the worker's queue. Editing is the shell's single
+    // busy state away, so the cell offers no editor at all: the grid holds no
+    // second opinion about whether the workspace is free.
+    const cell = cellOf(page, "CUST-0001", "name");
+    await cell.click();
+    await expect(cell.locator("input")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-table-select")).toBeDisabled();
+
+    // Once it lands, editing is offered again.
+    await expect(page.getByTestId("workspace-table")).toHaveCount(3, {
+      timeout: 30_000,
+    });
+    await typeInCell(page, "CUST-0001", "name", "Acme Holdings");
+    await expect(cellOf(page, "CUST-0001", "name")).toHaveText("Acme Holdings");
+  });
+
+  test("shows a table imported after the grid was already up", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await openWorkspace(page, await workspaceFixture());
+
+    // The grid is showing Customer, and knows of Customer and Region only.
+    await expect(page.getByTestId("workspace-table-select")).toHaveValue(
+      "Customer",
+    );
+    await expect(
+      page.getByTestId("workspace-table-select").locator("option"),
+    ).toHaveCount(2);
+
+    await page
+      .getByTestId("workspace-import-input")
+      .setInputFiles(await supplierWorkbook());
+    await expect(page.getByTestId("workspace-import-form")).toBeVisible();
+    await page.getByTestId("workspace-import-run").click();
+    await expect(page.getByTestId("workspace-table")).toHaveCount(3);
+
+    // The switcher reads the shell's summary, which the import replaced, so the
+    // new table is there without the grid asking anyone for a second listing.
+    await expect(
+      page.getByTestId("workspace-table-select").locator("option"),
+    ).toHaveCount(3);
+    await page.getByTestId("workspace-table-select").selectOption("Supplier");
+
+    // Located by column rather than by Record ID: what the import numbers the
+    // rows is its own business, and this test is about the table arriving.
+    // Scoped to a row rather than the whole grid: the column header carries the
+    // same field attribute, and only rows carry a Record ID.
+    const supplierName = page.locator(
+      '[data-record-id] [tabulator-field="Name"]',
+    );
+    await expect(supplierName).toHaveText("Acme Supply");
+
+    // And the grid is editing the workspace as it now stands: the read that
+    // followed the import carries the generation the worker will accept, so
+    // this edit is not refused as belonging to the workspace before it.
+    await editCell(supplierName, async (input) => {
+      await input.fill("Acme Supplies", { timeout: STEP_TIMEOUT });
+      await input.press("Enter", { timeout: STEP_TIMEOUT });
+    });
+    await expect(supplierName).toHaveText("Acme Supplies");
+    await expect(page.getByTestId("workspace-error")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
   });
 });

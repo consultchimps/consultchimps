@@ -20,6 +20,18 @@ import {
   readWorkbookExcelTables,
   splitWorkbookByColumn,
 } from "../src/index.js";
+import {
+  buildCorpusWorkbook,
+  cleanupCorpusDirectories,
+  CORPUS_IMPLICIT_ROW,
+  CORPUS_PARTS,
+  CORPUS_SPLIT_COLUMN,
+  createCorpusDirectory,
+  readPackagePart,
+  worksheetCellReferences,
+  worksheetCellValue,
+  worksheetRowNumbers,
+} from "./corpus/fixtures.js";
 
 const temporaryDirectories: string[] = [];
 const structuredTableFixture = fileURLToPath(
@@ -723,5 +735,58 @@ describe("splitWorkbookByColumn", () => {
         warning.includes("already exists"),
       ),
     ).toBe(true);
+  });
+});
+
+describe("split: a row the worksheet leaves to document order", () => {
+  afterEach(async () => {
+    await cleanupCorpusDirectories();
+  });
+
+  it("keeps the row below a filtered Excel Table at its own number", async () => {
+    // The format lets a row omit its `r` and take the number document order
+    // gives it. Filtering the table compacts the rows above this one while the
+    // block below it stays put, so a row still implicit in the output
+    // serialises directly under the shortened table and Excel reads it four
+    // rows early. The model materialises the number it inferred; this is the
+    // operation that proves the number reaches the file.
+    const directory = await createCorpusDirectory();
+    const input = path.join(directory, "corpus.xlsx");
+    const output = path.join(directory, "out");
+    await writeFile(
+      input,
+      await buildCorpusWorkbook({
+        shape: "table",
+        formulas: "structured",
+        implicitRow: true,
+        comments: false,
+      }),
+    );
+
+    const result = await splitWorkbookByColumn({
+      input,
+      outputDirectory: output,
+      column: CORPUS_SPLIT_COLUMN,
+      preserveWorkbook: true,
+    });
+
+    expect(result.artifacts.length).toBeGreaterThan(0);
+    for (const artifact of result.artifacts) {
+      const dataXml = await readPackagePart(
+        await readFile(artifact.path),
+        CORPUS_PARTS.dataSheet,
+      );
+
+      // The table compacted above it; this row did not move, and says so.
+      expect(worksheetRowNumbers(dataXml)).toContain(CORPUS_IMPLICIT_ROW);
+      expect(worksheetCellReferences(dataXml)).toContain(
+        `A${CORPUS_IMPLICIT_ROW}`,
+      );
+      expect(worksheetCellValue(dataXml, `B${CORPUS_IMPLICIT_ROW}`)).toBe("1");
+      // Every serialised row says which row it is, not just this one.
+      expect(worksheetRowNumbers(dataXml)).toHaveLength(
+        dataXml.split("<row").length - 1,
+      );
+    }
   });
 });

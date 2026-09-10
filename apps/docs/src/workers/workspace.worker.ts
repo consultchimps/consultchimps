@@ -15,14 +15,21 @@
  * wasm from our own origin, never a CDN, is the local-first rule in
  * docs/adr/0003 Decision 2.
  */
-import { Database, identifierKey, RECORD_ID_COLUMN } from "@consultchimps/db";
-import { ConsultChimpsError, isConsultChimpsError } from "@consultchimps/core";
+import {
+  Database,
+  identifierKey,
+  importTables,
+  RECORD_ID_COLUMN,
+} from "@consultchimps/db";
+import { isConsultChimpsError } from "@consultchimps/core";
 import type { CellValue } from "@consultchimps/tabular";
 
+import type { WorkspaceImportKind } from "@/lib/accepted-files";
 import { basePath } from "@/lib/shared";
-import { WorkspaceGenerations } from "@/lib/workspace-generation";
+import { HeldWorkspace } from "@/lib/workspace-generation";
 import {
   WORKSPACE_REFERENCE_LIMIT,
+  type ImportTableChoice,
   type WorkspaceColumn,
   type WorkspaceCommand,
   type WorkspaceEvent,
@@ -49,33 +56,37 @@ const engineConfig = {
   locateFile: (file: string): string => `${basePath}/sql-wasm/${file}`,
 };
 
-/** The one workspace this worker owns, or null before the first create or open. */
-let database: Database | null = null;
-
 /**
- * Which database that is. Every grid read and write names the workspace it
- * belongs to and is checked against this, so a command posted before a create,
- * open, or close and delivered after it is refused rather than applied to the
- * database that took its place. See `lib/workspace-generation.ts`.
+ * The one workspace this worker owns, and which one it is. Every grid read and
+ * write names a workspace and is checked against this, so a command posted
+ * before a create, open, close, or import and delivered after it is refused
+ * rather than applied to the database that took its place. The database is only
+ * reachable through this holder, so there is no way to change it without the
+ * generation moving with it. See `lib/workspace-generation.ts`.
  */
-const generations = new WorkspaceGenerations();
+const held = new HeldWorkspace<Database>();
 
 function summarize(current: Database): WorkspaceSummary {
+  const schema = current.getSchema();
   return {
-    tableCount: current.getSchema().length,
+    // Read here rather than asked for separately, so the table listing and the
+    // generation a grid quotes back always describe the same database.
+    generation: held.generation,
+    tableCount: schema.length,
     schemaFormatVersion: current.schemaFormatVersion(),
+    // Counted in the engine rather than by reading the rows, so listing a large
+    // workspace stays cheap.
+    tables: schema.map((table) => ({
+      name: table.name,
+      rowCount: current.countRecords(table.name),
+      recordIdPrefix: table.recordId.prefix,
+      recordIdPadding: table.recordId.padding,
+      columns: table.columns.map((column) => ({
+        name: column.name,
+        type: column.type,
+      })),
+    })),
   };
-}
-
-// Replace the held workspace, closing the previous one first so its sql.js
-// allocation is never orphaned. Assigned only after the new database is built,
-// so a failed open leaves the previous workspace untouched.
-function replaceDatabase(next: Database): void {
-  if (database !== null) {
-    database.close();
-  }
-  database = next;
-  generations.replaced();
 }
 
 function reportError(id: number, error: unknown): void {
@@ -92,25 +103,19 @@ function reportError(id: number, error: unknown): void {
 
 async function handleCreate(id: number): Promise<void> {
   const created = await Database.create(engineConfig);
-  replaceDatabase(created);
+  held.replace(created);
   scope.postMessage({ type: "ready", id, summary: summarize(created) });
 }
 
 async function handleOpen(id: number, buffer: ArrayBuffer): Promise<void> {
   // The buffer was transferred in, so this view owns it outright.
   const opened = await Database.open(new Uint8Array(buffer), engineConfig);
-  replaceDatabase(opened);
+  held.replace(opened);
   scope.postMessage({ type: "ready", id, summary: summarize(opened) });
 }
 
 function handleSerialize(id: number): void {
-  if (database === null) {
-    throw new ConsultChimpsError(
-      "WORKSPACE_NONE_OPEN",
-      "There is no workspace to save yet. Start a new workspace or open one first.",
-    );
-  }
-  const bytes = database.serialize();
+  const bytes = held.require().serialize();
   // Copy into an exactly sized buffer so the transfer moves only the workspace
   // bytes, never a larger pool the view might sit inside, and so the worker's
   // own database keeps a live buffer to serialize again.
@@ -121,14 +126,72 @@ function handleSerialize(id: number): void {
 }
 
 function handleClose(id: number): void {
-  if (database !== null) {
-    database.close();
-    database = null;
-  }
-  // Releasing the workspace makes everything read from it stale too, so the
-  // counter moves here as well as on a replacement.
-  generations.replaced();
+  held.release();
   scope.postMessage({ type: "closed", id });
+}
+
+/* ---------------------------------------------------------------------------
+ * Import. The file is read here and the tables are created by the library, so
+ * the worker only carries bytes between the two.
+ * ------------------------------------------------------------------------ */
+
+async function handleDescribeImport(
+  id: number,
+  fileName: string,
+  kind: WorkspaceImportKind,
+  buffer: ArrayBuffer,
+): Promise<void> {
+  // Describing a file touches no workspace, but the page only offers it once
+  // one is open, and refusing here keeps that promise true whatever calls it.
+  held.require();
+  const { describeImportSources } = await import("@/lib/workspace-import-file");
+  const sources = await describeImportSources(
+    fileName,
+    kind,
+    new Uint8Array(buffer),
+  );
+  scope.postMessage({ type: "importSources", id, sources });
+}
+
+async function handleImport(
+  id: number,
+  fileName: string,
+  kind: WorkspaceImportKind,
+  buffer: ArrayBuffer,
+  tables: readonly ImportTableChoice[],
+): Promise<void> {
+  const current = held.require();
+  const { resolveImportRequests } = await import("@/lib/workspace-import-file");
+  const requests = await resolveImportRequests(
+    fileName,
+    kind,
+    new Uint8Array(buffer),
+    tables,
+  );
+  // One call for every chosen table, so a failure part way through leaves the
+  // workspace exactly as it was rather than half imported.
+  const imported = importTables(current, requests);
+  // The database now holds tables a grid opened before this import never saw,
+  // and its snapshot of the rows it does show may be short of imported ones.
+  // Recording the change here is what makes that snapshot stale rather than
+  // merely out of date: the worker refuses its edits, and the new summary sends
+  // the grid back for a fresh read. It runs only once the import has succeeded,
+  // so a refused import leaves every open grid still valid.
+  held.changed();
+  scope.postMessage({
+    type: "imported",
+    id,
+    summary: summarize(current),
+    tables: imported.map((table) => ({
+      name: table.name,
+      rowCount: table.rowCount,
+      recordIdPrefix: table.recordId.prefix,
+      firstRecordId: table.firstRecordId,
+      lastRecordId: table.lastRecordId,
+      ignoredColumns: table.ignoredColumns,
+      renamedColumns: table.renamedColumns,
+    })),
+  });
 }
 
 /* -------------------------------------------------------------------------
@@ -140,28 +203,6 @@ function handleClose(id: number): void {
  * library owns, and a value that does not fit the column comes back as a
  * ConsultChimpsError the page can show.
  * ------------------------------------------------------------------------- */
-
-function requireDatabase(): Database {
-  if (database === null) {
-    throw new ConsultChimpsError(
-      "WORKSPACE_NONE_OPEN",
-      "There is no workspace open yet. Start a new workspace or open one first.",
-    );
-  }
-  return database;
-}
-
-function handleListTables(id: number): void {
-  const current = requireDatabase();
-  scope.postMessage({
-    type: "tables",
-    id,
-    // Handed out so every later read and write can name the workspace it came
-    // from, and be refused once that workspace is gone.
-    generation: generations.current,
-    tables: current.getSchema().map((schema) => schema.name),
-  });
-}
 
 /**
  * The options a foreign-key column offers. The label is the referenced record's
@@ -213,8 +254,8 @@ function referenceOptions(
 }
 
 function handleReadTable(id: number, name: string, generation: number): void {
-  generations.assertCurrent(generation, "read");
-  const current = requireDatabase();
+  held.assertCurrent(generation, "read");
+  const current = held.require();
   const schema = current.getTableSchema(name);
   const referencedBy = new Map(
     schema.foreignKeys.map((foreignKey) => [
@@ -255,7 +296,7 @@ function handleReadTable(id: number, name: string, generation: number): void {
   });
 
   const table: WorkspaceTable = {
-    generation: generations.current,
+    generation: held.generation,
     name: schema.name,
     columns,
     rows: current.readRecords(schema.name),
@@ -275,8 +316,8 @@ function handleUpdateCell(
   // replaced names a table and a Record ID that mean something different here,
   // and the Record ID very likely exists in this database too. Refuse it rather
   // than write it to whatever record happens to match.
-  generations.assertCurrent(generation, "edit");
-  const current = requireDatabase();
+  held.assertCurrent(generation, "edit");
+  const current = held.require();
   const updated = current.updateRecord(table, recordId, { [column]: value });
   // Read the stored value back under the column name the schema declared, which
   // is what updateRecord keys its reply by, whatever casing the grid sent.
@@ -294,8 +335,21 @@ async function dispatch(command: WorkspaceCommand): Promise<void> {
       return handleSerialize(command.id);
     case "close":
       return handleClose(command.id);
-    case "listTables":
-      return handleListTables(command.id);
+    case "describeImport":
+      return handleDescribeImport(
+        command.id,
+        command.fileName,
+        command.kind,
+        command.buffer,
+      );
+    case "import":
+      return handleImport(
+        command.id,
+        command.fileName,
+        command.kind,
+        command.buffer,
+        command.tables,
+      );
     case "readTable":
       return handleReadTable(command.id, command.name, command.generation);
     case "updateCell":

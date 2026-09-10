@@ -8,6 +8,31 @@
  * document: every edit is applied to one element the caller located first.
  */
 
+/**
+ * A cell's cached value element: `<v>` for a stored value, `<is>` for inline
+ * text, present or self-closing, whatever it holds.
+ *
+ * Cache presence is about the element being there, never about what is inside
+ * it. A string formula that evaluates to an empty string is written
+ * `<f>...</f><v></v>`, and a numeric one that evaluates to zero is written
+ * `<v>0</v>`: both are calculated results, and reading emptiness as "never
+ * calculated" would condemn them forever, since recalculating produces the same
+ * empty result again. This is the single definition of the question, used by
+ * the values-only conversion and by the workbook description alike, so the two
+ * cannot answer it differently.
+ */
+const CACHED_VALUE_ELEMENT =
+  /<(?:[A-Za-z_][\w.-]*:)?(?:v|is)\b[^>]*(?:\/\s*>|>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?(?:v|is)\s*>)/u;
+
+/**
+ * Whether cell XML carries a cached value element. Accepts either the whole
+ * `<c>` element or just its body: a cell's open tag cannot contain one, so the
+ * answer is the same for both.
+ */
+export function hasCachedValueElement(cellXml: string): boolean {
+  return CACHED_VALUE_ELEMENT.test(cellXml);
+}
+
 export interface XmlAttributeSpan {
   /** The attribute name exactly as written, including any prefix. */
   readonly name: string;
@@ -149,6 +174,30 @@ export function addAttribute(
   return `${tagText.slice(0, tagText.length - closing)} ${name}="${value}"${tagText.slice(
     tagText.length - closing,
   )}`;
+}
+
+/**
+ * Make an opening tag carry this attribute value, whether or not it already
+ * has the attribute: the value is replaced where it is written, and the
+ * attribute is added before the closing bracket where it is not. Existing
+ * attributes are matched on local name, as everywhere here, while a new one is
+ * written under the name given; the value is written as given, the same as both
+ * helpers this is built from.
+ *
+ * This is the helper for "the tag says this afterwards", which is what a write
+ * back of an inferred position needs. `setAttribute` answers the narrower
+ * question - change what is already written - and returns the tag untouched
+ * when there is nothing to change, which reads as success at a call site that
+ * meant to materialise a value and leaves the value implicit instead.
+ */
+export function writeAttribute(
+  tagText: string,
+  localName: string,
+  value: string,
+): string {
+  return getAttribute(tagText, localName) === undefined
+    ? addAttribute(tagText, localName, value)
+    : setAttribute(tagText, localName, value);
 }
 
 /**
