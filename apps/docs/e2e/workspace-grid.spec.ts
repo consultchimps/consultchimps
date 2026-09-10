@@ -847,6 +847,79 @@ test.describe("/workspace record grid", () => {
     await expect(cellOf(page, "CUST-0001", "name")).toHaveText("Acme Two");
   });
 
+  test("holds the Back button for a cell that is still open for editing", async ({
+    page,
+  }) => {
+    // #174. A Back press is the one way of leaving that never blurs the editor,
+    // so the draft is still in the input element when the question is raised.
+    // The confirmation used to lock the grid, the lock cancelled that editor,
+    // and the cancel then dismissed the question the press had raised: the
+    // draft went with no warning. A question is answered by the visitor, never
+    // by a side effect of the navigation that raised it.
+    await forceDownloadFallback(page);
+    await page.goto("/tools");
+    await page.getByRole("link", { name: "Workspace", exact: true }).click();
+    await openWorkspace(page, await workspaceFixture());
+
+    const beforeEditing = await page.evaluate(() => window.history.length);
+    await typeWithoutCommitting(cellOf(page, "CUST-0001", "name"), "Acme Two");
+    // The spare entry the press has to land on, which is also how the page says
+    // it is holding for the editor. Waited for, so the press below is one of
+    // the page's own rather than a press it never armed for.
+    await expect
+      .poll(() => page.evaluate(() => window.history.length))
+      .toBe(beforeEditing + 1);
+
+    await pressBack(page);
+
+    await expect(page.getByTestId("workspace-confirm")).toBeVisible();
+    await expect(page.getByTestId("workspace-confirm")).toContainText(
+      "A cell is still open for editing",
+    );
+    await expect(page).toHaveURL(/\/workspace$/u);
+
+    // The editor is still open behind the question, still holding the draft.
+    // This is the assertion the bug was: the question used to lock the grid,
+    // and the lock cancelled this editor and reverted what is in it.
+    await expect(
+      cellOf(page, "CUST-0001", "name").locator("input"),
+    ).toHaveValue("Acme Two");
+
+    // Keeping the workspace keeps the draft. The click that answers is also
+    // what blurs the editor, and Tabulator commits on blur, so by the time the
+    // question is answered the draft is an edit on its way rather than one
+    // still being typed. Either way it is in the workspace and not lost to it.
+    await page.getByTestId("workspace-confirm-cancel").click();
+    await expect(page.getByTestId("workspace-confirm")).toHaveCount(0);
+    await expect(cellOf(page, "CUST-0001", "name")).toHaveText("Acme Two");
+    await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
+  });
+
+  test("leaves when the visitor discards the draft it asked about", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/tools");
+    await page.getByRole("link", { name: "Workspace", exact: true }).click();
+    await openWorkspace(page, await workspaceFixture());
+
+    const beforeEditing = await page.evaluate(() => window.history.length);
+    await typeWithoutCommitting(cellOf(page, "CUST-0001", "name"), "Acme Two");
+    await expect
+      .poll(() => page.evaluate(() => window.history.length))
+      .toBe(beforeEditing + 1);
+
+    await pressBack(page);
+    await expect(page.getByTestId("workspace-confirm")).toBeVisible();
+
+    // Answered the other way, the press is honoured: back over the spare entry
+    // and this page together, to the page the visitor came from. Nothing warns
+    // a second time, because answering released the whole hold rather than the
+    // unsaved flag alone.
+    await page.getByTestId("workspace-confirm-discard").click();
+    await expect(page).toHaveURL(/\/tools$/u);
+  });
+
   test("stops holding once the editor is closed with Escape", async ({
     page,
   }) => {

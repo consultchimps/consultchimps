@@ -66,11 +66,15 @@ command when `out/` is missing.
   confirmed, they ask nothing once it has been saved, and a link out of the page
   and the Back button are both held the same way. The guard covers an import
   still in flight as well as unsaved changes, so a link click during one is held
-  even from a clean workspace, and the spare history entry the Back guard relies
-  on is armed again after an earlier press spent it. Further tests hold the
-  worker's import commands open to check that New, Open, and Save are disabled
-  while a file is being read and while an import runs, and refuse a worksheet
-  whose formulas the workbook carries no calculated value for.
+  even from a clean workspace. A Back press that finds a spare entry with
+  something at stake spends it and arms another, so a second press is caught
+  too; one that finds a spare with nothing left to guard retires it and reaches
+  the page before this one, rather than being spent on nothing. An import that
+  fails under a question raised by a held link dismisses that question, because
+  the reason it was raised about did not happen. Further tests hold the worker's
+  import commands open to check that New, Open, and Save are disabled while a
+  file is being read and while an import runs, and refuse a worksheet whose
+  formulas the workbook carries no calculated value for.
 - `workspace-grid.spec.ts`: showing a table's records in the grid, switching
   between tables, editing text, number, and foreign-key cells and finding those
   edits in the saved and reopened file, and having an impossible value and an
@@ -80,10 +84,13 @@ command when `out/` is missing.
   The rest covers where the grid meets the shell: an edit marks the workspace
   unsaved so New asks first, a saved edit makes it ask nothing, editing is
   locked while an import is in flight, and a table imported after the grid was
-  already up appears in its switcher and is editable there. Its workspace
-  fixture is built in Node with `@consultchimps/db` and opened through the
-  page's own file input, so the spec exercises the grid without waiting on
-  import.
+  already up appears in its switcher and is editable there. A Back press with a
+  cell still open for editing is held: the confirmation names the draft, the
+  editor stays open behind it because a standing question does not lock the
+  grid, keeping the workspace keeps what was typed, and discarding leaves for
+  the page before this one. Its workspace fixture is built in Node with
+  `@consultchimps/db` and opened through the page's own file input, so the spec
+  exercises the grid without waiting on import.
 - `tools-navigation.spec.ts`: the `/tools` index, the sub-bar tabs, the
   tool-named "Try ... online" button each guide gains from the tool registry,
   and the single button a guide shared by two operations offers.
