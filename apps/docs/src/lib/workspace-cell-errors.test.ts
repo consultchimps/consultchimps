@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  answerFailure,
   cellKey,
+  dismissFailures,
   failureReport,
+  failuresAt,
   NO_FAILURES,
+  NOTHING_REFUSED,
+  recordFailure,
   tableKey,
   withFailure,
   withoutFailure,
@@ -138,5 +143,89 @@ describe("standing explanations", () => {
     const refused = withFailure(NO_FAILURES, headcount, "Not a whole number.");
 
     expect(withoutFailure(refused, name)).toBe(refused);
+  });
+});
+
+describe("explanations belong to one workspace", () => {
+  const FIRST = 4;
+  const NEXT = 5;
+
+  const refusedInFirst = recordFailure(
+    NOTHING_REFUSED,
+    FIRST,
+    headcount,
+    "Not a whole number.",
+  );
+
+  it("shows nothing before a workspace is open", () => {
+    expect(failureReport(failuresAt(NOTHING_REFUSED, FIRST))).toBeNull();
+  });
+
+  it("shows what was refused in the workspace now held", () => {
+    expect(failureReport(failuresAt(refusedInFirst, FIRST))).toBe(
+      "Not a whole number.",
+    );
+  });
+
+  it("shows nothing from a workspace that has been replaced", () => {
+    // The case this exists for: New or Open replaces the database while the
+    // grid stays mounted. A key names a table, a Record ID and a column, and
+    // every one of those means something else in the next file, where
+    // "CUST-0001" very likely exists as a different record.
+    expect(failureReport(failuresAt(refusedInFirst, NEXT))).toBeNull();
+  });
+
+  it("starts the next workspace clean rather than merging into it", () => {
+    const refusedInNext = recordFailure(
+      refusedInFirst,
+      NEXT,
+      name,
+      "A required column was left empty.",
+    );
+
+    expect(failureReport(failuresAt(refusedInNext, NEXT))).toBe(
+      "A required column was left empty.",
+    );
+    // Not "1 other edit was refused as well": the first workspace's refusal did
+    // not come across.
+    expect(failuresAt(refusedInNext, NEXT).size).toBe(1);
+  });
+
+  it("does not let a reply from the old workspace answer the new one", () => {
+    const refusedInNext = recordFailure(
+      NOTHING_REFUSED,
+      NEXT,
+      headcount,
+      "Not a whole number.",
+    );
+
+    // A command sent before the replacement can still settle after it. Its
+    // answer is about a database nobody holds any more.
+    expect(
+      failureReport(
+        failuresAt(answerFailure(refusedInNext, FIRST, headcount), NEXT),
+      ),
+    ).toBe("Not a whole number.");
+  });
+
+  it("clears what its own workspace answered", () => {
+    expect(
+      failureReport(
+        failuresAt(answerFailure(refusedInFirst, FIRST, headcount), FIRST),
+      ),
+    ).toBeNull();
+  });
+
+  it("puts the whole set away when the visitor asks", () => {
+    expect(failureReport(failuresAt(dismissFailures(FIRST), FIRST))).toBeNull();
+  });
+
+  it("leaves what it was given alone", () => {
+    recordFailure(refusedInFirst, NEXT, name, "Something else.");
+    answerFailure(refusedInFirst, FIRST, headcount);
+
+    expect(failureReport(failuresAt(refusedInFirst, FIRST))).toBe(
+      "Not a whole number.",
+    );
   });
 });

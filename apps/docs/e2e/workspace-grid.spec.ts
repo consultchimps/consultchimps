@@ -309,12 +309,21 @@ test.describe("/workspace record grid", () => {
     await typeInCell(page, "CUST-0001", "headcount", "15");
     await expect(cellOf(page, "CUST-0001", "headcount")).toHaveText("15");
 
+    // And a refusal standing over that workspace, about CUST-0001's headcount.
+    await typeInCell(page, "CUST-0001", "headcount", "1.5");
+    await expect(page.getByTestId("workspace-grid-error")).toContainText(
+      "not a whole number",
+    );
+
     // A second workspace holds the same table and the same Record IDs, which is
     // exactly why an edit is bound to the workspace it was made in. The grid is
-    // replaced with the new one, and nothing from the first survives in it.
+    // replaced with the new one, and nothing from the first survives in it:
+    // neither the values, nor an explanation whose every key names something
+    // that exists here and means something else.
     await openWorkspace(page, await workspaceFixture("Globex"));
     await expect(cellOf(page, "CUST-0001", "name")).toHaveText("Globex");
     await expect(cellOf(page, "CUST-0001", "headcount")).toHaveText("12");
+    await expect(page.getByTestId("workspace-grid-error")).toHaveCount(0);
     await expect(page.getByTestId("workspace-error")).toHaveCount(0);
   });
 

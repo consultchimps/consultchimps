@@ -54,13 +54,15 @@ import type {
   ReportPendingEdits,
 } from "@/components/workspace-tool";
 import {
+  answerFailure,
   cellKey,
+  dismissFailures,
   failureReport,
-  NO_FAILURES,
+  failuresAt,
+  NOTHING_REFUSED,
+  recordFailure,
   tableKey,
-  withFailure,
-  withoutFailure,
-  type CellFailures,
+  type RecordedFailures,
 } from "@/lib/workspace-cell-errors";
 import { referenceLabel } from "@/lib/workspace-labels";
 import {
@@ -347,6 +349,12 @@ export function WorkspaceGrid({
   // Edits sent and not answered. It lives here rather than inside the effect
   // that builds the grid, so switching tables while one is in flight does not
   // lose count of it.
+  //
+  // Deliberately not scoped to a generation, unlike everything else here: it
+  // counts commands the worker still owes a reply to, and a command outlives
+  // the workspace it was sent to. Each one releases its own on settling,
+  // whether it was accepted, refused, or refused as stale, so the count comes
+  // back to zero without anything resetting it.
   const inFlightRef = useRef(0);
   const selectId = useId();
 
@@ -355,9 +363,10 @@ export function WorkspaceGrid({
   const [chosen, setChosen] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<LoadedTable | null>(null);
   // What has been refused and not yet dealt with, kept by the thing it is about
-  // rather than as one slot the next success would clear. See
-  // `lib/workspace-cell-errors`.
-  const [failures, setFailures] = useState<CellFailures>(NO_FAILURES);
+  // rather than as one slot the next success would clear, and stamped with the
+  // workspace it happened in so a new one starts clean without anything having
+  // to remember to clear it. See `lib/workspace-cell-errors`.
+  const [recorded, setRecorded] = useState<RecordedFailures>(NOTHING_REFUSED);
 
   const generation = summary.generation;
   // The one table listing. An import adds to it and a new workspace replaces it,
@@ -385,7 +394,9 @@ export function WorkspaceGrid({
         setLoaded({ table: selected, generation, data: table });
         // The read this table was waiting on succeeded, so whatever was
         // standing about reading it is answered.
-        setFailures((previous) => withoutFailure(previous, tableKey(selected)));
+        setRecorded((previous) =>
+          answerFailure(previous, generation, tableKey(selected)),
+        );
       })
       .catch((caught: unknown) => {
         if (cancelled) {
@@ -401,8 +412,13 @@ export function WorkspaceGrid({
         ) {
           return;
         }
-        setFailures((previous) =>
-          withFailure(previous, tableKey(selected), describeFailure(caught)),
+        setRecorded((previous) =>
+          recordFailure(
+            previous,
+            generation,
+            tableKey(selected),
+            describeFailure(caught),
+          ),
         );
       });
     return () => {
@@ -559,9 +575,10 @@ export function WorkspaceGrid({
       if (lockedRef.current) {
         const column = cell.getField();
         restore(cell, recordId);
-        setFailures((previous) =>
-          withFailure(
+        setRecorded((previous) =>
+          recordFailure(
             previous,
+            data.generation,
             cellKey(data.name, recordId, column),
             "That edit was not made because the workspace was busy. Make it again now the workspace is ready",
           ),
@@ -610,8 +627,12 @@ export function WorkspaceGrid({
           // This cell is dealt with, so what was standing about it goes. Only
           // this cell's: a refusal somewhere else is still true and still the
           // only thing saying why that cell reads as it does.
-          setFailures((previous) =>
-            withoutFailure(previous, cellKey(data.name, recordId, column)),
+          setRecorded((previous) =>
+            answerFailure(
+              previous,
+              data.generation,
+              cellKey(data.name, recordId, column),
+            ),
           );
           // The worker took it, so the workspace differs from its file. The
           // shell owns that flag; this is the one place the grid touches it, and
@@ -624,9 +645,10 @@ export function WorkspaceGrid({
           // Against the cell it was about, which is what stops the next
           // success elsewhere erasing it. A stale-generation refusal and a
           // value the database will not hold arrive here alike.
-          setFailures((previous) =>
-            withFailure(
+          setRecorded((previous) =>
+            recordFailure(
               previous,
+              data.generation,
               cellKey(data.name, recordId, column),
               describeFailure(caught),
             ),
@@ -716,10 +738,13 @@ export function WorkspaceGrid({
   // Only a snapshot can be short of records: a table referring to itself offers
   // the rows on screen, and the note below says so only when there are more of
   // those than the picker takes.
-  // Everything standing, newest in full. The cells it names are above it, which
-  // is the other half of why the grid explains its own refusals rather than
-  // handing them to a slot at the foot of the page.
-  const report = failureReport(failures);
+  // Everything standing in the workspace now held, newest in full. The cells it
+  // names are above it, which is the other half of why the grid explains its own
+  // refusals rather than handing them to a slot at the foot of the page. A set
+  // recorded under a workspace that has been replaced is not shown at all: none
+  // of its keys mean the same thing here, and a Record ID from one file is very
+  // likely to exist in the next.
+  const report = failureReport(failuresAt(recorded, generation));
 
   const truncated =
     data?.columns.filter((column) =>
@@ -802,7 +827,7 @@ export function WorkspaceGrid({
           <button
             className={`${compactButtonClass} mt-2`}
             data-testid="workspace-grid-error-dismiss"
-            onClick={() => setFailures(NO_FAILURES)}
+            onClick={() => setRecorded(dismissFailures(generation))}
             type="button"
           >
             Dismiss

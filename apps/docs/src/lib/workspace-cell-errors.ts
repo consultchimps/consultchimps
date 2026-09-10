@@ -25,6 +25,16 @@
  *
  * A read that fails is recorded the same way, against the table it was a read
  * of, so a refused edit and an unreadable table cannot erase each other either.
+ *
+ * All of it belongs to one database. A refusal names a table, a Record ID and a
+ * column, and every one of those means something different in the workspace that
+ * replaces it, while a Record ID such as `CUST-0001` is very likely to exist in
+ * both. So the whole set is stamped with the workspace generation it was
+ * recorded under and is only ever read back at that generation, which is the
+ * same rule everything else the grid holds follows. Hanging it off the
+ * generation rather than off New and Open is deliberate: a lifecycle command
+ * added later inherits it by doing nothing, where a reset call site is
+ * something to forget.
  */
 
 /** What is standing, oldest first, keyed by what it is about. */
@@ -103,4 +113,69 @@ export function failureReport(failures: CellFailures): string | null {
       ? "1 other edit was refused as well, and that cell still holds the value the workspace has"
       : `${others} other edits were refused as well, and those cells still hold the values the workspace has`
   }`;
+}
+
+/** What has been refused, and which database it was refused by. */
+export interface RecordedFailures {
+  readonly generation: number;
+  readonly failures: CellFailures;
+}
+
+/** Nothing refused, by no workspace: generation 0 is one no command can name. */
+export const NOTHING_REFUSED: RecordedFailures = {
+  generation: 0,
+  failures: NO_FAILURES,
+};
+
+/**
+ * Record a failure against the workspace it happened in. A failure from a
+ * workspace that has since been replaced takes the set with it: there is
+ * nothing to merge, because none of its keys mean the same thing here.
+ */
+export function recordFailure(
+  recorded: RecordedFailures,
+  generation: number,
+  key: string,
+  message: string,
+): RecordedFailures {
+  return {
+    generation,
+    failures: withFailure(
+      recorded.generation === generation ? recorded.failures : NO_FAILURES,
+      key,
+      message,
+    ),
+  };
+}
+
+/**
+ * Drop what was standing against one cell or table, because a later attempt on
+ * it succeeded. An answer for a workspace that is no longer held answers
+ * nothing.
+ */
+export function answerFailure(
+  recorded: RecordedFailures,
+  generation: number,
+  key: string,
+): RecordedFailures {
+  return recorded.generation === generation
+    ? { generation, failures: withoutFailure(recorded.failures, key) }
+    : recorded;
+}
+
+/** Put the whole set away, as the visitor asked. */
+export function dismissFailures(generation: number): RecordedFailures {
+  return { generation, failures: NO_FAILURES };
+}
+
+/**
+ * What is standing in the workspace now held. A set recorded under a workspace
+ * that has been replaced is not shown at all, rather than shown over rows it
+ * was never about.
+ */
+export function failuresAt(
+  recorded: RecordedFailures,
+  generation: number,
+): CellFailures {
+  return recorded.generation === generation ? recorded.failures : NO_FAILURES;
 }
