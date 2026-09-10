@@ -470,6 +470,12 @@ const FALLBACK_TABLE_PREFIX = "table_";
  * a person can edit. Letters and digits in any script are kept, every other run
  * of characters becomes one underscore, and a name the schema would refuse is
  * prefixed rather than silently changed into something unrecognisable.
+ *
+ * A cleaned name is offered at the full identifier limit. Only the branch that
+ * adds the prefix leaves room for one: reserving that room for every name
+ * shortened a suggestion nobody was going to prefix, and two files differing
+ * only in their last few characters were then handed one name between them to
+ * resolve by hand.
  */
 export function suggestTableName(source: string): string {
   // The first replace collapses every run of other characters to one "_", so
@@ -478,25 +484,32 @@ export function suggestTableName(source: string): string {
   // run, which is quadratic on a name that ends in something else. This is the
   // same shape, and the same fix, as `normalizedColumnKey` in
   // `@consultchimps/tabular`.
-  //
-  // The budget leaves room for the fallback prefix below, so a name that needs
-  // both shortening and prefixing still fits, and it is spent in the unit the
-  // limit is written in rather than a number picked to be safely under it.
-  const cleaned = truncateIdentifier(
-    source
-      .replace(/[^\p{L}\p{N}]+/gu, "_")
-      .replace(/^_/u, "")
-      .replace(/_$/u, ""),
-    MAX_IDENTIFIER_LENGTH - FALLBACK_TABLE_PREFIX.length,
-  );
+  const normalized = source
+    .replace(/[^\p{L}\p{N}]+/gu, "_")
+    .replace(/^_/u, "")
+    .replace(/_$/u, "");
+  // The whole limit, spent in the unit the limit is written in and cut between
+  // whole characters.
+  const cleaned = truncateIdentifier(normalized, MAX_IDENTIFIER_LENGTH);
   const candidate = cleaned === "" ? "table" : cleaned;
   try {
     assertSafeIdentifier(candidate, "table");
+    // At most the limit, because that is what it was shortened to.
     return candidate;
   } catch {
     // A reserved prefix ("sqlite_", the package's own) is the only way a
-    // cleaned name still fails, and prefixing keeps the original readable.
-    return `${FALLBACK_TABLE_PREFIX}${candidate}`;
+    // cleaned name still fails. Everything else `assertSafeIdentifier` refuses
+    // cannot arrive here: an empty name became "table", a control character or
+    // a quote became "_", an incomplete character is neither a letter nor a
+    // digit and became "_" too, "__proto__" cleans to "proto", and the length
+    // was settled above. Prefixing keeps the original readable, and the room
+    // for it is taken here, from the one name that needs it, so the result is
+    // the prefix plus at most the limit less the prefix and fits by
+    // construction.
+    return `${FALLBACK_TABLE_PREFIX}${truncateIdentifier(
+      candidate,
+      MAX_IDENTIFIER_LENGTH - FALLBACK_TABLE_PREFIX.length,
+    )}`;
   }
 }
 

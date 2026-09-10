@@ -56,6 +56,14 @@ created nothing, and a preview would describe a table under a name the engine
 will not take. They live in the plan now; only the checks that need the
 workspace, such as a name it already holds, still belong to the import.
 
+`suggestTableName` offers a cleaned name at the full identifier limit. It used
+to leave room for the `table_` prefix in every suggestion, including the ones
+nothing would ever prefix, so a name between 195 and 200 characters came back
+shortened for a prefix it was not going to get, and two files differing only in
+those last characters were handed the same name to resolve by hand. The room is
+now taken in the branch that adds the prefix, from the one name that needs it,
+and the result fits by construction either way.
+
 A column name is derived in the same step that numbers repeated ones, so it is
 inside the identifier limit by construction: a header too long to be a name is
 shortened at a whole-character boundary with room left for the number a

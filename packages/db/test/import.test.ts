@@ -182,6 +182,55 @@ describe("suggestTableName and suggestRecordIdPrefix", () => {
     expect(suggestRecordIdPrefix("Sales Orders")).toBe("SO");
     expect(suggestRecordIdPrefix("__")).toBe("REC");
   });
+
+  it("offers a safe name at the full limit unchanged", () => {
+    // Nothing will be prefixed, so nothing has to make room for a prefix.
+    // Taking that room anyway shortened a name the file already had.
+    const source = "a".repeat(MAX_IDENTIFIER_LENGTH);
+
+    expect(suggestTableName(source)).toBe(source);
+    expect(() =>
+      assertSafeIdentifier(suggestTableName(source), "table"),
+    ).not.toThrow();
+  });
+
+  it("keeps names apart that differ only in their last characters", () => {
+    // The window the reserved headroom used to swallow: two files named alike
+    // up to the final few characters were handed one name to resolve by hand.
+    for (const length of [195, 196, 197, 198, 199, 200]) {
+      const base = "a".repeat(length - 1);
+      expect(suggestTableName(`${base}X`)).not.toBe(
+        suggestTableName(`${base}Y`),
+      );
+    }
+  });
+
+  it("keeps a prefixed name inside the limit", () => {
+    const suggested = suggestTableName("sqlite_" + "a".repeat(250));
+
+    expect(suggested.startsWith("table_sqlite_")).toBe(true);
+    expect(suggested.length).toBe(MAX_IDENTIFIER_LENGTH);
+    expect(() => assertSafeIdentifier(suggested, "table")).not.toThrow();
+  });
+
+  it("never suggests a table name the schema would refuse", () => {
+    // The same enumerated shapes the column names are swept over: at the
+    // limit, past it, differing only past the cut, and a wide character on the
+    // boundary, each also in the form that forces the prefix.
+    const wide = String.fromCodePoint(0x10400);
+    for (const length of [1, 2, 190, 193, 194, 195, 199, 200, 201, 250, 300]) {
+      for (const filler of ["c", wide]) {
+        for (const lead of ["", "sqlite_", "_consultchimps"]) {
+          const suggested = suggestTableName(
+            `${lead}${filler.repeat(length)}${wide}`,
+          );
+          expect(suggested.length).toBeLessThanOrEqual(MAX_IDENTIFIER_LENGTH);
+          expect(suggested.isWellFormed()).toBe(true);
+          expect(() => assertSafeIdentifier(suggested, "table")).not.toThrow();
+        }
+      }
+    }
+  });
 });
 
 describe("dates a date column will hold", () => {
@@ -622,17 +671,31 @@ describe("identifiers made of whole characters", () => {
 
   it("never cuts a character in half when it shortens a name", () => {
     // Long enough that the cut lands exactly where the wide character starts.
-    const budget = MAX_IDENTIFIER_LENGTH - "table_".length;
-    const source = "a".repeat(budget - 1) + WIDE;
+    const source = "a".repeat(MAX_IDENTIFIER_LENGTH - 1) + WIDE;
 
-    // The defect this pins down: cutting at the same budget by code units
+    // The defect this pins down: cutting at the same limit by code units
     // leaves half a character behind, which is not text at all.
-    expect(source.slice(0, budget).isWellFormed()).toBe(false);
+    expect(source.slice(0, MAX_IDENTIFIER_LENGTH).isWellFormed()).toBe(false);
 
     const suggested = suggestTableName(source);
     expect(suggested.isWellFormed()).toBe(true);
-    expect(suggested.length).toBeLessThanOrEqual(budget);
-    expect(suggested).toBe("a".repeat(budget - 1));
+    expect(suggested.length).toBeLessThanOrEqual(MAX_IDENTIFIER_LENGTH);
+    expect(suggested).toBe("a".repeat(MAX_IDENTIFIER_LENGTH - 1));
+    expect(() => assertSafeIdentifier(suggested, "table")).not.toThrow();
+  });
+
+  it("cuts between whole characters in the branch that adds the prefix too", () => {
+    // The room for the prefix is taken here, and the boundary lands exactly
+    // where the wide character starts.
+    const budget = MAX_IDENTIFIER_LENGTH - "table_".length;
+    const source = `sqlite_${"a".repeat(budget - "sqlite_".length)}${WIDE}`;
+
+    const suggested = suggestTableName(source);
+    expect(suggested.isWellFormed()).toBe(true);
+    expect(suggested.length).toBe(MAX_IDENTIFIER_LENGTH);
+    expect(suggested).toBe(
+      `table_sqlite_${"a".repeat(budget - "sqlite_".length)}`,
+    );
     expect(() => assertSafeIdentifier(suggested, "table")).not.toThrow();
   });
 
