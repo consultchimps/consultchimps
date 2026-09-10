@@ -3,9 +3,12 @@
  * gets.
  *
  * A workbook names a moment in two ways: a serial counted from the workbook's
- * epoch, and, for a `t="d"` cell, ISO 8601 text with no zone on it. Both arrive
- * as components, and both leave as the same characters, because a value read
- * from a file has to be a function of the file.
+ * epoch, and, for a `t="d"` cell, ISO 8601 text with no zone on it. Both are
+ * turned into components here, both are judged here, and both leave as the same
+ * characters, because a value read from a file has to be a function of the
+ * file. There is one route in from each, and no other way to make a moment:
+ * a conversion that could hand back an unjudged one is a conversion whose
+ * caller will eventually spell something that is not a date.
  *
  * Nothing here builds a `Date` from components. `Date.UTC` and `new Date(text)`
  * carry rules of their own that quietly rewrite what they are given: a year
@@ -32,7 +35,7 @@ export interface CalendarParts {
 }
 
 /** Milliseconds in a day. The unit every conversion here counts in. */
-export const MILLISECONDS_PER_DAY = 86_400_000;
+const MILLISECONDS_PER_DAY = 86_400_000;
 
 /**
  * How many digits a year is written with, and therefore which years exist here.
@@ -56,12 +59,11 @@ const MONTH_LENGTHS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
 /**
  * Whether every component is inside the range its field allows.
  *
- * The day is checked against 31 rather than against the month, because a serial
- * decoded from a workbook may legitimately name 29 February 1900: the 1900 date
- * system deliberately reproduces a spreadsheet-era bug in which that day
- * exists, and refusing it would refuse a day Excel itself shows. Text that
- * claims to be ISO 8601 is held to the calendar as well, through
- * `isRealCalendarDay`.
+ * This is a range rule and only a range rule: the day is checked against 31
+ * rather than against the month it falls in. Whether a day exists is a separate
+ * question, asked by `isRealCalendarDay` where the day came from text somebody
+ * wrote. A day derived from a serial needs no such check, because the
+ * arithmetic that produced it only ever produces days the calendar has.
  *
  * Hour 24 and second 60 are out of range here. ISO 8601 allows both, as the end
  * of a day and as a leap second, and a worksheet writes neither.
@@ -190,7 +192,7 @@ export function calendarMoment(
 }
 
 /** A time of day, and the whole days it carries into. */
-export interface TimeOfDay {
+interface TimeOfDay {
   /** Whole days the milliseconds covered, which is 1 when they rounded up. */
   readonly days: number;
   readonly hour: number;
@@ -209,7 +211,7 @@ export interface TimeOfDay {
  * full second has to become 00:00:00 of the next day, and a field that is
  * clamped instead reports the second before, on the day before.
  */
-export function timeOfDayFromMilliseconds(milliseconds: number): TimeOfDay {
+function timeOfDayFromMilliseconds(milliseconds: number): TimeOfDay {
   const days = Math.floor(milliseconds / MILLISECONDS_PER_DAY);
   const intoDay = milliseconds - days * MILLISECONDS_PER_DAY;
   return {
@@ -219,6 +221,153 @@ export function timeOfDayFromMilliseconds(milliseconds: number): TimeOfDay {
     second: Math.floor(intoDay / 1000) % 60,
     millisecond: intoDay % 1000,
   };
+}
+
+/**
+ * The inverse of `daysFromCivil`, by the same author's `civil_from_days`. Days
+ * from 1 January 1970 back to the calendar date they name, with no remapping
+ * and no normalisation: a count too large simply names a year too large, which
+ * the range rule then refuses.
+ */
+function civilFromDays(days: number): {
+  year: number;
+  month: number;
+  day: number;
+} {
+  const shifted = days + 719_468;
+  const era = Math.floor(shifted / 146_097);
+  const dayOfEra = shifted - era * 146_097;
+  const yearOfEra = Math.floor(
+    (dayOfEra -
+      Math.floor(dayOfEra / 1460) +
+      Math.floor(dayOfEra / 36_524) -
+      Math.floor(dayOfEra / 146_096)) /
+      365,
+  );
+  const year = yearOfEra + era * 400;
+  const dayOfYear =
+    dayOfEra -
+    (365 * yearOfEra + Math.floor(yearOfEra / 4) - Math.floor(yearOfEra / 100));
+  const monthPosition = Math.floor((5 * dayOfYear + 2) / 153);
+  const day = dayOfYear - Math.floor((153 * monthPosition + 2) / 5) + 1;
+  const month = monthPosition + (monthPosition < 10 ? 3 : -9);
+  return { year: month <= 2 ? year + 1 : year, month, day };
+}
+
+/**
+ * Where each of Excel's two date systems starts counting, as days from the
+ * Unix epoch.
+ *
+ * The 1900 system counts a day that never existed. Serial 60 is 29 February
+ * 1900, a date the Gregorian calendar does not have, kept so that files written
+ * by a spreadsheet from the 1980s still add up. Serials past it are therefore
+ * one day ahead of the serials before it, which is why there are two starting
+ * points for one system rather than one plus a correction applied somewhere
+ * else and forgotten somewhere else again.
+ */
+const SERIAL_EPOCH_1900_BEFORE_THE_FAKE_DAY = daysFromCivil(1899, 12, 31);
+const SERIAL_EPOCH_1900_AFTER_THE_FAKE_DAY = daysFromCivil(1899, 12, 30);
+const SERIAL_EPOCH_1904 = daysFromCivil(1904, 1, 1);
+
+/**
+ * The serial the 1900 system gives the day that never existed, which is the one
+ * serial that names no moment.
+ *
+ * Excel shows 29 February 1900 for it. Nothing else can hold that day: it is
+ * not a day the Gregorian calendar has, no `Date` can represent it, and the
+ * `date` column in `@consultchimps/db` refuses it for the same reason. Spelling
+ * it anyway made the two paths out of this module disagree - the reader wrote
+ * `1900-02-29` while the split key, which has to pass through a `Date`, wrote
+ * `1900-03-01` - and a value that reads as two different days is worse than a
+ * value that reads as the number it is. So it is carried as the number, the
+ * same decision every other serial that names no moment gets.
+ */
+const FAKE_LEAP_DAY_SERIAL = 60;
+
+/** The calendar date a whole serial names, or undefined when it names none. */
+function calendarDayOfSerial(
+  days: number,
+  date1904: boolean,
+): { year: number; month: number; day: number } | undefined {
+  if (date1904) {
+    // No fake day in this system, and serial 0 is the first day of it.
+    return days < 0 ? undefined : civilFromDays(SERIAL_EPOCH_1904 + days);
+  }
+  if (days < 1) {
+    // Day zero, and everything below it, names nothing.
+    return undefined;
+  }
+  if (days === FAKE_LEAP_DAY_SERIAL) {
+    return undefined;
+  }
+  return civilFromDays(
+    (days > FAKE_LEAP_DAY_SERIAL
+      ? SERIAL_EPOCH_1900_AFTER_THE_FAKE_DAY
+      : SERIAL_EPOCH_1900_BEFORE_THE_FAKE_DAY) + days,
+  );
+}
+
+/**
+ * The components a workbook serial names, or undefined when it names no moment
+ * that can be written.
+ *
+ * The one route in from a number. Every reader that turns a date-formatted cell
+ * into a value comes through here, so the reader's text and the split key that
+ * names the output workbook a row lands in are the same characters for the same
+ * serial, and a serial with no writable moment is refused in one place rather
+ * than turned into a `Date` that some caller later spells.
+ *
+ * A serial that names nothing is one whose day count falls before its system
+ * begins, or whose calendar year falls outside the four digits a date is
+ * written with: an untrusted 1e100 in a cell wearing a date format used to
+ * become a moment no arithmetic could describe, whose components were all
+ * `NaN`, so every such cell was spelled the same characters and a split
+ * gathered them into one output.
+ *
+ * The time of day is rounded as one whole number of milliseconds before it is
+ * split, so a carry runs into the day count.
+ */
+export function serialCalendarParts(
+  serial: number,
+  date1904: boolean,
+): CalendarParts | undefined {
+  if (!Number.isFinite(serial)) {
+    return undefined;
+  }
+  const wholeDays = Math.floor(serial);
+  const time = timeOfDayFromMilliseconds(
+    Math.round((serial - wholeDays) * MILLISECONDS_PER_DAY),
+  );
+  const day = calendarDayOfSerial(wholeDays + time.days, date1904);
+  if (!day) {
+    return undefined;
+  }
+  const parts: CalendarParts = {
+    year: day.year,
+    month: day.month,
+    day: day.day,
+    hour: time.hour,
+    minute: time.minute,
+    second: time.second,
+    millisecond: time.millisecond,
+  };
+  return isComponentsInRange(parts) ? parts : undefined;
+}
+
+/**
+ * The moment a workbook serial names, as a `Date` whose UTC face carries it, or
+ * undefined when it names none.
+ *
+ * The only way to make a `Date` from a serial in this package. A conversion
+ * that skipped the judging above would hand its caller a moment with no
+ * spelling, and the caller would spell it anyway.
+ */
+export function serialMoment(
+  serial: number,
+  date1904: boolean,
+): Date | undefined {
+  const parts = serialCalendarParts(serial, date1904);
+  return parts === undefined ? undefined : new Date(calendarEpochMs(parts));
 }
 
 function pad(value: number, width: number): string {

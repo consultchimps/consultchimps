@@ -10,7 +10,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  excelSerialToDate,
+  serialMoment,
   isDateFormatCode,
   relocateFormulaRows,
   relocateReference,
@@ -155,15 +155,15 @@ describe("styles: date detection", () => {
     // A serial names a calendar moment and carries no zone, so the UTC face is
     // the face the workbook wrote. Reading the local face would report a
     // different day to everybody who is not in UTC.
-    expect(excelSerialToDate(45292, false).toISOString()).toBe(
+    expect(serialMoment(45292, false)?.toISOString()).toBe(
       "2024-01-01T00:00:00.000Z",
     );
     // The same day is 1462 days earlier in the 1904 system.
-    expect(excelSerialToDate(45292 - 1462, true).toISOString()).toBe(
+    expect(serialMoment(45292 - 1462, true)?.toISOString()).toBe(
       "2024-01-01T00:00:00.000Z",
     );
     // A fractional serial is the time of day, in that same face.
-    expect(excelSerialToDate(45292.5, false).toISOString()).toBe(
+    expect(serialMoment(45292.5, false)?.toISOString()).toBe(
       "2024-01-01T12:00:00.000Z",
     );
   });
@@ -180,7 +180,7 @@ describe("styles: date detection", () => {
     ] as const) {
       for (const zone of ZONES) {
         expect(
-          inZone(zone, () => excelSerialToDate(serial, date1904).toISOString()),
+          inZone(zone, () => serialMoment(serial, date1904)?.toISOString()),
         ).toBe(expected);
       }
     }

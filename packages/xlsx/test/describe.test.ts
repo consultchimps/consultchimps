@@ -10,6 +10,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 
 import { XLSX_ERRORS } from "../src/errors.js";
+import { WorkbookModel } from "../src/model/index.js";
+import { normalizeSplitValue } from "../src/region/values.js";
 import { forEachZone, ZONES } from "./zones.js";
 import {
   describeWorkbookBytes,
@@ -1085,12 +1087,153 @@ describe("dates a workbook stores as numbers", () => {
     ]);
   });
 
+  /** A worksheet holding one date-formatted serial per row, under one header. */
+  function serialWorkbook(serials: number[], date1904 = false): Uint8Array {
+    const sheet: XLSX.WorkSheet = {
+      "!ref": `A1:A${serials.length + 1}`,
+      A1: { t: "s", v: "Stamped" },
+    };
+    serials.forEach((serial, index) => {
+      sheet[`A${index + 2}`] = {
+        t: "n",
+        v: serial,
+        z: "yyyy-mm-dd hh:mm:ss",
+      } as XLSX.CellObject;
+    });
+    return new Uint8Array(
+      XLSX.write(
+        {
+          SheetNames: ["Data"],
+          Sheets: { Data: sheet },
+          Workbook: { WBProps: { date1904 } },
+        },
+        { bookType: "xlsx", type: "array" },
+      ) as ArrayBuffer,
+    );
+  }
+
+  it("spells a serial the same way for a reader and for a split key", async () => {
+    // The two paths that turn a serial into characters: the worksheet reader,
+    // whose text a table carries, and the document model, whose value becomes
+    // the group key a split names an output workbook after. They read the same
+    // cells here and have to agree, character for character, or one workbook
+    // would be filed under a day the other never reported.
+    const serials = [1, 59, 60, 61, 45292, 45292.75, 2_958_465];
+    for (const date1904 of [false, true]) {
+      const bytes = serialWorkbook(serials, date1904);
+      const [table] = await readWorkbookTablesBytes({
+        name: "serials.xlsx",
+        bytes,
+      });
+      const model = await WorkbookModel.load(bytes);
+      const worksheet = model.worksheet("Data")!;
+
+      const readerText = (table?.rows ?? []).map((row) => row["Stamped"]);
+      const splitKeys = serials.map((_serial, index) =>
+        normalizeSplitValue(
+          worksheet.cellValue({ row: index + 2, column: 0 }),
+          true,
+        ),
+      );
+
+      expect(readerText).toHaveLength(serials.length);
+      expect(splitKeys.map((split) => split?.display)).toEqual(
+        readerText.map((text) => String(text)),
+      );
+    }
+  });
+
+  it("never spells a serial that names no moment", async () => {
+    // A stand-in for the shapes an untrusted cell takes: past both ends of the
+    // calendar, at the ends themselves, and either side of the day the 1900
+    // system invents. None of them may produce characters that are not a date:
+    // a serial of 1e100 used to become a moment with no components at all,
+    // spelled `0NaN-NaN-NaNTNaN:NaN:NaN.NaNZ`, so every such cell carried one
+    // key and a split gathered them into a single output.
+    const serials = [
+      1e100,
+      -1e100,
+      Number.MAX_VALUE,
+      -Number.MAX_VALUE,
+      1e15,
+      -1,
+      0,
+      0.5,
+      1,
+      59,
+      60,
+      61,
+      2_958_465,
+      2_958_466,
+      45_292.999_999_995_37,
+    ];
+    for (const date1904 of [false, true]) {
+      const bytes = serialWorkbook(serials, date1904);
+      const [table] = await readWorkbookTablesBytes({
+        name: "extremes.xlsx",
+        bytes,
+      });
+      const model = await WorkbookModel.load(bytes);
+      const worksheet = model.worksheet("Data")!;
+
+      for (const [index, serial] of serials.entries()) {
+        const text = table?.rows[index]?.["Stamped"];
+        const split = normalizeSplitValue(
+          worksheet.cellValue({ row: index + 2, column: 0 }),
+          true,
+        );
+        // Either it is a date, or it is the number the cell holds. Never
+        // characters standing in for arithmetic that did not work.
+        expect(String(text)).not.toContain("NaN");
+        expect(String(split?.key)).not.toContain("NaN");
+        expect(String(split?.display)).not.toContain("NaN");
+        if (typeof text !== "string") {
+          expect(text).toBe(serial);
+        }
+      }
+    }
+  });
+
+  it("carries a serial with no moment as its number, and keys them apart", async () => {
+    const bytes = serialWorkbook([1e100, -1e100]);
+    const [table] = await readWorkbookTablesBytes({
+      name: "untrusted.xlsx",
+      bytes,
+    });
+    const model = await WorkbookModel.load(bytes);
+    const worksheet = model.worksheet("Data")!;
+
+    expect(table?.rows).toEqual([{ Stamped: 1e100 }, { Stamped: -1e100 }]);
+    const keys = [2, 3].map(
+      (row) =>
+        normalizeSplitValue(worksheet.cellValue({ row, column: 0 }), true)?.key,
+    );
+    expect(keys).toEqual(["number:1e+100", "number:-1e+100"]);
+  });
+
+  it("formats the first and last serials the calendar can write", async () => {
+    // Serial 1 is the first day of the 1900 system, and 2958465 is 31 December
+    // 9999, the last day four year digits can spell. One past it names a year
+    // there is no spelling for, so it stays the number it is.
+    const [table] = await readWorkbookTablesBytes({
+      name: "ends.xlsx",
+      bytes: serialWorkbook([1, 2_958_465, 2_958_466]),
+    });
+
+    expect(table?.rows).toEqual([
+      { Stamped: "1900-01-01T00:00:00.000Z" },
+      { Stamped: "9999-12-31T00:00:00.000Z" },
+      { Stamped: 2_958_466 },
+    ]);
+  });
+
   it("keeps a serial that names no calendar day as the number it is", async () => {
     // Serial 0 decodes to day zero of January 1900, which is not a day. There
     // is no date to write, so the number travels and nothing is invented.
-    // Serial 60 is a day: the 1900 system deliberately reproduces a
-    // spreadsheet-era bug in which 29 February 1900 exists, and that is what
-    // Excel shows for it, so that is what the reader writes.
+    // Serial 60 is the day the 1900 system invents, 29 February 1900, which the
+    // Gregorian calendar does not have and no `Date` can hold. Writing it made
+    // the reader and the split key disagree about which day it was, so it too
+    // is carried as the number it is.
     const sheet: XLSX.WorkSheet = {
       "!ref": "A1:B3",
       A1: { t: "s", v: "Case" },
@@ -1112,7 +1255,7 @@ describe("dates a workbook stores as numbers", () => {
 
     expect(table?.rows).toEqual([
       { Case: "R-1", Opened: 0 },
-      { Case: "R-2", Opened: "1900-02-29T00:00:00.000Z" },
+      { Case: "R-2", Opened: 60 },
     ]);
   });
 

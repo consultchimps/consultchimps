@@ -126,7 +126,8 @@ export interface WorksheetHost {
   /** Whether a cell style formats its number as a date. */
   isDateStyle(styleIndex: number | undefined): boolean;
   /** Convert an Excel date serial to a `Date` in the workbook's date system. */
-  serialToDate(serial: number): Date;
+  /** The moment a serial names, or undefined when it names none. */
+  serialToDate(serial: number): Date | undefined;
 }
 
 interface CellSegment {
@@ -689,11 +690,19 @@ export class WorksheetModel implements WorksheetModelContract {
           return trimmed;
         }
         const styleIndex = getAttribute(cell.openTag, "s");
-        return this.#host.isDateStyle(
-          styleIndex === undefined ? undefined : Number(styleIndex),
-        )
-          ? this.#host.serialToDate(numeric)
-          : numeric;
+        if (
+          !this.#host.isDateStyle(
+            styleIndex === undefined ? undefined : Number(styleIndex),
+          )
+        ) {
+          return numeric;
+        }
+        // A serial that names no moment that can be written is carried as the
+        // number it is, the same decision the text path makes for text that
+        // names none. Handing back a moment nothing could spell is how a cell
+        // holding 1e100 came to be keyed by the same characters as every other
+        // one, and a split gathered them into a single output.
+        return this.#host.serialToDate(numeric) ?? numeric;
       }
     }
   }

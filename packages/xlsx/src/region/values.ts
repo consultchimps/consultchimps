@@ -13,7 +13,11 @@
  * references) and the bindings (naming cells in reports) need them.
  */
 
-import { calendarIsoText, utcCalendarParts } from "../model/calendar.js";
+import {
+  calendarIsoText,
+  isComponentsInRange,
+  utcCalendarParts,
+} from "../model/calendar.js";
 import type {
   CellRange,
   CellRef,
@@ -76,8 +80,17 @@ export function normalizeSplitValue(
     // face named the outputs after a different day in every time zone. The
     // spelling is `calendarIsoText`, the same one the worksheet readers use,
     // so a group key and a read value cannot describe one cell two ways.
-    const display = calendarIsoText(utcCalendarParts(value));
-    return { display, key: `date:${display}` };
+    const parts = utcCalendarParts(value);
+    if (isComponentsInRange(parts)) {
+      const display = calendarIsoText(parts);
+      return { display, key: `date:${display}` };
+    }
+    // Unreachable from this package: every `Date` a workbook value becomes is
+    // judged where it is made. A moment with no writable calendar face is keyed
+    // by the instant itself rather than by characters that are not a date, and
+    // one that is not a moment at all is blank, exactly as a number that is not
+    // finite is.
+    return normalizeSplitValue(value.getTime(), strict);
   }
   if (typeof value === "number") {
     if (!Number.isFinite(value)) {

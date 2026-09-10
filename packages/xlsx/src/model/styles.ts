@@ -8,7 +8,6 @@
  * style points at. It reads nothing else: styles.xml is never rewritten, which
  * is what lets it travel through an edit byte-identical.
  */
-import { MILLISECONDS_PER_DAY } from "./calendar.js";
 import { decodeXmlText, editElements, getAttribute } from "./xml.js";
 
 /**
@@ -93,32 +92,4 @@ export class StyleTable {
     const custom = this.#customFormatCodes.get(formatId);
     return custom === undefined ? false : isDateFormatCode(custom);
   }
-}
-
-/**
- * Convert an Excel date serial to a `Date` whose UTC face is the calendar date
- * and time the workbook stores.
- *
- * A serial names a calendar moment and carries no zone: the workbook says
- * "15 March 2023", not "15 March 2023 somewhere". So the conversion is
- * arithmetic on the epoch and nothing else, and every reading of the result
- * takes its UTC face. The value is then a function of the serial alone, which
- * is what a group key, an output filename, and a stored date all need.
- *
- * It used to re-assemble the components in local time, which made
- * `toISOString()` subtract the host offset: the same workbook split under
- * UTC and under UTC+4 named its outputs after two different calendar days, and
- * east of UTC that day was the one before the one in the cell. The comment
- * here said the local assembly matched what the spreadsheet reader handed
- * back, and it did not: that reader composes the instant from this same epoch
- * and these same whole days, so this now agrees with it in every zone rather
- * than only in UTC.
- */
-export function excelSerialToDate(serial: number, date1904: boolean): Date {
-  const epoch = date1904
-    ? Date.UTC(1904, 0, 1)
-    : // The 1900 system counts a day that never existed (29 February 1900),
-      // which an epoch of 30 December 1899 absorbs for every later serial.
-      Date.UTC(1899, 11, 30);
-  return new Date(epoch + Math.round(serial * MILLISECONDS_PER_DAY));
 }

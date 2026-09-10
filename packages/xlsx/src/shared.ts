@@ -29,10 +29,8 @@ import { XLSX_ERRORS } from "./errors.js";
 import {
   calendarIsoText,
   isComponentsInRange,
-  MILLISECONDS_PER_DAY,
-  timeOfDayFromMilliseconds,
+  serialCalendarParts,
   utcCalendarParts,
-  type CalendarParts,
 } from "./model/calendar.js";
 import { preserveWorkbookWithFilteredExcelTable } from "./preserve-table-split.js";
 import type { AllWorksheetSplitMetric } from "./split/all-worksheet.js";
@@ -539,27 +537,17 @@ export async function parseExcelTableDefinitions(
   }
 }
 
-/** The calendar day a whole serial decodes to, in the engine's spelling. */
-interface SerialDateParts {
-  y: number;
-  m: number;
-  d: number;
-}
-
 /**
- * The number-format functions this reader calls directly.
+ * The one number-format function this reader calls directly: whether a format
+ * code describes a date. The package's types do not declare it, so the shape
+ * depended on is written out here rather than assumed.
  *
- * They are the engine's own serial decoding, and they are arithmetic:
- * `parse_date_code` turns a serial into calendar components with no `Date`
- * anywhere in the middle. The package's types do not declare them, so the
- * shape this reader depends on is written out here rather than assumed.
+ * Decoding the serial is not asked of the engine. The document model owns that
+ * arithmetic, and asking two libraries the same question is how the reader and
+ * the model came to disagree about which day serial 1 is.
  */
 const SSF = XLSX.SSF as unknown as {
   is_date(format: string): boolean;
-  parse_date_code(
-    serial: number,
-    options?: { date1904?: boolean },
-  ): SerialDateParts | null | undefined;
 };
 
 /** Whether the workbook counts its dates from 1904 rather than from 1900. */
@@ -610,24 +598,8 @@ function workbookDateText(
   serial: number,
   date1904: boolean,
 ): string | undefined {
-  const wholeDays = Math.floor(serial);
-  const time = timeOfDayFromMilliseconds(
-    Math.round((serial - wholeDays) * MILLISECONDS_PER_DAY),
-  );
-  const decoded = SSF.parse_date_code(wholeDays + time.days, { date1904 });
-  if (!decoded) {
-    return undefined;
-  }
-  const parts: CalendarParts = {
-    year: decoded.y,
-    month: decoded.m,
-    day: decoded.d,
-    hour: time.hour,
-    minute: time.minute,
-    second: time.second,
-    millisecond: time.millisecond,
-  };
-  return isComponentsInRange(parts) ? calendarIsoText(parts) : undefined;
+  const parts = serialCalendarParts(serial, date1904);
+  return parts === undefined ? undefined : calendarIsoText(parts);
 }
 
 /**

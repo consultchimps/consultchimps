@@ -10,7 +10,7 @@ import {
   parseColumnLetters,
   parseSheetRange,
 } from "../../src/region/values.js";
-import { excelSerialToDate } from "../../src/model/index.js";
+import { serialMoment } from "../../src/model/index.js";
 import { inZone, ZONES } from "../zones.js";
 
 // Non-ASCII inputs are written as escapes so the file stays pure ASCII.
@@ -152,7 +152,7 @@ describe("normalizeSplitValue on a workbook date", () => {
     const keys = ZONES.map((zone) =>
       inZone(
         zone,
-        () => normalizeSplitValue(excelSerialToDate(45292, false), true)?.key,
+        () => normalizeSplitValue(serialMoment(45292, false), true)?.key,
       ),
     );
 

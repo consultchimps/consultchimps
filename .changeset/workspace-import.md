@@ -175,6 +175,28 @@ carries into midnight of the next day; rounded after the second had already been
 decided, the carry had nowhere to go, the fraction was clamped to 999
 milliseconds, and the value read as the second before, on the day before.
 
+Turning a serial into a moment is one route now, and it judges what it makes.
+There were two: the reader asked the spreadsheet engine, and the document model
+did its own arithmetic. They disagreed about which day serial 1 is, because the
+model counted from an epoch that only holds for serials past the day the 1900
+system invents, so every date before 1 March 1900 read one day early through a
+split's group keys. Neither judged the result: a date-formatted cell holding an
+untrusted 1e100 became a moment with no components at all, spelled
+`0NaN-NaN-NaNTNaN:NaN:NaN.NaNZ`, so distinct serials were keyed alike and a
+split gathered them into one output workbook. Both now decode through
+`serialCalendarParts`, which rounds the time of day as one whole number of
+milliseconds, derives the calendar day by the module's own arithmetic, and
+refuses anything that names no moment; a serial that names none is carried as
+the number it is, the same decision text that names no moment gets. The
+unvalidated conversion is gone rather than deprecated, so no caller can spell a
+moment nothing judged.
+
+One consequence worth naming: serial 60 is carried as a number rather than
+written as a date. It is the day the 1900 system invents, 29 February 1900,
+which the Gregorian calendar does not have, no `Date` can hold, and a `date`
+column in `@consultchimps/db` refuses. Writing it made the reader and the split
+key report two different days for one cell.
+
 One spelling of a date, `calendarIsoText`, is now shared by the worksheet
 readers, the document model and the split's group keys, so a value read from a
 cell and the key that names the output workbook it lands in cannot describe one
