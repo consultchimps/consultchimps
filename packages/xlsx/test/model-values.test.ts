@@ -168,6 +168,36 @@ describe("styles: date detection", () => {
     );
   });
 
+  it("answers every shape a serial can arrive in", () => {
+    // The enumeration in `serialCalendarParts`, line for line. A cell can hold
+    // any number at all, so every one of them needs an answer.
+    const spelling = (serial: number, date1904: boolean): string =>
+      serialMoment(serial, date1904)?.toISOString() ?? "no moment";
+    for (const [serial, in1900, in1904] of [
+      [Number.NaN, "no moment", "no moment"],
+      [Number.POSITIVE_INFINITY, "no moment", "no moment"],
+      [Number.NEGATIVE_INFINITY, "no moment", "no moment"],
+      [-1, "no moment", "no moment"],
+      [0, "no moment", "1904-01-01T00:00:00.000Z"],
+      [1, "1900-01-01T00:00:00.000Z", "1904-01-02T00:00:00.000Z"],
+      [59, "1900-02-28T00:00:00.000Z", "1904-02-29T00:00:00.000Z"],
+      [60, "no moment", "1904-03-01T00:00:00.000Z"],
+      [61, "1900-03-01T00:00:00.000Z", "1904-03-02T00:00:00.000Z"],
+      [45_292.75, "2024-01-01T18:00:00.000Z", "2028-01-02T18:00:00.000Z"],
+      [2_958_465, "9999-12-31T00:00:00.000Z", "no moment"],
+      [2_958_466, "no moment", "no moment"],
+      [1e100, "no moment", "no moment"],
+      [-1e100, "no moment", "no moment"],
+    ] as const) {
+      expect([serial, spelling(serial, false)]).toEqual([serial, in1900]);
+      expect([serial, spelling(serial, true)]).toEqual([serial, in1904]);
+    }
+    // A fraction that rounds to a whole day carries into the next one.
+    expect(spelling(45_292 + 86_399_999.6 / 86_400_000, false)).toBe(
+      "2024-01-02T00:00:00.000Z",
+    );
+  });
+
   it("reads the same serial the same way in every time zone", () => {
     // The defect this pins down: the components used to be re-assembled in
     // local time, so `toISOString()` subtracted the host offset and a split
@@ -386,6 +416,92 @@ describe("model: cell values", () => {
 
     expect(key?.display).toBe("9999-12-31T23:30:00-01:00");
     expect(key?.key).toBe("string:9999-12-31T23:30:00-01:00");
+  });
+
+  it("answers every shape a declared date can arrive in", async () => {
+    // The enumeration in `worksheetDateValue`, line for line. This text is the
+    // one input in the module that comes from outside, and a shape without a
+    // stated answer is how it produced an edge case a round.
+    const FORMATS = "formats";
+    for (const [text, expected] of [
+      // Date, date and time, and the separators the profile and its readers
+      // write.
+      ["2024-01-01", "2024-01-01T00:00:00.000Z"],
+      ["2024-01-01T18:00:00", "2024-01-01T18:00:00.000Z"],
+      ["2024-01-01 18:00:00", "2024-01-01T18:00:00.000Z"],
+      ["2024-01-01t18:00:00", "2024-01-01T18:00:00.000Z"],
+      ["2024-01-01T18:00", "2024-01-01T18:00:00.000Z"],
+      // Fractions: up to a millisecond, and finer only when the finer digits
+      // say nothing.
+      ["2024-01-01T18:00:00.1", "2024-01-01T18:00:00.100Z"],
+      ["2024-01-01T18:00:00.12", "2024-01-01T18:00:00.120Z"],
+      ["2024-01-01T18:00:00.123", "2024-01-01T18:00:00.123Z"],
+      ["2024-01-01T18:00:00.1230", "2024-01-01T18:00:00.123Z"],
+      ["2024-01-01T18:00:00.123000000", "2024-01-01T18:00:00.123Z"],
+      ["2024-01-01T18:00:00.1234", FORMATS],
+      ["2024-01-01T18:00:00.1239", FORMATS],
+      ["2024-01-01T18:00:00.123456789", FORMATS],
+      // Zones.
+      ["2024-01-01T18:00:00Z", "2024-01-01T18:00:00.000Z"],
+      ["2024-01-01T18:00:00z", "2024-01-01T18:00:00.000Z"],
+      ["2024-01-01T18:00:00+00:00", "2024-01-01T18:00:00.000Z"],
+      ["2024-01-01T18:00:00-00:00", "2024-01-01T18:00:00.000Z"],
+      ["2024-01-01T18:00:00+05:30", "2024-01-01T12:30:00.000Z"],
+      ["2024-01-01T18:00:00-07:00", "2024-01-02T01:00:00.000Z"],
+      ["2024-01-01T18:00:00+05", FORMATS],
+      ["2024-01-01T18:00:00+0530", FORMATS],
+      ["2024-01-01T18:00:00+24:00", FORMATS],
+      ["2024-01-01T18:00:00+05:60", FORMATS],
+      // Surrounding space, and years at and past the ends.
+      ["  2024-01-01  ", "2024-01-01T00:00:00.000Z"],
+      ["+002024-01-01", FORMATS],
+      ["-002024-01-01", FORMATS],
+      ["0000-01-01", "0000-01-01T00:00:00.000Z"],
+      ["0001-01-01", "0001-01-01T00:00:00.000Z"],
+      ["9999-12-31", "9999-12-31T00:00:00.000Z"],
+      ["10000-01-01", FORMATS],
+      ["9999-12-31T23:30:00-01:00", FORMATS],
+      // Fields outside the calendar.
+      ["2024-01-01T24:00:00", FORMATS],
+      ["2024-01-01T23:59:60", FORMATS],
+      ["2024-00-01", FORMATS],
+      ["2024-13-01", FORMATS],
+      ["2024-01-00", FORMATS],
+      ["2024-02-30", FORMATS],
+      ["2023-02-29", FORMATS],
+      ["2024-02-29", "2024-02-29T00:00:00.000Z"],
+      ["2024-04-31", FORMATS],
+      // Nothing, and something that merely begins with a date.
+      ["", ""],
+      ["2024-01-01 is the day", FORMATS],
+    ] as const) {
+      // `FORMATS` marks the rows whose answer is the text itself, which is the
+      // only answer that cannot be written as a constant here.
+      const answer = expected === FORMATS ? text : expected;
+      expect(await datedInUtc(text)).toBe(answer);
+    }
+  });
+
+  it("keeps timestamps a fraction apart apart", async () => {
+    // Slicing the fourth digit made these one value, so a read changed what
+    // the cell said and a split gathered rows that were not together.
+    const keys = await Promise.all(
+      ["2024-01-01T18:00:00.1234", "2024-01-01T18:00:00.1239"].map(
+        async (text) => {
+          const model = await datedModel(text);
+          return inZone("UTC", () =>
+            normalizeSplitValue(
+              model.worksheet(CORPUS_SHEET)!.cellValue({ row: 4, column: 3 }),
+              true,
+            ),
+          );
+        },
+      ),
+    );
+
+    expect(keys[0]?.display).toBe("2024-01-01T18:00:00.1234");
+    expect(keys[1]?.display).toBe("2024-01-01T18:00:00.1239");
+    expect(keys[0]?.key).not.toBe(keys[1]?.key);
   });
 
   it("keys a date cell for a split the way the cell reads", async () => {

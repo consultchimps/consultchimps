@@ -558,6 +558,14 @@ not the cell carries a time, so a date column reads the same way down its whole
 length. `@consultchimps/db` accepts that spelling and the bare `2024-01-01` in a
 `date` column, so either travels.
 
+A moment carries a millisecond, and a declared date written finer than that is
+carried as its text rather than shortened to fit: `18:00:00.1234` and
+`18:00:00.1239` are not the same instant, and reading both as `18:00:00.123`
+would change what the cell says and let a split gather rows that are not
+together. Digits past the third that are zeros lose nothing and are accepted.
+The same rule covers every other shape the text can take, and the whole list is
+enumerated in the reader itself, beside the grammar.
+
 Both counts are read from the package's own document model, because the
 spreadsheet engine behind the table readers drops a numeric formula cell with no
 cached value while parsing and flattens an error into that code, and they are

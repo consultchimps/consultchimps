@@ -326,6 +326,27 @@ function calendarDayOfSerial(
  *
  * The time of day is rounded as one whole number of milliseconds before it is
  * split, so a carry runs into the day count.
+ *
+ * The whole contract, since a serial reaches this from a cell anyone can write
+ * and every shape of it has to have an answer. There are two: it *names a
+ * moment*, or it names none and the caller carries the number it is.
+ *
+ * ```text
+ * INPUT                          ANSWER
+ * NaN, Infinity, -Infinity       no moment
+ * below zero                     no moment: before either system begins
+ * 0                              1900: no moment, the day before day one
+ *                                1904: 1 January 1904, the first day
+ * 1 to 59                        formats, counted from 31 December 1899
+ * 60  (1900 only)                no moment: the day the system invents,
+ *                                29 February 1900, which no calendar has
+ * 61 and up                      formats, counted from 30 December 1899
+ * a fraction                     the time of day, rounded to a millisecond
+ * a fraction that rounds to a    the next day, at midnight
+ *   whole day
+ * 2958465                        formats: 31 December 9999, the last day
+ * 2958466 and up                 no moment: past the years that can be written
+ * ```
  */
 export function serialCalendarParts(
   serial: number,

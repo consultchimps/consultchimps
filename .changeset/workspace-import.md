@@ -214,10 +214,19 @@ but hands back its own parse of the text, which remaps a year of 0099 to 1999
 and normalises a month of 13 into January of the next year.
 
 A declared date whose text names no moment is carried as that text, as the model
-already did. Displayed text, which `readWorksheetRecords` reports, still comes
-from the engine for a cell that wears a date format, because that is the text
-the worksheet shows; for a declared date it comes from the model, because the
-engine's text for one is the serial it made of it.
+already did, and so is one written finer than a millisecond: `18:00:00.1234` and
+`18:00:00.1239` were both shortened to `.123`, which changed the value on the
+way in and let a split gather rows that were not together. Digits past the third
+that are zeros lose nothing and are still accepted. The reader now states its
+whole contract beside the grammar - every shape the text can arrive in and what
+each one answers - and a test pins the enumeration line for line; the serial
+path states and pins its own. Writing it down settled two shapes that had no
+stated answer: a lower case `t` separator is read, as a lower case `z` already
+was, and an offset written without minutes is carried as text, which is what the
+profile this format names allows. Displayed text, which `readWorksheetRecords`
+reports, still comes from the engine for a cell that wears a date format,
+because that is the text the worksheet shows; for a declared date it comes from
+the model, because the engine's text for one is the serial it made of it.
 
 One spelling of a date, `calendarIsoText`, is now shared by the worksheet
 readers, the document model and the split's group keys, so a value read from a
