@@ -173,33 +173,51 @@ function supplierWorkbook(): Promise<UploadFile> {
 }
 
 /**
- * Hold the worker's import commands, so the page can be inspected while one is
- * genuinely in flight. The same stand-in the import spec uses, and for the same
- * reason: a real import finishes in milliseconds, and making the fixture slow
- * enough to observe would trade one timing assumption for a worse one.
+ * Hold named worker commands on their way out, so the page can be inspected
+ * while one is genuinely in flight.
+ *
+ * The same stand-in the import spec uses, and for the same reason. An import of
+ * a real file finishes in milliseconds and a cell edit finishes in less: both
+ * are answered before React has rendered the question that was raised about
+ * them, so a test that waits for the page to settle sees only the state after.
+ * Making the work slow enough to observe would trade one timing assumption for
+ * a worse one. Delaying the command on its way to the worker leaves the page
+ * untouched, and what is being tested is exactly what the page does while a
+ * command has not come back.
  */
-async function delayWorkerImports(page: Page, ms: number): Promise<void> {
-  await page.addInitScript((delay: number) => {
-    const post = Worker.prototype.postMessage;
-    Worker.prototype.postMessage = function (
-      this: Worker,
-      message: unknown,
-      transfer?: unknown,
-    ): void {
-      const type = (message as { type?: string } | null)?.type;
-      if (type === "describeImport" || type === "import") {
-        window.setTimeout(() => {
-          (post as (m: unknown, t?: unknown) => void).call(
-            this,
-            message,
-            transfer,
-          );
-        }, delay);
-        return;
-      }
-      (post as (m: unknown, t?: unknown) => void).call(this, message, transfer);
-    } as typeof Worker.prototype.postMessage;
-  }, ms);
+async function delayWorkerCommands(
+  page: Page,
+  types: readonly string[],
+  ms: number,
+): Promise<void> {
+  await page.addInitScript(
+    ({ delay, held }: { delay: number; held: readonly string[] }) => {
+      const post = Worker.prototype.postMessage;
+      Worker.prototype.postMessage = function (
+        this: Worker,
+        message: unknown,
+        transfer?: unknown,
+      ): void {
+        const type = (message as { type?: string } | null)?.type;
+        if (type !== undefined && held.includes(type)) {
+          window.setTimeout(() => {
+            (post as (m: unknown, t?: unknown) => void).call(
+              this,
+              message,
+              transfer,
+            );
+          }, delay);
+          return;
+        }
+        (post as (m: unknown, t?: unknown) => void).call(
+          this,
+          message,
+          transfer,
+        );
+      } as typeof Worker.prototype.postMessage;
+    },
+    { delay: ms, held: types },
+  );
 }
 
 async function downloadedWorkspace(page: Page): Promise<Buffer> {
@@ -420,7 +438,7 @@ test.describe("/workspace record grid", () => {
 
   test("locks editing while an import is in flight", async ({ page }) => {
     await forceDownloadFallback(page);
-    await delayWorkerImports(page, 2_000);
+    await delayWorkerCommands(page, ["describeImport", "import"], 2_000);
     await page.goto("/workspace");
     await openWorkspace(page, await workspaceFixture());
 
@@ -500,6 +518,10 @@ test.describe("/workspace record grid", () => {
     page,
   }) => {
     await forceDownloadFallback(page);
+    // Held so the window under test is open long enough to look at. Without
+    // this the edit is answered before the question has rendered, and the page
+    // would be asserted in the state after it rather than during it.
+    await delayWorkerCommands(page, ["updateCell"], 2_000);
     await page.goto("/workspace");
     await openWorkspace(page, await workspaceFixture());
 
@@ -509,9 +531,19 @@ test.describe("/workspace record grid", () => {
     // without the shell counting the edit, New would go through, the edit would
     // land on the database being discarded, and nothing would say so.
     await typeWithoutCommitting(cellOf(page, "CUST-0001", "name"), "Acme Two");
+    await expect(page.getByTestId("workspace-unsaved")).toHaveCount(0);
     await page.getByTestId("workspace-new").click();
 
     await expect(page.getByTestId("workspace-confirm")).toBeVisible();
+    // And it says what is actually at stake. Nothing is unsaved yet, because
+    // the edit has not been answered, so a question explaining this state as
+    // anything else would be describing a workspace the visitor does not have.
+    await expect(page.getByTestId("workspace-confirm")).toContainText(
+      "An edit is still being applied",
+    );
+    await expect(page.getByTestId("workspace-confirm")).not.toContainText(
+      "An import is still running",
+    );
     // The workspace is untouched behind the question.
     await expect(page.getByTestId("workspace-file-name")).toHaveText(
       "records.sqlite",
@@ -521,7 +553,9 @@ test.describe("/workspace record grid", () => {
     await expect(page.getByTestId("workspace-confirm")).toHaveCount(0);
     // And the edit it committed on the way is in the workspace, not lost to it.
     await expect(cellOf(page, "CUST-0001", "name")).toHaveText("Acme Two");
-    await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
+    await expect(page.getByTestId("workspace-unsaved")).toBeVisible({
+      timeout: 30_000,
+    });
 
     // Answering it the other way is still available, and still discards.
     await page.getByTestId("workspace-new").click();
@@ -534,15 +568,48 @@ test.describe("/workspace record grid", () => {
     page,
   }) => {
     await forceDownloadFallback(page);
+    await delayWorkerCommands(page, ["updateCell"], 2_000);
     await page.goto("/workspace");
     await openWorkspace(page, await workspaceFixture());
+
+    // An accepted edit first, so the workspace is already unsaved when the
+    // second one is still on its way: two reasons at once, which is the case a
+    // question that names only one of them gets wrong.
+    await typeInCell(page, "CUST-0001", "name", "Acme Two");
+    await expect(page.getByTestId("workspace-unsaved")).toBeVisible({
+      timeout: 30_000,
+    });
 
     await typeWithoutCommitting(cellOf(page, "CUST-0001", "headcount"), "21");
     await page.getByTestId("workspace-open").click();
 
     await expect(page.getByTestId("workspace-confirm")).toBeVisible();
+    await expect(page.getByTestId("workspace-confirm")).toContainText(
+      "have not been saved to a file and an edit is still being applied",
+    );
+
     await page.getByTestId("workspace-confirm-cancel").click();
     await expect(cellOf(page, "CUST-0001", "headcount")).toHaveText("21");
     await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
+  });
+
+  test("names the edit alone once it has landed", async ({ page }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await openWorkspace(page, await workspaceFixture());
+
+    // No delay this time, so the edit is answered before the question renders
+    // and the workspace really is unsaved by then. The wording follows the
+    // state it is shown over rather than the one that raised it, which is what
+    // deriving it from the same answer buys.
+    await typeInCell(page, "CUST-0001", "name", "Acme Two");
+    await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
+    await page.getByTestId("workspace-new").click();
+    await expect(page.getByTestId("workspace-confirm")).toContainText(
+      "This workspace has changes that have not been saved to a file.",
+    );
+    await expect(page.getByTestId("workspace-confirm")).not.toContainText(
+      "an edit is still being applied",
+    );
   });
 });

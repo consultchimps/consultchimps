@@ -50,7 +50,11 @@ import {
 import { WorkspaceGrid } from "@/components/workspace-grid";
 import { WorkspaceImport } from "@/components/workspace-import";
 import { WORKSPACE_FILES } from "@/lib/accepted-files";
-import { mustHoldWorkspace } from "@/lib/workspace-hold";
+import {
+  mustHoldWorkspace,
+  workspaceHoldHeading,
+  workspaceHoldSentence,
+} from "@/lib/workspace-hold";
 import type { WorkspaceSummary } from "@/lib/workspace-protocol";
 import { WorkspaceClient } from "@/lib/workspace-worker";
 import {
@@ -343,11 +347,12 @@ export function WorkspaceTool() {
   // Whether there is anything to lose by leaving or replacing the workspace.
   // The conditions and the reasoning behind each live in `lib/workspace-hold`,
   // so every guard here asks one question with one answer.
-  const mustHold = mustHoldWorkspace({
+  const holdState = {
     unsavedChanges: hasUnsavedChanges,
     importing: busy === "importing",
     editsInFlight,
-  });
+  };
+  const mustHold = mustHoldWorkspace(holdState);
 
   /**
    * The same question, asked from a handler that may be running in the same
@@ -827,13 +832,13 @@ export function WorkspaceTool() {
               className="size-5 shrink-0 text-fd-primary"
             />
             <h2 className="text-xl font-bold tracking-[-0.03em]">
-              Unsaved changes
+              {workspaceHoldHeading(holdState)}
             </h2>
           </div>
           <p className="mt-3 text-sm text-fd-muted-foreground">
-            {hasUnsavedChanges
-              ? "This workspace has changes that have not been saved to a file."
-              : "An import is still running."}{" "}
+            {/* The same state the hold decision was made from, so the
+                sentence cannot describe a different one. */}
+            {workspaceHoldSentence(holdState)}{" "}
             {pending?.kind === "new"
               ? "Starting a new workspace replaces this one"
               : pending?.kind === "open"

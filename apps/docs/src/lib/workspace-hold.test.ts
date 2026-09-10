@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { mustHoldWorkspace, type WorkspaceHoldState } from "./workspace-hold";
+import {
+  mustHoldWorkspace,
+  workspaceHoldHeading,
+  workspaceHoldReasons,
+  workspaceHoldSentence,
+  type WorkspaceHoldState,
+} from "./workspace-hold";
 
 const nothingAtStake: WorkspaceHoldState = {
   unsavedChanges: false,
@@ -65,5 +71,130 @@ describe("mustHoldWorkspace", () => {
         editsInFlight: 2,
       }),
     ).toBe(true);
+  });
+});
+
+/** Every state the hold can be in, named by the reasons that make it up. */
+const CASES: ReadonlyArray<
+  readonly [string, WorkspaceHoldState, readonly string[], string]
+> = [
+  ["nothing at stake", nothingAtStake, [], ""],
+  [
+    "unsaved changes alone",
+    { ...nothingAtStake, unsavedChanges: true },
+    ["unsavedChanges"],
+    "This workspace has changes that have not been saved to a file.",
+  ],
+  [
+    "an import alone",
+    { ...nothingAtStake, importing: true },
+    ["importing"],
+    "An import is still running.",
+  ],
+  [
+    "an edit alone",
+    { ...nothingAtStake, editsInFlight: 1 },
+    ["editInFlight"],
+    "An edit is still being applied.",
+  ],
+  [
+    "unsaved changes and an import",
+    { ...nothingAtStake, unsavedChanges: true, importing: true },
+    ["unsavedChanges", "importing"],
+    "This workspace has changes that have not been saved to a file and an import is still running.",
+  ],
+  [
+    "unsaved changes and an edit",
+    { ...nothingAtStake, unsavedChanges: true, editsInFlight: 2 },
+    ["unsavedChanges", "editInFlight"],
+    "This workspace has changes that have not been saved to a file and an edit is still being applied.",
+  ],
+  [
+    "an import and an edit",
+    { ...nothingAtStake, importing: true, editsInFlight: 1 },
+    ["importing", "editInFlight"],
+    "An import is still running and an edit is still being applied.",
+  ],
+  [
+    "all three at once",
+    { unsavedChanges: true, importing: true, editsInFlight: 3 },
+    ["unsavedChanges", "importing", "editInFlight"],
+    "This workspace has changes that have not been saved to a file, an import is still running, and an edit is still being applied.",
+  ],
+];
+
+describe("workspaceHoldReasons", () => {
+  it.each(CASES)("names what is at stake with %s", (_, state, reasons) => {
+    expect(workspaceHoldReasons(state)).toEqual(reasons);
+  });
+
+  it("agrees with the decision, because the decision is made from it", () => {
+    for (const [, state] of CASES) {
+      expect(mustHoldWorkspace(state)).toBe(
+        workspaceHoldReasons(state).length > 0,
+      );
+    }
+  });
+});
+
+describe("workspaceHoldSentence", () => {
+  it.each(CASES)("explains %s", (_, state, __, sentence) => {
+    expect(workspaceHoldSentence(state)).toBe(sentence);
+  });
+
+  it("names every reason that stands, never just the first", () => {
+    // The defect this replaced: the wording was worked out from one flag after
+    // the decision had been made from three, so a workspace held only by an
+    // edit was explained as an import.
+    for (const [, state, reasons] of CASES) {
+      // Lower cased, because whichever clause comes first opens the sentence.
+      const sentence = workspaceHoldSentence(state).toLowerCase();
+      if (reasons.includes("unsavedChanges")) {
+        expect(sentence).toContain("have not been saved to a file");
+      }
+      if (reasons.includes("importing")) {
+        expect(sentence).toContain("an import is still running");
+      }
+      if (reasons.includes("editInFlight")) {
+        expect(sentence).toContain("an edit is still being applied");
+      }
+    }
+  });
+
+  it("reads as one sentence, whatever it has to say", () => {
+    for (const [, state] of CASES) {
+      const sentence = workspaceHoldSentence(state);
+      if (sentence === "") {
+        continue;
+      }
+      expect(sentence.charAt(0)).toBe(sentence.charAt(0).toUpperCase());
+      expect(sentence.endsWith(".")).toBe(true);
+      expect(sentence).not.toContain("..");
+      // It is followed by the clause naming what would replace the workspace,
+      // so it carries no dangling joiner of its own.
+      expect(sentence.endsWith(" and.")).toBe(false);
+    }
+  });
+});
+
+describe("workspaceHoldHeading", () => {
+  it.each(CASES)("names %s in two words", (_, state, reasons) => {
+    expect(workspaceHoldHeading(state)).toBe(
+      reasons.includes("unsavedChanges")
+        ? "Unsaved changes"
+        : "Work not saved yet",
+    );
+  });
+
+  it("does not claim a change until one has been made", () => {
+    // The badge that means "changes no file has" is gated on the same flag, so
+    // a heading that said this over a workspace without it would be the two
+    // disagreeing on one screen.
+    expect(workspaceHoldHeading({ ...nothingAtStake, editsInFlight: 1 })).toBe(
+      "Work not saved yet",
+    );
+    expect(workspaceHoldHeading({ ...nothingAtStake, importing: true })).toBe(
+      "Work not saved yet",
+    );
   });
 });
