@@ -217,6 +217,9 @@ describe("styles: date detection", () => {
   });
 });
 
+/** The answer for a cell that holds no value at all. */
+const BLANK = "(blank)";
+
 describe("model: cell values", () => {
   it("resolves shared strings rather than handing back their index", async () => {
     const model = await WorkbookModel.load(
@@ -307,9 +310,12 @@ describe("model: cell values", () => {
         const value = model
           .worksheet(CORPUS_SHEET)!
           .cellValue({ row: 4, column: 3 });
-        return value instanceof Date
-          ? calendarIsoText(utcCalendarParts(value))
-          : String(value);
+        if (value instanceof Date) {
+          return calendarIsoText(utcCalendarParts(value));
+        }
+        // Blank is an answer in its own right, and not one any text can stand
+        // for, so it is named rather than stringified.
+        return value === undefined ? BLANK : String(value);
       }),
     );
   }
@@ -472,7 +478,8 @@ describe("model: cell values", () => {
       ["2024-02-29", "2024-02-29T00:00:00.000Z"],
       ["2024-04-31", FORMATS],
       // Nothing, and something that merely begins with a date.
-      ["", ""],
+      ["", BLANK],
+      ["   ", BLANK],
       ["2024-01-01 is the day", FORMATS],
     ] as const) {
       // `FORMATS` marks the rows whose answer is the text itself, which is the

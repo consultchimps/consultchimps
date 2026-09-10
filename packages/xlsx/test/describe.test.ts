@@ -1326,6 +1326,63 @@ describe("dates a worksheet declares rather than formats", () => {
     );
   });
 
+  it("counts an empty declared date as blank, not as a header row", async () => {
+    // The used range opens with a declared date cell holding nothing but
+    // spaces. Blank is what it is, and the header is the row below. Reading it
+    // as text made it content: the header row was found one row early, the
+    // columns became invented names, and the real header imported as data.
+    const withEmptyFirstRow =
+      `<row r="1"><c r="A1" t="d"><v>   </v></c></row>` +
+      `<row r="2">${textCell("A2", "Case")}${textCell("B2", "Region")}</row>` +
+      `<row r="3">${textCell("A3", "R-1")}${textCell("B3", "north")}</row>`;
+    const bytes = await uncalculatedWorkbookBytes(withEmptyFirstRow);
+
+    const [report] = await readWorkbookWorksheetsBytes({
+      name: "blank.xlsx",
+      bytes,
+    });
+    expect(report?.region?.headerRow).toBe(2);
+    expect(report?.table?.columns).toEqual(["Case", "Region"]);
+    // The real header is the header, so the row under it is the only data row
+    // and this is the schema an import would infer.
+    expect(report?.table?.rows).toEqual([{ Case: "R-1", Region: "north" }]);
+  });
+
+  it("counts a declared date holding only spaces as blank in a data row", async () => {
+    const bytes = await uncalculatedWorkbookBytes(
+      `<row r="1">${textCell("A1", "Case")}${textCell("B1", "Opened")}</row>` +
+        `<row r="2">${textCell("A2", "R-1")}<c r="B2" t="d"><v>   </v></c></row>`,
+    );
+    const [table] = await readWorkbookTablesBytes({
+      name: "spaces.xlsx",
+      bytes,
+    });
+
+    expect(table?.rows).toEqual([{ Case: "R-1", Opened: null }]);
+  });
+
+  it("refuses a worksheet the engine listed but could not read", async () => {
+    // A declared date holding no text at all takes the whole worksheet part
+    // with it: the engine lists the sheet and produces nothing for it, without
+    // raising. Skipping it would drop the worksheet from every list this feeds
+    // and say nothing. The document model reads such a worksheet, so this is a
+    // limit of the reader rather than of the file, and the honest answer until
+    // the reader takes its cells from the model is to stop and name it.
+    for (const empty of ["<v></v>", "<v/>", ""]) {
+      const bytes = await uncalculatedWorkbookBytes(
+        `<row r="1"><c r="A1" t="d">${empty}</c></row>` +
+          `<row r="2">${textCell("A2", "Case")}</row>`,
+      );
+
+      await expect(
+        readWorkbookWorksheetsBytes({ name: "empty.xlsx", bytes }),
+      ).rejects.toMatchObject({
+        code: XLSX_ERRORS.XLSX_READ_FAILED,
+        details: { source: "empty.xlsx", worksheet: "Review Log" },
+      });
+    }
+  });
+
   it("gives the reader and the split key the same characters", async () => {
     const bytes = await uncalculatedWorkbookBytes(rows);
     const [table] = await readWorkbookTablesBytes({

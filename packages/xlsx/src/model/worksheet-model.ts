@@ -530,7 +530,8 @@ function fractionMilliseconds(fraction: string): number | undefined {
  * 2024-01-00  2024-02-30  2023-02-29      text: no such day
  * 2024-02-29  (a leap year)               formats
  * 2024-04-31  (a 30-day month)            text: no such day
- * ""  (an empty cell)                     the empty text, so the cell is blank
+ * ""  or "   "  (an empty cell)          blank: no value at all, as for every
+ *                                         other cell holding only spaces
  * 2024-01-01 is the day  (a date and more) text: the whole value is judged
  * ```
  *
@@ -750,7 +751,14 @@ export class WorksheetModel implements WorksheetModelContract {
       case "b":
         return text.trim() === "1" || text.trim().toLowerCase() === "true";
       case "d":
-        return worksheetDateValue(text) ?? text;
+        // Blank first, the same rule the numeric branch below applies: a cell
+        // holding nothing, or nothing but spaces, holds no value at all. This
+        // branch used to skip it and hand back the empty text, which is a
+        // value, so an empty declared date above a worksheet's real header
+        // counted as content and the header row was found one row too early.
+        return text.trim() === ""
+          ? undefined
+          : (worksheetDateValue(text) ?? text);
       case "s":
       case "str":
       case "inlineStr":

@@ -213,6 +213,24 @@ instead was measured and rejected: with its dates on it keeps the declaration
 but hands back its own parse of the text, which remaps a year of 0099 to 1999
 and normalises a month of 13 into January of the next year.
 
+A declared date cell holding nothing, or nothing but spaces, is blank. The
+branch that reads one skipped the rule its neighbour applies to every other cell
+and handed back the empty text, which is a value: an empty declared date above a
+worksheet's real header counted as content, so the header row was found a row
+early, the columns became invented names and the real header imported as data.
+The rule now lives in the one switch that reads a cell, beside the identical
+rule for a numeric cell two lines below it. A number that is not finite is blank
+too, which is what the engine makes of text it cannot read.
+
+Measuring that scenario turned up something worse and it is fixed here as well.
+The engine cannot parse a worksheet containing a declared date with no text at
+all: it lists the sheet, produces nothing for it, and raises nothing. The reader
+skipped such a worksheet, so it vanished from every list it feeds - the tables,
+the worksheets an import offers - and nothing said so. That is now a refusal
+with the stable read code, naming the workbook and the worksheet. The document
+model reads those worksheets, so this is a limit of the reader rather than of
+the file, and it goes when the reader takes its cells from the model.
+
 A declared date whose text names no moment is carried as that text, as the model
 already did, and so is one written finer than a millisecond: `18:00:00.1234` and
 `18:00:00.1239` were both shortened to `.123`, which changed the value on the

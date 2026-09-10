@@ -577,7 +577,14 @@ export interface WorkbookDates {
  * nobody wrote.
  */
 interface CellDate {
-  readonly value: CellValue;
+  /**
+   * One of the two answers a date cell has: the canonical timestamp, or the
+   * cell's own text where that names no moment. Never blank - a cell holding
+   * nothing is not a date cell, and `WorksheetModel.cellValue` reads it as no
+   * value at all, so it never reaches this map and the reader's ordinary blank
+   * rule answers for it.
+   */
+  readonly value: string;
   readonly declared: boolean;
 }
 
@@ -717,11 +724,14 @@ function cellToPrimitive(
     }
   }
 
-  if (
-    typeof cell.v === "string" ||
-    typeof cell.v === "number" ||
-    typeof cell.v === "boolean"
-  ) {
+  if (typeof cell.v === "number") {
+    // A cell cannot hold one of these; the engine makes them out of text it
+    // could not read, such as the spaces in a declared date cell. Blank is what
+    // the cell holds, and blank is what every other reader here calls it.
+    return Number.isFinite(cell.v) ? cell.v : null;
+  }
+
+  if (typeof cell.v === "string" || typeof cell.v === "boolean") {
     return cell.v;
   }
 
@@ -1130,7 +1140,19 @@ export function workbookWorksheetReports(
 
     const worksheet = workbook.Sheets[sheetName];
     if (!worksheet) {
-      continue;
+      // The workbook lists this worksheet and the engine produced nothing for
+      // it, which it does silently: a cell it cannot parse, such as a declared
+      // date holding no text at all, takes the whole part with it. Skipping
+      // would drop a worksheet from every list this feeds - the tables, the
+      // sheets an import offers - and say nothing, which is the one outcome a
+      // reader must never produce. The document model reads such a worksheet;
+      // until this reader takes its cells from there, the honest answer is to
+      // stop and name it.
+      throw new ConsultChimpsError(
+        XLSX_ERRORS.XLSX_READ_FAILED,
+        `Worksheet "${sheetName}" is listed in ${sourceFile} but could not be read from it, so what it holds is unknown.`,
+        { details: { source: sourceFile, worksheet: sheetName } },
+      );
     }
     const read = worksheetToTable(
       sourceFile,
