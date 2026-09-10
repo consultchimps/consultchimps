@@ -536,15 +536,22 @@ for (const worksheet of await readWorkbookWorksheetsBytes({
 `readWorkbookWorksheets` is the file twin: both surfaces hand the same operation
 the same bytes, so neither can answer differently about the same workbook.
 
-A cell Excel stores as a date reads as ISO 8601 text, and that text is a
-function of the workbook alone. Excel holds a date as a count of days from the
-workbook's epoch, wearing a date number format, and attaches no time zone, so
-the reader decodes that count into calendar components and writes them out. No
-`Date` takes part: a `Date` has a local face as well as a UTC one, and text
-built from the local face makes the same workbook read as a different calendar
-day in every time zone. The same workbook therefore reads identically on a
-machine set to UTC, to UTC+4, or to UTC-7, which is what a group key, an output
-filename, and a stored date all need.
+A cell a worksheet stores as a date reads as ISO 8601 text, and that text is a
+function of the workbook alone. A worksheet says a cell is a date in two ways,
+and both are read: a count of days from the workbook's epoch wearing a date
+number format, which is what Excel writes, and a cell that declares `t="d"` and
+writes ISO 8601 text, which the format allows and other generators use. The
+declared type is enough on its own; a cell that declares itself a date and wears
+no format is still a date, and reads as one.
+
+Neither carries a time zone, so the reader decodes what the workbook holds into
+calendar components and writes them out. No `Date` takes part: a `Date` has a
+local face as well as a UTC one, and text built from the local face makes the
+same workbook read as a different calendar day in every time zone. The same
+workbook therefore reads identically on a machine set to UTC, to UTC+4, or to
+UTC-7, which is what a group key, an output filename, and a stored date all
+need. A declared date whose text names no moment is carried as that text rather
+than converted.
 
 The text is always the full timestamp, `2024-01-01T00:00:00.000Z`, whether or
 not the cell carries a time, so a date column reads the same way down its whole

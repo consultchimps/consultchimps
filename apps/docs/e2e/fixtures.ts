@@ -90,9 +90,24 @@ export interface DateSerialCell {
   readonly serial: number;
 }
 
+/**
+ * A cell that declares itself a date and writes ISO 8601 text, which the format
+ * allows and Excel opens. It wears no number format, so the only thing saying
+ * it is a date is the declaration.
+ */
+export interface DeclaredDateCell {
+  /** ISO 8601, as the format writes it: a date, or a date and a time. */
+  readonly date: string;
+}
+
 /** One cell of a worksheet fixture. */
 export type WorksheetCellFixture =
-  number | string | UncalculatedFormulaCell | ErrorValueCell | DateSerialCell;
+  | number
+  | string
+  | UncalculatedFormulaCell
+  | ErrorValueCell
+  | DateSerialCell
+  | DeclaredDateCell;
 
 /** One worksheet: a name and its rows, top-left aligned at A1. */
 export interface WorksheetFixture {
@@ -193,6 +208,9 @@ function worksheetXml(
             }
             if ("error" in value) {
               return `<c r="${address}" t="e"><v>${escapeXml(value.error)}</v></c>`;
+            }
+            if ("date" in value) {
+              return `<c r="${address}" t="d"><v>${escapeXml(value.date)}</v></c>`;
             }
             // Style 1 is the date format the styles part declares.
             return `<c r="${address}" s="1"><v>${value.serial}</v></c>`;

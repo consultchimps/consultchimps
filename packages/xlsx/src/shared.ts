@@ -29,9 +29,11 @@ import { XLSX_ERRORS } from "./errors.js";
 import {
   calendarIsoText,
   isComponentsInRange,
-  serialCalendarParts,
   utcCalendarParts,
 } from "./model/calendar.js";
+import type { WorkbookModel } from "./model/index.js";
+import type { WorksheetModel } from "./model/types.js";
+import { WorkbookRead } from "./operations/read-model.js";
 import { preserveWorkbookWithFilteredExcelTable } from "./preserve-table-split.js";
 import type { AllWorksheetSplitMetric } from "./split/all-worksheet.js";
 import { splitOutputFilenames } from "./split/names.js";
@@ -491,13 +493,12 @@ export function parseWorkbookBytes(
 ): XLSX.WorkBook {
   try {
     return XLSX.read(workbookBytes, {
-      // The serial is kept rather than turned into a `Date`, and the number
-      // format is kept so a date-formatted serial can be told from a quantity.
-      // See `workbookDateText`: a `Date` has a local face as well as a UTC one,
-      // and which of them is the workbook's depends on how the engine composed
-      // it, so text built from one is text built on somebody else's convention.
+      // The serial is kept rather than turned into a `Date`. A `Date` has a
+      // local face as well as a UTC one, and which of them is the workbook's
+      // depends on how the engine composed it, so text built from one is text
+      // built on somebody else's convention. Which cells are dates, and what
+      // they hold, is the document model's answer: see `WorkbookDates`.
       cellDates: false,
-      cellNF: true,
       cellText: options.cellText ?? false,
       dense: false,
       type: "array",
@@ -538,68 +539,140 @@ export async function parseExcelTableDefinitions(
 }
 
 /**
- * The one number-format function this reader calls directly: whether a format
- * code describes a date. The package's types do not declare it, so the shape
- * depended on is written out here rather than assumed.
+ * What a worksheet holds in the cells it declares or formats as dates, read
+ * from the document model.
  *
- * Decoding the serial is not asked of the engine. The document model owns that
- * arithmetic, and asking two libraries the same question is how the reader and
- * the model came to disagree about which day serial 1 is.
+ * The engine cannot answer this. A worksheet may say a cell is a date in two
+ * ways: by wearing a date number format, or by declaring `t="d"` and writing
+ * ISO 8601 text. Reading with `cellDates` off, which is what keeps a serial a
+ * serial, turns the second kind into a plain number and drops the declaration
+ * entirely: measured on this engine, `<c t="d"><v>2024-01-01</v></c>` arrives
+ * as the number 45292 with no field left saying what it was. So the reader
+ * asked the style alone, and an unstyled date cell became an integer, in the
+ * table and in the schema an import inferred from it. Reading with `cellDates`
+ * on keeps the declaration but hands back the engine's own parse of the text,
+ * which remaps a year of 0099 to 1999 and normalises a month of 13 into
+ * January of the next year: two defects the model refuses.
+ *
+ * So the model answers, for both kinds. It is the reader that sees the
+ * declared type, it owns the style table, and its values come through the one
+ * calendar route. The engine keeps the work it is good at: the used range, the
+ * header row, and every cell that is not a date.
  */
-const SSF = XLSX.SSF as unknown as {
-  is_date(format: string): boolean;
-};
-
-/** Whether the workbook counts its dates from 1904 rather than from 1900. */
-function workbookDateSystem(workbook: XLSX.WorkBook): boolean {
-  return workbook.Workbook?.WBProps?.date1904 === true;
+export interface WorkbookDates {
+  /** The dates one worksheet holds. */
+  forSheet(sheet: string): SheetDates;
 }
 
 /**
- * The ISO 8601 text for a date-formatted serial.
+ * What the model read in a date cell, and how the cell said it was one.
  *
- * A workbook stores a date as a count of days from an epoch, and which day the
- * count starts from is a property of the workbook rather than of the cell. So
- * the text is computed from those two things and nothing else: the serial and
- * the workbook's date system, decoded by the engine's own `parse_date_code`,
- * with the components written out directly.
- *
- * No `Date` takes part. A `Date` has a local face as well as a UTC one, and
- * which of them carries the calendar date depends on how whoever built it
- * chose to compose it. Text built from a `Date` is therefore text built on
- * that choice, and where the choice was the local face the same workbook read
- * as a different calendar day in every time zone. This is a function of the
- * workbook, so every reader in every zone gets the same characters.
- *
- * The spelling comes from `calendarIsoText`, which is also what the document
- * model's dates are read back as, so a workbook read through this reader and
- * the same workbook read through the model spell a date with the same
- * characters rather than with two rules that could drift apart.
- *
- * The time of day is rounded as one value and split afterwards, not decomposed
- * and then rounded field by field. A serial naming 23:59:59.9996 rounds to a
- * whole day: split from the rounded whole, that carries into midnight of the
- * next day, which is the moment the serial names. Rounded after the second was
- * already decided, the carry had nowhere to go, so the fraction was clamped and
- * the value read as the second before, on the day before. The engine is
- * therefore asked only which calendar day a *whole* serial names, and this no
- * longer rests on its fraction never reaching a full second.
- *
- * A serial the engine cannot decode into components in range, such as the
- * day-zero serial 0, comes back undefined and the caller keeps the number.
- * Serial 60 is decoded rather than refused: the 1900 system deliberately
- * reproduces a spreadsheet-era bug in which 29 February 1900 exists, and that
- * is the day Excel shows for it, and the day count is what carries that bug. It
- * is why the components are only checked for range here, and the stricter "is
- * this a day the calendar has" rule belongs to the text path, whose input is
- * not Excel's own arithmetic.
+ * The two ways differ in what the engine makes of the cell, so they differ in
+ * how far this has to override it. A cell wearing a date format is a number the
+ * engine formats correctly for display and reports as a serial: its stored
+ * value comes from here, and its displayed text is the engine's, which is the
+ * text the worksheet shows. A cell that declares `t="d"` is one the engine has
+ * already turned into a serial, so both its value and its displayed text come
+ * from here; the engine's display for it is that serial, which is a number
+ * nobody wrote.
  */
-function workbookDateText(
-  serial: number,
-  date1904: boolean,
-): string | undefined {
-  const parts = serialCalendarParts(serial, date1904);
-  return parts === undefined ? undefined : calendarIsoText(parts);
+interface CellDate {
+  readonly value: CellValue;
+  readonly declared: boolean;
+}
+
+/** A worksheet's date cells, by row and column. */
+type WorksheetDates = ReadonlyMap<string, CellDate>;
+
+/**
+ * One worksheet's dates, asked for the way the engine indexes its cells: a
+ * zero-based row, as `getCell` takes, rather than the one-based row a worksheet
+ * writes. Converting here means no reader has to remember which of the two it
+ * is holding.
+ */
+export type SheetDates = (
+  rowIndex: number,
+  columnIndex: number,
+) => CellDate | undefined;
+
+function dateKey(row: number, column: number): string {
+  return `${row},${column}`;
+}
+
+/**
+ * Collect a worksheet's date cells in one pass.
+ *
+ * A cell is a date when it declares itself one or when its style says so; both
+ * questions are the model's, and the value is the model's too, so the reader
+ * has one rule and one spelling rather than a second set of its own. A cell
+ * the model reads as text - a `t="d"` cell whose text names no moment - is
+ * kept as that text, because that is what the file says it is.
+ */
+function collectWorksheetDates(
+  model: WorkbookModel,
+  worksheet: WorksheetModel | undefined,
+): WorksheetDates {
+  const dates = new Map<string, CellDate>();
+  if (!worksheet) {
+    return dates;
+  }
+  for (const row of worksheet.rows()) {
+    for (const cell of row.cells) {
+      const declared = cell.type === DECLARED_DATE_TYPE;
+      if (!declared && !model.isDateStyle(cell.styleIndex)) {
+        continue;
+      }
+      const value = worksheet.cellValue(cell.ref);
+      if (value instanceof Date) {
+        dates.set(dateKey(cell.ref.row, cell.ref.column), {
+          declared,
+          value: calendarIsoText(utcCalendarParts(value)),
+        });
+      } else if (declared && typeof value === "string") {
+        dates.set(dateKey(cell.ref.row, cell.ref.column), {
+          declared,
+          value,
+        });
+      }
+    }
+  }
+  return dates;
+}
+
+/** The OOXML cell type a worksheet declares a date with. */
+const DECLARED_DATE_TYPE = "d";
+
+/**
+ * The dates a workbook's bytes hold, for a reader that has bytes rather than a
+ * loaded model. The worksheets are parsed on demand, so a reader that touches
+ * one worksheet pays for one.
+ */
+export async function readWorkbookDates(
+  bytes: Uint8Array,
+  source: string,
+  details: Record<string, unknown>,
+): Promise<WorkbookDates> {
+  return workbookDatesFrom(await WorkbookRead.load(bytes, { source, details }));
+}
+
+/**
+ * The dates a workbook holds, read once per worksheet and only when a reader
+ * asks for that worksheet.
+ */
+export function workbookDatesFrom(read: WorkbookRead): WorkbookDates {
+  const bySheet = new Map<string, WorksheetDates>();
+  return {
+    forSheet(sheet) {
+      return (rowIndex, columnIndex) => {
+        let dates = bySheet.get(sheet);
+        if (dates === undefined) {
+          dates = collectWorksheetDates(read.workbook, read.worksheet(sheet));
+          bySheet.set(sheet, dates);
+        }
+        return dates.get(dateKey(rowIndex + 1, columnIndex));
+      };
+    },
+  };
 }
 
 /**
@@ -623,38 +696,18 @@ function parsedDateText(value: Date): string | undefined {
   return isComponentsInRange(parts) ? calendarIsoText(parts) : undefined;
 }
 
-/**
- * The date text for a cell, or undefined when the cell is not one the workbook
- * stores as a date.
- *
- * A stored date is a number wearing a date number format, and the format is
- * the only thing that separates it from a case number or a quantity, which is
- * why this reader keeps the format rather than only the value.
- */
-function cellDateText(
-  cell: XLSX.CellObject,
-  date1904: boolean,
-): string | undefined {
-  if (cell.t !== "n" || typeof cell.v !== "number") {
-    return undefined;
-  }
-  const format = cell.z;
-  return typeof format === "string" && SSF.is_date(format)
-    ? workbookDateText(cell.v, date1904)
-    : undefined;
-}
-
 function cellToPrimitive(
   cell: XLSX.CellObject | undefined,
-  date1904: boolean,
+  date: CellDate | undefined,
 ): CellValue {
+  // A date the model read is the stored value, whether or not the engine saw a
+  // cell here at all: a `t="d"` cell whose text names no moment reaches the
+  // engine as nothing, and the text is what the file holds.
+  if (date !== undefined) {
+    return date.value;
+  }
   if (!cell || cell.v === null || cell.v === undefined) {
     return null;
-  }
-
-  const dateText = cellDateText(cell, date1904);
-  if (dateText !== undefined) {
-    return dateText;
   }
 
   if (cell.v instanceof Date) {
@@ -677,8 +730,16 @@ function cellToPrimitive(
 
 function cellToDisplayText(
   cell: XLSX.CellObject | undefined,
-  date1904: boolean,
+  date: CellDate | undefined,
 ): string {
+  // A cell that declares itself a date goes before the cached display text,
+  // because that text is the serial the engine made of it rather than anything
+  // the worksheet shows. A cell that only wears a date format does not: the
+  // engine formats it the way the worksheet does, and displayed text is what
+  // this reader promises.
+  if (date?.declared === true) {
+    return String(date.value);
+  }
   if (!cell || cell.v === null || cell.v === undefined) {
     return "";
   }
@@ -687,18 +748,17 @@ function cellToDisplayText(
     return cell.w;
   }
 
-  // No cached display text: a stored date would otherwise report as the raw
-  // serial, which is a number nobody wrote into the cell.
-  const dateText = cellDateText(cell, date1904);
-  if (dateText !== undefined) {
-    return dateText;
-  }
-
   if (cell.v instanceof Date) {
     const parsed = parsedDateText(cell.v);
     if (parsed !== undefined) {
       return parsed;
     }
+  }
+
+  if (date !== undefined) {
+    // No cached display text: the stored date beats the raw serial, which is a
+    // number nobody wrote into the cell.
+    return String(date.value);
   }
 
   if (typeof cell.v === "boolean") {
@@ -720,7 +780,7 @@ function getCell(
 function findHeaderRow(
   worksheet: XLSX.WorkSheet,
   range: XLSX.Range,
-  date1904: boolean,
+  dates: SheetDates,
   configuredRow?: number,
 ): number | undefined {
   if (configuredRow !== undefined) {
@@ -741,8 +801,10 @@ function findHeaderRow(
       columnIndex += 1
     ) {
       if (
-        cellToPrimitive(getCell(worksheet, rowIndex, columnIndex), date1904) !==
-        null
+        cellToPrimitive(
+          getCell(worksheet, rowIndex, columnIndex),
+          dates(rowIndex, columnIndex),
+        ) !== null
       ) {
         return rowIndex;
       }
@@ -763,7 +825,7 @@ function worksheetToTable(
   sourceFile: string,
   sheetName: string,
   worksheet: XLSX.WorkSheet,
-  date1904: boolean,
+  dates: SheetDates,
   configuredHeaderRow?: number,
 ): { table: Table; region: WorksheetRegion } | undefined {
   const reference = worksheet["!ref"];
@@ -775,7 +837,7 @@ function worksheetToTable(
   const headerRowIndex = findHeaderRow(
     worksheet,
     range,
-    date1904,
+    dates,
     configuredHeaderRow,
   );
   if (
@@ -794,7 +856,7 @@ function worksheetToTable(
   ) {
     const value = cellToPrimitive(
       getCell(worksheet, headerRowIndex, columnIndex),
-      date1904,
+      dates(headerRowIndex, columnIndex),
     );
     rawHeaders.push(value === null ? null : String(value));
   }
@@ -811,7 +873,7 @@ function worksheetToTable(
     const values = columns.map((_, index) =>
       cellToPrimitive(
         getCell(worksheet, rowIndex, range.s.c + index),
-        date1904,
+        dates(rowIndex, range.s.c + index),
       ),
     );
 
@@ -858,7 +920,7 @@ function excelTableToTable(
   sourceFile: string,
   definition: ExcelTableDefinition,
   worksheet: XLSX.WorkSheet,
-  date1904: boolean,
+  dates: SheetDates,
 ): WorkbookExcelTable | undefined {
   let range: XLSX.Range;
   try {
@@ -911,7 +973,7 @@ function excelTableToTable(
     const values = columns.map((_, index) =>
       cellToPrimitive(
         getCell(worksheet, rowIndex, range.s.c + index),
-        date1904,
+        dates(rowIndex, range.s.c + index),
       ),
     );
 
@@ -968,7 +1030,7 @@ function namedRangeToTable(
   sheetName: string,
   rangeRef: string,
   worksheet: XLSX.WorkSheet,
-  date1904: boolean,
+  dates: SheetDates,
 ): WorkbookNamedRange | undefined {
   let range: XLSX.Range;
   try {
@@ -992,7 +1054,7 @@ function namedRangeToTable(
   ) {
     const value = cellToPrimitive(
       getCell(worksheet, range.s.r, columnIndex),
-      date1904,
+      dates(range.s.r, columnIndex),
     );
     rawHeaders.push(value === null ? null : String(value));
   }
@@ -1004,7 +1066,7 @@ function namedRangeToTable(
     const values = columns.map((_, index) =>
       cellToPrimitive(
         getCell(worksheet, rowIndex, range.s.c + index),
-        date1904,
+        dates(rowIndex, range.s.c + index),
       ),
     );
     if (values.every((value) => value === null || value === "")) {
@@ -1051,10 +1113,10 @@ function lowercaseSet(values: string[] | undefined): Set<string> | undefined {
  */
 export function workbookWorksheetReports(
   workbook: XLSX.WorkBook,
+  workbookDates: WorkbookDates,
   sourceFile: string,
   options: ReadWorkbookOptions = {},
 ): WorksheetTableReport[] {
-  const date1904 = workbookDateSystem(workbook);
   const selectedSheets = lowercaseSet(options.sheets);
   const reports: WorksheetTableReport[] = [];
 
@@ -1074,7 +1136,7 @@ export function workbookWorksheetReports(
       sourceFile,
       sheetName,
       worksheet,
-      date1904,
+      workbookDates.forSheet(sheetName),
       options.headerRow,
     );
     reports.push({
@@ -1089,12 +1151,14 @@ export function workbookWorksheetReports(
 
 export function workbookTables(
   workbook: XLSX.WorkBook,
+  workbookDates: WorkbookDates,
   sourceFile: string,
   options: ReadWorkbookOptions = {},
 ): Table[] {
   const tables: Table[] = [];
   for (const report of workbookWorksheetReports(
     workbook,
+    workbookDates,
     sourceFile,
     options,
   )) {
@@ -1107,11 +1171,11 @@ export function workbookTables(
 
 export function workbookExcelTables(
   workbook: XLSX.WorkBook,
+  workbookDates: WorkbookDates,
   definitions: ExcelTableDefinition[],
   sourceFile: string,
   options: ReadWorkbookExcelTablesOptions = {},
 ): WorkbookExcelTable[] {
-  const date1904 = workbookDateSystem(workbook);
   const selectedSheets = lowercaseSet(options.sheets);
   const selectedTables = lowercaseSet(options.tables);
   const tables: WorkbookExcelTable[] = [];
@@ -1144,7 +1208,7 @@ export function workbookExcelTables(
       sourceFile,
       definition,
       worksheet,
-      date1904,
+      workbookDates.forSheet(definition.sheet),
     );
     if (table) {
       tables.push(table);
@@ -1156,10 +1220,10 @@ export function workbookExcelTables(
 
 export function workbookNamedRanges(
   workbook: XLSX.WorkBook,
+  workbookDates: WorkbookDates,
   sourceFile: string,
   options: ReadWorkbookNamedRangesOptions = {},
 ): WorkbookNamedRange[] {
-  const date1904 = workbookDateSystem(workbook);
   const selectedSheets = lowercaseSet(options.sheets);
   const selectedNames = lowercaseSet(options.names);
   const ranges: WorkbookNamedRange[] = [];
@@ -1204,7 +1268,7 @@ export function workbookNamedRanges(
       parsed.sheet,
       parsed.range,
       worksheet,
-      date1904,
+      workbookDates.forSheet(parsed.sheet),
     );
     if (table) {
       ranges.push(table);
@@ -1216,9 +1280,9 @@ export function workbookNamedRanges(
 
 export function workbookWorksheetRecords(
   workbook: XLSX.WorkBook,
+  workbookDates: WorkbookDates,
   options: ReadWorksheetRecordsOptions,
 ): WorksheetRecords {
-  const date1904 = workbookDateSystem(workbook);
   const requestedWorksheet = options.worksheet?.trim();
   const worksheetName = requestedWorksheet
     ? workbook.SheetNames.find(
@@ -1258,10 +1322,11 @@ export function workbookWorksheetRecords(
   }
 
   const range = XLSX.utils.decode_range(reference);
+  const dates = workbookDates.forSheet(worksheetName);
   const headerRowIndex = findHeaderRow(
     worksheet,
     range,
-    date1904,
+    dates,
     options.headerRow,
   );
   if (headerRowIndex === undefined || headerRowIndex > range.e.r) {
@@ -1285,7 +1350,7 @@ export function workbookWorksheetRecords(
   ) {
     const header = cellToDisplayText(
       getCell(worksheet, headerRowIndex, columnIndex),
-      date1904,
+      dates(headerRowIndex, columnIndex),
     ).trim();
     if (!header) {
       throw new ConsultChimpsError(
@@ -1332,8 +1397,11 @@ export function workbookWorksheetRecords(
     const cells = columns.map((_, columnOffset) =>
       getCell(worksheet, rowIndex, range.s.c + columnOffset),
     );
-    const isEmpty = cells.every((cell) => {
-      const value = cellToPrimitive(cell, date1904);
+    const isEmpty = cells.every((cell, columnOffset) => {
+      const value = cellToPrimitive(
+        cell,
+        dates(rowIndex, range.s.c + columnOffset),
+      );
       return value === null || value === "";
     });
     if (isEmpty) {
@@ -1343,7 +1411,10 @@ export function workbookWorksheetRecords(
 
     const row: Record<string, string> = {};
     columns.forEach((column, columnOffset) => {
-      row[column] = cellToDisplayText(cells[columnOffset], date1904);
+      row[column] = cellToDisplayText(
+        cells[columnOffset],
+        dates(rowIndex, range.s.c + columnOffset),
+      );
     });
     rows.push(row);
     sourceRows.push(rowIndex + 1);
@@ -1540,6 +1611,14 @@ export async function resolveSplitSource(
     cellText: options.range !== undefined,
     details: context.details,
   });
+  // The dates come from the document model, which is the only reader that sees
+  // a cell declare itself a date rather than only wear a date format.
+  const dates = workbookDatesFrom(
+    await WorkbookRead.load(workbookBytes, {
+      source: context.label,
+      details: context.details ?? { source: context.label },
+    }),
+  );
   const sheets = options.sheet ? [options.sheet] : undefined;
 
   let definitions: ExcelTableDefinition[] = [];
@@ -1555,6 +1634,7 @@ export async function resolveSplitSource(
     );
     availableExcelTables = workbookExcelTables(
       workbook,
+      dates,
       definitions,
       context.file,
       { includeHiddenSheets: options.includeHiddenSheets, sheets },
@@ -1565,7 +1645,7 @@ export async function resolveSplitSource(
         options.table?.toLocaleLowerCase(),
     );
   } else if (options.range) {
-    availableNamedRanges = workbookNamedRanges(workbook, context.file, {
+    availableNamedRanges = workbookNamedRanges(workbook, dates, context.file, {
       includeHiddenSheets: options.includeHiddenSheets,
       sheets,
     });
@@ -1575,7 +1655,7 @@ export async function resolveSplitSource(
         options.range?.toLocaleLowerCase(),
     );
   } else {
-    tables = workbookTables(workbook, context.file, {
+    tables = workbookTables(workbook, dates, context.file, {
       headerRow: options.headerRow,
       includeHiddenSheets: options.includeHiddenSheets,
       sheets,

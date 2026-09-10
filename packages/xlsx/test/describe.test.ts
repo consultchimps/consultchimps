@@ -19,6 +19,7 @@ import {
   readWorkbookNamedRangesBytes,
   readWorkbookTablesBytes,
   readWorkbookWorksheetsBytes,
+  readWorksheetRecordsBytes,
 } from "../src/bytes.js";
 import {
   describeWorkbook,
@@ -915,7 +916,7 @@ async function uncalculatedWorkbookBytes(rows: string): Promise<Uint8Array> {
   const archive = new JSZip();
   archive.file(
     "[Content_Types].xml",
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`,
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`,
   );
   archive.file(
     "_rels/.rels",
@@ -927,7 +928,13 @@ async function uncalculatedWorkbookBytes(rows: string): Promise<Uint8Array> {
   );
   archive.file(
     "xl/_rels/workbook.xml.rels",
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`,
+  );
+  // Style 1 is Excel's built-in date format 14, so a cell can be written
+  // wearing a date format as well as declaring itself a date.
+  archive.file(
+    "xl/styles.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="14" applyNumberFormat="1"/></cellXfs></styleSheet>`,
   );
   archive.file(
     "xl/worksheets/sheet1.xml",
@@ -1271,6 +1278,102 @@ describe("dates a workbook stores as numbers", () => {
         Reference: 45292 - 1462,
       })),
     );
+  });
+});
+
+describe("dates a worksheet declares rather than formats", () => {
+  /**
+   * A worksheet may say a cell is a date in two ways: by wearing a date number
+   * format, or by declaring `t="d"` and writing ISO 8601 text. Both are in the
+   * format, and a file that uses the second is one Excel opens.
+   */
+  const DECLARED = `<c r="B2" t="d"><v>2024-01-01</v></c>`;
+  const DECLARED_WITH_FORMAT = `<c r="B3" t="d" s="1"><v>2024-01-02</v></c>`;
+  const STYLED_SERIAL = `<c r="B4" s="1"><v>45294</v></c>`;
+  const DECLARED_NOT_A_MOMENT = `<c r="B5" t="d"><v>2024-13-01</v></c>`;
+
+  const rows =
+    `<row r="1">${textCell("A1", "Case")}${textCell("B1", "Opened")}</row>` +
+    `<row r="2">${textCell("A2", "R-1")}${DECLARED}</row>` +
+    `<row r="3">${textCell("A3", "R-2")}${DECLARED_WITH_FORMAT}</row>` +
+    `<row r="4">${textCell("A4", "R-3")}${STYLED_SERIAL}</row>` +
+    `<row r="5">${textCell("A5", "R-4")}${DECLARED_NOT_A_MOMENT}</row>`;
+
+  it("reads a cell that declares itself a date, with or without a format", async () => {
+    // The defect this pins down: reading with the engine's dates off, which is
+    // what keeps a serial a serial, turns a declared date into a plain number
+    // and leaves no field saying what it was. The reader asked the style alone,
+    // so an unstyled date cell arrived as the integer 45292 and an import
+    // inferred an integer column for it.
+    const bytes = await uncalculatedWorkbookBytes(rows);
+    const rowsRead = await forEachZone(async () => {
+      const [table] = await readWorkbookTablesBytes({
+        name: "declared.xlsx",
+        bytes,
+      });
+      return table?.rows;
+    });
+
+    expect(rowsRead).toEqual(
+      ZONES.map(() => [
+        { Case: "R-1", Opened: "2024-01-01T00:00:00.000Z" },
+        { Case: "R-2", Opened: "2024-01-02T00:00:00.000Z" },
+        { Case: "R-3", Opened: "2024-01-03T00:00:00.000Z" },
+        // Text that names no moment is the text the file holds, which is what
+        // the model has always done with it.
+        { Case: "R-4", Opened: "2024-13-01" },
+      ]),
+    );
+  });
+
+  it("gives the reader and the split key the same characters", async () => {
+    const bytes = await uncalculatedWorkbookBytes(rows);
+    const [table] = await readWorkbookTablesBytes({
+      name: "declared.xlsx",
+      bytes,
+    });
+    const model = await WorkbookModel.load(bytes);
+    const worksheet = model.worksheet("Review Log")!;
+
+    const keys = [2, 3, 4, 5].map(
+      (row) =>
+        normalizeSplitValue(worksheet.cellValue({ row, column: 1 }), true)
+          ?.display,
+    );
+
+    expect(keys).toEqual((table?.rows ?? []).map((row) => row["Opened"]));
+  });
+
+  it("reports the declared date rather than the serial as displayed text", async () => {
+    // The engine's cached display text for a declared date is the serial it
+    // made of it, which is a number nobody wrote into the cell. A cell that
+    // only wears a date format keeps the engine's text, because that is the
+    // text the worksheet shows.
+    const records = await readWorksheetRecordsBytes({
+      name: "declared.xlsx",
+      bytes: await uncalculatedWorkbookBytes(rows),
+    });
+
+    expect(records.rows.map((row) => row["Opened"])).toEqual([
+      "2024-01-01T00:00:00.000Z",
+      "2024-01-02T00:00:00.000Z",
+      "1/3/24",
+      "2024-13-01",
+    ]);
+  });
+
+  it("samples the declared date in a description", async () => {
+    const { description } = await describeWorkbookBytes({
+      name: "declared.xlsx",
+      bytes: await uncalculatedWorkbookBytes(rows),
+    });
+
+    expect(description.sheets[0]?.columns[1]?.sampleValues).toEqual([
+      "2024-01-01",
+      "2024-01-02",
+      45294,
+      "2024-13-01",
+    ]);
   });
 });
 

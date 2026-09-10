@@ -197,6 +197,28 @@ which the Gregorian calendar does not have, no `Date` can hold, and a `date`
 column in `@consultchimps/db` refuses. Writing it made the reader and the split
 key report two different days for one cell.
 
+A worksheet says a cell is a date in two ways, and both are read now. Excel
+writes a count of days wearing a date number format; the format also lets a cell
+declare `t="d"` and write ISO 8601 text, which other generators use and Excel
+opens. The worksheet readers saw only the first, because reading with the
+engine's dates off, which is what keeps a serial a serial, turns a declared date
+into a plain number with no field left saying what it was: measured on the
+pinned engine, `<c t="d"><v>2024-01-01</v></c>` arrives as 45292. So such a cell
+read as an integer, and an import inferred an integer column for it, while the
+document model read the same cell correctly. The readers now take dates from the
+model, which is the reader that sees the declared type, owns the style table,
+and goes through the one calendar route; the engine keeps the used range, the
+header row, and every cell that is not a date. Reading the type from the engine
+instead was measured and rejected: with its dates on it keeps the declaration
+but hands back its own parse of the text, which remaps a year of 0099 to 1999
+and normalises a month of 13 into January of the next year.
+
+A declared date whose text names no moment is carried as that text, as the model
+already did. Displayed text, which `readWorksheetRecords` reports, still comes
+from the engine for a cell that wears a date format, because that is the text
+the worksheet shows; for a declared date it comes from the model, because the
+engine's text for one is the serial it made of it.
+
 One spelling of a date, `calendarIsoText`, is now shared by the worksheet
 readers, the document model and the split's group keys, so a value read from a
 cell and the key that names the output workbook it lands in cannot describe one

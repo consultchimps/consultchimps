@@ -140,6 +140,24 @@ function dateSerialWorkbook(): Promise<UploadFile> {
 }
 
 /**
+ * A workbook whose dates declare themselves dates and write ISO 8601 text,
+ * wearing no number format at all. Nothing but the declaration says they are
+ * dates, which is the case a reader that judges by format alone gets wrong.
+ */
+function declaredDateWorkbook(): Promise<UploadFile> {
+  return createWorkbookUpload("declared.xlsx", [
+    {
+      name: "Customers",
+      rows: [
+        ["Customer", "Opened"],
+        ["Acme", { date: "2024-01-01" }],
+        ["Beta", { date: "2024-01-02" }],
+      ],
+    },
+  ]);
+}
+
+/**
  * A workbook whose amounts are errors. A reader built on a spreadsheet engine
  * sees the internal code Excel numbers each error by, so `#REF!` would import
  * as 23 and `#DIV/0!` as 7, and the column would infer a numeric type.
@@ -468,6 +486,30 @@ test.describe("/workspace import", () => {
     // a date through the browser's own zone would produce 31 December here for
     // a cell that says 1 January, so the import runs where that would show.
     test.use({ timezoneId: "Asia/Dubai" });
+
+    test("imports a date a worksheet declares without a format", async ({
+      page,
+    }) => {
+      await forceDownloadFallback(page);
+      await page.goto("/workspace");
+      await page.getByTestId("workspace-new").click();
+
+      await page
+        .getByTestId("workspace-import-input")
+        .setInputFiles(await declaredDateWorkbook());
+      await page.getByTestId("workspace-import-run").click();
+      await expect(page.getByTestId("workspace-table")).toHaveCount(1);
+
+      // The column can only take the date type if the reader saw the cell
+      // declare itself one. Judging by the number format alone, which is what
+      // it used to do, made this an integer column holding two serials.
+      await expect(page.getByTestId("workspace-table-columns")).toHaveText(
+        "Customer (text), Opened (date)",
+      );
+      await expect(page.getByTestId("workspace-table-rows")).toHaveText(
+        "2 rows",
+      );
+    });
 
     test("imports a date Excel holds as a number", async ({ page }) => {
       await forceDownloadFallback(page);

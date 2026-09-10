@@ -39,6 +39,7 @@ import { XLSX_ERRORS } from "../errors.js";
 import type { CellModel, WorksheetModel } from "../model/types.js";
 import {
   parseWorkbookBytes,
+  workbookDatesFrom,
   workbookWorksheetReports,
   type ReadWorkbookOptions,
   type WorksheetRegion,
@@ -163,12 +164,16 @@ export async function readWorksheetReports(
   options: ReadWorkbookOptions = {},
 ): Promise<WorksheetImportReport[]> {
   const details = { source };
+  const read = await WorkbookRead.load(bytes, { source, details });
   const reports = workbookWorksheetReports(
     parseWorkbookBytes(bytes, source, { details }),
+    // The dates come from the model this operation already loads: it is the
+    // only reader that sees a cell declare itself a date rather than only wear
+    // a date format.
+    workbookDatesFrom(read),
     source,
     options,
   );
-  const read = await WorkbookRead.load(bytes, { source, details });
   return reports.map((report) => {
     const worksheet = read.worksheet(report.sheet);
     if (worksheet === undefined) {

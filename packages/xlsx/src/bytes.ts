@@ -76,6 +76,7 @@ import {
   MERGE_OPERATION,
   parseExcelTableDefinitions,
   parseWorkbookBytes,
+  readWorkbookDates,
   preservedSplitTemplateBytes,
   refuseMappingWithSuggestion,
   resolveSplitSource,
@@ -737,6 +738,9 @@ export async function consolidateWorkbooksBytes(
         parseWorkbookBytes(input.bytes, input.name, {
           details: { source: input.name },
         }),
+        await readWorkbookDates(input.bytes, input.name, {
+          source: input.name,
+        }),
         input.name,
         options,
       ),
@@ -926,6 +930,7 @@ export async function readWorkbookTablesBytes(
     parseWorkbookBytes(input.bytes, input.name, {
       details: { source: input.name },
     }),
+    await readWorkbookDates(input.bytes, input.name, { source: input.name }),
     input.name,
     options,
   );
@@ -963,6 +968,7 @@ export async function readWorksheetRecordsBytes(
       cellText: true,
       details: { source: input.name },
     }),
+    await readWorkbookDates(input.bytes, input.name, { source: input.name }),
     options,
   );
 }
@@ -986,7 +992,13 @@ export async function readWorkbookExcelTablesBytes(
     input.name,
     details,
   );
-  return workbookExcelTables(workbook, definitions, input.name, options);
+  return workbookExcelTables(
+    workbook,
+    await readWorkbookDates(input.bytes, input.name, details),
+    definitions,
+    input.name,
+    options,
+  );
 }
 
 /**
@@ -1002,6 +1014,7 @@ export async function readWorkbookNamedRangesBytes(
       cellText: true,
       details: { source: input.name },
     }),
+    await readWorkbookDates(input.bytes, input.name, { source: input.name }),
     input.name,
     options,
   );

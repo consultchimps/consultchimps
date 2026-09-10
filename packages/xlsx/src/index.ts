@@ -91,6 +91,7 @@ import {
   MERGE_OPERATION,
   parseExcelTableDefinitions,
   parseWorkbookBytes,
+  readWorkbookDates,
   preservedSplitTemplateBytes,
   refuseMappingWithSuggestion,
   resolveSplitSource,
@@ -354,8 +355,13 @@ export async function readWorkbookTables(
   options: ReadWorkbookOptions = {},
 ): Promise<Table[]> {
   const absolutePath = path.resolve(filePath);
-  const { workbook } = await readWorkbookFile(absolutePath);
-  return workbookTables(workbook, path.basename(absolutePath), options);
+  const { bytes, workbook } = await readWorkbookFile(absolutePath);
+  return workbookTables(
+    workbook,
+    await readWorkbookDates(bytes, absolutePath, { filePath: absolutePath }),
+    path.basename(absolutePath),
+    options,
+  );
 }
 
 /**
@@ -384,10 +390,14 @@ export async function readWorksheetRecords(
   options: ReadWorksheetRecordsOptions,
 ): Promise<WorksheetRecords> {
   const absolutePath = path.resolve(filePath);
-  const { workbook } = await readWorkbookFile(absolutePath, {
+  const { bytes, workbook } = await readWorkbookFile(absolutePath, {
     cellText: true,
   });
-  return workbookWorksheetRecords(workbook, options);
+  return workbookWorksheetRecords(
+    workbook,
+    await readWorkbookDates(bytes, absolutePath, { filePath: absolutePath }),
+    options,
+  );
 }
 
 export async function readWorkbookExcelTables(
@@ -401,6 +411,7 @@ export async function readWorkbookExcelTables(
   });
   return workbookExcelTables(
     workbook,
+    await readWorkbookDates(bytes, absolutePath, { filePath: absolutePath }),
     definitions,
     path.basename(absolutePath),
     options,
@@ -412,10 +423,15 @@ export async function readWorkbookNamedRanges(
   options: ReadWorkbookNamedRangesOptions = {},
 ): Promise<WorkbookNamedRange[]> {
   const absolutePath = path.resolve(filePath);
-  const { workbook } = await readWorkbookFile(absolutePath, {
+  const { bytes, workbook } = await readWorkbookFile(absolutePath, {
     cellText: true,
   });
-  return workbookNamedRanges(workbook, path.basename(absolutePath), options);
+  return workbookNamedRanges(
+    workbook,
+    await readWorkbookDates(bytes, absolutePath, { filePath: absolutePath }),
+    path.basename(absolutePath),
+    options,
+  );
 }
 
 /**
