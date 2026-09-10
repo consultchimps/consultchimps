@@ -10,6 +10,8 @@ import {
   parseColumnLetters,
   parseSheetRange,
 } from "../../src/region/values.js";
+import { excelSerialToDate } from "../../src/model/index.js";
+import { inZone, ZONES } from "../zones.js";
 
 // Non-ASCII inputs are written as escapes so the file stays pure ASCII.
 const FULLWIDTH_REGION = "\uFF32\uFF45\uFF47\uFF49\uFF4F\uFF4E"; // fullwidth Region
@@ -138,5 +140,22 @@ describe("A1 reference helpers", () => {
     expect(parseSheetRange("'My Sheet'!A1:B2")?.sheet).toBe("My Sheet");
     expect(parseSheetRange("'It''s Data'!A1:B2")?.sheet).toBe("It's Data");
     expect(parseSheetRange("A1:B2")).toBeUndefined();
+  });
+});
+
+describe("normalizeSplitValue on a workbook date", () => {
+  it("keys a date serial the same way in every time zone", () => {
+    // The group key becomes the output workbook's name, so a key that moved
+    // with the host offset renamed every date-valued output: the same split
+    // run in UTC and in UTC+4 produced files for two different days, and the
+    // day east of UTC was the one before the one in the cell.
+    const keys = ZONES.map((zone) =>
+      inZone(
+        zone,
+        () => normalizeSplitValue(excelSerialToDate(45292, false), true)?.key,
+      ),
+    );
+
+    expect(keys).toEqual(ZONES.map(() => "date:2024-01-01T00:00:00.000Z"));
   });
 });

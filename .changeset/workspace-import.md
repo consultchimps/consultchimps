@@ -119,6 +119,43 @@ now go through one translation: a failed read reports `XLSX_READ_FAILED` naming
 the workbook and, where the failure belongs to a worksheet, that worksheet, with
 the parser's own complaint as the error's `cause`.
 
+Dates read out of a workbook no longer depend on the reader's time zone. This is
+a correctness fix, and it changes what every non-UTC caller gets.
+
+Excel holds a date as a count of days from the workbook's epoch, wearing a date
+number format, and attaches no zone. Three readers turned that into a JavaScript
+`Date` and then took its ISO 8601 face, and a `Date` has a local face as well as
+a UTC one:
+
+- The document model assembled the components in local time, so serial 45292
+  read as `2024-01-01T00:00:00Z` in UTC, `2023-12-31T20:00:00Z` in UTC+4 and
+  `2023-12-31T18:30:00Z` in UTC+5:30. East of UTC the calendar day moved to the
+  one before the one in the cell.
+- A `t="d"` cell writes ISO text with no zone on it, and `new Date(text)` read
+  that as a local moment: `2024-01-01T18:00:00` became 14:00Z in UTC+4 and the
+  next day in UTC-7.
+- The worksheet readers asked the spreadsheet engine for a `Date` and rendered
+  it, which was correct only because that engine happens to compose the instant
+  from a UTC epoch. Nothing said so, and a change underneath would have moved
+  every date silently.
+
+All three now work from the workbook's own numbers: the readers decode the
+serial and the workbook's `date1904` flag into calendar components with the
+engine's `parse_date_code` and write the components out, and the model composes
+its `Date` with `Date.UTC`. The text is a function of the workbook alone, and it
+is always the full timestamp, `2024-01-01T00:00:00.000Z`, whether or not the
+cell carries a time, so a date column reads one way down its length and a value
+the workbook holds as a date stays distinguishable from text somebody typed.
+`@consultchimps/db` accepts that spelling in a `date` column.
+
+The blast radius is every consumer that reads a cell through these readers:
+`readWorkbookTables`, `readWorkbookWorksheets`, the Excel Table and named-range
+readers, worksheet records, consolidation, and the split, whose group keys
+become output workbook filenames. In UTC nothing changes; in every other zone
+these now report the day the cell names. Tests read the same workbook with the
+host in five zones, from UTC-7 to UTC+14, and require one answer, in both of
+Excel's date systems.
+
 A row or cell that carries no `r` attribute keeps its place through an edit.
 Both are optional in the format: such a row or cell sits where document order
 puts it. The model infers the position and writes it back, because an implicit

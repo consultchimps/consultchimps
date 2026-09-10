@@ -98,12 +98,23 @@ export class StyleTable {
 }
 
 /**
- * Convert an Excel date serial to a `Date`.
+ * Convert an Excel date serial to a `Date` whose UTC face is the calendar date
+ * and time the workbook stores.
  *
- * The components are assembled in local time, matching what the spreadsheet
- * reader the split engine used to call handed back. Group keys derive from
- * `toISOString()`, so changing the construction here would silently rename
- * every date-valued output workbook.
+ * A serial names a calendar moment and carries no zone: the workbook says
+ * "15 March 2023", not "15 March 2023 somewhere". So the conversion is
+ * arithmetic on the epoch and nothing else, and every reading of the result
+ * takes its UTC face. The value is then a function of the serial alone, which
+ * is what a group key, an output filename, and a stored date all need.
+ *
+ * It used to re-assemble the components in local time, which made
+ * `toISOString()` subtract the host offset: the same workbook split under
+ * UTC and under UTC+4 named its outputs after two different calendar days, and
+ * east of UTC that day was the one before the one in the cell. The comment
+ * here said the local assembly matched what the spreadsheet reader handed
+ * back, and it did not: that reader composes the instant from this same epoch
+ * and these same whole days, so this now agrees with it in every zone rather
+ * than only in UTC.
  */
 export function excelSerialToDate(serial: number, date1904: boolean): Date {
   const epoch = date1904
@@ -111,15 +122,5 @@ export function excelSerialToDate(serial: number, date1904: boolean): Date {
     : // The 1900 system counts a day that never existed (29 February 1900),
       // which an epoch of 30 December 1899 absorbs for every later serial.
       Date.UTC(1899, 11, 30);
-  const instant = new Date(epoch + Math.round(serial * MILLISECONDS_PER_DAY));
-
-  return new Date(
-    instant.getUTCFullYear(),
-    instant.getUTCMonth(),
-    instant.getUTCDate(),
-    instant.getUTCHours(),
-    instant.getUTCMinutes(),
-    instant.getUTCSeconds(),
-    instant.getUTCMilliseconds(),
-  );
+  return new Date(epoch + Math.round(serial * MILLISECONDS_PER_DAY));
 }

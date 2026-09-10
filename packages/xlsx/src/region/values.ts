@@ -69,6 +69,10 @@ export function normalizeSplitValue(
     return undefined;
   }
   if (value instanceof Date) {
+    // The UTC face, which is the calendar face the workbook wrote: the model
+    // composes a date from the workbook's epoch and whole days and attaches no
+    // zone. This key becomes an output workbook's name, so reading the local
+    // face named the outputs after a different day in every time zone.
     const display = value.toISOString();
     return { display, key: `date:${display}` };
   }

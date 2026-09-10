@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 
 import { XLSX_ERRORS } from "../src/errors.js";
+import { inZoneAsync, ZONES } from "./zones.js";
 import {
   describeWorkbookBytes,
   readWorkbookExcelTablesBytes,
@@ -936,6 +937,119 @@ async function uncalculatedWorkbookBytes(rows: string): Promise<Uint8Array> {
 function textCell(address: string, text: string): string {
   return `<c r="${address}" t="inlineStr"><is><t>${text}</t></is></c>`;
 }
+
+describe("dates a workbook stores as numbers", () => {
+  /**
+   * A worksheet whose columns are date-formatted serials. `date1904` writes the
+   * workbook in Excel's other date system, where the same calendar day is 1462
+   * serials lower, so the two workbooks below hold different numbers and mean
+   * the same days.
+   */
+  function datedWorkbook(date1904 = false): Uint8Array {
+    const shift = date1904 ? 1462 : 0;
+    const sheet: XLSX.WorkSheet = {
+      "!ref": "A1:D2",
+      A1: { t: "s", v: "Customer" },
+      B1: { t: "s", v: "Opened" },
+      C1: { t: "s", v: "Stamped" },
+      D1: { t: "s", v: "Reference" },
+      A2: { t: "s", v: "Acme" },
+      // 1 January 2024, and the same day at 18:00.
+      B2: { t: "n", v: 45292 - shift, z: "yyyy-mm-dd" },
+      C2: { t: "n", v: 45292.75 - shift, z: "yyyy-mm-dd hh:mm:ss" },
+      // A plain number wearing no date format stays a number, whatever it
+      // would decode to if it were read as a serial.
+      D2: { t: "n", v: 45292 - shift },
+    };
+    return new Uint8Array(
+      XLSX.write(
+        {
+          SheetNames: ["Data"],
+          Sheets: { Data: sheet },
+          Workbook: { WBProps: { date1904 } },
+        },
+        { bookType: "xlsx", type: "array" },
+      ) as ArrayBuffer,
+    );
+  }
+
+  async function firstRowPerZone(
+    bytes: Uint8Array,
+  ): Promise<Array<Record<string, unknown> | undefined>> {
+    return await Promise.all(
+      ZONES.map((zone) =>
+        inZoneAsync(zone, async () => {
+          const [table] = await readWorkbookTablesBytes({
+            name: "dates.xlsx",
+            bytes,
+          });
+          return table?.rows[0];
+        }),
+      ),
+    );
+  }
+
+  it("reads a date-formatted serial the same way in every time zone", async () => {
+    // A serial names a calendar moment and carries no zone, so the text is a
+    // function of the serial and the workbook's date system and of nothing
+    // else. The reader decodes the serial into calendar components directly,
+    // with no `Date` in the middle: a `Date` has a local face as well as a UTC
+    // one, and text built from the local face made the same workbook read as a
+    // different calendar day in every zone.
+    expect(await firstRowPerZone(datedWorkbook())).toEqual(
+      ZONES.map(() => ({
+        Customer: "Acme",
+        Opened: "2024-01-01T00:00:00.000Z",
+        Stamped: "2024-01-01T18:00:00.000Z",
+        Reference: 45292,
+      })),
+    );
+  });
+
+  it("keeps a serial that names no calendar day as the number it is", async () => {
+    // Serial 0 decodes to day zero of January 1900, which is not a day. There
+    // is no date to write, so the number travels and nothing is invented.
+    // Serial 60 is a day: the 1900 system deliberately reproduces a
+    // spreadsheet-era bug in which 29 February 1900 exists, and that is what
+    // Excel shows for it, so that is what the reader writes.
+    const sheet: XLSX.WorkSheet = {
+      "!ref": "A1:B3",
+      A1: { t: "s", v: "Case" },
+      B1: { t: "s", v: "Opened" },
+      A2: { t: "s", v: "R-1" },
+      B2: { t: "n", v: 0, z: "yyyy-mm-dd" },
+      A3: { t: "s", v: "R-2" },
+      B3: { t: "n", v: 60, z: "yyyy-mm-dd" },
+    };
+    const [table] = await readWorkbookTablesBytes({
+      name: "edges.xlsx",
+      bytes: new Uint8Array(
+        XLSX.write(
+          { SheetNames: ["Data"], Sheets: { Data: sheet } },
+          { bookType: "xlsx", type: "array" },
+        ) as ArrayBuffer,
+      ),
+    });
+
+    expect(table?.rows).toEqual([
+      { Case: "R-1", Opened: 0 },
+      { Case: "R-2", Opened: "1900-02-29T00:00:00.000Z" },
+    ]);
+  });
+
+  it("reads the 1904 date system by the workbook's own count", async () => {
+    // The same days, written in the system that starts 1462 days later. Which
+    // day a serial names belongs to the workbook, so the reader asks it.
+    expect(await firstRowPerZone(datedWorkbook(true))).toEqual(
+      ZONES.map(() => ({
+        Customer: "Acme",
+        Opened: "2024-01-01T00:00:00.000Z",
+        Stamped: "2024-01-01T18:00:00.000Z",
+        Reference: 45292 - 1462,
+      })),
+    );
+  });
+});
 
 describe("worksheets whose formulas were never calculated", () => {
   const input = async (rows: string) => ({

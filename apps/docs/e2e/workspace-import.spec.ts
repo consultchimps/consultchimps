@@ -120,6 +120,26 @@ function uncalculatedWorkbook(): Promise<UploadFile> {
 }
 
 /**
+ * A workbook whose dates are held the way Excel holds them: a count of days
+ * from the workbook's epoch, wearing a date number format. Nothing in the file
+ * spells the date out, so what reaches the workspace is what the reader made
+ * of the number.
+ */
+function dateSerialWorkbook(): Promise<UploadFile> {
+  return createWorkbookUpload("opened.xlsx", [
+    {
+      name: "Customers",
+      rows: [
+        ["Customer", "Opened"],
+        // 1 January 2024, and the day after it.
+        ["Acme", { serial: 45292 }],
+        ["Beta", { serial: 45293 }],
+      ],
+    },
+  ]);
+}
+
+/**
  * A workbook whose amounts are errors. A reader built on a spreadsheet engine
  * sees the internal code Excel numbers each error by, so `#REF!` would import
  * as 23 and `#DIV/0!` as 7, and the column would infer a numeric type.
@@ -441,6 +461,36 @@ test.describe("/workspace import", () => {
     // Nothing was created, and the workspace is untouched.
     await expect(page.getByTestId("workspace-tables-empty")).toBeVisible();
     await expect(page.getByTestId("workspace-unsaved")).toHaveCount(0);
+  });
+
+  test.describe("in a browser east of UTC", () => {
+    // The page runs in UTC+4 for this block. A reader that turned a serial into
+    // a date through the browser's own zone would produce 31 December here for
+    // a cell that says 1 January, so the import runs where that would show.
+    test.use({ timezoneId: "Asia/Dubai" });
+
+    test("imports a date Excel holds as a number", async ({ page }) => {
+      await forceDownloadFallback(page);
+      await page.goto("/workspace");
+      await page.getByTestId("workspace-new").click();
+
+      await page
+        .getByTestId("workspace-import-input")
+        .setInputFiles(await dateSerialWorkbook());
+      await page.getByTestId("workspace-import-run").click();
+      await expect(page.getByTestId("workspace-table")).toHaveCount(1);
+
+      // Nothing in the file spells the dates out, so the column can only take
+      // the date type if the reader turned both serials into ISO 8601 text
+      // that the database accepts as a date. A serial that arrived as a number
+      // would have made this an integer column.
+      await expect(page.getByTestId("workspace-table-columns")).toHaveText(
+        "Customer (text), Opened (date)",
+      );
+      await expect(page.getByTestId("workspace-table-rows")).toHaveText(
+        "2 rows",
+      );
+    });
   });
 
   test("refuses a worksheet holding error values", async ({ page }) => {

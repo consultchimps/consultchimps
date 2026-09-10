@@ -432,6 +432,47 @@ export class WorksheetRow {
   }
 }
 
+/**
+ * ISO 8601 as OOXML writes a `t="d"` cell, with no zone on it: a date, or a
+ * date and a time, and optionally a fraction of a second.
+ */
+const UNZONED_ISO_DATE =
+  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3})\d*)?)?)?$/u;
+
+/**
+ * The date a `t="d"` cell holds, as a `Date` whose UTC face is the calendar
+ * date and time the cell wrote.
+ *
+ * A cell's date text carries no zone, so `new Date(text)` read it as a moment
+ * in the host's zone and `toISOString()` then subtracted the host offset: the
+ * same cell became 18:00 in UTC and 14:00 in UTC+4, and west of UTC the
+ * calendar day moved forward. The components are read and composed with
+ * `Date.UTC` instead, so the value is a function of the text alone, exactly as
+ * `excelSerialToDate` is a function of the serial alone.
+ *
+ * Text that does carry a zone is already an unambiguous moment, and is left to
+ * the platform parser. Anything neither of those describes has no date in it,
+ * and the caller keeps the text.
+ */
+function worksheetDateValue(text: string): Date | undefined {
+  const trimmed = text.trim();
+  const parts = UNZONED_ISO_DATE.exec(trimmed);
+  const parsed = parts
+    ? new Date(
+        Date.UTC(
+          Number(parts[1]),
+          Number(parts[2]) - 1,
+          Number(parts[3]),
+          Number(parts[4] ?? "0"),
+          Number(parts[5] ?? "0"),
+          Number(parts[6] ?? "0"),
+          Number((parts[7] ?? "").padEnd(3, "0") || "0"),
+        ),
+      )
+    : new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
+
 function splitCells(rowNumber: number, inner: string): CellSegment[] {
   const segments: CellSegment[] = [];
   let cursor = 0;
@@ -598,10 +639,8 @@ export class WorksheetModel implements WorksheetModelContract {
     switch (getAttribute(cell.openTag, "t")) {
       case "b":
         return text.trim() === "1" || text.trim().toLowerCase() === "true";
-      case "d": {
-        const parsed = new Date(text);
-        return Number.isNaN(parsed.getTime()) ? text : parsed;
-      }
+      case "d":
+        return worksheetDateValue(text) ?? text;
       case "s":
       case "str":
       case "inlineStr":

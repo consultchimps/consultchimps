@@ -25,6 +25,7 @@ import {
   CORPUS_PARTS,
   CORPUS_SHEET,
 } from "./corpus/fixtures.js";
+import { inZone, ZONES } from "./zones.js";
 
 /** Alpha's movement: 4 stays, 6 lands on 5, 9 lands on 6; 5, 7 and 8 leave. */
 const ALPHA = RowRelocation.explicit([
@@ -149,15 +150,38 @@ describe("styles: date detection", () => {
   });
 
   it("converts serials in both of Excel's date systems", () => {
-    // 1 January 2024 is serial 45292 in the 1900 system.
-    expect(excelSerialToDate(45292, false).getFullYear()).toBe(2024);
-    expect(excelSerialToDate(45292, false).getMonth()).toBe(0);
-    expect(excelSerialToDate(45292, false).getDate()).toBe(1);
+    // A serial names a calendar moment and carries no zone, so the UTC face is
+    // the face the workbook wrote. Reading the local face would report a
+    // different day to everybody who is not in UTC.
+    expect(excelSerialToDate(45292, false).toISOString()).toBe(
+      "2024-01-01T00:00:00.000Z",
+    );
     // The same day is 1462 days earlier in the 1904 system.
-    expect(excelSerialToDate(45292 - 1462, true).getDate()).toBe(1);
-    expect(excelSerialToDate(45292 - 1462, true).getFullYear()).toBe(2024);
-    // Times survive as local-time components.
-    expect(excelSerialToDate(45292.5, false).getHours()).toBe(12);
+    expect(excelSerialToDate(45292 - 1462, true).toISOString()).toBe(
+      "2024-01-01T00:00:00.000Z",
+    );
+    // A fractional serial is the time of day, in that same face.
+    expect(excelSerialToDate(45292.5, false).toISOString()).toBe(
+      "2024-01-01T12:00:00.000Z",
+    );
+  });
+
+  it("reads the same serial the same way in every time zone", () => {
+    // The defect this pins down: the components used to be re-assembled in
+    // local time, so `toISOString()` subtracted the host offset and a split
+    // named its outputs after a different calendar day in every zone - the day
+    // before the one in the cell, for everybody east of UTC.
+    for (const [serial, date1904, expected] of [
+      [45292, false, "2024-01-01T00:00:00.000Z"],
+      [45292.75, false, "2024-01-01T18:00:00.000Z"],
+      [45292 - 1462, true, "2024-01-01T00:00:00.000Z"],
+    ] as const) {
+      for (const zone of ZONES) {
+        expect(
+          inZone(zone, () => excelSerialToDate(serial, date1904).toISOString()),
+        ).toBe(expected);
+      }
+    }
   });
 });
 
@@ -217,11 +241,56 @@ describe("model: cell values", () => {
     });
 
     expect(value).toBeInstanceOf(Date);
-    expect((value as Date).getFullYear()).toBe(2024);
+    // The UTC face, which is the face the serial named. Reading the local one
+    // would report 2023 to anybody west of UTC.
+    expect((value as Date).toISOString()).toBe("2024-01-01T00:00:00.000Z");
     // A plain number in the same column keeps its number type.
     expect(
       model.worksheet(CORPUS_SHEET)!.cellValue({ row: 5, column: 3 }),
     ).toBe(20);
+  });
+
+  it("reads a date cell the same way in every time zone", async () => {
+    // A `t="d"` cell writes ISO 8601 with no zone on it, so `new Date(text)`
+    // read it as a moment in the host's zone: the same cell was 18:00 in UTC,
+    // 14:00 in UTC+4, and the next calendar day west of UTC.
+    const dated = async (text: string): Promise<string[]> => {
+      const workbookPackage = await WorkbookPackage.load(
+        await buildCorpusWorkbook({ shape: "range" }),
+      );
+      workbookPackage.writeText(
+        CORPUS_PARTS.dataSheet,
+        workbookPackage
+          .requireText(CORPUS_PARTS.dataSheet)
+          .replace(
+            '<c r="D4"><v>10</v></c>',
+            `<c r="D4" t="d"><v>${text}</v></c>`,
+          ),
+      );
+      const model = WorkbookModel.fromPackage(workbookPackage);
+      return ZONES.map((zone) =>
+        inZone(zone, () => {
+          const value = model
+            .worksheet(CORPUS_SHEET)!
+            .cellValue({ row: 4, column: 3 });
+          return value instanceof Date ? value.toISOString() : String(value);
+        }),
+      );
+    };
+
+    // A date and a time, a date on its own, and text that already carries a
+    // zone and is therefore a moment rather than a calendar face.
+    expect(await dated("2024-01-01T18:00:00")).toEqual(
+      ZONES.map(() => "2024-01-01T18:00:00.000Z"),
+    );
+    expect(await dated("2024-01-01")).toEqual(
+      ZONES.map(() => "2024-01-01T00:00:00.000Z"),
+    );
+    expect(await dated("2024-01-01T18:00:00Z")).toEqual(
+      ZONES.map(() => "2024-01-01T18:00:00.000Z"),
+    );
+    // Text that is not a date at all is still handed back as text.
+    expect(await dated("not a date")).toEqual(ZONES.map(() => "not a date"));
   });
 
   it("reports a headerless table's header row as 0", async () => {
