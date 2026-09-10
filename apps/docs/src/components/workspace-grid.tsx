@@ -9,6 +9,16 @@
  *
  * Three rules shape everything here.
  *
+ * The grid sends the worker two kinds of command, and only one of them is the
+ * shell's business. A cell edit changes the workspace, so it is counted while
+ * it is in flight and the shell holds New, Open, and leaving for it: an edit
+ * that has been sent and not answered is work no file has, even though nothing
+ * is marked unsaved until the worker accepts it. A table read changes nothing,
+ * so it is not held for; one that races a create or an open is refused as
+ * belonging to a workspace that has moved on, and the summary that replaced it
+ * brings a fresh read with it. Holding for a read would put a question in front
+ * of a visitor with nothing at stake.
+ *
  * - The grid owns no data. Rows are read through the workspace worker, which
  *   holds the one `@consultchimps/db` database, and every edit is written back
  *   through it before the grid believes it. What a cell shows after an edit is
@@ -34,7 +44,10 @@
 import "tabulator-tables/dist/css/tabulator.min.css";
 
 import { describeFailure, sectionClass } from "@/components/tool-kit";
-import type { MarkWorkspaceChanged } from "@/components/workspace-tool";
+import type {
+  MarkWorkspaceChanged,
+  ReportPendingEdits,
+} from "@/components/workspace-tool";
 import {
   WORKSPACE_STALE_READ,
   type WorkspaceColumn,
@@ -202,6 +215,14 @@ export interface WorkspaceGridProps {
    * accepted and never for one it refused. The grid tracks no dirtiness itself.
    */
   readonly markChanged: MarkWorkspaceChanged;
+  /**
+   * How many edits have been sent to the worker and not answered. An edit is
+   * only unsaved once it is accepted, so between sending and the reply the
+   * workspace still reads as clean; this is what lets the shell hold New, Open,
+   * and leaving for an edit that is still on its way. It is the shell's guard
+   * that reads it, not a second idea of unsaved kept here.
+   */
+  readonly onEditsPending: ReportPendingEdits;
   /** Where a refusal is shown. Called with null once an edit succeeds. */
   readonly onError: (message: string | null) => void;
   /**
@@ -226,6 +247,7 @@ export function WorkspaceGrid({
   getClient,
   locked,
   markChanged,
+  onEditsPending,
   onError,
   summary,
 }: WorkspaceGridProps) {
@@ -235,6 +257,10 @@ export function WorkspaceGrid({
   const lockedRef = useRef(locked);
   // The cell whose editor is open, so the lock can close it.
   const editingRef = useRef<CellComponent | null>(null);
+  // Edits sent and not answered. It lives here rather than inside the effect
+  // that builds the grid, so switching tables while one is in flight does not
+  // lose count of it.
+  const inFlightRef = useRef(0);
   const selectId = useId();
 
   // Which table the visitor picked. A preference, not a fact: which tables exist
@@ -287,6 +313,16 @@ export function WorkspaceGrid({
     };
   }, [generation, getClient, onError, selected]);
 
+  // A grid that goes away with edits still in flight must not leave the shell
+  // holding for answers nothing is waiting on any more.
+  useEffect(
+    () => () => {
+      inFlightRef.current = 0;
+      onEditsPending(0);
+    },
+    [onEditsPending],
+  );
+
   // The lock is a ref so the grid does not have to be rebuilt to honour it, and
   // an effect so an editor already open is closed rather than left to commit
   // after the page has taken its snapshot.
@@ -335,6 +371,15 @@ export function WorkspaceGrid({
     // anything written while this is raised.
     let applying = 0;
 
+    // Tell the shell how many edits are on their way, before the command is
+    // sent and after it is answered. Never clamped below zero, so an edit that
+    // outlives the grid it was made in cannot drive the count negative and
+    // release a hold something else is waiting on.
+    const countInFlight = (delta: number): void => {
+      inFlightRef.current = Math.max(0, inFlightRef.current + delta);
+      onEditsPending(inFlightRef.current);
+    };
+
     // Put a cell back to the last value the database confirmed. A record with
     // no baseline is left alone rather than blanked, so a missing entry could
     // never turn a refusal into data loss.
@@ -381,6 +426,11 @@ export function WorkspaceGrid({
       const raw = cell.getValue() as CellValue | undefined;
       const value: CellValue = raw === "" || raw === undefined ? null : raw;
 
+      // Counted before the command is posted, and while still inside the event
+      // that committed the edit. The editor commits on blur, so a click on New
+      // or Open is what commits the edit it is about to replace, and the shell
+      // has to be holding by the time that click is handled.
+      countInFlight(1);
       void client
         .updateCell({
           // The workspace these rows came from. The worker refuses the edit if
@@ -409,6 +459,10 @@ export function WorkspaceGrid({
           onError(describeFailure(caught));
         })
         .finally(() => {
+          // Released whatever became of it, and after the branches above: an
+          // accepted edit has already marked the workspace unsaved, so the
+          // shell's hold never lapses between the two reasons for it.
+          countInFlight(-1);
           if (destroyed || latest.get(key) !== mine) {
             return;
           }
@@ -474,7 +528,7 @@ export function WorkspaceGrid({
       editingRef.current = null;
       instance?.destroy();
     };
-  }, [data, getClient, markChanged, onError]);
+  }, [data, getClient, markChanged, onEditsPending, onError]);
 
   const truncated =
     data?.columns.filter((column) => column.referencesTruncated) ?? [];

@@ -50,6 +50,7 @@ import {
 import { WorkspaceGrid } from "@/components/workspace-grid";
 import { WorkspaceImport } from "@/components/workspace-import";
 import { WORKSPACE_FILES } from "@/lib/accepted-files";
+import { mustHoldWorkspace } from "@/lib/workspace-hold";
 import type { WorkspaceSummary } from "@/lib/workspace-protocol";
 import { WorkspaceClient } from "@/lib/workspace-worker";
 import {
@@ -169,6 +170,17 @@ type PendingAction =
 export type MarkWorkspaceChanged = (summary?: WorkspaceSummary) => void;
 
 /**
+ * Report how many of a feature's mutating commands are in flight, so the shell
+ * can hold for them exactly as it holds for an import.
+ *
+ * A command that has been sent and not answered is work this tab holds and no
+ * file does, even though nothing is marked unsaved yet: marking before the
+ * answer would claim a change the worker may refuse. The count is what covers
+ * the gap between the two.
+ */
+export type ReportPendingEdits = (count: number) => void;
+
+/**
  * The one command in flight, or null while the page is idle.
  *
  * There is a single busy state for the whole page, not one per section, because
@@ -192,12 +204,24 @@ export function WorkspaceTool() {
   // is installed once and has to see the current answer, not the first one.
   const spareEntriesRef = useRef(0);
   const mustHoldRef = useRef(false);
+  /**
+   * The same count as `editsInFlight`, kept where a handler can read it in the
+   * tick it changed.
+   *
+   * The grid commits a cell edit when its editor loses focus, so clicking New
+   * or Open is itself what commits the edit being replaced: the edit is sent
+   * and the click handler runs in the same tick, and state read during that
+   * handler would still be the state from before the edit. React catches up a
+   * microtask later, which is soon enough to render and far too late to decide.
+   */
+  const editsInFlightRef = useRef(0);
 
   const [workspace, setWorkspace] = useState<OpenWorkspace | null>(null);
   const [busy, setBusy] = useState<WorkspaceBusy>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingAction>(null);
+  const [editsInFlight, setEditsInFlight] = useState(0);
   const router = useRouter();
 
   const client = useCallback((): WorkspaceClient => {
@@ -316,22 +340,41 @@ export function WorkspaceTool() {
 
   const hasUnsavedChanges = workspace?.unsavedChanges === true;
 
+  // Whether there is anything to lose by leaving or replacing the workspace.
+  // The conditions and the reasoning behind each live in `lib/workspace-hold`,
+  // so every guard here asks one question with one answer.
+  const mustHold = mustHoldWorkspace({
+    unsavedChanges: hasUnsavedChanges,
+    importing: busy === "importing",
+    editsInFlight,
+  });
+
   /**
-   * Whether there is anything to lose by leaving or replacing the workspace.
+   * The same question, asked from a handler that may be running in the same
+   * tick as the edit that changed the answer. Everything but an in-flight edit
+   * settles through a render long before a click reaches a button, so the last
+   * rendered answer covers those, and the count covers the one that does not.
    *
-   * Two conditions, one answer, because the guards below all ask the same
-   * question and any of them keyed on only half of it is a hole. Unsaved
-   * changes are the obvious half. The other is an import that has not come
-   * back: it is the one command whose result exists nowhere else, so leaving
-   * mid-import destroys work that was never anywhere but this tab.
-   *
-   * The other busy states are deliberately not held. Creating and opening have
-   * nothing to lose yet, reading a file to describe it touches no workspace,
-   * and a save is already covered because the unsaved flag stays set until its
-   * write resolves. Holding those would put a warning in front of a visitor who
-   * has nothing at stake, which is how a warning stops being read.
+   * Measured, not assumed: the editor commits on blur, and blur runs on the
+   * mousedown that precedes the click, so React does in fact re-render in time
+   * and reading state here would pass the tests below today. It reads the count
+   * anyway, because that is a fact about React's scheduling rather than about
+   * this page, and the cost of being wrong about it is a silently discarded
+   * edit.
    */
-  const mustHold = hasUnsavedChanges || busy === "importing";
+  const holdsNow = useCallback(
+    (): boolean => mustHoldRef.current || editsInFlightRef.current > 0,
+    [],
+  );
+
+  /**
+   * Count a feature's mutating commands. Recorded in the ref first, because the
+   * click that raises the guard can be the same click that commits the edit.
+   */
+  const reportPendingEdits = useCallback<ReportPendingEdits>((count) => {
+    editsInFlightRef.current = count;
+    setEditsInFlight(count);
+  }, []);
 
   // The question exists only while its reason does. A save made while it is on
   // screen, or an import that fails after a link was held, answers it by
@@ -351,13 +394,13 @@ export function WorkspaceTool() {
   // mutating feature added later inherits the guard by doing nothing.
   const replaceWorkspace = useCallback(
     (kind: "new" | "open") => {
-      if (mustHold) {
+      if (holdsNow()) {
         setPending({ kind });
         return;
       }
       void (kind === "new" ? startNew() : startOpen());
     },
-    [mustHold, startNew, startOpen],
+    [holdsNow, startNew, startOpen],
   );
 
   /**
@@ -446,6 +489,14 @@ export function WorkspaceTool() {
   // Warn before the tab closes, reloads, or leaves for another site. This is
   // the browser's own dialog and the only guard available for those, but it
   // covers none of the ways of leaving that stay inside the app.
+  //
+  // Attached on the rendered answer rather than read from `holdsNow` at fire
+  // time, which is deliberate. Unload cannot be reached in the same tick as a
+  // cell edit, because closing or reloading is a gesture on the browser's own
+  // chrome rather than a click on this page, and any later task sees the count
+  // already rendered. Keeping the listener off a clean workspace is worth more
+  // than covering a case that cannot happen: a page that always carries one
+  // gives up the browser's back-forward cache.
   useEffect(() => {
     if (!mustHold) {
       return;
@@ -510,7 +561,7 @@ export function WorkspaceTool() {
       ) {
         return;
       }
-      if (mustHoldRef.current) {
+      if (holdsNow()) {
         event.preventDefault();
         event.stopPropagation();
         setPending({ kind: "leave", href: destination.href });
@@ -556,7 +607,7 @@ export function WorkspaceTool() {
         return;
       }
       spareEntriesRef.current -= 1;
-      if (!mustHoldRef.current) {
+      if (!holdsNow()) {
         // Nothing at stake, so the press was simply spent. Whether the page
         // stays or goes from here is the browser's business.
         return;
@@ -981,6 +1032,7 @@ export function WorkspaceTool() {
           getClient={client}
           locked={isBusy || confirming}
           markChanged={markChanged}
+          onEditsPending={reportPendingEdits}
           onError={setError}
           summary={workspace.summary}
         />

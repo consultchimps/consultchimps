@@ -124,6 +124,23 @@ async function editCell(
   }).toPass({ timeout: 30_000 });
 }
 
+/**
+ * Open a cell's editor and type into it, leaving it open and uncommitted. The
+ * caller decides what commits it, which for these tests is a click somewhere
+ * else on the page.
+ */
+async function typeWithoutCommitting(
+  cell: Locator,
+  value: string,
+): Promise<void> {
+  const input = cell.locator("input");
+  await expect(async () => {
+    await cell.click({ timeout: STEP_TIMEOUT });
+    await expect(input).toBeVisible({ timeout: STEP_TIMEOUT });
+    await input.fill(value, { timeout: STEP_TIMEOUT });
+  }).toPass({ timeout: 30_000 });
+}
+
 /** Type into a cell and commit with Enter, the way a visitor would. */
 async function typeInCell(
   page: Page,
@@ -476,6 +493,56 @@ test.describe("/workspace record grid", () => {
     });
     await expect(supplierName).toHaveText("Acme Supplies");
     await expect(page.getByTestId("workspace-error")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
+  });
+
+  test("holds New for an edit that has been sent but not answered", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await openWorkspace(page, await workspaceFixture());
+
+    // The editor commits when it loses focus, so this click is both what
+    // commits the edit and what asks to replace the workspace. Between the two
+    // the workspace still reads as clean, and that is the window being tested:
+    // without the shell counting the edit, New would go through, the edit would
+    // land on the database being discarded, and nothing would say so.
+    await typeWithoutCommitting(cellOf(page, "CUST-0001", "name"), "Acme Two");
+    await page.getByTestId("workspace-new").click();
+
+    await expect(page.getByTestId("workspace-confirm")).toBeVisible();
+    // The workspace is untouched behind the question.
+    await expect(page.getByTestId("workspace-file-name")).toHaveText(
+      "records.sqlite",
+    );
+
+    await page.getByTestId("workspace-confirm-cancel").click();
+    await expect(page.getByTestId("workspace-confirm")).toHaveCount(0);
+    // And the edit it committed on the way is in the workspace, not lost to it.
+    await expect(cellOf(page, "CUST-0001", "name")).toHaveText("Acme Two");
+    await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
+
+    // Answering it the other way is still available, and still discards.
+    await page.getByTestId("workspace-new").click();
+    await page.getByTestId("workspace-confirm-discard").click();
+    await expect(page.getByTestId("workspace-tables-empty")).toBeVisible();
+    await expect(page.getByTestId("workspace-unsaved")).toHaveCount(0);
+  });
+
+  test("holds Open for an edit that has been sent but not answered", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await openWorkspace(page, await workspaceFixture());
+
+    await typeWithoutCommitting(cellOf(page, "CUST-0001", "headcount"), "21");
+    await page.getByTestId("workspace-open").click();
+
+    await expect(page.getByTestId("workspace-confirm")).toBeVisible();
+    await page.getByTestId("workspace-confirm-cancel").click();
+    await expect(cellOf(page, "CUST-0001", "headcount")).toHaveText("21");
     await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
   });
 });
