@@ -120,6 +120,8 @@ columns keep their row positions and nulls; dropping a column never shifts or
 drops rows. A column whose complete values or row alignment cannot be recovered
 is skipped as a whole. If no columns remain, the table is excluded. A table with
 zero rows and at least one output column produces a header-only worksheet.
+Successful partial exports also populate `OperationResult.warnings` from the
+manifest under Decision 9, so the normal result summary reports the exclusions.
 
 A workbook is only produced when at least one table is exportable. When the
 model holds tables but every one of them is excluded, whether hidden under the
@@ -180,6 +182,12 @@ before `_10`, and 27 before `_2_2`. These constraints follow
 [Excel's worksheet-name rules](https://support.microsoft.com/en-us/excel/rename-a-worksheet).
 
 ## Decision 6: value formatting
+
+Boolean values are native Excel Boolean cells: `true` remains `true`, `false`
+remains `false`, and null is a blank cell. They are not numeric `0` or `1`,
+text, or formulas. Boolean columns preserve their source row positions;
+independent workbook round trips must distinguish both Boolean values from null.
+This unchanged representation adds no value-conversion manifest entry.
 
 **Decision: write a finite numeric value as an Excel number only when it passes
 all three checks: at most fifteen significant decimal digits, the numeric range
@@ -324,6 +332,19 @@ ordinary-text truncation separately. The manifest does not duplicate those cell
 values or collect row-index lists. Its size still depends on table and column
 counts, worksheet parts, and DAX text, so its full size remains part of the
 browser memory measurement.
+
+The operation's `warnings` are a deterministic summary derived from the
+manifest. Emit one plain-language warning per distinct reason code present,
+sorted by code in ascending ASCII order, aggregating affected tables, columns,
+or values in the unit that code describes. Include exclusions, worksheet splits,
+text conversions, date rounding, and truncation. Each warning explains what
+happened and directs the user to the manifest for detail; hidden-table warnings
+also name the include-hidden option. Do not include source cell values or
+construct per-cell warning strings. DAX and provenance metadata alone do not
+produce warnings. Build item 8 verifies that a successful partial export has
+these warnings and that the normal result renderer displays them; it must not
+announce that no recoverable problems occurred after data was omitted or
+changed.
 
 ## Known limits
 
