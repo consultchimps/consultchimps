@@ -154,15 +154,29 @@ break. Binary encodings follow Decision 6 instead and are never truncated.
 Worksheet names follow Excel's rules (31 characters, forbidden characters
 replaced, case-insensitive uniqueness with numeric suffixes).
 
-Worksheet allocation is deterministic. Tables are processed in the model's own
-catalog order (the order the file stores them), never in decode-completion
-order, and each table claims all of its worksheet names before the next table is
-considered: its sanitized name first, then its numbered parts. A name already
-claimed, case-insensitively, whether by an earlier table's name or one of its
-parts, takes the next free numeric suffix. So a real table named `Sales_2` that
-follows a split `Sales` becomes `Sales_2_2`, and the same file always yields the
-same names, tab order, and bytes. Within a table, columns follow catalog order
-and rows follow storage order.
+Worksheet allocation is deterministic. Tables are processed in ascending numeric
+catalog `Table.ID` order, never in decode-completion order, and each table
+claims all of its worksheet names before the next table is considered: its
+sanitized name first, then its numbered parts. A name already claimed,
+case-insensitively, whether by an earlier table's name or one of its parts,
+takes the next free numeric suffix. So a real table named `Sales_2` that follows
+a split `Sales` becomes `Sales_2_2`, and the same file always yields the same
+names, tab order, and bytes. Within a table, columns follow ascending
+`ColumnStorage.StoragePosition`, then numeric `Column.ID` as a tie-breaker.
+These are the table and column catalog orders used throughout this ADR.
+
+Within each table, concatenate partitions by ascending
+`PartitionStorage.StoragePosition`, then numeric `PartitionStorage.ID` as a
+tie-breaker. This uses the stored partition position exposed by the
+[reference catalog reader](https://github.com/Hugoberry/pbixray/blob/c5da940b45d2806c8f8d3e109f0d1909117a7db0/pbixray/meta/sqlite_source.py#L281).
+Within a partition, concatenate segments by their zero-based position in its
+stored segment-descriptor sequence, then retain the decoded row order inside
+each segment. All retained columns must use that same partition and segment
+sequence and aligned row counts. Apply `PBI_COLUMN_ROW_ALIGNMENT_UNRECOVERABLE`
+when a column cannot be placed on that sequence. Neither catalog query return
+order without an explicit sort nor worker completion order determines row order.
+Build item 7 tests multiple partitions and segments with shuffled decode
+completion and verifies identical rows and worksheet splits.
 
 For name collisions and the reserved-name check, compare the final candidate's
 ECMAScript `String.prototype.toLowerCase()` value, without a locale argument or
@@ -291,6 +305,15 @@ an entry or a copy of the source value for each affected cell.** Each aggregate
 holds a stable reason code and the affected-value count. The manifest also
 records excluded tables and columns with their reasons, ordered worksheet parts
 and their source row ranges, and the DAX expressions from Decision 8.
+
+Source row ranges use zero-based, half-open coordinates `[start, end)` in the
+table's concatenated row sequence from Decision 5. They exclude worksheet
+headers and never restart at a partition or segment boundary. Part `k`, counted
+from zero, covers `[k * 1048575, min((k + 1) * 1048575, rowCount))`. For
+1,048,576 source rows the ranges are `[0, 1048575)` and `[1048575, 1048576)`. A
+header-only table has one part with `[0, 0)`; excluded tables have no output
+parts. Each range length equals that part's data-row count, and adjacent parts
+meet without gaps or overlap.
 
 The manifest uses this reason-code vocabulary:
 
