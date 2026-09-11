@@ -589,7 +589,7 @@ test.describe("/workspace import", () => {
     // Discarding follows the link that was held.
     await page.getByTestId("guide-link").click();
     await page.getByTestId("workspace-confirm-discard").click();
-    await expect(page).toHaveURL(/\/docs\/libraries/u);
+    await expect(page).toHaveURL(/\/docs\/tools\/data-workspace/u);
   });
 
   test("follows a link at once when nothing is unsaved", async ({ page }) => {
@@ -599,7 +599,7 @@ test.describe("/workspace import", () => {
     await expect(page.getByTestId("workspace-summary")).toBeVisible();
 
     await page.getByTestId("guide-link").click();
-    await expect(page).toHaveURL(/\/docs\/libraries/u);
+    await expect(page).toHaveURL(/\/docs\/tools\/data-workspace/u);
     await expect(page.getByTestId("workspace-confirm")).toHaveCount(0);
   });
 
@@ -658,7 +658,7 @@ test.describe("/workspace import", () => {
     await expect(page.getByTestId("workspace-table")).toHaveCount(1);
   });
 
-  test("arms the Back guard again after a save has spent it", async ({
+  test("spends the spare entry and leaves once a save has cleared the hold", async ({
     page,
   }) => {
     await forceDownloadFallback(page);
@@ -672,24 +672,81 @@ test.describe("/workspace import", () => {
     await downloadPromise;
     await expect(page.getByTestId("workspace-unsaved")).toHaveCount(0);
 
-    // Nothing is at stake, so this press is simply spent. The page still has to
-    // notice that it went, or it will believe it is still holding the spare.
-    await pressBack(page);
+    // The save cleared the hold and cannot remove the entry the browser is
+    // holding, so this press lands on a spare with nothing left to guard. It is
+    // not spent on nothing: the page retires what is left and lets the press
+    // through, which is the rule the link guard already follows, and one press
+    // reaches the page before this one.
+    //
+    // Pressed on a timer rather than through `pressBack`, because this press
+    // does leave: waiting inside the page for the event would be waiting in an
+    // execution context the navigation is about to destroy.
+    await page.evaluate(() => {
+      window.setTimeout(() => window.history.back(), 0);
+    });
+    await expect(page).toHaveURL(/\/tools$/u);
     await expect(page.getByTestId("workspace-confirm")).toHaveCount(0);
-    await expect(page).toHaveURL(/\/workspace$/u);
+  });
 
-    // A second import has to arm the guard again rather than trust a flag left
-    // over from the first.
-    await page.getByTestId("workspace-import-input").setInputFiles(ORDERS_CSV);
-    await importRow(page, 0)
-      .getByTestId("workspace-import-name")
-      .fill("Orders");
-    await page.getByTestId("workspace-import-run").click();
-    await expect(page.getByTestId("workspace-unsaved")).toBeVisible();
+  test("holds the Back button again for a change made after a spare was spent", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/tools");
+    await page.goto("/workspace");
+    await page.getByTestId("workspace-new").click();
+    await importCustomersSheet(page);
+
+    // One press, answered by keeping the workspace. It spends the spare and
+    // arms another in the same breath, so a second press is caught too rather
+    // than trusting a flag left over from the first.
+    await pressBack(page);
+    await page.getByTestId("workspace-confirm-cancel").click();
+    await expect(page).toHaveURL(/\/workspace$/u);
 
     await pressBack(page);
     await expect(page.getByTestId("workspace-confirm")).toBeVisible();
     await expect(page).toHaveURL(/\/workspace$/u);
+  });
+
+  test("dismisses a question raised by a held link when the import fails", async ({
+    page,
+  }) => {
+    // The other half of the #174 rule. A question must not outlive its reason:
+    // the import the visitor was warned about did not happen, so there is
+    // nothing left to ask them about and the warning goes with it. What may not
+    // dismiss a question is the navigation's own teardown, which is a different
+    // thing entirely and is pinned in the grid's spec.
+    await forceDownloadFallback(page);
+    await delayWorkerImports(page, 1500);
+    await page.goto("/workspace");
+    await page.getByTestId("workspace-new").click();
+    await expect(page.getByTestId("workspace-new")).toBeEnabled();
+
+    // A table name the form accepts and the database refuses, so the import
+    // fails in the worker rather than before it is sent. A double quote cannot
+    // be quoted into an identifier, which `assertSafeIdentifier` refuses.
+    await page.getByTestId("workspace-import-input").setInputFiles(ORDERS_CSV);
+    await importRow(page, 0)
+      .getByTestId("workspace-import-name")
+      .fill('Bad"Name');
+    await page.getByTestId("workspace-import-run").click();
+
+    await page.getByTestId("guide-link").click();
+    await expect(page.getByTestId("workspace-confirm")).toContainText(
+      "An import is still running",
+    );
+
+    // The import comes back refused. Nothing was created, nothing is unsaved,
+    // and the question that was standing over the import has nothing left to
+    // stand over.
+    await expect(page.getByTestId("workspace-import-error")).toBeVisible();
+    await expect(page.getByTestId("workspace-confirm")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-unsaved")).toHaveCount(0);
+
+    // And with nothing at stake the link is followed rather than held.
+    await page.getByTestId("guide-link").click();
+    await expect(page).toHaveURL(/\/docs\/tools\/data-workspace/u);
   });
 
   test("names a one-worksheet workbook after the file it came from", async ({
@@ -772,7 +829,7 @@ test.describe("/workspace import", () => {
     // copy of the workspace before it reaches the page before it.
     await page.getByTestId("guide-link").click();
     await page.getByTestId("workspace-confirm-discard").click();
-    await expect(page).toHaveURL(/\/docs\/libraries/u);
+    await expect(page).toHaveURL(/\/docs\/tools\/data-workspace/u);
 
     await page.goBack();
     await expect(page).toHaveURL(/\/workspace$/u);
@@ -797,7 +854,7 @@ test.describe("/workspace import", () => {
     // Saving clears the flag but cannot remove the entry the change armed, so
     // the clean way out has to retire it too.
     await page.getByTestId("guide-link").click();
-    await expect(page).toHaveURL(/\/docs\/libraries/u);
+    await expect(page).toHaveURL(/\/docs\/tools\/data-workspace/u);
 
     await page.goBack();
     await expect(page).toHaveURL(/\/workspace$/u);

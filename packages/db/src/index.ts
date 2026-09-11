@@ -35,7 +35,19 @@ export {
   type RecordIdConfig,
   type TableSchema,
 } from "./schema.js";
-export { Database, type InsertedRecord } from "./database.js";
+export {
+  Database,
+  type InsertedRecord,
+  type ReadRecordsOptions,
+  type UpdatedRecord,
+} from "./database.js";
+export {
+  updateRecords,
+  type AcceptedRecordUpdate,
+  type RecordUpdateOutcome,
+  type RecordUpdateRequest,
+  type RefusedRecordUpdate,
+} from "./update-records.js";
 export { addRecordsFromTable, databaseTableToTable } from "./bridge.js";
 export { parseCsvTable, type ParseCsvOptions } from "./csv.js";
 export {

@@ -266,6 +266,82 @@ reference. The prefix and zero-padding are configured per table, and the schema,
 that configuration, and the next-id counter are stored inside the database file,
 so reopening the bytes restores them.
 
+### Edit a record
+
+`updateRecord` writes to an existing record, found by its Record ID:
+
+```ts
+const updated = database.updateRecord("Customer", "CUST-0001", {
+  name: "Acme Holdings",
+  active: "no",
+});
+
+console.log(updated.values); // { name: "Acme Holdings", active: false }
+```
+
+It returns the values now stored, read back through their declared types, which
+is why `"no"` comes back as `false`: a caller that displays the record can show
+what the database kept rather than what it sent.
+
+Every value goes through the same conversion an insert uses, so the type rules
+are one set of rules rather than two. A value that does not fit the column is
+refused with a stable code (`DB_INVALID_NUMBER`, `DB_INVALID_BOOLEAN`) naming
+the table and column, and nothing is written. An unknown table, record, or
+column is refused the same way, and so is any attempt to change the Record ID,
+which is assigned once: it is `DB_RECORD_ID_IMMUTABLE` here, and a database
+trigger under that refuses it even to a raw statement.
+
+### Edit many records as one step
+
+`updateRecords` applies a batch of record updates in one transaction, which is
+what a pasted block or a dragged fill in a spreadsheet amounts to: tens or
+hundreds of cell writes made as a single movement. Each request goes through
+`updateRecord`, so the conversion and the Record ID rule are the single-record
+path's own.
+
+```ts
+import { updateRecords } from "@consultchimps/db";
+
+database.insertRecord("Customer", { name: "South", active: true }); // CUST-0002
+
+const outcomes = updateRecords(database, [
+  { table: "Customer", recordId: "CUST-0001", values: { active: "no" } },
+  { table: "Customer", recordId: "CUST-0002", values: { active: "maybe" } },
+]);
+
+for (const outcome of outcomes) {
+  if (outcome.accepted) {
+    console.log(outcome.recordId, outcome.values); // CUST-0001 { active: false }
+  } else {
+    console.log(outcome.recordId, outcome.code); // CUST-0002 DB_INVALID_BOOLEAN
+  }
+}
+```
+
+Application is partial and the commit is atomic. A value the schema refuses is
+reported against its own request, as data rather than as a thrown error, so a
+caller across a worker boundary can show it against the cell it belongs to, and
+the batch carries on; the accepted writes then commit together. That is what a
+spreadsheet does, and the alternative was rejected: all-or-nothing would cost
+the caller every accepted write in a two hundred cell paste for one bad value. A
+failure that is not a refusal, one nobody planned for, rolls the whole
+transaction back and propagates. An empty batch writes nothing and reports
+nothing.
+
+`readRecords` reads a table's records, the Record ID first in every row. Pass
+options to narrow it: `columns` reads only the named columns, matched like every
+other identifier, and `limit` reads at most that many records in storage order.
+An unknown or repeated column name, or a limit that is not a whole number within
+the safe integer range, is refused with a stable error rather than guessed at.
+
+```ts
+// The first ten records, Record ID and name only.
+const recent = database.readRecords("Customer", {
+  columns: ["name"],
+  limit: 10,
+});
+```
+
 ### Bridge to the table model
 
 The database exchanges rows with `@consultchimps/tabular` in both directions, so

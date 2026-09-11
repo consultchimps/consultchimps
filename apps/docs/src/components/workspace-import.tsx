@@ -39,7 +39,7 @@ import type {
   ImportTableChoice,
   WorkspaceSummary,
 } from "@/lib/workspace-protocol";
-import type { WorkspaceBusy } from "@/components/workspace-tool";
+import type { WorkspaceBusy } from "@/lib/workspace-state";
 import type { WorkspaceClient } from "@/lib/workspace-worker";
 import { identifierKey, MAX_RECORD_ID_PADDING } from "@consultchimps/db/schema";
 import { FileUp, LoaderCircle, Upload, X } from "lucide-react";
@@ -166,18 +166,37 @@ export interface WorkspaceImportProps {
   readonly client: () => WorkspaceClient;
   /** The tables the workspace already holds, so a clash is caught early. */
   readonly existingTableNames: readonly string[];
-  /** Reports this section's commands into the page's busy state. */
-  readonly onBusy: (busy: WorkspaceBusy) => void;
-  /** Hands the page the workspace as it stands after a successful import. */
+  /**
+   * A file was chosen and is being read so its sources can be described.
+   *
+   * This and the four below report what this section did, as it happens, rather
+   * than setting a busy value from here. The page's state model decides what
+   * each of them means; this section only says which happened, so one place
+   * knows what the page is doing.
+   */
+  readonly onReading: () => void;
+  /** That read ended, whether it described the file or refused it. */
+  readonly onReadFinished: () => void;
+  /** The import itself has been sent to the worker. */
+  readonly onRunning: () => void;
+  /** It landed: the workspace as it stands now, and what to say about it. */
   readonly onImported: (summary: WorkspaceSummary, notice: string) => void;
+  /**
+   * It did not. The explanation stays here, against the form it belongs to, so
+   * the page says nothing about a failure whose context is on this section.
+   */
+  readonly onFailed: () => void;
 }
 
 export function WorkspaceImport({
   busy,
   client,
   existingTableNames,
-  onBusy,
+  onFailed,
   onImported,
+  onReadFinished,
+  onReading,
+  onRunning,
 }: WorkspaceImportProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [file, setFile] = useState<ChosenFile | null>(null);
@@ -193,7 +212,7 @@ export function WorkspaceImport({
   const onFiles = useCallback(
     (files: readonly File[]) => {
       void (async () => {
-        onBusy("reading");
+        onReading();
         setError(null);
         try {
           // The kind and the acceptance are one question, asked once. Picking
@@ -234,11 +253,11 @@ export function WorkspaceImport({
           setChoices([]);
           setError(describeFailure(caught));
         } finally {
-          onBusy(null);
+          onReadFinished();
         }
       })();
     },
-    [client, onBusy],
+    [client, onReadFinished, onReading],
   );
 
   const update = useCallback((index: number, change: Partial<SourceChoice>) => {
@@ -268,7 +287,7 @@ export function WorkspaceImport({
         });
       });
 
-      onBusy("importing");
+      onRunning();
       setError(null);
       try {
         const result = await client().importFile(
@@ -311,12 +330,14 @@ export function WorkspaceImport({
         );
         reset();
       } catch (caught) {
+        // Reported after the message is on screen, and only on this path: the
+        // import that landed has already told the page what it did, and there
+        // is no third outcome for a `finally` to cover.
         setError(describeFailure(caught));
-      } finally {
-        onBusy(null);
+        onFailed();
       }
     })();
-  }, [choices, client, file, onBusy, onImported, reset]);
+  }, [choices, client, file, onFailed, onImported, onRunning, reset]);
 
   const problem =
     file === null ? null : formProblem(choices, existingTableNames);

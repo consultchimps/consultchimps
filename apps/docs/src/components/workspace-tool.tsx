@@ -6,28 +6,32 @@
  * This is the shell only: it starts an empty workspace, opens an existing
  * `.sqlite` file, and saves the workspace back out. The database itself lives in
  * the workspace Web Worker (`workers/workspace.worker.ts`), which owns the one
- * `@consultchimps/db` instance; this component holds view state and drives the
- * worker through `WorkspaceClient`.
+ * `@consultchimps/db` instance; this component drives the worker through
+ * `WorkspaceClient` and holds no view state of its own.
  *
- * Data import lives in `workspace-import.tsx` and is mounted below the summary;
- * a grid is still to come. Until it does, the table listing in the summary is
- * how a person sees what a workspace holds: each table's name, row count,
- * Record ID prefix, and the column types import inferred.
+ * What the page is doing lives in `lib/workspace-state`: one state, one total
+ * transition table, and every answer derived from it. This file is the part
+ * that cannot be pure. It turns clicks, worker replies and browser events into
+ * events for that model, performs the effects the model asks for, and renders
+ * the answers it derives. It decides nothing: a condition worked out here would
+ * be a second reading of a state that already has one, and two readings drift.
  *
- * The workspace is one in-memory database, so replacing it or leaving the page
- * is the whole of losing it. The shell therefore owns the unsaved-changes flag
- * rather than each mutating feature: `markChanged` is the single place it is
- * set, and a write that actually resolved is the only place it is cleared. A
- * feature that changes the workspace inherits the guard by calling that one
- * marker.
+ * Data import lives in `workspace-import.tsx` and the record grid in
+ * `workspace-grid.tsx`, both mounted below the summary. Neither keeps state the
+ * shell also keeps: the grid is handed the summary it may show tables from and
+ * the lock that closes its editors, and reports its edits and its own teardown
+ * back as events. The table listing in the summary stays, as the compact
+ * description of what a workspace holds: each table's name, row count, Record
+ * ID prefix, and the column types import inferred.
  *
  * Leaving is guarded in every form it takes, not just the one the browser fires
  * an event for. Replacing the workspace (New, Open), following a link out of
  * the page, going back, and closing the tab all end the same way, so all four
- * are held by the same flag and all but the last ask through the same inline
- * confirmation. A guard attached to `beforeunload` alone would miss a
- * client-side transition entirely, because that never unloads anything: it just
- * unmounts this component, and the cleanup below then terminates the worker.
+ * ask the model the one question and all but the last ask the visitor through
+ * the same inline confirmation. A guard attached to `beforeunload` alone would
+ * miss a client-side transition entirely, because that never unloads anything:
+ * it just unmounts this component, and the cleanup below then terminates the
+ * worker.
  *
  * Saving prefers the File System Access API so a repeat save writes back to the
  * same file in place. Where that API is missing, saving falls back to a plain
@@ -44,9 +48,25 @@ import {
   sectionClass,
   ToolShell,
 } from "@/components/tool-kit";
+import { WorkspaceGrid } from "@/components/workspace-grid";
 import { WorkspaceImport } from "@/components/workspace-import";
 import { WORKSPACE_FILES } from "@/lib/accepted-files";
 import type { WorkspaceSummary } from "@/lib/workspace-protocol";
+import {
+  commandsEnabled,
+  editingLocked,
+  INITIAL_WORKSPACE_STATE,
+  questionView,
+  shouldArmHistorySpare,
+  spinningButton,
+  unloadGuardInstalled,
+  workspaceBusy,
+  workspaceStep,
+  type SaveMode,
+  type WorkspaceEffect,
+  type WorkspaceEvent,
+  type WorkspaceState,
+} from "@/lib/workspace-state";
 import { WorkspaceClient } from "@/lib/workspace-worker";
 import {
   Database,
@@ -125,76 +145,71 @@ async function writeToHandle(
   }
 }
 
-/** What the page shows once a workspace is held: where it came from and its shape. */
-interface OpenWorkspace {
-  readonly summary: WorkspaceSummary;
-  /** The file it was opened from or last saved as, or null for a fresh one. */
-  readonly fileName: string | null;
-  /**
-   * Whether the workspace has changed since it was last written to a file.
-   *
-   * The workspace is one in-memory database and nothing else: replacing it, or
-   * leaving the page, is the whole of losing it. So the shell tracks this
-   * itself rather than leaving each mutating feature to remember, which is what
-   * keeps the guard true for a mutation the shell has never heard of.
-   */
-  readonly unsavedChanges: boolean;
-}
-
 /**
- * What a confirmation is standing in front of, or null for none.
+ * An edit is on its way to the worker.
  *
- * Every way of losing the workspace routes through this one question rather
- * than growing a dialog each: replacing it, and leaving the page for somewhere
- * else in the app. `href` is where the visitor was going, or null when they
- * pressed Back and the way to honour that is to go back again.
+ * A command that has been sent and not answered is work this tab holds and no
+ * file does, even though nothing is marked unsaved yet: marking before the
+ * answer would claim a change the worker may refuse. Reporting it is what
+ * covers the gap between the two.
  */
-type PendingAction =
-  | { readonly kind: "new" }
-  | { readonly kind: "open" }
-  | { readonly kind: "leave"; readonly href: string | null }
-  | null;
+export type ReportEditSent = () => void;
 
 /**
- * The shell's record-a-change callback, handed to any section that mutates the
- * workspace. Import receives it folded into `onImported`; the record grid takes
- * it directly when its cell edits land. Passing a summary replaces the table
- * listing at the same time, and passing nothing marks the workspace changed
- * without one.
+ * That edit came back, and whether the worker took it. One report rather than
+ * two, so the workspace is marked unsaved and the edit's hold released in the
+ * same move.
  */
-export type MarkWorkspaceChanged = (summary?: WorkspaceSummary) => void;
+export type ReportEditSettled = (accepted: boolean) => void;
 
 /**
- * The one command in flight, or null while the page is idle.
+ * Report that a cell is open for editing, from the moment it opens until it
+ * commits or cancels.
  *
- * There is a single busy state for the whole page, not one per section, because
- * the worker runs one command at a time and every long-running command has the
- * same consequence: nothing else may start, and in particular nothing may
- * replace the workspace. A section that runs its own command reports through
- * `onBusy` rather than keeping a flag of its own, so the shell can always see
- * that something is in flight. A second notion of busy is exactly how a click
- * on New lands behind a running import and throws its result away.
+ * A draft in an input element is work no one else knows about: nothing has been
+ * sent, so nothing has an answer to wait for. The shell holds for it so that
+ * the ways of leaving that never blur an editor, the Back button and closing
+ * the tab, are not the ways that lose it.
  */
-export type WorkspaceBusy =
-  "creating" | "opening" | "saving" | "reading" | "importing" | null;
+export type ReportEditorOpened = () => void;
+
+/**
+ * That editor closed, and whether the grid closed it on its way out. A
+ * visitor's Escape answers a standing confirmation; a teardown may not, and
+ * only the grid knows which of the two Tabulator's cancel was.
+ */
+export type ReportEditorClosed = (byTeardown: boolean) => void;
+
+/**
+ * Report that the grid has gone, taking whatever it held with it. Distinct from
+ * an editor closing because the model has to tell a teardown from a visitor's
+ * own Escape: see the #174 rule in `lib/workspace-state`.
+ */
+export type ReportGridDetached = () => void;
 
 export function WorkspaceTool() {
   const clientRef = useRef<WorkspaceClient | null>(null);
-  // The handle for an in-place save, held only when a picker granted one.
+  // The handle for an in-place save, held only when a picker granted one. It
+  // stays a ref rather than joining the state: it is an opaque browser object,
+  // nothing is derived from it, and what a save reached is reported back.
   const handleRef = useRef<WorkspaceFileHandle | null>(null);
   const fallbackInputRef = useRef<HTMLInputElement | null>(null);
-  // How many spare history entries the page is holding for the Back guard, and
-  // the condition that guard reads. Both are refs because the popstate listener
-  // is installed once and has to see the current answer, not the first one.
-  const spareEntriesRef = useRef(0);
-  const mustHoldRef = useRef(false);
-
-  const [workspace, setWorkspace] = useState<OpenWorkspace | null>(null);
-  const [busy, setBusy] = useState<WorkspaceBusy>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [pending, setPending] = useState<PendingAction>(null);
   const router = useRouter();
+
+  /**
+   * The one state, and the same value where a handler must read it inside the
+   * event that changed it.
+   *
+   * The ref is not a second copy: `send` is the only writer, and it moves both
+   * in the one call, so the ref is the state as of the last event and the React
+   * copy is the state as of the last render. The distinction matters exactly
+   * once. The grid commits a cell edit when its editor loses focus, so clicking
+   * New or Open is itself what commits the edit being replaced: the edit is
+   * reported and the click handler runs in the same tick, and rendered state
+   * read during that handler would still be the state from before the edit.
+   */
+  const [state, setState] = useState<WorkspaceState>(INITIAL_WORKSPACE_STATE);
+  const stateRef = useRef<WorkspaceState>(INITIAL_WORKSPACE_STATE);
 
   const client = useCallback((): WorkspaceClient => {
     clientRef.current ??= new WorkspaceClient();
@@ -210,28 +225,36 @@ export function WorkspaceTool() {
     [],
   );
 
-  const startNew = useCallback(async () => {
-    setBusy("creating");
-    setError(null);
-    setNotice(null);
+  /**
+   * Move the state, and hand back what the model asked the page to do.
+   *
+   * It does not perform the effect: a handler that has to decide whether to
+   * take a browser event over needs the answer before it acts on it, and one
+   * function that both decides and acts could not give it one.
+   */
+  const send = useCallback((event: WorkspaceEvent): WorkspaceEffect | null => {
+    const step = workspaceStep(stateRef.current, event);
+    stateRef.current = step.state;
+    setState(step.state);
+    return step.effect;
+  }, []);
+
+  const runCreate = useCallback(async () => {
     try {
       const summary = await client().create();
       handleRef.current = null;
-      setWorkspace({ summary, fileName: null, unsavedChanges: false });
-      setNotice("Started a new empty workspace");
+      send({ type: "createSucceeded", summary });
     } catch (caught) {
-      setError(describeFailure(caught));
-    } finally {
-      setBusy(null);
+      send({ type: "createFailed", message: describeFailure(caught) });
     }
-  }, [client]);
+  }, [client, send]);
 
   // Shared open path for every way a file arrives. The read itself runs inside
   // the guarded section, so a file that stops being readable after it was
   // chosen (moved, deleted, locked) reports through the same error path as a
   // database the worker rejects, whichever entry point chose it. The handle is
   // remembered when a picker supplied one so a later save writes back in place.
-  const openWorkspace = useCallback(
+  const runOpen = useCallback(
     async (
       read: () => Promise<{
         readonly name: string;
@@ -239,32 +262,44 @@ export function WorkspaceTool() {
       }>,
       handle: WorkspaceFileHandle | null,
     ) => {
-      setBusy("opening");
-      setError(null);
-      setNotice(null);
+      // The model decides whether this open may start, and this honours its
+      // answer: without it the worker would replace its database for a page
+      // that had stopped listening, and the summary on screen would name a
+      // workspace the worker no longer holds.
+      //
+      // The question asked is whether THIS event moved the state, not whether
+      // the page happens to be opening, which a second open racing the first
+      // would also see. An event the table refuses returns the state it was
+      // given, by identity, so comparing the value before and after is exactly
+      // that question. Nothing is said when it is refused: the command the page
+      // is actually running has an outcome of its own, and that is what the
+      // visitor is waiting to read.
+      const before = stateRef.current;
+      send({ type: "openStarted" });
+      if (stateRef.current === before) {
+        return;
+      }
       try {
         const { name, bytes } = await read();
         const summary = await client().open(bytes);
         handleRef.current = handle;
-        setWorkspace({ summary, fileName: name, unsavedChanges: false });
-        setNotice("Opened the workspace");
+        send({ type: "openSucceeded", summary, fileName: name });
       } catch (caught) {
-        setError(describeFailure(caught));
-      } finally {
-        setBusy(null);
+        send({ type: "openFailed", message: describeFailure(caught) });
       }
     },
-    [client],
+    [client, send],
   );
 
-  // The work an Open does once it is allowed to. The hidden file input below is
-  // reachable only from here, so guarding this entry point guards every way a
-  // visitor can replace the workspace with a file.
-  const startOpen = useCallback(async () => {
+  // The work an Open does once the model has allowed it. The hidden file input
+  // below is reachable only from here, so guarding the click that leads here
+  // guards every way a visitor can replace the workspace with a file.
+  const runOpenFile = useCallback(async () => {
     const picker = fileSystemWindow().showOpenFilePicker;
     if (picker === undefined) {
       // No File System Access API: fall back to the file input, whose change
-      // handler continues the open.
+      // handler continues the open. Nothing is in flight until it reports one,
+      // because a file input that the visitor closes reports nothing at all.
       fallbackInputRef.current?.click();
       return;
     }
@@ -276,7 +311,7 @@ export function WorkspaceTool() {
       if (isAbort(caught)) {
         return;
       }
-      setError(describeFailure(caught));
+      send({ type: "openPickerFailed", message: describeFailure(caught) });
       return;
     }
     if (handle === undefined) {
@@ -284,20 +319,20 @@ export function WorkspaceTool() {
     }
     const chosen = handle;
     // A picker grants a writable handle, so a later Save writes back in place.
-    await openWorkspace(async () => {
+    await runOpen(async () => {
       const file = await chosen.getFile();
       return {
         name: file.name,
         bytes: new Uint8Array(await file.arrayBuffer()),
       };
     }, chosen);
-  }, [openWorkspace]);
+  }, [runOpen, send]);
 
   const onFallbackFiles = useCallback(
     (files: readonly File[]) => {
       // A file input alone grants no write handle, so a later Save downloads a
       // copy, or offers Save as where the browser supports it.
-      void openWorkspace(async () => {
+      void runOpen(async () => {
         const [first] = await readUploads(files, WORKSPACE_FILES.accepts);
         if (first === undefined) {
           throw new Error(
@@ -307,62 +342,67 @@ export function WorkspaceTool() {
         return first;
       }, null);
     },
-    [openWorkspace],
+    [runOpen],
   );
 
-  const hasUnsavedChanges = workspace?.unsavedChanges === true;
+  // Serialize once, then route the bytes to the right destination. Which of the
+  // three it reaches cannot be known at the click, so the mode is what the
+  // state carries and the destination is what comes back.
+  const runSave = useCallback(
+    async (how: SaveMode) => {
+      try {
+        const bytes = await client().serialize();
+        const existing = handleRef.current;
+        const saveAs = fileSystemWindow().showSaveFilePicker;
+        const suggested =
+          stateRef.current.held?.fileName ?? DEFAULT_WORKSPACE_NAME;
 
-  /**
-   * Whether there is anything to lose by leaving or replacing the workspace.
-   *
-   * Two conditions, one answer, because the guards below all ask the same
-   * question and any of them keyed on only half of it is a hole. Unsaved
-   * changes are the obvious half. The other is an import that has not come
-   * back: it is the one command whose result exists nowhere else, so leaving
-   * mid-import destroys work that was never anywhere but this tab.
-   *
-   * The other busy states are deliberately not held. Creating and opening have
-   * nothing to lose yet, reading a file to describe it touches no workspace,
-   * and a save is already covered because the unsaved flag stays set until its
-   * write resolves. Holding those would put a warning in front of a visitor who
-   * has nothing at stake, which is how a warning stops being read.
-   */
-  const mustHold = hasUnsavedChanges || busy === "importing";
+        // Save writes back in place when a handle is already held.
+        if (how === "save" && existing !== null) {
+          await writeToHandle(existing, bytes);
+          // Reported here rather than beside the serialize above: the bytes
+          // only reach the file once the write resolves, and a write that
+          // throws has to leave the workspace unsaved.
+          send({ type: "saveSucceeded", destination: "inPlace" });
+          return;
+        }
 
-  // The question exists only while its reason does. A save made while it is on
-  // screen, or an import that fails after a link was held, answers it by
-  // removing what it was about; left standing it would reappear at the next
-  // change, asking about something that already happened. Adjusted during
-  // render, which is React's own pattern for state that follows another value:
-  // an effect would show the stale question for a frame first.
-  const [heldFor, setHeldFor] = useState(mustHold);
-  if (heldFor !== mustHold) {
-    setHeldFor(mustHold);
-    if (!mustHold && pending !== null) {
-      setPending(null);
-    }
-  }
+        // Otherwise ask for a destination where the API is available: this both
+        // handles Save as and gives a first Save somewhere to write.
+        if (saveAs !== undefined) {
+          let handle: WorkspaceFileHandle;
+          try {
+            handle = await saveAs({
+              suggestedName: suggested,
+              types: PICKER_TYPES,
+            });
+          } catch (caught) {
+            if (isAbort(caught)) {
+              send({ type: "saveDismissed" });
+              return;
+            }
+            throw caught;
+          }
+          await writeToHandle(handle, bytes);
+          handleRef.current = handle;
+          send({
+            type: "saveSucceeded",
+            destination: "saveAs",
+            fileName: handle.name,
+          });
+          return;
+        }
 
-  // Both entry points that replace the held workspace go through here, so a
-  // mutating feature added later inherits the guard by doing nothing.
-  const replaceWorkspace = useCallback(
-    (kind: "new" | "open") => {
-      if (mustHold) {
-        setPending({ kind });
-        return;
+        // No File System Access API anywhere: download a copy.
+        saveBinaryFile(bytes, suggested, WORKSPACE_MEDIA_TYPE);
+        send({ type: "saveSucceeded", destination: "download" });
+      } catch (caught) {
+        send({ type: "saveFailed", message: describeFailure(caught) });
       }
-      void (kind === "new" ? startNew() : startOpen());
     },
-    [mustHold, startNew, startOpen],
+    [client, send],
   );
 
-  /**
-   * Do the thing the visitor has just accepted losing the workspace for.
-   *
-   * Leaving clears the flag first, because the visitor has answered the
-   * question: keeping it set would arm `beforeunload` and ask them a second
-   * time, in the browser's own words, for the navigation they just approved.
-   */
   /**
    * Leave this page, retiring the spare history entries the Back guard pushed.
    *
@@ -377,9 +417,7 @@ export function WorkspaceTool() {
    * back over the spares and this page together.
    */
   const leaveFor = useCallback(
-    (href: string | null) => {
-      const spares = spareEntriesRef.current;
-      spareEntriesRef.current = 0;
+    (href: string | null, spares: number) => {
       if (href === null) {
         window.history.go(-(spares + 1));
         return;
@@ -398,52 +436,127 @@ export function WorkspaceTool() {
     [router],
   );
 
-  const onConfirmAction = useCallback(() => {
-    const action = pending;
-    setPending(null);
-    if (action === null) {
-      return;
-    }
-    if (action.kind === "new") {
-      void startNew();
-      return;
-    }
-    if (action.kind === "open") {
-      void startOpen();
-      return;
-    }
-    setWorkspace((previous) =>
-      previous === null ? previous : { ...previous, unsavedChanges: false },
-    );
-    leaveFor(action.href);
-  }, [leaveFor, pending, startNew, startOpen]);
-
   /**
-   * Record that the held workspace no longer matches its file.
-   *
-   * Every command that changes the workspace reports through here: import calls
-   * it below with the summary it got back, and the record grid's cell edits call
-   * it the same way when they land, with or without a summary. One flag, one
-   * place that sets it, so a second mutating feature cannot arrive with a second
-   * idea of what unsaved means.
+   * Push somewhere harmless for a Back press to land, and record that it is
+   * there. What the page believes about history comes from what happened to
+   * history, never from what the guard was doing at the time.
    */
-  const markChanged = useCallback<MarkWorkspaceChanged>((summary) => {
-    setWorkspace((previous) =>
-      previous === null
-        ? previous
-        : {
-            ...previous,
-            summary: summary ?? previous.summary,
-            unsavedChanges: true,
-          },
-    );
-  }, []);
+  const armSpare = useCallback(() => {
+    // Next's router keeps its own state on the entry, so the copy carries it
+    // rather than a null that the router would not recognise on the way back.
+    window.history.pushState(window.history.state, "", window.location.href);
+    send({ type: "historySpareArmed" });
+  }, [send]);
+
+  /** Do what the model asked for, and nothing it did not. */
+  const perform = useCallback(
+    (effect: WorkspaceEffect | null) => {
+      if (effect === null) {
+        return;
+      }
+      switch (effect.kind) {
+        case "create":
+          void runCreate();
+          return;
+        case "openFile":
+          void runOpenFile();
+          return;
+        case "save":
+          void runSave(effect.how);
+          return;
+        case "leave":
+          leaveFor(effect.href, effect.spares);
+          return;
+        case "armHistoryEntry":
+          armSpare();
+          return;
+        case "holdNavigation":
+          // Taking the click over is the caller's to do, inside the event.
+          return;
+        default: {
+          // Not a runtime path: every effect above returns, and this is what
+          // makes an effect added to the model without a home here a type
+          // error rather than a click that quietly does nothing.
+          const unhandled: never = effect;
+          return unhandled;
+        }
+      }
+    },
+    [armSpare, leaveFor, runCreate, runOpenFile, runSave],
+  );
+
+  /** The common case: move the state and do what that asked for. */
+  const dispatch = useCallback(
+    (event: WorkspaceEvent) => {
+      perform(send(event));
+    },
+    [perform, send],
+  );
+
+  // One stable reporter per thing a section can report.
+  //
+  // They go through `send` rather than `dispatch`, which matters twice. It is
+  // what makes them depend on nothing (`send` is created once), and the grid
+  // releases what it holds in an unmount cleanup keyed on `onDetached`: a
+  // reporter whose identity moved would run that cleanup mid-life, releasing a
+  // hold for work still on screen and rebuilding the grid under an open editor.
+  // And it is honest about the model, which asks the page to do nothing for any
+  // of these; a unit test holds that true, so an effect cannot be dropped here
+  // by a later change without the test failing.
+  const onReading = useCallback(
+    () => send({ type: "importFileChosen" }),
+    [send],
+  );
+  const onReadFinished = useCallback(
+    () => send({ type: "importReadFinished" }),
+    [send],
+  );
+  const onRunning = useCallback(() => send({ type: "importClicked" }), [send]);
+  const onImported = useCallback(
+    (summary: WorkspaceSummary, notice: string) =>
+      send({ type: "importSucceeded", summary, notice }),
+    [send],
+  );
+  const onImportFailed = useCallback(
+    () => send({ type: "importFailed" }),
+    [send],
+  );
+  const onEditorOpened = useCallback<ReportEditorOpened>(
+    () => send({ type: "editorOpened" }),
+    [send],
+  );
+  const onEditorClosed = useCallback<ReportEditorClosed>(
+    (byTeardown) => send({ type: "editorClosed", byTeardown }),
+    [send],
+  );
+  const onEditSent = useCallback<ReportEditSent>(
+    () => send({ type: "editSent" }),
+    [send],
+  );
+  const onEditSettled = useCallback<ReportEditSettled>(
+    (accepted) => send({ type: "editSettled", accepted }),
+    [send],
+  );
+  const onDetached = useCallback<ReportGridDetached>(
+    () => send({ type: "gridDetached" }),
+    [send],
+  );
+
+  const holding = unloadGuardInstalled(state);
 
   // Warn before the tab closes, reloads, or leaves for another site. This is
   // the browser's own dialog and the only guard available for those, but it
   // covers none of the ways of leaving that stay inside the app.
+  //
+  // Attached on the rendered answer rather than read at fire time, which is
+  // deliberate. Unload cannot be reached in the same tick as a cell edit,
+  // because closing or reloading is a gesture on the browser's own chrome
+  // rather than a click on this page, and any later task sees the state already
+  // rendered. Keeping the listener off a clean workspace is worth more than
+  // covering a case that cannot happen: a page that always carries one gives up
+  // the browser's back-forward cache.
   useEffect(() => {
-    if (!mustHold) {
+    if (!holding) {
       return;
     }
     const warn = (event: BeforeUnloadEvent): void => {
@@ -454,7 +567,7 @@ export function WorkspaceTool() {
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [mustHold]);
+  }, [holding]);
 
   /**
    * Hold a link out of the page until the visitor has answered for the
@@ -465,9 +578,10 @@ export function WorkspaceTool() {
    * and the database with it. Catching the click in the capture phase is what
    * makes the guard run before any of that can start: the router's own handler
    * never sees the event, so there is nothing to undo afterward. Only a plain
-   * left click on a same-origin link that actually leaves this page is held; a
-   * modified click, a new tab, a download, and a jump to an anchor on this page
-   * are all left alone, because none of them lose the workspace.
+   * left click on a same-origin link that actually leaves this page is offered
+   * to the model; a modified click, a new tab, a download, and a jump to an
+   * anchor on this page are all left alone, because none of them lose the
+   * workspace.
    *
    * The listener lives for the whole page rather than only while the guard is
    * armed, for the reason the Back observer does: a link followed after a save
@@ -506,27 +620,21 @@ export function WorkspaceTool() {
       ) {
         return;
       }
-      if (mustHoldRef.current) {
-        event.preventDefault();
-        event.stopPropagation();
-        setPending({ kind: "leave", href: destination.href });
-        return;
-      }
-      if (spareEntriesRef.current === 0) {
+      const effect = send({ type: "linkClicked", href: destination.href });
+      if (effect === null) {
         // Nothing at stake and nothing to retire: the router's own handling is
         // exactly right, so it is left alone.
         return;
       }
-      // Nothing at stake, but a spare from an earlier change is still in the
-      // history. A save clears the flag and cannot remove that entry, so the
-      // clean way out has to retire it or inherit the phantom.
+      // The model took the click over, either to ask about it or to retire a
+      // spare entry on the way out. Either way the browser must not follow it.
       event.preventDefault();
       event.stopPropagation();
-      leaveFor(destination.href);
+      perform(effect);
     };
     document.addEventListener("click", hold, true);
     return () => document.removeEventListener("click", hold, true);
-  }, [leaveFor]);
+  }, [perform, send]);
 
   /**
    * Hold the Back button the same way.
@@ -535,49 +643,48 @@ export function WorkspaceTool() {
    * is to have somewhere harmless for it to land: a spare history entry for
    * this same page, which the first Back press consumes without changing the
    * route. The trade is one Back press that appears to do nothing, in a session
-   * that had something at stake, against losing that work outright.
+   * that had something at stake, against losing that work outright. A press
+   * with nothing at stake is not spent on nothing: the model retires what is
+   * left and lets the navigation through.
    *
-   * Two things keep the bookkeeping honest. The listener is installed for the
-   * life of the page rather than while the guard is armed, so a press that
-   * happens between arming and re-arming is still counted: what the page
-   * believes about history comes from what happened to history, never from what
-   * the guard was doing at the time. And it counts entries rather than holding a
-   * flag, so a press while the question is already showing is caught too, and
-   * answering it steps back over exactly the spares that were pushed.
+   * The listener is installed for the life of the page rather than while the
+   * guard is armed, so a press that happens between arming and re-arming is
+   * still counted: what the page believes about history comes from what
+   * happened to history, never from what the guard was doing at the time.
    */
   useEffect(() => {
     const observed = (): void => {
-      if (spareEntriesRef.current === 0) {
-        // Not one of ours: the visitor is leaving a page we never armed.
-        return;
-      }
-      spareEntriesRef.current -= 1;
-      if (!mustHoldRef.current) {
-        // Nothing at stake, so the press was simply spent. Whether the page
-        // stays or goes from here is the browser's business.
-        return;
-      }
-      // Re-arm before asking, so a second press while the question is up lands
-      // somewhere harmless too.
-      window.history.pushState(window.history.state, "", window.location.href);
-      spareEntriesRef.current += 1;
-      setPending({ kind: "leave", href: null });
+      dispatch({ type: "backPressed" });
     };
     window.addEventListener("popstate", observed);
     return () => window.removeEventListener("popstate", observed);
-  }, []);
+  }, [dispatch]);
 
-  // The observer above outlives every render, so it reads the condition from a
-  // ref rather than closing over a stale copy of it.
+  /**
+   * Notice the page coming back from the browser's back-forward cache.
+   *
+   * A confirmed leave puts the page into `leaving`, where every event is
+   * ignored so that a worker reply arriving during the navigation cannot put
+   * back the hold the visitor has just released. A tab restored by Forward
+   * comes back with that state intact and would be a page that answers nothing,
+   * so the restore is an event like any other and ends it.
+   */
   useEffect(() => {
-    mustHoldRef.current = mustHold;
-  }, [mustHold]);
+    const restored = (event: PageTransitionEvent): void => {
+      if (event.persisted) {
+        dispatch({ type: "pageRestored" });
+      }
+    };
+    window.addEventListener("pageshow", restored);
+    return () => window.removeEventListener("pageshow", restored);
+  }, [dispatch]);
 
   // Arm whenever there is something to lose and no spare entry is held, which
   // covers both the first change and a change made after an earlier spare was
   // spent.
+  const needsSpare = shouldArmHistorySpare(state);
   useEffect(() => {
-    if (!mustHold || spareEntriesRef.current > 0) {
+    if (!needsSpare) {
       return;
     }
     // Nothing below this page means Back cannot leave it, so there is nothing
@@ -586,113 +693,21 @@ export function WorkspaceTool() {
     if (window.history.length <= 1) {
       return;
     }
-    // Next's router keeps its own state on the entry, so the copy carries it
-    // rather than a null that the router would not recognise on the way back.
-    window.history.pushState(window.history.state, "", window.location.href);
-    spareEntriesRef.current += 1;
-  }, [mustHold]);
+    armSpare();
+  }, [armSpare, needsSpare]);
 
-  // Serialize once, then route the bytes to the right destination.
-  const saveWith = useCallback(
-    async (mode: "save" | "saveAs") => {
-      setBusy("saving");
-      setError(null);
-      setNotice(null);
-      try {
-        const bytes = await client().serialize();
-        const existing = handleRef.current;
-        const saveAs = fileSystemWindow().showSaveFilePicker;
-
-        // Save writes back in place when a handle is already held.
-        if (mode === "save" && existing !== null) {
-          await writeToHandle(existing, bytes);
-          // Cleared here rather than beside the serialize above: the bytes only
-          // reach the file once the write resolves, and a write that throws has
-          // to leave the workspace unsaved.
-          setWorkspace((previous) =>
-            previous === null
-              ? previous
-              : { ...previous, unsavedChanges: false },
-          );
-          setNotice("Saved to the workspace file");
-          return;
-        }
-
-        // Otherwise ask for a destination where the API is available: this both
-        // handles Save as and gives a first Save somewhere to write.
-        if (saveAs !== undefined) {
-          let handle: WorkspaceFileHandle;
-          try {
-            handle = await saveAs({
-              suggestedName: workspace?.fileName ?? DEFAULT_WORKSPACE_NAME,
-              types: PICKER_TYPES,
-            });
-          } catch (caught) {
-            if (isAbort(caught)) {
-              return;
-            }
-            throw caught;
-          }
-          await writeToHandle(handle, bytes);
-          handleRef.current = handle;
-          setWorkspace((previous) =>
-            previous === null
-              ? previous
-              : { ...previous, fileName: handle.name, unsavedChanges: false },
-          );
-          setNotice("Saved to the workspace file");
-          return;
-        }
-
-        // No File System Access API anywhere: download a copy.
-        saveBinaryFile(
-          bytes,
-          workspace?.fileName ?? DEFAULT_WORKSPACE_NAME,
-          WORKSPACE_MEDIA_TYPE,
-        );
-        // A download hands the bytes to the browser and the page never learns
-        // where they landed, so this is the strongest signal this surface
-        // offers. Treating it as unsaved forever would make the guard fire on
-        // every New in a browser without the File System Access API, which
-        // teaches people to dismiss it.
-        setWorkspace((previous) =>
-          previous === null ? previous : { ...previous, unsavedChanges: false },
-        );
-        setNotice("Downloaded a copy of the workspace");
-      } catch (caught) {
-        setError(describeFailure(caught));
-      } finally {
-        setBusy(null);
-      }
-    },
-    [client, workspace],
-  );
-
-  // Import replaces the summary wholesale, so the table listing above always
-  // reflects what the worker now holds rather than a count kept in step by hand,
-  // and it marks the workspace changed through the shared marker.
-  const onImported = useCallback(
-    (summary: WorkspaceSummary, imported: string) => {
-      markChanged(summary);
-      setError(null);
-      setNotice(imported);
-    },
-    [markChanged],
-  );
-
-  const isBusy = busy !== null;
-  const hasWorkspace = workspace !== null;
-  // Derived rather than stored, so a save made while the question is on screen
-  // answers it: the reason to ask is gone, so the asking goes with it.
-  // `pending` is cleared the moment its reason goes, so holding one is the
-  // whole condition rather than half of it.
-  const confirming = pending !== null;
+  const workspace = state.held;
+  const question = questionView(state);
+  const enabled = commandsEnabled(state);
+  const busy = workspaceBusy(state);
+  const spinning = spinningButton(state);
+  const announcement = state.announcement;
 
   return (
     <ToolShell
       description="Start a workspace in this tab, or open one you saved before, import a worksheet or a .csv file into it, then save it back to a single file. The workspace is an in-memory database that never leaves your browser"
-      guideHref="/docs/libraries#build-a-local-database"
-      guideLabel="Read about the local database"
+      guideHref="/docs/tools/data-workspace"
+      guideLabel="Read the workspace guide"
       kicker="Online tool · Data workspace"
       title="Data workspace"
     >
@@ -710,11 +725,11 @@ export function WorkspaceTool() {
           <button
             className={primaryButtonClass}
             data-testid="workspace-new"
-            disabled={isBusy}
-            onClick={() => replaceWorkspace("new")}
+            disabled={!enabled}
+            onClick={() => dispatch({ type: "newClicked" })}
             type="button"
           >
-            {busy === "creating" ? (
+            {spinning === "new" ? (
               <LoaderCircle
                 aria-hidden="true"
                 className="size-4 animate-spin"
@@ -727,11 +742,11 @@ export function WorkspaceTool() {
           <button
             className={secondaryButtonClass}
             data-testid="workspace-open"
-            disabled={isBusy}
-            onClick={() => replaceWorkspace("open")}
+            disabled={!enabled}
+            onClick={() => dispatch({ type: "openClicked" })}
             type="button"
           >
-            {busy === "opening" ? (
+            {spinning === "open" ? (
               <LoaderCircle
                 aria-hidden="true"
                 className="size-4 animate-spin"
@@ -760,7 +775,7 @@ export function WorkspaceTool() {
         </div>
       </section>
 
-      {confirming ? (
+      {question !== null ? (
         <section
           aria-live="assertive"
           className={`${sectionClass} border-fd-primary/60`}
@@ -772,37 +787,29 @@ export function WorkspaceTool() {
               className="size-5 shrink-0 text-fd-primary"
             />
             <h2 className="text-xl font-bold tracking-[-0.03em]">
-              Unsaved changes
+              {question.heading}
             </h2>
           </div>
           <p className="mt-3 text-sm text-fd-muted-foreground">
-            {hasUnsavedChanges
-              ? "This workspace has changes that have not been saved to a file."
-              : "An import is still running."}{" "}
-            {pending?.kind === "new"
-              ? "Starting a new workspace replaces this one"
-              : pending?.kind === "open"
-                ? "Opening another workspace replaces this one"
-                : "Leaving this page closes the workspace"}
-            , and that work is gone
+            {/* Derived from the same state the hold decision was made from, so
+                the sentence cannot describe a different one. */}
+            {question.sentence} {question.consequence}, and that work is gone
           </p>
           <div className="mt-5 flex flex-wrap gap-3">
             <button
               className={secondaryButtonClass}
               data-testid="workspace-confirm-discard"
-              disabled={isBusy}
-              onClick={onConfirmAction}
+              disabled={!enabled}
+              onClick={() => dispatch({ type: "confirmClicked" })}
               type="button"
             >
-              {pending?.kind === "leave"
-                ? "Discard the changes and leave"
-                : "Discard the changes and continue"}
+              {question.confirmLabel}
             </button>
             <button
               className={primaryButtonClass}
               data-testid="workspace-confirm-cancel"
-              disabled={isBusy}
-              onClick={() => setPending(null)}
+              disabled={!enabled}
+              onClick={() => dispatch({ type: "cancelClicked" })}
               type="button"
             >
               Keep this workspace
@@ -811,7 +818,7 @@ export function WorkspaceTool() {
         </section>
       ) : null}
 
-      {hasWorkspace ? (
+      {workspace !== null ? (
         <section className={sectionClass} data-testid="workspace-summary">
           <div className="flex items-center gap-2">
             <Database
@@ -918,11 +925,11 @@ export function WorkspaceTool() {
             <button
               className={primaryButtonClass}
               data-testid="workspace-save"
-              disabled={isBusy}
-              onClick={() => void saveWith("save")}
+              disabled={!enabled}
+              onClick={() => dispatch({ type: "saveClicked", how: "save" })}
               type="button"
             >
-              {busy === "saving" ? (
+              {spinning === "save" ? (
                 <LoaderCircle
                   aria-hidden="true"
                   className="size-4 animate-spin"
@@ -935,11 +942,18 @@ export function WorkspaceTool() {
             <button
               className={secondaryButtonClass}
               data-testid="workspace-save-as"
-              disabled={isBusy}
-              onClick={() => void saveWith("saveAs")}
+              disabled={!enabled}
+              onClick={() => dispatch({ type: "saveClicked", how: "saveAs" })}
               type="button"
             >
-              <Download aria-hidden="true" className="size-4" />
+              {spinning === "saveAs" ? (
+                <LoaderCircle
+                  aria-hidden="true"
+                  className="size-4 animate-spin"
+                />
+              ) : (
+                <Download aria-hidden="true" className="size-4" />
+              )}
               Save as
             </button>
           </div>
@@ -956,36 +970,59 @@ export function WorkspaceTool() {
       {/* Import mounts as its own section so the two files stay independent:
           everything the flow needs lives in workspace-import.tsx and only the
           new workspace summary comes back here. */}
-      {hasWorkspace ? (
+      {workspace !== null ? (
         <WorkspaceImport
           busy={busy}
           client={client}
           existingTableNames={workspace.summary.tables.map(
             (table) => table.name,
           )}
-          onBusy={setBusy}
+          onFailed={onImportFailed}
           onImported={onImported}
+          onReadFinished={onReadFinished}
+          onReading={onReading}
+          onRunning={onRunning}
         />
       ) : null}
 
-      {notice ? (
+      {/* The grid keeps no flag the shell already keeps: which tables exist and
+          which database they belong to are both read from the summary, editing
+          is locked by the one derived answer, and its edits and its teardown
+          are reported as events. It does keep its own refusals, because those
+          belong to the cells they name rather than to the page, and a slot
+          shared with this component's own failures is one each would clear from
+          under the other. */}
+      {workspace !== null ? (
+        <WorkspaceGrid
+          getClient={client}
+          locked={editingLocked(state)}
+          onDetached={onDetached}
+          onEditorClosed={onEditorClosed}
+          onEditorOpened={onEditorOpened}
+          onEditSent={onEditSent}
+          onEditSettled={onEditSettled}
+          summary={workspace.summary}
+        />
+      ) : null}
+
+      {announcement?.kind === "notice" ? (
         <p
           aria-live="polite"
           className="rounded-lg border border-fd-primary/40 bg-fd-accent/30 px-4 py-3 text-sm text-fd-accent-foreground"
           data-testid="workspace-notice"
           role="status"
         >
-          {notice}
+          {announcement.text}
         </p>
       ) : null}
 
-      {error ? (
+      {announcement?.kind === "error" ? (
         <pre
           aria-live="polite"
           className="overflow-x-auto whitespace-pre-wrap rounded-lg border border-fd-primary/40 bg-fd-accent/30 px-4 py-3 text-xs leading-6 text-fd-accent-foreground"
           data-testid="workspace-error"
         >
-          {error}
+          {announcement.text}
         </pre>
       ) : null}
     </ToolShell>

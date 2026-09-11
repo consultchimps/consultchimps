@@ -11,6 +11,7 @@
     "excel-preservation",
     "powerpoint-populate",
     "pdf-split",
-    "pdf-merge"
+    "pdf-merge",
+    "data-workspace"
   ]
 }

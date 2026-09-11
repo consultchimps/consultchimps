@@ -15,16 +15,36 @@
  * wasm from our own origin, never a CDN, is the local-first rule in
  * docs/adr/0003 Decision 2.
  */
-import { Database, importTables } from "@consultchimps/db";
+import {
+  Database,
+  identifierKey,
+  importTables,
+  sameIdentifier,
+  updateRecords,
+  RECORD_ID_COLUMN,
+  type TableSchema,
+} from "@consultchimps/db";
 import { ConsultChimpsError, isConsultChimpsError } from "@consultchimps/core";
+import type { CellValue } from "@consultchimps/tabular";
 
 import type { WorkspaceImportKind } from "@/lib/accepted-files";
 import { basePath } from "@/lib/shared";
-import type {
-  ImportTableChoice,
-  WorkspaceCommand,
-  WorkspaceEvent,
-  WorkspaceSummary,
+import { HeldWorkspace } from "@/lib/workspace-generation";
+import { referenceLabel } from "@/lib/workspace-labels";
+import {
+  WORKSPACE_GESTURE_TOO_LARGE,
+  WORKSPACE_MAX_GESTURE_CELLS,
+  WORKSPACE_REFERENCE_LIMIT,
+  type ImportTableChoice,
+  type WorkspaceCellResult,
+  type WorkspaceCellWrite,
+  type WorkspaceColumn,
+  type WorkspaceCommand,
+  type WorkspaceEvent,
+  type WorkspaceReference,
+  type WorkspaceReferenceSource,
+  type WorkspaceSummary,
+  type WorkspaceTable,
 } from "@/lib/workspace-protocol";
 
 /**
@@ -45,12 +65,22 @@ const engineConfig = {
   locateFile: (file: string): string => `${basePath}/sql-wasm/${file}`,
 };
 
-/** The one workspace this worker owns, or null before the first create or open. */
-let database: Database | null = null;
+/**
+ * The one workspace this worker owns, and which one it is. Every grid read and
+ * write names a workspace and is checked against this, so a command posted
+ * before a create, open, close, or import and delivered after it is refused
+ * rather than applied to the database that took its place. The database is only
+ * reachable through this holder, so there is no way to change it without the
+ * generation moving with it. See `lib/workspace-generation.ts`.
+ */
+const held = new HeldWorkspace<Database>();
 
 function summarize(current: Database): WorkspaceSummary {
   const schema = current.getSchema();
   return {
+    // Read here rather than asked for separately, so the table listing and the
+    // generation a grid quotes back always describe the same database.
+    generation: held.generation,
     tableCount: schema.length,
     schemaFormatVersion: current.schemaFormatVersion(),
     // Counted in the engine rather than by reading the rows, so listing a large
@@ -68,28 +98,6 @@ function summarize(current: Database): WorkspaceSummary {
   };
 }
 
-// Every command that acts on a workspace needs one to be open, and says so the
-// same way.
-function requireDatabase(): Database {
-  if (database === null) {
-    throw new ConsultChimpsError(
-      "WORKSPACE_NONE_OPEN",
-      "There is no workspace open yet. Start a new workspace or open one first.",
-    );
-  }
-  return database;
-}
-
-// Replace the held workspace, closing the previous one first so its sql.js
-// allocation is never orphaned. Assigned only after the new database is built,
-// so a failed open leaves the previous workspace untouched.
-function replaceDatabase(next: Database): void {
-  if (database !== null) {
-    database.close();
-  }
-  database = next;
-}
-
 function reportError(id: number, error: unknown): void {
   scope.postMessage({
     type: "error",
@@ -104,19 +112,19 @@ function reportError(id: number, error: unknown): void {
 
 async function handleCreate(id: number): Promise<void> {
   const created = await Database.create(engineConfig);
-  replaceDatabase(created);
+  held.replace(created);
   scope.postMessage({ type: "ready", id, summary: summarize(created) });
 }
 
 async function handleOpen(id: number, buffer: ArrayBuffer): Promise<void> {
   // The buffer was transferred in, so this view owns it outright.
   const opened = await Database.open(new Uint8Array(buffer), engineConfig);
-  replaceDatabase(opened);
+  held.replace(opened);
   scope.postMessage({ type: "ready", id, summary: summarize(opened) });
 }
 
 function handleSerialize(id: number): void {
-  const bytes = requireDatabase().serialize();
+  const bytes = held.require().serialize();
   // Copy into an exactly sized buffer so the transfer moves only the workspace
   // bytes, never a larger pool the view might sit inside, and so the worker's
   // own database keeps a live buffer to serialize again.
@@ -127,10 +135,7 @@ function handleSerialize(id: number): void {
 }
 
 function handleClose(id: number): void {
-  if (database !== null) {
-    database.close();
-    database = null;
-  }
+  held.release();
   scope.postMessage({ type: "closed", id });
 }
 
@@ -147,7 +152,7 @@ async function handleDescribeImport(
 ): Promise<void> {
   // Describing a file touches no workspace, but the page only offers it once
   // one is open, and refusing here keeps that promise true whatever calls it.
-  requireDatabase();
+  held.require();
   const { describeImportSources } = await import("@/lib/workspace-import-file");
   const sources = await describeImportSources(
     fileName,
@@ -164,7 +169,7 @@ async function handleImport(
   buffer: ArrayBuffer,
   tables: readonly ImportTableChoice[],
 ): Promise<void> {
-  const current = requireDatabase();
+  const current = held.require();
   const { resolveImportRequests } = await import("@/lib/workspace-import-file");
   const requests = await resolveImportRequests(
     fileName,
@@ -175,6 +180,13 @@ async function handleImport(
   // One call for every chosen table, so a failure part way through leaves the
   // workspace exactly as it was rather than half imported.
   const imported = importTables(current, requests);
+  // The database now holds tables a grid opened before this import never saw,
+  // and its snapshot of the rows it does show may be short of imported ones.
+  // Recording the change here is what makes that snapshot stale rather than
+  // merely out of date: the worker refuses its edits, and the new summary sends
+  // the grid back for a fresh read. It runs only once the import has succeeded,
+  // so a refused import leaves every open grid still valid.
+  held.changed();
   scope.postMessage({
     type: "imported",
     id,
@@ -189,6 +201,222 @@ async function handleImport(
       renamedColumns: table.renamedColumns,
     })),
   });
+}
+
+/* -------------------------------------------------------------------------
+ * Record grid
+ *
+ * The grid holds rows, never a database, so every read and every write it makes
+ * lands here. Type enforcement is not repeated: an edit is handed to
+ * `Database.updateRecord`, which routes it through the one conversion point the
+ * library owns, and a value that does not fit the column comes back as a
+ * ConsultChimpsError the page can show.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The column of a table whose value names a record.
+ *
+ * A foreign-key column holds Record IDs, so it names nothing; the first
+ * ordinary text column is the readable one. Null when the table has none, and
+ * its records are then named by their Record ID alone.
+ */
+function labelColumnOf(schema: TableSchema): string | null {
+  const foreignKeyColumns = new Set(
+    schema.foreignKeys.map((foreignKey) => identifierKey(foreignKey.column)),
+  );
+  return (
+    schema.columns.find(
+      (column) =>
+        column.type === "text" &&
+        !foreignKeyColumns.has(identifierKey(column.name)),
+    )?.name ?? null
+  );
+}
+
+/**
+ * Where a foreign-key column's options come from. See `WorkspaceReferenceSource`
+ * for the rule; this is the half of it the worker owns.
+ *
+ * A table that refers to itself is not read at all: its rows are the ones being
+ * sent, and the grid keeps them live, so a snapshot here would be a second copy
+ * that goes stale the moment a record is renamed on screen.
+ */
+function referenceSource(
+  current: Database,
+  onScreen: TableSchema,
+  referencedTable: string,
+): WorkspaceReferenceSource {
+  if (sameIdentifier(referencedTable, onScreen.name)) {
+    return {
+      kind: "onScreen",
+      table: onScreen.name,
+      labelColumn: labelColumnOf(onScreen),
+    };
+  }
+  const schema = current.getTableSchema(referencedTable);
+  const labelColumn = labelColumnOf(schema);
+  // Read only the columns an option needs, and one record past the cap: that
+  // single extra row says whether the table holds more than is offered, without
+  // counting or materialising the rest of a large referenced table.
+  const rows = current.readRecords(schema.name, {
+    columns: labelColumn === null ? [] : [labelColumn],
+    limit: WORKSPACE_REFERENCE_LIMIT + 1,
+  });
+  const records = rows
+    .slice(0, WORKSPACE_REFERENCE_LIMIT)
+    .map((row): WorkspaceReference => {
+      const value = String(row[RECORD_ID_COLUMN]);
+      return {
+        value,
+        label: referenceLabel(
+          value,
+          labelColumn === null ? null : row[labelColumn],
+        ),
+      };
+    });
+  return {
+    kind: "snapshot",
+    table: schema.name,
+    labelColumn,
+    records,
+    truncated: rows.length > records.length,
+  };
+}
+
+function handleReadTable(id: number, name: string, generation: number): void {
+  held.assertCurrent(generation, "read");
+  const current = held.require();
+  const schema = current.getTableSchema(name);
+  const referencedBy = new Map(
+    schema.foreignKeys.map((foreignKey) => [
+      identifierKey(foreignKey.column),
+      foreignKey.referencesTable,
+    ]),
+  );
+  // One lookup per referenced table, not per column, so two foreign keys onto
+  // the same table read it once.
+  const sourceByTable = new Map<string, WorkspaceReferenceSource>();
+  const columns = schema.columns.map((column): WorkspaceColumn => {
+    const referencesTable = referencedBy.get(identifierKey(column.name));
+    if (referencesTable === undefined) {
+      return {
+        name: column.name,
+        type: column.type,
+        nullable: column.nullable !== false,
+        references: null,
+      };
+    }
+    const key = identifierKey(referencesTable);
+    let source = sourceByTable.get(key);
+    if (source === undefined) {
+      source = referenceSource(current, schema, referencesTable);
+      sourceByTable.set(key, source);
+    }
+    return {
+      name: column.name,
+      type: column.type,
+      nullable: column.nullable !== false,
+      references: source,
+    };
+  });
+
+  const table: WorkspaceTable = {
+    generation: held.generation,
+    name: schema.name,
+    columns,
+    rows: current.readRecords(schema.name),
+  };
+  scope.postMessage({ type: "table", id, table });
+}
+
+function handleUpdateCell(
+  id: number,
+  generation: number,
+  table: string,
+  recordId: string,
+  column: string,
+  value: CellValue,
+): void {
+  // Before anything else: an edit made in a workspace that has since been
+  // replaced names a table and a Record ID that mean something different here,
+  // and the Record ID very likely exists in this database too. Refuse it rather
+  // than write it to whatever record happens to match.
+  held.assertCurrent(generation, "edit");
+  const current = held.require();
+  const updated = current.updateRecord(table, recordId, { [column]: value });
+  // Read the stored value back under the column name the schema declared, which
+  // is what updateRecord keys its reply by, whatever casing the grid sent.
+  const [stored] = Object.values(updated.values);
+  scope.postMessage({ type: "cellUpdated", id, value: stored ?? null });
+}
+
+/**
+ * Write many cells as one step: one paste, or one drag of the fill handle.
+ *
+ * The gesture is one transaction, so the cells the database accepts commit
+ * together rather than arriving one at a time, and each cell the database
+ * refuses is reported against itself rather than taking the rest of the gesture
+ * down with it. That split lives in `updateRecords`; the worker's part is the
+ * two guards that belong to the workspace rather than to a value, and they are
+ * both checked before anything is written.
+ */
+function handleUpdateCells(
+  id: number,
+  generation: number,
+  table: string,
+  writes: readonly WorkspaceCellWrite[],
+): void {
+  // The same rule every grid write follows: a gesture made in a workspace that
+  // has since been replaced names records that mean something else here.
+  held.assertCurrent(generation, "edit");
+  if (writes.length > WORKSPACE_MAX_GESTURE_CELLS) {
+    // Checked here as well as in the page, because a limit the worker does not
+    // enforce is a limit it cannot keep.
+    throw new ConsultChimpsError(
+      WORKSPACE_GESTURE_TOO_LARGE,
+      `That change covers ${String(writes.length)} cells, and one step applies at most ${String(WORKSPACE_MAX_GESTURE_CELLS)}, so nothing was changed. Try again with a smaller range.`,
+      { details: { cells: writes.length, limit: WORKSPACE_MAX_GESTURE_CELLS } },
+    );
+  }
+  const current = held.require();
+  // One request per cell rather than one per record: a record's columns batched
+  // together would have the first refused value refuse its neighbours, and the
+  // page explains a refusal against the cell it belongs to.
+  const outcomes = updateRecords(
+    current,
+    writes.map((write) => ({
+      table,
+      recordId: write.recordId,
+      values: { [write.column]: write.value },
+    })),
+  );
+  const results = writes.map((write, index): WorkspaceCellResult => {
+    const outcome = outcomes[index];
+    // There is one outcome per request, in order, so a missing one cannot
+    // happen. Answered rather than assumed, because the alternative to a
+    // sentence here would be reporting a write that never happened as accepted.
+    if (outcome === undefined || !outcome.accepted) {
+      return {
+        accepted: false,
+        recordId: write.recordId,
+        column: write.column,
+        message:
+          outcome?.message ?? "That cell was not written to the workspace.",
+        code: outcome?.code,
+      };
+    }
+    // One column per request, so the reply holds exactly one value. It is read
+    // positionally because updateRecord keys it by the column name the schema
+    // declared, which is not always the casing the grid sent.
+    const [stored] = Object.values(outcome.values);
+    return {
+      accepted: true,
+      recordId: write.recordId,
+      column: write.column,
+      value: stored ?? null,
+    };
+  });
+  scope.postMessage({ type: "cellsUpdated", id, results });
 }
 
 async function dispatch(command: WorkspaceCommand): Promise<void> {
@@ -215,6 +443,24 @@ async function dispatch(command: WorkspaceCommand): Promise<void> {
         command.kind,
         command.buffer,
         command.tables,
+      );
+    case "readTable":
+      return handleReadTable(command.id, command.name, command.generation);
+    case "updateCell":
+      return handleUpdateCell(
+        command.id,
+        command.generation,
+        command.table,
+        command.recordId,
+        command.column,
+        command.value,
+      );
+    case "updateCells":
+      return handleUpdateCells(
+        command.id,
+        command.generation,
+        command.table,
+        command.writes,
       );
   }
 }
