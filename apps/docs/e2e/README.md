@@ -91,6 +91,18 @@ command when `out/` is missing.
   the page before this one. Its workspace fixture is built in Node with
   `@consultchimps/db` and opened through the page's own file input, so the spec
   exercises the grid without waiting on import.
+- `workspace-grid-gestures.spec.ts`: the grid's spreadsheet gestures. A range
+  copied as the tab and CRLF text Excel reads, a block pasted back from a
+  Windows copy, a paste anchored on the last record refused whole because
+  records are not added by a paste, a number series and a date series and a
+  text-with-a-number series filled from the corner of a selection, a sideways
+  fill where one column takes the value and the whole-number column cannot (the
+  others accepted, that one left as it was and explained), a gesture naming a
+  workspace the worker does not hold refused whole with nothing written, and a
+  single click selecting where a double click edits. The clipboard is driven by
+  dispatching the browser's own copy and paste events with a `DataTransfer` on
+  them, rather than through the system clipboard, which needs permissions the
+  export never asks for.
 - `workspace-grid-theme.spec.ts`: the grid wearing the site's theme rather than
   Tabulator's hardcoded hex, in light mode and in dark. It checks the painted
   surfaces against the site's own tokens (the cell surface is the card token,
@@ -267,6 +279,14 @@ row carries `data-record-id` with its Record ID, and a cell carries
 column rather than by position. Editing a cell is retried as a whole
 interaction, because a grid that renders rows as they are needed can move an
 element under a click.
+
+An editor opens on a **double** click, not a single one: a single click selects
+the cell, because a drag from it selects a range. The fill handle on the corner
+of the selection is `workspace-fill-handle`; drag it with `page.mouse` rather
+than `dragTo`, so the drag passes over the cells between. A gesture refused
+before anything is sent (a paste past the last record, a disjoint selection, the
+Record ID as a target) reports into `workspace-grid-error` like any other
+refusal, against the cell the gesture started from.
 
 `createWorkbookUpload` accepts `{ formula }` in place of a cell value, which
 writes `<f>` with no `<v>`: a formula the workbook carries no calculated value

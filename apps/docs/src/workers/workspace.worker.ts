@@ -20,10 +20,11 @@ import {
   identifierKey,
   importTables,
   sameIdentifier,
+  updateRecords,
   RECORD_ID_COLUMN,
   type TableSchema,
 } from "@consultchimps/db";
-import { isConsultChimpsError } from "@consultchimps/core";
+import { ConsultChimpsError, isConsultChimpsError } from "@consultchimps/core";
 import type { CellValue } from "@consultchimps/tabular";
 
 import type { WorkspaceImportKind } from "@/lib/accepted-files";
@@ -31,8 +32,12 @@ import { basePath } from "@/lib/shared";
 import { HeldWorkspace } from "@/lib/workspace-generation";
 import { referenceLabel } from "@/lib/workspace-labels";
 import {
+  WORKSPACE_GESTURE_TOO_LARGE,
+  WORKSPACE_MAX_GESTURE_CELLS,
   WORKSPACE_REFERENCE_LIMIT,
   type ImportTableChoice,
+  type WorkspaceCellResult,
+  type WorkspaceCellWrite,
   type WorkspaceColumn,
   type WorkspaceCommand,
   type WorkspaceEvent,
@@ -345,6 +350,75 @@ function handleUpdateCell(
   scope.postMessage({ type: "cellUpdated", id, value: stored ?? null });
 }
 
+/**
+ * Write many cells as one step: one paste, or one drag of the fill handle.
+ *
+ * The gesture is one transaction, so the cells the database accepts commit
+ * together rather than arriving one at a time, and each cell the database
+ * refuses is reported against itself rather than taking the rest of the gesture
+ * down with it. That split lives in `updateRecords`; the worker's part is the
+ * two guards that belong to the workspace rather than to a value, and they are
+ * both checked before anything is written.
+ */
+function handleUpdateCells(
+  id: number,
+  generation: number,
+  table: string,
+  writes: readonly WorkspaceCellWrite[],
+): void {
+  // The same rule every grid write follows: a gesture made in a workspace that
+  // has since been replaced names records that mean something else here.
+  held.assertCurrent(generation, "edit");
+  if (writes.length > WORKSPACE_MAX_GESTURE_CELLS) {
+    // Checked here as well as in the page, because a limit the worker does not
+    // enforce is a limit it cannot keep.
+    throw new ConsultChimpsError(
+      WORKSPACE_GESTURE_TOO_LARGE,
+      `That change covers ${String(writes.length)} cells, and one step applies at most ${String(WORKSPACE_MAX_GESTURE_CELLS)}, so nothing was changed. Try again with a smaller range.`,
+      { details: { cells: writes.length, limit: WORKSPACE_MAX_GESTURE_CELLS } },
+    );
+  }
+  const current = held.require();
+  // One request per cell rather than one per record: a record's columns batched
+  // together would have the first refused value refuse its neighbours, and the
+  // page explains a refusal against the cell it belongs to.
+  const outcomes = updateRecords(
+    current,
+    writes.map((write) => ({
+      table,
+      recordId: write.recordId,
+      values: { [write.column]: write.value },
+    })),
+  );
+  const results = writes.map((write, index): WorkspaceCellResult => {
+    const outcome = outcomes[index];
+    // There is one outcome per request, in order, so a missing one cannot
+    // happen. Answered rather than assumed, because the alternative to a
+    // sentence here would be reporting a write that never happened as accepted.
+    if (outcome === undefined || !outcome.accepted) {
+      return {
+        accepted: false,
+        recordId: write.recordId,
+        column: write.column,
+        message:
+          outcome?.message ?? "That cell was not written to the workspace.",
+        code: outcome?.code,
+      };
+    }
+    // One column per request, so the reply holds exactly one value. It is read
+    // positionally because updateRecord keys it by the column name the schema
+    // declared, which is not always the casing the grid sent.
+    const [stored] = Object.values(outcome.values);
+    return {
+      accepted: true,
+      recordId: write.recordId,
+      column: write.column,
+      value: stored ?? null,
+    };
+  });
+  scope.postMessage({ type: "cellsUpdated", id, results });
+}
+
 async function dispatch(command: WorkspaceCommand): Promise<void> {
   switch (command.type) {
     case "create":
@@ -380,6 +454,13 @@ async function dispatch(command: WorkspaceCommand): Promise<void> {
         command.recordId,
         command.column,
         command.value,
+      );
+    case "updateCells":
+      return handleUpdateCells(
+        command.id,
+        command.generation,
+        command.table,
+        command.writes,
       );
   }
 }

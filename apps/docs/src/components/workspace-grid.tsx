@@ -39,6 +39,42 @@
  * offers to change it. The library refuses the write too, and the database has
  * a trigger under that, which is what makes it true rather than merely
  * discouraged.
+ *
+ * ## The spreadsheet gestures
+ *
+ * Range selection, the clipboard, and the fill handle are the grid's Excel-grade
+ * half, and they follow one rule: a gesture is one movement, so it is one
+ * command. Every one of them is planned whole before anything is sent
+ * (`lib/workspace-gesture`), written by one batched `updateCells`
+ * (`lib/workspace-protocol`), and reported to the shell as exactly one
+ * `editSent` and one `editSettled`, because it is one unit of work in flight
+ * however many cells it covers.
+ *
+ * Three pieces of it are ours rather than Tabulator's, and each is here for a
+ * reason found in its source at 6.5.2 rather than by preference:
+ *
+ * - **The fill handle**, entirely: Tabulator has none, not even a copying one.
+ * - **The paste**, because its built-in `range` paste action writes through
+ *   `row.updateData`, which reaches cells by `setValueProcessData` and therefore
+ *   never dispatches `cellEdited`. The grid's only path to the database is
+ *   `cellEdited`, so that action would repaint the grid and save nothing. Ours
+ *   plans the block and sends the one command. Its built-in `range` paste parser
+ *   is not used either: it splits on "
+" and leaves the "
+" of a Windows copy
+ *   on the last field of every row.
+ * - **The copy**, because `generatePlainContent` quotes nothing, and a text
+ *   column here may hold a tab or a newline, so such a cell would corrupt the
+ *   clipboard exactly as the stray "
+" corrupts a paste. It also emits a header
+ *   row, which a range copy should not. Ours is `lib/workspace-tsv`, one grammar
+ *   read in both directions.
+ *
+ * Two Tabulator options are deliberately left off. `selectableRangeClearCells`
+ * would let Delete clear a range through `cell.setValue` per cell, which is one
+ * gesture becoming as many commands as it has cells. Header sorting is off
+ * because a header click now selects the column, and one click with two meanings
+ * is how a visitor loses a selection they were building.
  */
 
 import "tabulator-tables/dist/css/tabulator.min.css";
@@ -57,16 +93,35 @@ import type {
   ReportGridDetached,
 } from "@/components/workspace-tool";
 import {
+  attachFillHandle,
+  rangeRect,
+  type FillHandleDrag,
+} from "@/components/workspace-fill-handle";
+import {
   answerFailure,
+  answerFailures,
   cellKey,
   dismissFailures,
   failureReport,
   failuresAt,
+  gestureKey,
   NOTHING_REFUSED,
   recordFailure,
+  recordFailures,
   tableKey,
   type RecordedFailures,
 } from "@/lib/workspace-cell-errors";
+import {
+  busyRefusal,
+  ONE_RECTANGLE_ONLY,
+  planFill,
+  planPaste,
+  type GestureGrid,
+  type GestureKind,
+  type GestureRect,
+  type PlannedWrite,
+} from "@/lib/workspace-gesture";
+import { cellText, encodeTsv, parseTsv } from "@/lib/workspace-tsv";
 import { referenceLabel } from "@/lib/workspace-labels";
 import {
   WORKSPACE_REFERENCE_LIMIT,
@@ -76,7 +131,10 @@ import {
   type WorkspaceSummary,
   type WorkspaceTable,
 } from "@/lib/workspace-protocol";
-import type { WorkspaceClient } from "@/lib/workspace-worker";
+import type {
+  WorkspaceCellOutcome,
+  WorkspaceClient,
+} from "@/lib/workspace-worker";
 import { isConsultChimpsError } from "@consultchimps/core";
 import { RECORD_ID_COLUMN } from "@consultchimps/db";
 import type { CellValue, TableRow } from "@consultchimps/tabular";
@@ -87,6 +145,8 @@ import type {
   ColumnDefinition,
   Formatter,
   ListEditorParams,
+  Options,
+  RangeComponent,
   RowComponent,
   Tabulator,
 } from "tabulator-tables";
@@ -119,11 +179,6 @@ const titleElement: Formatter = (cell) =>
  */
 const labelElement = ((label: string) =>
   textElement(label)) as unknown as ListEditorParams["itemFormatter"];
-
-/** How a value reads in a cell when nothing prettier applies. */
-function asText(value: CellValue | undefined): string {
-  return value === null || value === undefined ? "" : String(value);
-}
 
 /**
  * The rows the grid is showing, as the database last confirmed them.
@@ -244,7 +299,7 @@ function gridColumn(
       })) as unknown as ColumnDefinition["editorParams"],
       formatter: (cell: CellComponent) => {
         const value = cell.getValue() as CellValue | undefined;
-        const text = asText(value);
+        const text = cellText(value);
         return textElement(text === "" ? "" : source.label(text));
       },
     };
@@ -287,6 +342,35 @@ function gridColumns(
     },
     ...table.columns.map((column) => gridColumn(column, editable, live)),
   ];
+}
+
+/**
+ * Tabulator's paste pipeline, wired to our own parser and our own action.
+ *
+ * Only the paste half of its clipboard is enabled: `clipboard: "paste"`
+ * registers the paste listener and leaves the copy to the listener this grid
+ * adds itself. The paste is worth keeping because of what surrounds it, the
+ * origin check that leaves a paste inside an open editor alone, not because of
+ * what it does with the text.
+ *
+ * Both functions are cast past the published types, which describe the parser as
+ * returning rows and the action as one of four names, while Tabulator accepts a
+ * function for either (`Clipboard.setPasteParser`, `setPasteAction`). The parser
+ * deliberately returns an object rather than an array: the clipboard module runs
+ * an array through the mutator module before handing it on, and a block of text
+ * is not row data for a mutator to touch.
+ */
+function pasteOptions(apply: (block: string[][]) => void): Partial<Options> {
+  return {
+    clipboard: "paste",
+    clipboardPasteParser: (text: string) => ({ block: parseTsv(text) }),
+    clipboardPasteAction: (parsed: { block: string[][] }) => {
+      apply(parsed.block);
+      // What Tabulator would report as the pasted rows. Ours are reported by the
+      // worker's reply instead, so there is nothing to hand back here.
+      return [];
+    },
+  } as unknown as Partial<Options>;
 }
 
 export interface WorkspaceGridProps {
@@ -378,6 +462,11 @@ export function WorkspaceGrid({
   summary,
 }: WorkspaceGridProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // The positioned element the fill handle and its outline live in. It has to be
+  // outside the grid's own element: Tabulator takes the element it is given as
+  // the table itself and lays out its children, so anything appended there is
+  // swept away when it builds.
+  const frameRef = useRef<HTMLDivElement | null>(null);
   // Read by Tabulator's editable callback whenever an editor is about to open,
   // so the lock takes effect without rebuilding the grid.
   const lockedRef = useRef(locked);
@@ -394,6 +483,15 @@ export function WorkspaceGrid({
   // workspace it happened in so a new one starts clean without anything having
   // to remember to clear it. See `lib/workspace-cell-errors`.
   const [recorded, setRecorded] = useState<RecordedFailures>(NOTHING_REFUSED);
+
+  // Read by a gesture, which has to know whether a cell it would fill from is
+  // one the database refused. A ref because the gesture handlers live in the
+  // effect that built the grid, where the state of a later render is not in
+  // scope, and it mirrors that state rather than being a second copy of it.
+  const recordedRef = useRef(recorded);
+  useEffect(() => {
+    recordedRef.current = recorded;
+  }, [recorded]);
 
   const generation = summary.generation;
   // The one table listing. An import adds to it and a new workspace replaces it,
@@ -506,13 +604,15 @@ export function WorkspaceGrid({
   // changes or the component unmounts.
   useEffect(() => {
     const element = containerRef.current;
-    if (data === null || element === null) {
+    const frame = frameRef.current;
+    if (data === null || element === null || frame === null) {
       return;
     }
 
     const client = getClient();
     let instance: Tabulator | null = null;
     let destroyed = false;
+    let detachHandle: (() => void) | null = null;
 
     // The last value the database confirmed for each record.
     //
@@ -525,7 +625,7 @@ export function WorkspaceGrid({
     // previous value would be wrong the moment two edits to one cell overlap:
     // the second one's "previous" is the first one's unstored text.
     const committed = new Map<string, TableRow>(
-      data.rows.map((row) => [asText(row[RECORD_ID_COLUMN]), { ...row }]),
+      data.rows.map((row) => [cellText(row[RECORD_ID_COLUMN]), { ...row }]),
     );
     // What a table referring to itself reads its labels from. `committed` is
     // insertion ordered, which is row order, and holds what the database
@@ -548,9 +648,14 @@ export function WorkspaceGrid({
     );
 
     // Edits are numbered per cell so a reply that has been overtaken by a newer
-    // edit to the same cell reports its outcome without touching the grid.
+    // edit to the same cell reports its outcome without touching the grid. A
+    // gesture stamps every cell it writes, so one cell of it can be overtaken
+    // without the others losing their answer.
     const latest = new Map<string, number>();
     let sequence = 0;
+    // A separator no identifier can hold, so two cells cannot share a key.
+    const editKey = (recordId: string, column: string): string =>
+      `${recordId}\u0000${column}`;
     // Putting a value back is itself a cell change, so the edit handler ignores
     // anything written while this is raised.
     let applying = 0;
@@ -622,8 +727,7 @@ export function WorkspaceGrid({
         return;
       }
       const column = cell.getField();
-      // A separator no identifier can hold, so two cells cannot share a key.
-      const key = `${recordId}\u0000${column}`;
+      const key = editKey(recordId, column);
       sequence += 1;
       const mine = sequence;
       latest.set(key, mine);
@@ -707,6 +811,405 @@ export function WorkspaceGrid({
         });
     };
 
+    /* ---------------------------------------------------------------------
+     * The spreadsheet gestures: the clipboard and the fill handle.
+     *
+     * Each is planned whole, sent as one command, and reported to the shell as
+     * one unit of work. Nothing below decides whether a value is acceptable, and
+     * nothing below writes to a cell except through the `applying` guard, so the
+     * one path from a gesture to the database stays the one path.
+     * ------------------------------------------------------------------ */
+
+    /** The columns as a gesture sees them, in the order they are shown. */
+    const fields = [
+      RECORD_ID_COLUMN,
+      ...data.columns.map((column) => column.name),
+    ];
+    const writableColumn = (field: string): boolean =>
+      field !== RECORD_ID_COLUMN;
+    // A foreign key holds Record IDs, so a fill copies them: reading the
+    // trailing integer of one as a counter would point rows at records nobody
+    // chose, and those records may well exist.
+    const referenceColumns = new Set(
+      data.columns
+        .filter((column) => column.references !== null)
+        .map((column) => column.name),
+    );
+
+    /**
+     * Record IDs in the order the rows are on screen, which is what a rectangle
+     * indexes. Read from Tabulator rather than from `committed`, so the grid's
+     * own idea of where a row is stays the only one.
+     */
+    const displayedRecords = (): string[] =>
+      instance === null
+        ? []
+        : instance.getRows("active").map((row) => String(row.getIndex()));
+
+    const gridForGesture = (): GestureGrid => ({
+      columns: fields.map((field) => ({
+        field,
+        writable: writableColumn(field),
+        series: !referenceColumns.has(field),
+      })),
+      recordIds: displayedRecords(),
+      // What the database confirmed, never what Tabulator holds: a cell carrying
+      // an edit nobody has answered yet is not a value to copy or to fill from.
+      text: (recordId, field) => cellText(committed.get(recordId)?.[field]),
+      refused: (recordId, field) =>
+        failuresAt(recordedRef.current, data.generation).has(
+          cellKey(data.name, recordId, field),
+        ),
+    });
+
+    /**
+     * Every selected rectangle, as grid indices, in the order they were made, or
+     * null when one of them names a row or a column this grid is not showing.
+     *
+     * Null rather than the ones that did resolve: dropping one would turn a
+     * selection of two rectangles into a gesture on one, which is the opposite
+     * of the rule that a gesture acts on a single rectangle or on none.
+     */
+    const selectedRects = (): GestureRect[] | null => {
+      if (instance === null) {
+        return null;
+      }
+      const geometry = { columns: fields, rows: displayedRecords() };
+      const rects = instance
+        .getRanges()
+        .map((range: RangeComponent) => rangeRect(range, geometry));
+      return rects.every((rect): rect is GestureRect => rect !== null)
+        ? rects
+        : null;
+    };
+
+    /**
+     * The cell a gesture's explanation belongs to: the top left of what it was
+     * about. A gesture refused as a whole has no single cell of its own, and this
+     * is the cell the visitor started from, so the sentence sits where they are
+     * looking and is cleared by their next attempt there.
+     */
+    const anchorAt = (
+      rect: GestureRect | undefined,
+    ): { recordId: string; column: string } | null => {
+      if (rect === undefined) {
+        return null;
+      }
+      const recordId = displayedRecords()[rect.top];
+      const column = fields[rect.left];
+      return recordId === undefined || column === undefined
+        ? null
+        : { recordId, column };
+    };
+
+    const reportGesture = (
+      anchor: { recordId: string; column: string } | null,
+      message: string,
+    ): void => {
+      setRecorded((previous) =>
+        recordFailure(
+          previous,
+          data.generation,
+          // Against the gesture, by the cell it started from, or by the table
+          // alone when there is no such cell: a selection this grid cannot read
+          // has no cell to name, and a refusal nobody is told about is worse
+          // than one filed against the table it happened in. Never under the
+          // cell's own key: a gesture refused before it was sent says nothing
+          // about the value that cell holds, and `refused` above must not read
+          // it as if it did, or the next fill from that cell would be refused
+          // for a reason that was never about the cell.
+          gestureKey(data.name, anchor),
+          message,
+        ),
+      );
+    };
+
+    /**
+     * A gesture from this anchor is going ahead, so whatever refused the last
+     * one from here no longer applies and its notice comes down. The cells'
+     * own explanations are untouched: those are answered by the reply.
+     */
+    const answerGesture = (
+      anchor: { recordId: string; column: string } | null,
+    ): void => {
+      setRecorded((previous) =>
+        answerFailure(previous, data.generation, gestureKey(data.name, anchor)),
+      );
+    };
+
+    /**
+     * Show what the database stored, without that counting as an edit.
+     *
+     * The value comes from the reply rather than from `committed`, and a record
+     * with no baseline is left alone rather than blanked, which is the rule
+     * `restore` keeps for the same reason: a missing entry must never turn a
+     * reply into data loss.
+     */
+    const paint = (
+      recordId: string,
+      column: string,
+      value: CellValue,
+      stamp: number,
+    ): void => {
+      if (destroyed || instance === null || !committed.has(recordId)) {
+        return;
+      }
+      if (latest.get(editKey(recordId, column)) !== stamp) {
+        return;
+      }
+      // Tabulator answers `false` for a row or a cell it does not have, which
+      // the published types do not say, so both are read as what they can be: a
+      // record can have been reloaded away from under a reply.
+      const row = instance.getRow(recordId) as RowComponent | false;
+      if (row === false) {
+        return;
+      }
+      const cell = row.getCell(column) as CellComponent | false;
+      if (cell === false) {
+        return;
+      }
+      applying += 1;
+      try {
+        cell.setValue(value);
+      } finally {
+        applying -= 1;
+      }
+    };
+
+    /** What came back for each cell of a gesture, applied in one move. */
+    const settleGesture = (
+      outcomes: readonly WorkspaceCellOutcome[],
+      stamp: number,
+    ): void => {
+      const answered: string[] = [];
+      const refusals: Array<{ key: string; message: string }> = [];
+      let renamed = false;
+      for (const outcome of outcomes) {
+        const key = cellKey(data.name, outcome.recordId, outcome.column);
+        if (!outcome.accepted) {
+          // Against the cell it was about, so a refusal elsewhere in the same
+          // gesture is still the only thing saying why that cell reads as it
+          // does.
+          refusals.push({ key, message: describeFailure(outcome.error) });
+          continue;
+        }
+        const row = committed.get(outcome.recordId);
+        if (row !== undefined) {
+          row[outcome.column] = outcome.value;
+        }
+        answered.push(key);
+        if (namingColumns.has(outcome.column)) {
+          renamed = true;
+        }
+        paint(outcome.recordId, outcome.column, outcome.value, stamp);
+      }
+      // One state update for the whole gesture: the cells it dealt with and the
+      // cells it could not, in the order they happened.
+      setRecorded((previous) =>
+        recordFailures(
+          answerFailures(previous, data.generation, answered),
+          data.generation,
+          refusals,
+        ),
+      );
+      if (renamed) {
+        refreshLabels();
+      }
+    };
+
+    /**
+     * Send one gesture: one command, one `editSent`, one `editSettled`.
+     *
+     * Nothing is painted before the reply. The single-cell path shows the typed
+     * value only because the editor has already put it there; here there is no
+     * editor, so painting first would be a block of values that some cells then
+     * take back.
+     */
+    const applyGesture = (
+      writes: readonly PlannedWrite[],
+      anchor: { recordId: string; column: string } | null,
+    ): void => {
+      if (writes.length === 0) {
+        return;
+      }
+      sequence += 1;
+      const stamp = sequence;
+      const keys = writes.map((write) => editKey(write.recordId, write.column));
+      // Every cell of the gesture is stamped, so a later edit to one of them
+      // overtakes this reply for that cell alone.
+      for (const key of keys) {
+        latest.set(key, stamp);
+      }
+      answerGesture(anchor);
+      // Before the command is posted, and inside the event that caused it: the
+      // shell has to be holding for this work by the time anything else is
+      // clicked.
+      onEditSent();
+      let accepted = false;
+      void client
+        .updateCells({
+          generation: data.generation,
+          table: data.name,
+          writes: writes.map((write) => ({
+            recordId: write.recordId,
+            column: write.column,
+            // An empty cell means no value rather than the empty string, the
+            // same rule a cleared editor follows.
+            value: write.value === "" ? null : write.value,
+          })),
+        })
+        .then(
+          (outcomes) => {
+            // Unsaved once, for the gesture, if the database took any of it.
+            accepted = outcomes.some((outcome) => outcome.accepted);
+            settleGesture(outcomes, stamp);
+          },
+          // The rejection handler rather than a `catch`, so a fault while
+          // applying the reply is not reported as the gesture having been
+          // refused: by then it has not been, and the cells are already painted.
+          (caught: unknown) => {
+            // The gesture was refused whole: a workspace that has moved on, more
+            // cells than one step applies, or a worker that has gone. Nothing
+            // was written, so every cell still shows what the database holds.
+            reportGesture(anchor, describeFailure(caught));
+          },
+        )
+        .finally(() => {
+          onEditSettled(accepted);
+          for (const key of keys) {
+            if (latest.get(key) === stamp) {
+              latest.delete(key);
+            }
+          }
+        });
+    };
+
+    /**
+     * Leave the selection on what a gesture just did, the way a spreadsheet
+     * does, so the handle is on the corner of it and a second drag carries on
+     * from there.
+     *
+     * On the movement rather than on the reply: it is the shape the visitor drew
+     * and they should see it at once. A gesture the worker then refuses as a
+     * whole leaves every value untouched and says so, so the selection is the
+     * only thing that moved.
+     *
+     * A row the grid has not rendered has no cells to bound a range with, so a
+     * fill or a paste reaching past the rendered window leaves the selection
+     * where it was rather than guessing.
+     */
+    const selectCovered = (rect: GestureRect | null): void => {
+      if (rect === null || instance === null) {
+        return;
+      }
+      const rows = instance.getRows("active");
+      const range = instance.getRanges()[0];
+      const start = rows[rect.top]?.getCells()[rect.left];
+      const end = rows[rect.bottom]?.getCells()[rect.right];
+      if (range === undefined || start === undefined || end === undefined) {
+        return;
+      }
+      range.setBounds(start, end);
+    };
+
+    /** Refuse a gesture the page is too busy for, without sending anything. */
+    const refuseWhileBusy = (
+      kind: GestureKind,
+      anchor: { recordId: string; column: string } | null,
+    ): boolean => {
+      if (!lockedRef.current) {
+        return false;
+      }
+      reportGesture(anchor, busyRefusal(kind));
+      return true;
+    };
+
+    /** Put the selected rectangle on the clipboard as the text Excel reads. */
+    const copySelection = (event: ClipboardEvent): void => {
+      // An open editor has its own text selection, and copying inside it is the
+      // browser's business rather than the grid's.
+      if (editingRef.current !== null || instance === null) {
+        return;
+      }
+      const rects = selectedRects();
+      // Nothing selected is nothing to copy, and nothing to explain either: the
+      // browser does whatever it would have done.
+      if (rects === null || rects.length === 0) {
+        return;
+      }
+      const rect = rects[0] as GestureRect;
+      if (rects.length !== 1) {
+        // Nothing is copied, rather than whichever rectangle came last.
+        event.preventDefault();
+        reportGesture(anchorAt(rect), ONE_RECTANGLE_ONLY);
+        return;
+      }
+      const forGesture = gridForGesture();
+      const rows: string[][] = [];
+      for (let row = rect.top; row <= rect.bottom; row += 1) {
+        const recordId = forGesture.recordIds[row];
+        if (recordId === undefined) {
+          return;
+        }
+        const line: string[] = [];
+        for (let column = rect.left; column <= rect.right; column += 1) {
+          const field = forGesture.columns[column]?.field;
+          if (field === undefined) {
+            return;
+          }
+          line.push(forGesture.text(recordId, field));
+        }
+        rows.push(line);
+      }
+      if (event.clipboardData === null) {
+        return;
+      }
+      event.clipboardData.setData("text/plain", encodeTsv(rows));
+      event.preventDefault();
+      answerGesture(anchorAt(rect));
+    };
+
+    /** Write a pasted block into the selection, or say why it was not written. */
+    const pasteBlock = (block: string[][]): void => {
+      const rects = selectedRects();
+      const anchor = anchorAt(rects?.[0]);
+      if (refuseWhileBusy("paste", anchor)) {
+        return;
+      }
+      const plan = planPaste({
+        grid: gridForGesture(),
+        // An unreadable selection is not one rectangle, and the planner says so
+        // in the one sentence that covers both.
+        ranges: rects ?? [],
+        block,
+      });
+      if (plan.kind === "refused") {
+        reportGesture(anchor, plan.reason);
+        return;
+      }
+      applyGesture(plan.writes, anchor);
+      selectCovered(plan.covered);
+    };
+
+    /** Extend the selection's values into the cells the drag covered. */
+    const fillFrom = (drag: FillHandleDrag): void => {
+      const anchor = anchorAt(drag.ranges[0]);
+      if (refuseWhileBusy("fill", anchor)) {
+        return;
+      }
+      const plan = planFill({
+        grid: gridForGesture(),
+        ranges: drag.ranges,
+        pointer: drag.pointer,
+      });
+      if (plan.kind === "refused") {
+        reportGesture(anchor, plan.reason);
+        return;
+      }
+      applyGesture(plan.writes, anchor);
+      selectCovered(plan.covered);
+    };
+
     void (async () => {
       const { TabulatorFull } = await import("tabulator-tables");
       if (destroyed) {
@@ -728,18 +1231,64 @@ export function WorkspaceGrid({
         index: RECORD_ID_COLUMN,
         layout: "fitColumns",
         maxHeight: "60vh",
-        // A single click opens the editor. Range selection in later work may
-        // want this on double click instead, which is Tabulator's advice when
-        // dragging a selection and starting an edit share the mouse.
-        editTriggerEvent: "click",
+        // A rectangle by drag or shift, several by ctrl-click, a whole column by
+        // its header, and keyboard extension with shift-arrow and
+        // ctrl-shift-arrow. All of it Tabulator's own.
+        selectableRange: true,
+        selectableRangeColumns: true,
+        // Deliberately not selectableRangeRows: it makes the first column
+        // Tabulator's row header, which is excluded from every cell range, and
+        // the Record ID has to stay selectable so that it can be copied.
+        //
+        // Deliberately not selectableRangeClearCells either: Delete would clear
+        // a range through one setValue per cell, which turns one gesture into one
+        // command per cell.
+        //
+        // A double click opens the editor now that a drag selects, which is
+        // Tabulator's own advice: the two would otherwise share the mouse. Enter
+        // on the active cell opens it too.
+        editTriggerEvent: "dblclick",
+        // A header click selects the column, so it must not also sort. One click
+        // with two meanings is how a visitor loses the selection they were
+        // building, and the order rows are shown in is what a rectangle indexes.
+        columnDefaults: { headerSort: false },
+        ...pasteOptions(pasteBlock),
         placeholder: "This table has no records yet",
         rowFormatter: (row: RowComponent) => {
           // The Record ID on the row element, so a test or an assistive tool
           // can find a record without counting rows.
-          row.getElement().dataset["recordId"] = asText(
+          row.getElement().dataset["recordId"] = cellText(
             row.getData()[RECORD_ID_COLUMN] as CellValue | undefined,
           );
         },
+      });
+      // Every time an editor closes or a cell is clicked, range selection puts
+      // focus back on the rows, and a focus that scrolls moves the page under
+      // whatever the visitor is reaching for: the click that closed the editor
+      // on its way down lands somewhere else on its way up, so New, Open, a link
+      // out of the page, and Back never see a click at all. The focus is wanted,
+      // the scrolling is not.
+      //
+      // Every focus of this element, not only those two: it is a 60vh scroll
+      // container that is nearly always on screen already, and a focus that
+      // jumps the page to it is unhelpful wherever it comes from.
+      //
+      // On `tableBuilt`, because the table is built in a later task than the
+      // constructor (Tabulator defers `_create` so that these very handlers can
+      // be registered first) and building empties this element and appends the
+      // row area to it. Looking for the row area now would find nothing.
+      instance.on("tableBuilt", () => {
+        const rowArea = element.querySelector(".tabulator-tableholder");
+        if (rowArea instanceof HTMLElement) {
+          rowArea.focus = function focusWithoutScrolling(
+            options?: FocusOptions,
+          ): void {
+            HTMLElement.prototype.focus.call(this, {
+              ...options,
+              preventScroll: true,
+            });
+          };
+        }
       });
       // Registered after construction because a cell edit is a table event in
       // Tabulator 6, not a table option.
@@ -771,6 +1320,14 @@ export function WorkspaceGrid({
       // Splitting the two would need this grid to know it is unmounting, which
       // is the one thing this cleanup cannot tell.
       const closed = (): void => {
+        // A value put back is a cell change like any other, and Tabulator
+        // dispatches `cellEdited` for it, so this runs for a reply painting a
+        // cell as well as for an editor closing. The guard is what tells the two
+        // apart: without it a gesture would report an editor closing once per
+        // cell it wrote, and an editor closing is an answer the page acts on.
+        if (applying > 0) {
+          return;
+        }
         editingRef.current = null;
         onEditorClosed(destroyed);
         if (labelsStale) {
@@ -779,11 +1336,28 @@ export function WorkspaceGrid({
       };
       instance.on("cellEdited", closed);
       instance.on("cellEditCancelled", closed);
+
+      // Copy is ours: see the note at the top of this file. Registered on the
+      // frame, which every copy inside the grid bubbles up to.
+      frame.addEventListener("copy", copySelection);
+      // The fill handle, which Tabulator does not have at all.
+      detachHandle = attachFillHandle({
+        table: instance,
+        container: frame,
+        geometry: () => ({
+          rows: displayedRecords(),
+          columns: fields,
+          writable: writableColumn,
+        }),
+        onFill: fillFrom,
+      });
     })();
 
     return () => {
       destroyed = true;
       editingRef.current = null;
+      frame.removeEventListener("copy", copySelection);
+      detachHandle?.();
       instance?.destroy();
     };
   }, [
@@ -854,9 +1428,12 @@ export function WorkspaceGrid({
         </p>
       ) : (
         <p className="mt-3 text-sm text-fd-muted-foreground">
-          Click a cell to edit it. Each edit is written to the workspace as you
-          make it, and Save writes the workspace back to its file. The Record ID
-          is assigned once and cannot be edited
+          Double-click a cell to edit it. Click and drag to select a range,
+          ctrl-click to add another, and copy or paste a range the way a
+          spreadsheet does. Drag the corner of a selection to fill from it. Each
+          change is written to the workspace as you make it, and Save writes the
+          workspace back to its file. The Record ID is assigned once and cannot
+          be edited
         </p>
       )}
 
@@ -869,11 +1446,16 @@ export function WorkspaceGrid({
         </p>
       ) : null}
 
-      <div
-        className="mt-4 empty:hidden"
-        data-testid="workspace-grid"
-        ref={containerRef}
-      />
+      {/* Positioned, and outside the grid's own element, because the fill handle
+          and its outline are placed in it and Tabulator owns everything inside
+          the element it is given. */}
+      <div className="relative" ref={frameRef}>
+        <div
+          className="mt-4 empty:hidden"
+          data-testid="workspace-grid"
+          ref={containerRef}
+        />
+      </div>
 
       {report === null ? null : (
         <div className="mt-4">

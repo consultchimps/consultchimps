@@ -141,6 +141,128 @@ that normalizes line endings, because the built-in `range` parser does not strip
 layer that maps our CSS variables onto Tabulator's selectors, since it ships
 hardcoded hex rather than variables. All three are moderate, additive work.
 
+### Interactions
+
+The grid's Excel-grade half is one rule with several faces: a gesture is one
+movement, so it is one command. A range selection, a copy, a paste, and a drag
+of the fill handle are each planned whole before anything is sent, written by a
+single batched `updateCells` carrying the workspace generation, and reported to
+the page's state model (Decision 9) as exactly one `editSent` and one
+`editSettled`, however many cells they cover. Nothing is added to that model: a
+paste and a fill are edits in flight, not an open editor, so the transition
+table is unchanged.
+
+Building it corrected the spike's picture twice, both times from the library's
+source at 6.5.2 rather than from preference.
+
+- Tabulator's built-in `range` paste action writes through `row.updateData`,
+  which reaches cells by `setValueProcessData` and therefore never dispatches
+  `cellEdited`. The grid's only path to the database is `cellEdited`, so that
+  action would repaint the grid and save nothing. The paste action is ours; the
+  parser is ours as already planned, because the built-in one splits on "\n" and
+  leaves the "\r" of a Windows copy on the last field of every row.
+- Tabulator's copy quotes nothing and emits a header row. A text column here may
+  hold a tab or a newline, so such a cell would corrupt the clipboard on the way
+  out exactly as the stray "\r" corrupts a paste on the way in. Copy is ours
+  too, so one grammar is read in both directions.
+
+**Selection.** Native: a rectangle by drag or shift-click, several by
+ctrl-click, a column by its header, and keyboard extension by shift-arrow and
+ctrl-shift-arrow. `editTriggerEvent` becomes `dblclick`, which is Tabulator's
+own advice once a drag selects, and Enter opens the editor on the active cell.
+Header sorting is off, because a header click now selects the column and one
+click with two meanings loses the selection a visitor is building.
+`selectableRangeRows` stays off: it would make the Record ID column Tabulator's
+row header, which is excluded from every cell range, and the Record ID has to
+stay selectable so it can be copied. `selectableRangeClearCells` stays off:
+Delete would clear a range through one `setValue` per cell, which is one gesture
+becoming one command per cell. Selection and copy stay available while the page
+is busy, because neither writes; a paste or a fill made then is refused and says
+so. The Record ID is selectable and never a write target.
+
+**Clipboard.** Cells joined by tabs, every row terminated by CRLF, and no header
+row. A field holding a tab, a newline, a carriage return, or a quote is wrapped
+in double quotes with internal quotes doubled, which is what Excel reads and
+writes. A cell contributes its stored value's text rather than its rendered
+label, so a foreign-key cell copies the Record ID that pastes back and resolves.
+
+What a line break means is one rule, stated once and read by both halves: it
+ends the row before it rather than starting an empty one, which is the
+convention Excel's own clipboard follows, since a single copied cell arrives
+there as `A` and a break. So the encoder terminates the last row too. The
+alternative cannot be read back: with no terminator, `A` and a break would have
+to mean both a block of one row and a block whose second row is blank, and a
+range ending in a blank row is an ordinary thing to copy. Terminating always
+makes the round trip exact, and it is what a test now pins for every block,
+blank rows, blank columns and blank blocks included. The parser accepts CRLF, a
+bare CR, and a bare LF in any mix, keeps a last row the text did not terminate,
+and reads the unwritten cases the way a spreadsheet does rather than refusing: a
+quote inside an unquoted field is literal, text after a closing quote continues
+the field, and an unterminated quote takes the rest of the text.
+
+A paste of a single value fills the selection; a block whose height and width
+both divide the selection tiles across it; anything else is written from the
+anchor, overflowing the selection when larger. A paste that would run past the
+last record or the last column is refused whole and says how many are missing,
+because records are not added by a paste and a truncated block reads as one that
+worked. A gesture is refused whole, too, when more than one rectangle is
+selected, and when any target is the Record ID. Values are sent as text and the
+library's one conversion point decides what each column will hold; a foreign key
+that names no record is refused there like any other value.
+
+**Fill handle.** A handle on the active range's bottom right corner, dragged
+along one axis, the one the pointer moved furthest along, with a tie going to
+the vertical. The source occupies indices 0 to n-1 along that axis and a target
+is asked for by its own index, negative behind the source and n or greater ahead
+of it, so one rule extends in both directions. The rules, each pinned by a table
+of examples in `apps/docs/src/lib/workspace-series.test.ts`: a single number
+copies; two or more with a constant difference extend, in exact scaled integer
+arithmetic, so 0.1 and 0.2 give 0.3 and the decimals the source was written with
+are the decimals the fill writes; a date series applies when every source value
+shares the same time part, all-midnight import timestamps included, stepping by
+a constant month difference when every date shares a day of the month of 28 or
+lower and otherwise by a constant day difference, with a single date stepping by
+one day, every produced value checked against the grammar the column keeps, and
+the counting done in whole days by integer calendar arithmetic rather than
+through a date constructor, which remaps a year below 100 into the twentieth
+century and would answer 2000-01-01 for the day after 0099-12-31; text with a
+trailing integer steps that integer, by one from a single value and by their
+constant difference from several, keeping the padding; and everything else
+copies the block cyclically, which covers mixed kinds, plain text, and booleans,
+since a boolean has no series to infer and alternating one would invent data. A
+foreign-key column copies only, and a sideways fill whose line crosses one
+copies throughout, because a series read across columns that mean different
+things is not a series anyone asked for. A fill never writes to the Record ID
+column, never past the grid's edge, and never from a source cell that has a
+refusal standing against it. The selection then follows what the gesture
+covered, on the movement rather than on the reply: it is the shape the visitor
+drew, and a gesture the worker refuses as a whole leaves every value untouched
+and says so.
+
+**Persistence.** One `updateCells` per gesture, one request per cell within it,
+applied by `updateRecords` in `@consultchimps/db` inside a single transaction.
+Partial application: the accepted writes commit together and a value the schema
+refuses is reported against its own cell, which is both what a spreadsheet does
+and what the grid's per-cell explanations already expect. All-or-nothing was the
+alternative and was rejected: one bad value in a two hundred cell paste would
+cost the visitor the other hundred and ninety nine with nothing to show for it.
+A stale generation refuses the whole gesture before the transaction opens, and
+so does a gesture above `WORKSPACE_MAX_GESTURE_CELLS`, which is 5000: far more
+than a person produces by hand, and still a batch the in-browser engine applies
+well inside a second. The grid checks that ceiling before sending so the refusal
+costs no round trip, and the worker checks it again, because a limit the worker
+does not enforce is a limit it cannot keep. Nothing is painted before the reply,
+and a gesture the grid refuses before sending is not work in flight and reports
+nothing to the state model. Its explanation stands against the gesture, keyed by
+the cell it started from, and not against that cell's value, so it never stops
+the next fill from that cell; it comes down when a gesture from there goes
+ahead.
+
+Undo is not in this item. After a paste that was partly refused, each refused
+cell is explained against itself and still holds the value the workspace holds,
+the accepted cells are ordinary edits, and the file on disk is unchanged until
+Save.
+
 ### Theme
 
 The third of those pieces is this subsection's subject, and it was built on a
