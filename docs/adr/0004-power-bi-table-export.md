@@ -95,22 +95,23 @@ decision.
 
 **Decision: the operation has three model-policy refusals, each with its own
 stable code: the file holds no model, the model is encrypted, or the model has
-no exportable table. Any readable model with at least one exportable table
-produces a workbook, and every excluded table or column is reported in a
-manifest.** Before policy applies, input that cannot be read at all is refused
-with a validation code rather than a leaked parser error: a file that is not a
-zip or lacks the parts a `.pbix` must have (`PBI_INVALID_CONTAINER`), and a
-model part whose compressed stream, backup container, or catalog is truncated or
-corrupt (`PBI_MODEL_UNREADABLE`). A valid Power BI container without a
-`DataModel` part is refused with `PBI_NO_MODEL`. A missing `DataModel` is not an
-invalid container. The message says the file has no embedded model to export and
-asks for a `.pbix` saved with imported data. Templates, live connections, and
-DirectQuery-only files are possible causes, not diagnoses inferred from an
-extension or a missing part. They share this code until fixtures establish
-reliable distinctions. The presence of a `Connections` part is not a
-live-connection signal: a current Microsoft sample carries one alongside a full
-model, and the spike hit that false positive. An encrypted or password-protected
-model is refused (`PBI_MODEL_ENCRYPTED`); the reader does not attempt it.
+no exportable table. A readable model with at least one exportable table
+produces a workbook when it passes the capacity limits below, and every excluded
+table or column is reported in a manifest.** Before policy applies, input that
+cannot be read at all is refused with a validation code rather than a leaked
+parser error: a file that is not a zip or lacks the parts a `.pbix` must have
+(`PBI_INVALID_CONTAINER`), and a model part whose compressed stream, backup
+container, or catalog is truncated or corrupt (`PBI_MODEL_UNREADABLE`). A valid
+Power BI container without a `DataModel` part is refused with `PBI_NO_MODEL`. A
+missing `DataModel` is not an invalid container. The message says the file has
+no embedded model to export and asks for a `.pbix` saved with imported data.
+Templates, live connections, and DirectQuery-only files are possible causes, not
+diagnoses inferred from an extension or a missing part. They share this code
+until fixtures establish reliable distinctions. The presence of a `Connections`
+part is not a live-connection signal: a current Microsoft sample carries one
+alongside a full model, and the spike hit that false positive. An encrypted or
+password-protected model is refused (`PBI_MODEL_ENCRYPTED`); the reader does not
+attempt it.
 
 When a file decodes partially, for example one column uses an encoding the
 reader has not seen, the operation still produces the workbook and lists each
@@ -129,6 +130,30 @@ default policy, over the column limit, or without any usable output columns, the
 operation fails with a stable code (`PBI_NO_EXPORTABLE_TABLES`) whose message
 lists each table with the reason it was excluded, and names the include-hidden
 option when that is the cure. An empty workbook is never a success.
+
+Capacity is a separate operational gate, with `PBI_EXPORT_LIMIT_EXCEEDED` for an
+export that cannot fit the configured limits. The shared byte engine accepts
+positive, finite byte limits for input bytes, decoded bytes, output bytes, and
+estimated peak working memory. Browser defaults are fixed, measured values
+shipped with the implementation, not guesses based on available device memory.
+Build items 1 and 8 must establish the limits and their estimator fixtures
+before item 9 can claim browser support. Larger limits require an explicit
+caller option and are outside the default browser envelope.
+
+Check the input size before reading a browser `File` into an array. Use
+validated container sizes, model row counts, and dictionary/value widths to
+conservatively bound decompression, table cells, workbook structures,
+serialization buffers, the manifest, the combined-download archive, and
+worker-to-host copies before allocating them. Reserve the worst case, including
+uncompressed output; compressed file size alone is never the estimate. If a
+supported format path cannot supply a safe upper bound, refuse with the same
+capacity code instead of attempting an unbounded export. Enforce cumulative byte
+and allocation budgets during decompression and writing as well, since file
+metadata is untrusted. Check each growth before allocating; do not depend on
+catching an out-of-memory exception. The error identifies the stage, configured
+limit, and either the required bound or why it cannot be estimated. It suggests
+a smaller model. Capacity refusal returns no byte artifacts and occurs before a
+file adapter writes destinations.
 
 ## Decision 5: tables larger than a worksheet
 
@@ -315,6 +340,25 @@ header-only table has one part with `[0, 0)`; excluded tables have no output
 parts. Each range length equals that part's data-row count, and adjacent parts
 meet without gaps or overlap.
 
+The manifest is a UTF-8 JSON companion artifact with media type
+`application/json` and `schemaVersion: 1`. It is present for every successful
+export, including one with no warnings. Build item 8 commits its public schema,
+typed serializer, and deterministic property-order fixtures before exposing the
+operation. The schema carries the ordered table, column, part, reason, and DAX
+data defined here; it adds no wall-clock timestamps, random IDs, or source cell
+values.
+
+Use the existing `ByteOperationOutcome`: `outputs` contains the workbook first
+and the manifest second, and `result.artifacts` lists the matching file names
+and media types in that same order. The portable workbook name comes from the
+output plan; replacing its final `.xlsx` extension with `.manifest.json` gives
+the companion name. No manifest field is added to shared `OperationResult`, and
+the manifest is not a workbook worksheet. The file adapter and later CLI plan
+and validate both destinations before writing, including overwrite and input
+collision checks, and report both files as artifacts. The browser exposes both
+downloads and includes both in its combined download. Refusals return structured
+errors instead of a manifest-only successful artifact pair.
+
 The manifest uses this reason-code vocabulary:
 
 | Code                                     | Scope  | Meaning                                                       |
@@ -400,7 +444,11 @@ must measure and bound decoder working set, workbook, zip, and manifest memory
 together, including final serialization. The corpus must include many moderate
 tables and a column with millions of values requiring exact text, to verify that
 manifest entries grow with columns and reasons rather than row count. This is
-required before the browser surface is declared to work.
+required before the browser surface is declared to work, together with tests
+that over-limit inputs receive `PBI_EXPORT_LIMIT_EXCEEDED` before the prohibited
+allocation or destination write. These tested limits define the supported
+envelope; they cannot guarantee spare memory in an already exhausted browser
+process.
 
 ## Build list
 
@@ -409,8 +457,9 @@ an independent review before push:
 
 1. Package skeleton, zip and part reader, refusal contract
    (`PBI_INVALID_CONTAINER`, `PBI_MODEL_UNREADABLE`, `PBI_NO_MODEL`,
-   `PBI_MODEL_ENCRYPTED`, `PBI_NO_EXPORTABLE_TABLES`) and error codes. Ships a
-   real, testable refusal before any decode.
+   `PBI_MODEL_ENCRYPTED`, `PBI_NO_EXPORTABLE_TABLES`,
+   `PBI_EXPORT_LIMIT_EXCEEDED`) and error codes. Ships a real, testable refusal
+   before any decode.
 2. Vendored XPress9 source, Emscripten build script, committed binary, the
    same-origin copy script, and the licence attributions.
 3. XPress9 chunk framing (single and multithreaded), the backup container, and a
