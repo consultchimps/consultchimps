@@ -66,6 +66,15 @@ is. The Microsoft copyright and MIT text are reproduced in
 `THIRD-PARTY-LICENSES.md` and beside the vendored source, and the ported Huffman
 kernel attributes its origin in its file header.
 
+Before committing the first binary, build item 2 pins the Emscripten toolchain
+image by immutable digest, including its compiler, linker, and optimizer. A
+committed build script records the complete compiler and linker flags, fixes the
+build path and timestamp inputs, and is the single command used locally and in
+CI. No floating toolchain tags or runner-provided compiler are used. The check
+builds twice in clean copies with that pinned environment and compares both
+outputs with the committed binary. Toolchain upgrades update the pin and rebuilt
+binary together in a reviewed PR.
+
 ## Decision 3: a named tool in a new "Power BI" category
 
 Options considered: a named registry operation with its own category; a `.pbix`
@@ -132,11 +141,12 @@ accepted knowingly, is that lookups and pivots across the parts are the user's
 job. Every part carries the header row, so a part holds at most 1,048,575 data
 rows (the worksheet limit less the header), and the last part is never asked to
 hold a row the worksheet cannot address. Column count above 16,384 refuses the
-table (such a model is pathological), and ordinary cell text above 32,767
-characters is truncated and counted in the manifest. Binary encodings follow
-Decision 6 instead and are never truncated. Worksheet names follow Excel's rules
-(31 characters, forbidden characters replaced, case-insensitive uniqueness with
-numeric suffixes).
+table (such a model is pathological), and ordinary cell text above 32,767 UTF-16
+code units is truncated to its longest prefix within that limit that does not
+split a surrogate pair. Count one `PBI_TEXT_TRUNCATED` per changed cell, not per
+removed code unit. Binary encodings follow Decision 6 instead and are never
+truncated. Worksheet names follow Excel's rules (31 characters, forbidden
+characters replaced, case-insensitive uniqueness with numeric suffixes).
 
 Worksheet allocation is deterministic. Tables are processed in the model's own
 catalog order (the order the file stores them), never in decode-completion
@@ -147,6 +157,12 @@ parts, takes the next free numeric suffix. So a real table named `Sales_2` that
 follows a split `Sales` becomes `Sales_2_2`, and the same file always yields the
 same names, tab order, and bytes. Within a table, columns follow catalog order
 and rows follow storage order.
+
+For name collisions and the reserved-name check, compare the final candidate's
+ECMAScript `String.prototype.toLowerCase()` value, without a locale argument or
+locale-sensitive comparison. Do not use `toLocaleLowerCase()` or a collator. The
+displayed name keeps its source case. Fixtures include `I` followed by `i` under
+English and Turkish browser locales; both must allocate `I`, then `i_2`.
 
 Name allocation reserves suffix space before truncation, as the existing
 workbook merge allocator does. Replace forbidden worksheet-name characters with
@@ -202,17 +218,20 @@ millisecond toward the later instant. Count only emitted, non-null dates whose
 stored timestamp changes under that rounding as `PBI_DATE_ROUNDED`; dates
 already on a millisecond boundary do not increment it.
 
-Use the workbook's 1900 date system. Write a date serial only if the rounded
-timestamp is a valid date in that system and the serialized double reads back to
-that same millisecond through the workbook reader. Dates before 1900-01-01,
-dates that round into year 10000, and other timestamps that fail this round trip
-are written as the original timestamp's ISO 8601 text with its stored
-fractional-second precision. Do not attach a timezone that the source does not
-carry. Count these cells as `PBI_DATE_AS_TEXT` instead of `PBI_DATE_ROUNDED`;
-the fallback keeps the original timestamp rather than the rounded candidate. The
-writer must not generate Excel's fictitious 1900-02-29. Build-item 7 fixtures
-cover both date-system limits and a serial whose double conversion crosses a
-millisecond boundary.
+Use the workbook's 1900 date system. Test the original timestamp first: anything
+before 1900-01-01 is written as text without rounding, even if rounding would
+carry it into that day. For other timestamps, form the rounded candidate and
+write a date serial only if that candidate is valid in the 1900 system and the
+serialized double reads back to that same millisecond through the workbook
+reader. A candidate in year 10000 or any failed round trip also selects text.
+Every date-text fallback uses the original timestamp's ISO 8601 text with its
+stored fractional-second precision. Do not attach a timezone that the source
+does not carry. Count these cells as `PBI_DATE_AS_TEXT` instead of
+`PBI_DATE_ROUNDED`; the fallback keeps the original timestamp rather than the
+rounded candidate. The writer must not generate Excel's fictitious 1900-02-29.
+Build-item 7 fixtures cover both date-system limits, `1899-12-31T23:59:59.9996`
+remaining text, and a serial whose double conversion crosses a millisecond
+boundary.
 
 Honouring display format strings would mean implementing Power BI's
 format-string language, which is out of proportion for a first version.
