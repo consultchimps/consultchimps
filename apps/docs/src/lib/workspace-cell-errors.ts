@@ -149,6 +149,27 @@ export function recordFailure(
 }
 
 /**
+ * Record several failures at once, which is what one refused gesture produces.
+ *
+ * A paste or a fill is one movement that can be refused in many cells, and each
+ * refusal still belongs to its own cell. Folding them in one call is what keeps
+ * that true without the caller applying a state update per cell: the newest is
+ * the last of them, and the rest stand behind it exactly as separately recorded
+ * ones do.
+ */
+export function recordFailures(
+  recorded: RecordedFailures,
+  generation: number,
+  entries: ReadonlyArray<{ readonly key: string; readonly message: string }>,
+): RecordedFailures {
+  return entries.reduce(
+    (carried, entry) =>
+      recordFailure(carried, generation, entry.key, entry.message),
+    recorded,
+  );
+}
+
+/**
  * Drop what was standing against one cell or table, because a later attempt on
  * it succeeded. An answer for a workspace that is no longer held answers
  * nothing.
@@ -161,6 +182,35 @@ export function answerFailure(
   return recorded.generation === generation
     ? { generation, failures: withoutFailure(recorded.failures, key) }
     : recorded;
+}
+
+/**
+ * Answer several cells at once: the cells of a gesture the database accepted.
+ *
+ * The same rule as one cell, applied to each: an accepted write deals with what
+ * was standing against that cell and with nothing else, so a refusal elsewhere
+ * in the same gesture is still there and still the only thing saying why its
+ * cell reads as it does.
+ */
+export function answerFailures(
+  recorded: RecordedFailures,
+  generation: number,
+  keys: readonly string[],
+): RecordedFailures {
+  // One pass over one copy: a gesture answers as many cells as it wrote, and
+  // folding `answerFailure` would build a set for each of them.
+  if (recorded.generation !== generation) {
+    return recorded;
+  }
+  const answered = keys.filter((key) => recorded.failures.has(key));
+  if (answered.length === 0) {
+    return recorded;
+  }
+  const failures = new Map(recorded.failures);
+  for (const key of answered) {
+    failures.delete(key);
+  }
+  return { generation, failures };
 }
 
 /** Put the whole set away, as the visitor asked. */

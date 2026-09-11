@@ -188,7 +188,8 @@ export type WorkspaceCommand =
   | ImportCommand
   // The record-grid commands, declared at the foot of this file.
   | ReadWorkspaceTableCommand
-  | UpdateWorkspaceCellCommand;
+  | UpdateWorkspaceCellCommand
+  | UpdateWorkspaceCellsCommand;
 
 /**
  * The worker holds a workspace after a create or open. The summary lets the
@@ -278,7 +279,8 @@ export type WorkspaceEvent =
   | WorkspaceImportedEvent
   // The record-grid events, declared at the foot of this file.
   | WorkspaceTableEvent
-  | WorkspaceCellUpdatedEvent;
+  | WorkspaceCellUpdatedEvent
+  | WorkspaceCellsUpdatedEvent;
 
 /* -------------------------------------------------------------------------
  * Record grid
@@ -293,6 +295,14 @@ export type WorkspaceEvent =
  * save. The database is the source of truth for whether a value is acceptable,
  * so the grid needs the answer for the cell the visitor just left, and it needs
  * it before they judge the next one.
+ *
+ * A spreadsheet gesture is the other shape, and it is the reason `updateCells`
+ * exists beside `updateCell`. A paste of a block or a drag of the fill handle is
+ * one movement the visitor made, and it has to reach the database as one
+ * command: sending a command per cell would multiply the round trips, interleave
+ * the cells with whatever else the queue holds, and make one gesture as many
+ * units of in-flight work as it has cells. So a gesture is exactly one command,
+ * applied in one transaction, answered with one result per cell.
  * ------------------------------------------------------------------------- */
 
 /**
@@ -447,4 +457,80 @@ export interface WorkspaceCellUpdatedEvent {
   readonly type: "cellUpdated";
   readonly id: number;
   readonly value: CellValue;
+}
+
+/**
+ * The most cells one gesture may change.
+ *
+ * A paste or a fill is one transaction and one message, and a drag can ask for
+ * an unbounded number of cells, so there is a ceiling. Five thousand is far more
+ * than a person produces by hand (a hundred records across fifty columns) and
+ * still a batch the in-browser engine applies well inside a second, so it bounds
+ * a runaway drag without standing in the way of real work.
+ *
+ * The grid checks it before sending, so the refusal needs no round trip, and the
+ * worker checks it again, because a guard the worker does not enforce is a guard
+ * it cannot keep. Both read this one number.
+ */
+export const WORKSPACE_MAX_GESTURE_CELLS = 5_000;
+
+/** Raised when a gesture asks for more cells than one step applies. */
+export const WORKSPACE_GESTURE_TOO_LARGE = "WORKSPACE_GESTURE_TOO_LARGE";
+
+/** One cell a gesture writes: which record, which column, and the new value. */
+export interface WorkspaceCellWrite {
+  readonly recordId: string;
+  readonly column: string;
+  readonly value: CellValue;
+}
+
+/**
+ * Write many cells as one step, from the workspace `generation` names.
+ *
+ * The writes are one per cell rather than one per record on purpose. Grouping a
+ * record's cells into a single update would make the first value the database
+ * refuses refuse its neighbours too, and the grid explains a refusal against the
+ * cell it belongs to.
+ */
+export interface UpdateWorkspaceCellsCommand {
+  readonly type: "updateCells";
+  readonly id: number;
+  readonly generation: number;
+  readonly table: string;
+  readonly writes: readonly WorkspaceCellWrite[];
+}
+
+/**
+ * What became of one cell of a gesture. Accepted carries the value the database
+ * now holds, read back through the column's declared type; refused carries the
+ * refusal's own sentence and its stable code, so the page can show it and the
+ * shared error formatting still recognises it.
+ */
+export type WorkspaceCellResult =
+  | {
+      readonly accepted: true;
+      readonly recordId: string;
+      readonly column: string;
+      readonly value: CellValue;
+    }
+  | {
+      readonly accepted: false;
+      readonly recordId: string;
+      readonly column: string;
+      readonly message: string;
+      readonly code?: string | undefined;
+    };
+
+/**
+ * A gesture was applied: one result per cell, in the order the writes were sent.
+ *
+ * Partial application is deliberate. The accepted writes commit together in one
+ * transaction, and a cell the database refused is reported against itself rather
+ * than discarding the writes beside it, which is both what a spreadsheet does
+ * and what the grid's per-cell explanations already expect.
+ */
+export interface WorkspaceCellsUpdatedEvent {
+  readonly type: "cellsUpdated";
+  readonly id: number;
+  readonly results: readonly WorkspaceCellResult[];
 }

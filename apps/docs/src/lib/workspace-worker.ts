@@ -24,6 +24,7 @@ import type {
   ImportSourceDescription,
   ImportTableChoice,
   UpdateWorkspaceCellCommand,
+  UpdateWorkspaceCellsCommand,
   WorkspaceCommand,
   WorkspaceEvent,
   WorkspaceSummary,
@@ -44,6 +45,36 @@ export interface WorkspaceImportResult {
  * drift apart.
  */
 export type WorkspaceCellEdit = Omit<UpdateWorkspaceCellCommand, "type" | "id">;
+
+/**
+ * One gesture: the cells a paste or a fill writes, in one command. It is the
+ * batch command without its wire fields, for the same reason as above.
+ */
+export type WorkspaceCellsEdit = Omit<
+  UpdateWorkspaceCellsCommand,
+  "type" | "id"
+>;
+
+/**
+ * What became of one cell of a gesture, as the page reads it.
+ *
+ * A refusal arrives as data on the wire and is rebuilt into an error here, the
+ * same way a whole command's failure is, so the caller has one kind of thing to
+ * hand to the shared error formatting.
+ */
+export type WorkspaceCellOutcome =
+  | {
+      readonly accepted: true;
+      readonly recordId: string;
+      readonly column: string;
+      readonly value: CellValue;
+    }
+  | {
+      readonly accepted: false;
+      readonly recordId: string;
+      readonly column: string;
+      readonly error: unknown;
+    };
 
 /** Raised when the worker cannot start, so no command can be served. */
 export const WORKSPACE_WORKER_UNAVAILABLE = "WORKSPACE_WORKER_UNAVAILABLE";
@@ -195,6 +226,46 @@ export class WorkspaceClient {
   }
 
   /**
+   * Write many cells as one step, which is what one paste or one fill is.
+   *
+   * Resolves with one outcome per write, in the order they were sent: the value
+   * the database now holds, or the refusal for that cell. The accepted writes
+   * commit together, so a refusal in the middle of a gesture does not discard
+   * the cells beside it. The whole gesture is rejected, and nothing is written,
+   * when it names a workspace that is no longer held or asks for more cells than
+   * one step applies.
+   */
+  async updateCells(
+    gesture: WorkspaceCellsEdit,
+  ): Promise<readonly WorkspaceCellOutcome[]> {
+    const event = await this.#run((id) => ({
+      type: "updateCells",
+      id,
+      generation: gesture.generation,
+      table: gesture.table,
+      writes: gesture.writes,
+    }));
+    if (event.type !== "cellsUpdated") {
+      throw this.#unexpected(event);
+    }
+    return event.results.map((result) =>
+      result.accepted
+        ? {
+            accepted: true,
+            recordId: result.recordId,
+            column: result.column,
+            value: result.value,
+          }
+        : {
+            accepted: false,
+            recordId: result.recordId,
+            column: result.column,
+            error: this.#rebuild(result.message, result.code),
+          },
+    );
+  }
+
+  /**
    * Tear down the worker entirely, failing anything still pending, and refuse
    * every command from now on. Commands still waiting in the queue when this
    * runs reach `#ensureWorker` only after the pending one is rejected, so the
@@ -217,6 +288,17 @@ export class WorkspaceClient {
 
   #unexpected(event: WorkspaceEvent): Error {
     return new Error(`Unexpected workspace worker reply: ${event.type}`);
+  }
+
+  /**
+   * Rebuild a failure that travelled as a message and a code. A
+   * `ConsultChimpsError` cannot be structure-cloned as itself, and this bundle's
+   * class is what the shared error formatting tests for.
+   */
+  #rebuild(message: string, code: string | undefined): Error {
+    return code === undefined
+      ? new Error(message)
+      : new ConsultChimpsError(code, message);
   }
 
   #ensureWorker(): Worker {
@@ -253,13 +335,7 @@ export class WorkspaceClient {
     }
     this.#pending.delete(event.id);
     if (event.type === "error") {
-      pending.reject(
-        event.code === undefined
-          ? new Error(event.message)
-          : // Rebuilt with this bundle's class so the shared error formatting,
-            // which tests for a ConsultChimpsError, still recognizes it.
-            new ConsultChimpsError(event.code, event.message),
-      );
+      pending.reject(this.#rebuild(event.message, event.code));
       return;
     }
     pending.resolve(event);

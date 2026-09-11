@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   answerFailure,
+  answerFailures,
   cellKey,
   dismissFailures,
   failureReport,
@@ -9,6 +10,7 @@ import {
   NO_FAILURES,
   NOTHING_REFUSED,
   recordFailure,
+  recordFailures,
   tableKey,
   withFailure,
   withoutFailure,
@@ -227,5 +229,46 @@ describe("explanations belong to one workspace", () => {
     expect(failureReport(failuresAt(refusedInFirst, FIRST))).toBe(
       "Not a whole number.",
     );
+  });
+});
+
+describe("a gesture's worth of explanations", () => {
+  it("records every refused cell of one gesture in one move", () => {
+    const recorded = recordFailures(NOTHING_REFUSED, 4, [
+      { key: headcount, message: "not a whole number" },
+      { key: otherRecord, message: "not a whole number either" },
+    ]);
+
+    expect(failuresAt(recorded, 4).size).toBe(2);
+    // The newest is the last one recorded, shown in full above the count.
+    expect(failureReport(failuresAt(recorded, 4))).toContain(
+      "not a whole number either",
+    );
+    expect(failureReport(failuresAt(recorded, 4))).toContain("1 other edit");
+  });
+
+  it("answers the accepted cells of a gesture and leaves the refused ones", () => {
+    const before = recordFailures(NOTHING_REFUSED, 4, [
+      { key: headcount, message: "refused here" },
+      { key: name, message: "refused there" },
+    ]);
+
+    const after = answerFailures(before, 4, [name, otherRecord]);
+
+    expect([...failuresAt(after, 4).keys()]).toEqual([headcount]);
+  });
+
+  it("records nothing for a gesture that refused nothing", () => {
+    expect(recordFailures(NOTHING_REFUSED, 4, [])).toBe(NOTHING_REFUSED);
+    expect(answerFailures(NOTHING_REFUSED, 4, [])).toBe(NOTHING_REFUSED);
+  });
+
+  it("ignores a gesture recorded against a workspace that has been replaced", () => {
+    const recorded = recordFailures(NOTHING_REFUSED, 4, [
+      { key: headcount, message: "refused" },
+    ]);
+
+    expect(failuresAt(recorded, 5)).toBe(NO_FAILURES);
+    expect(answerFailures(recorded, 5, [headcount])).toBe(recorded);
   });
 });

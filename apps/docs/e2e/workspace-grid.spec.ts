@@ -130,13 +130,18 @@ function cellOf(page: Page, recordId: string, field: string): Locator {
  */
 const STEP_TIMEOUT = 2_000;
 
+/**
+ * A double click, because that is what opens an editor now that a drag selects a
+ * range. A single click selects the cell, which is Tabulator's advice once range
+ * selection is on: the two gestures would otherwise share the mouse.
+ */
 async function editCell(
   cell: Locator,
   interaction: (input: Locator) => Promise<void>,
 ): Promise<void> {
   const input = cell.locator("input");
   await expect(async () => {
-    await cell.click({ timeout: STEP_TIMEOUT });
+    await cell.dblclick({ timeout: STEP_TIMEOUT });
     await expect(input).toBeVisible({ timeout: STEP_TIMEOUT });
     await interaction(input);
   }).toPass({ timeout: 30_000 });
@@ -153,7 +158,7 @@ async function typeWithoutCommitting(
 ): Promise<void> {
   const input = cell.locator("input");
   await expect(async () => {
-    await cell.click({ timeout: STEP_TIMEOUT });
+    await cell.dblclick({ timeout: STEP_TIMEOUT });
     await expect(input).toBeVisible({ timeout: STEP_TIMEOUT });
     await input.fill(value, { timeout: STEP_TIMEOUT });
   }).toPass({ timeout: 30_000 });
@@ -345,7 +350,11 @@ test.describe("/workspace record grid", () => {
 
     const recordId = cellOf(page, "CUST-0001", "record_id");
     await expect(recordId).toHaveText("CUST-0001");
+    // Selectable, so it can be copied, and never editable: a double click is
+    // what opens an editor now, and this column has none to open.
     await recordId.click();
+    await expect(recordId.locator("input")).toHaveCount(0);
+    await recordId.dblclick();
     await expect(recordId.locator("input")).toHaveCount(0);
 
     // Tab from an editable cell lands on the next editable one, never on a
@@ -509,7 +518,7 @@ test.describe("/workspace record grid", () => {
     // busy state away, so the cell offers no editor at all: the grid holds no
     // second opinion about whether the workspace is free.
     const cell = cellOf(page, "CUST-0001", "name");
-    await cell.click();
+    await cell.dblclick();
     await expect(cell.locator("input")).toHaveCount(0);
     await expect(page.getByTestId("workspace-table-select")).toBeDisabled();
 
