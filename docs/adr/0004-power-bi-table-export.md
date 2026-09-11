@@ -84,13 +84,17 @@ decision.
 
 ## Decision 4: refusal and partial export
 
-**Decision: refuse only when the file holds no model; otherwise export every
-table that decodes and report the rest in a manifest.** A `.pbix` or `.pbit`
-without a `DataModel` part is refused with a code that names the actual reason
-(template, live connection, or DirectQuery-only file), never a generic parse
-error. The presence of a `Connections` part is not a live-connection signal: a
-current Microsoft sample carries one alongside a full model, and the spike hit
-that false positive. The sound test is the presence of the model part.
+**Decision: the operation refuses in exactly three cases, each with its own
+stable code: the file holds no model, the model is encrypted, or the model has
+no exportable table. Any model with at least one exportable table produces a
+workbook, and every excluded table or column is reported in a manifest.** A
+`.pbix` or `.pbit` without a `DataModel` part is refused with a code that names
+the actual reason (template, live connection, or DirectQuery-only file), never a
+generic parse error. The presence of a `Connections` part is not a
+live-connection signal: a current Microsoft sample carries one alongside a full
+model, and the spike hit that false positive. The sound test is the presence of
+the model part. An encrypted or password-protected model is refused
+(`PBI_MODEL_ENCRYPTED`); the reader does not attempt it.
 
 When a file decodes partially, for example one column uses an encoding the
 reader has not seen, the operation still produces the workbook and lists each
@@ -120,25 +124,44 @@ and cell text above 32,767 characters is truncated and counted in the manifest.
 Worksheet names follow Excel's rules (31 characters, forbidden characters
 replaced, case-insensitive uniqueness with numeric suffixes).
 
+Worksheet allocation is deterministic. Tables are processed in the model's own
+catalog order (the order the file stores them), never in decode-completion
+order, and each table claims all of its worksheet names before the next table is
+considered: its sanitized name first, then its numbered parts. A name already
+claimed, case-insensitively, whether by an earlier table's name or one of its
+parts, takes the next free numeric suffix. So a real table named `Sales_2` that
+follows a split `Sales` becomes `Sales_2_2`, and the same file always yields the
+same names, tab order, and bytes. Within a table, columns follow catalog order
+and rows follow storage order.
+
 ## Decision 6: value formatting
 
-**Decision: dates become Excel serial dates rounded to the millisecond with a
-date number format; currency stays a scaled integer until it is written with a
-four-decimal number format; Power BI display format strings are ignored in the
-first version.** The model stores dates to the nanosecond and an Excel serial
-cannot carry that detail (the spike's only cell differences were sub-millisecond
-date remainders), so the rounding is stated rather than pretended away.
+**Decision: a numeric value is written as an Excel number only when that number
+reads back as exactly the stored value; otherwise it is written as exact decimal
+text and counted in the manifest. Dates are the one stated exception, rounded to
+the millisecond. Power BI display format strings are ignored in the first
+version.**
 
-Currency is stored as an integer count of ten-thousandths. An Excel numeric cell
-is an IEEE-754 double, so a number format changes only the display, never the
-stored precision, and a scaled integer beyond 2^53 cannot survive as a number.
-The policy: a currency value whose scaled integer lies within the safe-integer
-range is written as a number with a four-decimal format; a value outside that
-range is written as its exact decimal text (for example `123456789012345.6789`)
-and counted in the manifest, so the workbook never silently alters an amount.
-The scaled integer is kept as an integer until that choice is made. Honouring
-display format strings would mean implementing Power BI's format-string
-language, which is out of proportion for a first version.
+An Excel numeric cell is an IEEE-754 double, so a number format changes only the
+display, never the stored precision. The rule therefore applies to every numeric
+type by the same test, not by a per-type range: whole numbers are 64-bit
+integers, of which only those within the safe-integer range survive as doubles;
+currency is a 64-bit count of ten-thousandths, and dividing even a safe integer
+by ten thousand can land two distinct amounts on one double (`9007199254740002`
+and `9007199254740003` both become `900719925474.0002`), so the range check
+alone is not enough. The writer keeps the stored integer as an integer, forms
+the candidate double, and converts it back; only an exact round trip is written
+as a number (currency with a four-decimal format). Any other value is written as
+its exact decimal text (for example `900719925474.0003`) with a manifest entry,
+so the workbook never silently alters a value.
+
+Dates are the exception because no exact representation exists: the model stores
+them to the nanosecond and an Excel serial date is itself a double count of
+days, so they are rounded to the millisecond by stated policy (the spike's only
+cell differences were sub-millisecond remainders) and written as serials with a
+date number format. Honouring display format strings would mean implementing
+Power BI's format-string language, which is out of proportion for a first
+version.
 
 ## Decision 7: hidden tables
 
