@@ -302,16 +302,18 @@ path's own.
 ```ts
 import { updateRecords } from "@consultchimps/db";
 
+database.insertRecord("Customer", { name: "South", active: true }); // CUST-0002
+
 const outcomes = updateRecords(database, [
-  { table: "Customer", recordId: "CUST-0001", values: { headcount: "12" } },
-  { table: "Customer", recordId: "CUST-0002", values: { headcount: "many" } },
+  { table: "Customer", recordId: "CUST-0001", values: { active: "no" } },
+  { table: "Customer", recordId: "CUST-0002", values: { active: "maybe" } },
 ]);
 
 for (const outcome of outcomes) {
   if (outcome.accepted) {
-    console.log(outcome.recordId, outcome.values); // CUST-0001 { headcount: 12 }
+    console.log(outcome.recordId, outcome.values); // CUST-0001 { active: false }
   } else {
-    console.log(outcome.recordId, outcome.code); // CUST-0002 DB_INVALID_NUMBER
+    console.log(outcome.recordId, outcome.code); // CUST-0002 DB_INVALID_BOOLEAN
   }
 }
 ```
