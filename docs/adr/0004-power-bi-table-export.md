@@ -143,12 +143,16 @@ accepted knowingly, is that lookups and pivots across the parts are the user's
 job. Every part carries the header row, so a part holds at most 1,048,575 data
 rows (the worksheet limit less the header), and the last part is never asked to
 hold a row the worksheet cannot address. Column count above 16,384 refuses the
-table (such a model is pathological), and ordinary cell text above 32,767 UTF-16
-code units is truncated to its longest prefix within that limit that does not
-split a surrogate pair. Count one `PBI_TEXT_TRUNCATED` per changed cell, not per
-removed code unit. Binary encodings follow Decision 6 instead and are never
-truncated. Worksheet names follow Excel's rules (31 characters, forbidden
-characters replaced, case-insensitive uniqueness with numeric suffixes).
+table (such a model is pathological). Ordinary cell text is limited to 32,767
+UTF-16 code units and 253 line breaks. Count a CRLF pair as one break and a lone
+CR or LF as one break; retain the original line-ending characters. Truncate to
+the longest prefix satisfying both limits without splitting a surrogate pair or
+a CRLF pair. In particular, stop before the 254th line break even when the
+code-unit limit has not been reached. Count one `PBI_TEXT_TRUNCATED` per changed
+cell, including a cell exceeding both limits, not per removed code unit or line
+break. Binary encodings follow Decision 6 instead and are never truncated.
+Worksheet names follow Excel's rules (31 characters, forbidden characters
+replaced, case-insensitive uniqueness with numeric suffixes).
 
 Worksheet allocation is deterministic. Tables are processed in the model's own
 catalog order (the order the file stores them), never in decode-completion
