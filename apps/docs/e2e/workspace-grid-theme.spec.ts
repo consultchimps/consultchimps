@@ -276,7 +276,10 @@ function pickerOf(page: Page): Locator {
  */
 async function openPicker(page: Page, popup: Locator): Promise<void> {
   await expect(async () => {
-    await cellOf(page, "CUST-0001", "region").click({ timeout: 2_000 });
+    // A double click, because a single one selects the cell: the grid's
+    // spreadsheet gestures give a click to selection and the editor to
+    // `dblclick`, which is the same rule `workspace-grid.spec.ts` follows.
+    await cellOf(page, "CUST-0001", "region").dblclick({ timeout: 2_000 });
     await expect(popup).toBeVisible({ timeout: 2_000 });
   }).toPass({ timeout: 30_000 });
 }
@@ -498,7 +501,7 @@ test.describe("/workspace record grid theme", () => {
       const editing = cellOf(page, "CUST-0001", "name");
       const input = editing.locator("input");
       await expect(async () => {
-        await editing.click({ timeout: 2_000 });
+        await editing.dblclick({ timeout: 2_000 });
         await expect(input).toBeVisible({ timeout: 2_000 });
       }).toPass({ timeout: 30_000 });
       await record("the open editor's own text", input, 4.5);

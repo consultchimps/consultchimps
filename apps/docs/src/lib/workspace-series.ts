@@ -42,7 +42,10 @@
  * - **Text with a trailing integer**: the integer steps. A single value steps
  *   by one; two or more sharing a prefix step by their constant difference.
  *   Zero padding is kept, to the width of the source value the fill continues
- *   from, and digits grow past it rather than being truncated.
+ *   from, and digits grow past it rather than being truncated. The integer is
+ *   the unsigned digits on the end, so a counter stops at zero: a line whose
+ *   step would take it below copies instead, because a minus sign written
+ *   there would read back as part of the prefix and not as the number.
  * - **Everything else copies** the source block cyclically, which is what a
  *   spreadsheet does with a pattern it cannot read: mixed kinds, plain text,
  *   and booleans, which have no series to infer and would otherwise be
@@ -486,8 +489,15 @@ function textRule(source: readonly string[]): LineRule | null {
     // Padded to the width of the source value this target continues from, which
     // is the last one going forwards and the first one going backwards.
     const width = (index < 0 ? first.digits : last.digits).length;
-    const negative = value < 0n;
-    const digits = (negative ? -value : value).toString().padStart(width, "0");
-    return `${first.prefix}${negative ? "-" : ""}${digits}`;
+    // A counter is unsigned digits, so there is no spelling for a value below
+    // zero: "Row -1" would parse back as the counter 1 under the prefix
+    // "Row -", a different series from the one that produced it, and a source
+    // that already reads that way ("Row -2", "Row -1") would double the sign.
+    // Answering null hands the line to the copy rule, as an unspellable date
+    // does.
+    if (value < 0n) {
+      return null;
+    }
+    return `${first.prefix}${value.toString().padStart(width, "0")}`;
   };
 }

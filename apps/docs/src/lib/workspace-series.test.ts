@@ -255,8 +255,23 @@ describe("fillLine: text", () => {
     expect(up(["A-08", "A-09"], 2)).toEqual(["A-07", "A-06"]);
   });
 
-  it("extends backwards through zero", () => {
-    expect(up(["Row 1", "Row 2"], 3)).toEqual(["Row 0", "Row -1", "Row -2"]);
+  it("extends backwards to zero", () => {
+    expect(up(["Row 1", "Row 2"], 1)).toEqual(["Row 0"]);
+  });
+
+  it("copies a line whose counter would go below zero", () => {
+    // The counter is the unsigned digits on the end, so there is no spelling
+    // for -1 here: "Row -1" would read back as the counter 1 under the prefix
+    // "Row -". One unspellable value hands the whole line to the copy rule.
+    expect(up(["Row 1", "Row 2"], 3)).toEqual(["Row 2", "Row 1", "Row 2"]);
+  });
+
+  it("does not double a sign the prefix already carries", () => {
+    // "Row -2", "Row -1" is the counter 2 then 1 under the prefix "Row -", a
+    // series stepping down by one. It continues to "Row -0" and then has
+    // nowhere to go, so the line copies rather than writing "Row --1".
+    expect(down(["Row -3", "Row -2"], 2)).toEqual(["Row -1", "Row -0"]);
+    expect(down(["Row -2", "Row -1"])).toEqual(["Row -2", "Row -1", "Row -2"]);
   });
 });
 

@@ -291,6 +291,41 @@ column is refused the same way, and so is any attempt to change the Record ID,
 which is assigned once: it is `DB_RECORD_ID_IMMUTABLE` here, and a database
 trigger under that refuses it even to a raw statement.
 
+### Edit many records as one step
+
+`updateRecords` applies a batch of record updates in one transaction, which is
+what a pasted block or a dragged fill in a spreadsheet amounts to: tens or
+hundreds of cell writes made as a single movement. Each request goes through
+`updateRecord`, so the conversion and the Record ID rule are the single-record
+path's own.
+
+```ts
+import { updateRecords } from "@consultchimps/db";
+
+const outcomes = updateRecords(database, [
+  { table: "Customer", recordId: "CUST-0001", values: { headcount: "12" } },
+  { table: "Customer", recordId: "CUST-0002", values: { headcount: "many" } },
+]);
+
+for (const outcome of outcomes) {
+  if (outcome.accepted) {
+    console.log(outcome.recordId, outcome.values); // CUST-0001 { headcount: 12 }
+  } else {
+    console.log(outcome.recordId, outcome.code); // CUST-0002 DB_INVALID_NUMBER
+  }
+}
+```
+
+Application is partial and the commit is atomic. A value the schema refuses is
+reported against its own request, as data rather than as a thrown error, so a
+caller across a worker boundary can show it against the cell it belongs to, and
+the batch carries on; the accepted writes then commit together. That is what a
+spreadsheet does, and the alternative was rejected: all-or-nothing would cost
+the caller every accepted write in a two hundred cell paste for one bad value. A
+failure that is not a refusal, one nobody planned for, rolls the whole
+transaction back and propagates. An empty batch writes nothing and reports
+nothing.
+
 `readRecords` reads a table's records, the Record ID first in every row. Pass
 options to narrow it: `columns` reads only the named columns, matched like every
 other identifier, and `limit` reads at most that many records in storage order.
