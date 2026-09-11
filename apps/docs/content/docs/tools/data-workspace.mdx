@@ -46,8 +46,10 @@ assigned once, never edited, and is what other tables refer to. Every column
 takes the type its own values agree on, one of text, whole number, number, yes
 or no, and date, or text when they do not. A worksheet holding cells whose
 formulas have no cached result, or cells holding an error value, is refused
-before anything is imported, with the cells named, because a table with holes in
-it is not the table you saw in Excel.
+before anything is imported, and the page says how many such cells the worksheet
+holds, because a table with holes in it is not the table you saw in Excel. Open
+the workbook in Excel, recalculate, fix the errors, and save it before importing
+again.
 
 ## Edit records in the grid
 
