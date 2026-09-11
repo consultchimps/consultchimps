@@ -2,7 +2,7 @@
 title: Data workspace
 description:
   Keep a project's tables in one file, edit them in an Excel-like grid in the
-  browser, and save the file back where it came from.
+  browser, and save them back to a single file.
 icon: Database
 ---
 
@@ -76,24 +76,29 @@ The grid works the way a spreadsheet does:
   cell. A paste that would run past the last record or the last column is
   refused whole, because records and columns are not added by a paste.
 - **Fill** by dragging the handle on the corner of a selection. Numbers with a
-  constant difference extend it; dates step by the constant month or day
-  difference the source states, and a single date steps by one day; text ending
-  in a number steps the number when the selected values share the same text
-  before it and step by a constant difference, and a single such value steps by
-  one; everything else repeats. A column that refers to another table is copied
-  rather than counted, because a Record ID is a name and not a number.
+  constant difference extend it; dates sharing the same time of day step by a
+  constant number of months when every date falls on the 28th or earlier and
+  otherwise by a constant number of days, and a single date steps by one day;
+  dates with differing times of day repeat; text ending in a number steps the
+  number when the selected values share the same text before it and step by a
+  constant difference, and a single such value steps by one; everything else
+  repeats. A column that refers to another table is copied rather than counted,
+  because a Record ID is a name and not a number.
 
 A paste or a fill is one movement, so it reaches the workspace as one step: the
 cells it could write are written together, and any it could not are explained
-against themselves. The Record ID column is never a write target.
+against themselves. One movement covers at most 5,000 cells, far more than a
+hand makes; a larger one is refused whole. The Record ID column is never a write
+target.
 
 ## Save the workspace
 
 Saving writes the workspace back to a single file. In a browser with the File
 System Access API, which today means Chromium browsers such as Chrome and Edge,
 Save writes back to the same file you opened, in place, and Save as asks where
-to put it. In every other browser the page downloads a copy, because the browser
-gives it no way to write the original.
+to put it; after a Save as, Save writes to the file you chose there. In every
+other browser the page downloads a copy, because the browser gives it no way to
+write the original.
 
 The file is the only copy that matters. Two people can take turns on a file in a
 shared folder, one at a time. Editing is single-writer by design: the workspace
