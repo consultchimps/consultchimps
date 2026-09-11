@@ -148,6 +148,21 @@ follows a split `Sales` becomes `Sales_2_2`, and the same file always yields the
 same names, tab order, and bytes. Within a table, columns follow catalog order
 and rows follow storage order.
 
+Name allocation reserves suffix space before truncation, as the existing
+workbook merge allocator does. Replace forbidden worksheet-name characters with
+`_`, remove leading and trailing whitespace and apostrophes, and use `Sheet` for
+an empty base. The first part has no part suffix; later parts use `_2`, `_3`,
+and so on. If a candidate is already claimed, append a collision suffix starting
+at `_2` and increment until free. For each attempt, concatenate the part and
+collision suffixes, shorten the sanitized base to leave room for that entire
+suffix within 31 UTF-16 code units, then append it. Keep the longest prefix that
+does not split a surrogate pair, and remove trailing whitespace or apostrophes
+exposed by truncation. Treat the reserved name `History` as already claimed.
+Each attempt starts from the original sanitized base, not a previously shortened
+candidate. For example, a 31-character base leaves 29 characters before `_2`, 28
+before `_10`, and 27 before `_2_2`. These constraints follow
+[Excel's worksheet-name rules](https://support.microsoft.com/en-us/excel/rename-a-worksheet).
+
 ## Decision 6: value formatting
 
 **Decision: a finite numeric value is written as an Excel number only when Excel
@@ -185,9 +200,22 @@ cell differences were sub-millisecond remainders) and written as serials with a
 date number format. Round to the nearest millisecond, resolving an exact half
 millisecond toward the later instant. Count only emitted, non-null dates whose
 stored timestamp changes under that rounding as `PBI_DATE_ROUNDED`; dates
-already on a millisecond boundary do not increment it. Honouring display format
-strings would mean implementing Power BI's format-string language, which is out
-of proportion for a first version.
+already on a millisecond boundary do not increment it.
+
+Use the workbook's 1900 date system. Write a date serial only if the rounded
+timestamp is a valid date in that system and the serialized double reads back to
+that same millisecond through the workbook reader. Dates before 1900-01-01,
+dates that round into year 10000, and other timestamps that fail this round trip
+are written as the original timestamp's ISO 8601 text with its stored
+fractional-second precision. Do not attach a timezone that the source does not
+carry. Count these cells as `PBI_DATE_AS_TEXT` instead of `PBI_DATE_ROUNDED`;
+the fallback keeps the original timestamp rather than the rounded candidate. The
+writer must not generate Excel's fictitious 1900-02-29. Build-item 7 fixtures
+cover both date-system limits and a serial whose double conversion crosses a
+millisecond boundary.
+
+Honouring display format strings would mean implementing Power BI's
+format-string language, which is out of proportion for a first version.
 
 Binary values use standard padded base64 text without line breaks. Null remains
 a blank cell; an empty byte sequence encodes as an empty string. The manifest
@@ -241,6 +269,7 @@ The manifest uses this reason-code vocabulary:
 | `PBI_NUMERIC_AS_TEXT`                    | Values | Numeric values written as exact text under Decision 6         |
 | `PBI_NONFINITE_AS_TEXT`                  | Values | Non-finite doubles written with the defined text spelling     |
 | `PBI_DATE_ROUNDED`                       | Values | Dates changed by rounding to the nearest millisecond          |
+| `PBI_DATE_AS_TEXT`                       | Values | Original timestamps written as text when date serials fail    |
 | `PBI_BINARY_AS_BASE64`                   | Values | Non-null binary values written as base64 text                 |
 | `PBI_TEXT_TRUNCATED`                     | Values | Ordinary text values shortened to the worksheet cell limit    |
 
@@ -264,7 +293,7 @@ these same table and column exclusions in its structured details.
 
 This replaces per-value reporting: a million high-precision identifiers add one
 count for their column, not a million manifest entries. Counts cover exact
-numeric text, non-finite text, date rounding, base64 conversion, and
+numeric text, non-finite text, date rounding, date text, base64 conversion, and
 ordinary-text truncation separately. The manifest does not duplicate those cell
 values or collect row-index lists. Its size still depends on table and column
 counts, worksheet parts, and DAX text, so its full size remains part of the
@@ -332,8 +361,8 @@ an independent review before push:
 - The repository gains its first vendored C source and committed WebAssembly
   binary, with a reproducibility check in CI. All licences are MIT.
 - Output is faithful in substance, not in presentation: the workbook carries the
-  model's values, not Power BI's formatting, and dates lose sub-millisecond
-  detail by stated policy.
+  model's values, not Power BI's formatting, and numeric date cells lose
+  sub-millisecond detail by stated policy.
 - The library and CLI surfaces share the same bytes-level engine, so the
   operation can ship on all three surfaces; the browser surface is first.
 - Reading query definitions from a `.pbix` is not planned. Files that need it
