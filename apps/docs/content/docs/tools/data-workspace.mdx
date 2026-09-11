@@ -8,7 +8,8 @@ icon: Database
 
 <Callout title="No installation needed">
   [Use the workspace in your browser](/workspace). The whole workspace runs in
-  the page: nothing you import, edit, or save leaves your browser tab.
+  the page and nothing is uploaded: what you import and edit stays in the tab,
+  and a save writes only to a file on your own machine.
 </Callout>
 
 The data workspace holds a small relational database for a project. You start
@@ -30,8 +31,9 @@ A new workspace is empty. Opening one takes a `.sqlite`, `.sqlite3`, or `.db`
 file that the workspace saved before, or any SQLite database whose tables were
 created through the same library. Starting or opening another workspace replaces
 the one in the tab, so the page asks first when the current one holds changes
-that have not been saved, and the browser's own warning asks again if you close
-the tab or follow a link away.
+that have not been saved. Following a link to another page of this site asks the
+same question in the page, and closing the tab or leaving the site raises the
+browser's own warning.
 
 ## Import a worksheet or a .csv file
 
@@ -68,14 +70,15 @@ The grid works the way a spreadsheet does:
   range copied here pastes into Excel and a range copied from Excel pastes here.
   A single value pastes into every selected cell; a block that tiles the
   selection tiles it; anything else is written from the top left cell. A paste
-  that would run past the last record is refused whole, because records are not
-  added by a paste.
+  that would run past the last record or the last column is refused whole,
+  because records and columns are not added by a paste.
 - **Fill** by dragging the handle on the corner of a selection. Numbers with a
   constant difference extend it; dates step by the constant month or day
   difference the source states, and a single date steps by one day; text ending
-  in a number steps the number; everything else repeats. A column that refers to
-  another table is copied rather than counted, because a Record ID is a name and
-  not a number.
+  in a number steps the number when the selected values share the same text
+  before it and step by a constant difference, and a single such value steps by
+  one; everything else repeats. A column that refers to another table is copied
+  rather than counted, because a Record ID is a name and not a number.
 
 A paste or a fill is one movement, so it reaches the workspace as one step: the
 cells it could write are written together, and any it could not are explained
