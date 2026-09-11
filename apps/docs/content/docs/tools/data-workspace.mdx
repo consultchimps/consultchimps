@@ -1,0 +1,100 @@
+---
+title: Data workspace
+description:
+  Keep a project's tables in one file, edit them in an Excel-like grid in the
+  browser, and save the file back where it came from.
+icon: Database
+---
+
+<Callout title="No installation needed">
+  [Use the workspace in your browser](/workspace). The whole workspace runs in
+  the page: nothing you import, edit, or save leaves your browser tab.
+</Callout>
+
+The data workspace holds a small relational database for a project. You start
+one empty or open one you saved before, import the rows of a worksheet or a
+`.csv` file into it as a table, edit the records in a grid that behaves like a
+spreadsheet, and save the whole thing back to a single file. The file is an
+ordinary SQLite database, so anything that reads SQLite can read it too.
+
+It is the stateful half of ConsultChimps. Every other tool here takes files in
+and writes files out, keeping nothing between runs. The workspace keeps
+something: a file you come back to, edit in place, and put back in the shared
+folder it lives in. The design behind it is recorded in ADR 0003 in the
+repository, and the library it is built on is described in
+[Build a local database](/docs/libraries#build-a-local-database).
+
+## Start or open a workspace
+
+A new workspace is empty. Opening one takes a `.sqlite`, `.sqlite3`, or `.db`
+file that the workspace saved before, or any SQLite database whose tables were
+created through the same library. Starting or opening another workspace replaces
+the one in the tab, so the page asks first when the current one holds changes
+that have not been saved, and the browser's own warning asks again if you close
+the tab or follow a link away.
+
+## Import a worksheet or a .csv file
+
+Choose an Excel `.xlsx` or `.xlsm` workbook or a `.csv` file. A workbook offers
+its visible worksheets and you pick the ones to import; hidden worksheets are
+not offered. Each becomes one table, and you give each table a name and a Record
+ID prefix before anything is written.
+
+Every row is given a **Record ID**: a short generated identifier such as
+`CUST-0001`, made from the prefix you chose and a zero-padded counter. It is
+assigned once, never edited, and is what other tables refer to. Every column
+takes the type its own values agree on, one of text, whole number, number, yes
+or no, and date, or text when they do not. A worksheet holding cells whose
+formulas have no cached result, or cells holding an error value, is refused
+before anything is imported, with the cells named, because a table with holes in
+it is not the table you saw in Excel.
+
+## Edit records in the grid
+
+The grid shows one table at a time. Double-click a cell, or press Enter on it,
+to edit it. Each edit is written to the workspace as you make it, and a value
+the column cannot hold is refused and explained against that cell, which keeps
+the value the workspace has until you deal with it. A column that refers to
+another table is edited through a picker of that table's records.
+
+The grid works the way a spreadsheet does:
+
+- **Select** a rectangle by dragging or shift-clicking, several with ctrl-click,
+  a column by clicking its header, and extend a selection with shift and the
+  arrow keys.
+- **Copy and paste** as the tab-separated text Excel reads and writes, so a
+  range copied here pastes into Excel and a range copied from Excel pastes here.
+  A single value pastes into every selected cell; a block that tiles the
+  selection tiles it; anything else is written from the top left cell. A paste
+  that would run past the last record is refused whole, because records are not
+  added by a paste.
+- **Fill** by dragging the handle on the corner of a selection. Numbers with a
+  constant difference extend it; dates step by the constant month or day
+  difference the source states, and a single date steps by one day; text ending
+  in a number steps the number; everything else repeats. A column that refers to
+  another table is copied rather than counted, because a Record ID is a name and
+  not a number.
+
+A paste or a fill is one movement, so it reaches the workspace as one step: the
+cells it could write are written together, and any it could not are explained
+against themselves. The Record ID column is never a write target.
+
+## Save the workspace
+
+Saving writes the workspace back to a single file. In a browser with the File
+System Access API, which today means Chromium browsers such as Chrome and Edge,
+Save writes back to the same file you opened, in place, and Save as asks where
+to put it. In every other browser the page downloads a copy, because the browser
+gives it no way to write the original.
+
+The file is the only copy that matters. Two people can take turns on a file in a
+shared folder, one at a time. Editing is single-writer by design: the workspace
+does not merge two people's edits to the same file.
+
+## Browser support
+
+The workspace runs the SQLite engine as WebAssembly served from this site and
+keeps the whole database in the tab's memory, so it needs a current browser and
+enough memory for the file. Saving back to the original file in place needs the
+File System Access API, which Chromium browsers provide and Firefox and Safari
+do not; where it is missing, the workspace downloads a copy instead.
