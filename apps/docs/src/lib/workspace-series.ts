@@ -49,8 +49,12 @@
  *   alternated into data nobody entered.
  *
  * Every rule is a pure function of the source text and the index, with no
- * locale, no time zone (dates are counted in UTC), and no floating point, so
- * the same drag produces the same values everywhere.
+ * locale, no time zone, and no floating point, so the same drag produces the
+ * same values everywhere. Dates are counted in whole days by the calendar
+ * arithmetic below rather than by a `Date`, which is the only way to stay right
+ * across the whole range the column accepts: `Date.UTC` and the date
+ * constructor remap a year from 0 to 99 into the twentieth century, so a fill
+ * from 0099-12-31 would answer 2000-01-01 and call it a series.
  */
 import { isIsoDateText } from "@consultchimps/db";
 
@@ -69,8 +73,6 @@ const TRAILING_INTEGER = /^([\s\S]*?)(\d+)$/u;
  * would multiply the value by ten.
  */
 const EXPONENT_NUMBER = /^[+-]?(?:\d+\.?\d*|\.\d+)[eE][+-]?\d+$/u;
-
-const MILLISECONDS_PER_DAY = 86_400_000;
 
 export interface FillLineOptions {
   /**
@@ -243,9 +245,62 @@ function parseDate(value: string): DateParts | null {
   };
 }
 
-/** Days since the epoch, in UTC, which is the only clock this reads. */
+/**
+ * Days from 1 January 1970 to a civil date, by Howard Hinnant's
+ * `days_from_civil`, and its inverse.
+ *
+ * Integer arithmetic rather than a `Date`, for the reason the note at the top of
+ * this file gives: a date constructor remaps a year from 0 to 99 into the
+ * twentieth century, and the `date` column's grammar spells 0000 to 9999, so a
+ * series over the early years would step into the wrong millennium and produce
+ * a value that looks perfectly valid. The same pair of functions does the same
+ * job in `packages/xlsx/src/model/calendar.ts`, where the same rule bit; it is
+ * mirrored rather than imported, because a browser module and an L1 workbook
+ * model are different layers and neither should depend on the other for four
+ * lines of arithmetic.
+ */
+function daysFromCivil(year: number, month: number, day: number): number {
+  const shifted = month <= 2 ? year - 1 : year;
+  const era = Math.floor(shifted / 400);
+  const yearOfEra = shifted - era * 400;
+  const dayOfYear =
+    Math.floor((153 * (month + (month > 2 ? -3 : 9)) + 2) / 5) + day - 1;
+  const dayOfEra =
+    yearOfEra * 365 +
+    Math.floor(yearOfEra / 4) -
+    Math.floor(yearOfEra / 100) +
+    dayOfYear;
+  return era * 146_097 + dayOfEra - 719_468;
+}
+
+function civilFromDays(days: number): {
+  year: number;
+  month: number;
+  day: number;
+} {
+  const shifted = days + 719_468;
+  const era = Math.floor(shifted / 146_097);
+  const dayOfEra = shifted - era * 146_097;
+  const yearOfEra = Math.floor(
+    (dayOfEra -
+      Math.floor(dayOfEra / 1460) +
+      Math.floor(dayOfEra / 36_524) -
+      Math.floor(dayOfEra / 146_096)) /
+      365,
+  );
+  const year = yearOfEra + era * 400;
+  const dayOfYear =
+    dayOfEra -
+    (365 * yearOfEra + Math.floor(yearOfEra / 4) - Math.floor(yearOfEra / 100));
+  const monthPosition = Math.floor((5 * dayOfYear + 2) / 153);
+  const day = dayOfYear - Math.floor((153 * monthPosition + 2) / 5) + 1;
+  const month = monthPosition + (monthPosition < 10 ? 3 : -9);
+  return { year: month <= 2 ? year + 1 : year, month, day };
+}
+
+/** Which day this date is, counted from one fixed day, so a step is a sum. */
 function dayNumber(date: DateParts): number {
-  return Date.UTC(date.year, date.month - 1, date.day) / MILLISECONDS_PER_DAY;
+  return daysFromCivil(date.year, date.month, date.day);
 }
 
 /** The month as one number, so a month step is a subtraction. */
@@ -268,14 +323,26 @@ function renderDate(
   return isIsoDateText(text) ? text : null;
 }
 
-function fromDayNumber(day: number, time: string): string | null {
-  const moment = new Date(day * MILLISECONDS_PER_DAY);
-  return renderDate(
-    moment.getUTCFullYear(),
-    moment.getUTCMonth() + 1,
-    moment.getUTCDate(),
-    time,
-  );
+/** The date a day count names, spelled the way the source was spelled. */
+function fromDayNumber(days: number, time: string): string | null {
+  const { year, month, day } = civilFromDays(days);
+  return renderDate(year, month, day, time);
+}
+
+/** The date a month count and a day of the month name. */
+function fromMonthNumber(
+  months: number,
+  day: number,
+  time: string,
+): string | null {
+  // Floor division and a remainder that is never negative, so a month before
+  // the year 0000 names the month it should rather than a zeroth one. The only
+  // route to a negative count is a year below the range anyway, which the guard
+  // in `renderDate` refuses either way, so this is structural rather than
+  // observable: it keeps the arithmetic honest instead of leaning on an invalid
+  // month being caught downstream.
+  const year = Math.floor(months / 12);
+  return renderDate(year, months - year * 12 + 1, day, time);
 }
 
 function dateRule(source: readonly string[]): LineRule | null {
@@ -306,10 +373,8 @@ function dateRule(source: readonly string[]): LineRule | null {
   if (monthStep !== null) {
     const startMonth = monthNumber(first);
     const { day } = first;
-    return (index) => {
-      const month = startMonth + monthStep * index;
-      return renderDate(Math.floor(month / 12), (month % 12) + 1, day, time);
-    };
+    return (index) =>
+      fromMonthNumber(startMonth + monthStep * index, day, time);
   }
 
   const days = parsed.map(dayNumber);

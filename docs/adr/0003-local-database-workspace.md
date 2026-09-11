@@ -212,16 +212,19 @@ are the decimals the fill writes; a date series applies when every source value
 shares the same time part, all-midnight import timestamps included, stepping by
 a constant month difference when every date shares a day of the month of 28 or
 lower and otherwise by a constant day difference, with a single date stepping by
-one day and every produced value checked against the grammar the column keeps;
-text with a trailing integer steps that integer, by one from a single value and
-by their constant difference from several, keeping the padding; and everything
-else copies the block cyclically, which covers mixed kinds, plain text, and
-booleans, since a boolean has no series to infer and alternating one would
-invent data. A foreign-key column copies only, and a sideways fill whose line
-crosses one copies throughout, because a series read across columns that mean
-different things is not a series anyone asked for. A fill never writes to the
-Record ID column, never past the grid's edge, and never from a source cell that
-has a refusal standing against it. The selection then follows what the gesture
+one day, every produced value checked against the grammar the column keeps, and
+the counting done in whole days by integer calendar arithmetic rather than
+through a date constructor, which remaps a year below 100 into the twentieth
+century and would answer 2000-01-01 for the day after 0099-12-31; text with a
+trailing integer steps that integer, by one from a single value and by their
+constant difference from several, keeping the padding; and everything else
+copies the block cyclically, which covers mixed kinds, plain text, and booleans,
+since a boolean has no series to infer and alternating one would invent data. A
+foreign-key column copies only, and a sideways fill whose line crosses one
+copies throughout, because a series read across columns that mean different
+things is not a series anyone asked for. A fill never writes to the Record ID
+column, never past the grid's edge, and never from a source cell that has a
+refusal standing against it. The selection then follows what the gesture
 covered, on the movement rather than on the reply: it is the shape the visitor
 drew, and a gesture the worker refuses as a whole leaves every value untouched
 and says so.

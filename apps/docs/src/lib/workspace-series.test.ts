@@ -155,6 +155,59 @@ describe("fillLine: dates", () => {
       "2026-02-15",
     ]);
   });
+
+  // The date column's grammar spells a year 0000 to 9999, and a date
+  // constructor remaps a year from 0 to 99 into the twentieth century, so these
+  // are the years where a fill built on one would answer a plausible wrong
+  // value: 0099-12-31 plus a day would read as 2000-01-01.
+  it("crosses the year 0100 without leaving the century it was in", () => {
+    expect(down(["0099-12-31"], 3)).toEqual([
+      "0100-01-01",
+      "0100-01-02",
+      "0100-01-03",
+    ]);
+  });
+
+  it("steps back into the years below 100", () => {
+    expect(up(["0100-01-02", "0100-01-03"], 4)).toEqual([
+      "0100-01-01",
+      "0099-12-31",
+      "0099-12-30",
+      "0099-12-29",
+    ]);
+  });
+
+  it("carries a month series across the same boundary", () => {
+    expect(down(["0099-11-15", "0099-12-15"], 3)).toEqual([
+      "0100-01-15",
+      "0100-02-15",
+      "0100-03-15",
+    ]);
+  });
+
+  it("steps a month series back below the year 100", () => {
+    expect(up(["0100-02-10", "0100-03-10"], 3)).toEqual([
+      "0100-01-10",
+      "0099-12-10",
+      "0099-11-10",
+    ]);
+  });
+
+  it("keeps the first years of the calendar rather than shifting them", () => {
+    expect(down(["0001-02-28"], 2)).toEqual(["0001-03-01", "0001-03-02"]);
+    expect(down(["0004-02-28"], 1)).toEqual(["0004-02-29"]);
+  });
+
+  it("copies at the far end, where the year has no spelling", () => {
+    // 9999-12-31 plus a day is the year 10000, which the grammar cannot write,
+    // so the line copies rather than filling values the column would refuse.
+    expect(down(["9999-12-31"], 2)).toEqual(["9999-12-31", "9999-12-31"]);
+    expect(down(["9999-11-30", "9999-12-30"], 1)).toEqual(["9999-11-30"]);
+  });
+
+  it("copies at the near end, where the year would go below zero", () => {
+    expect(up(["0000-01-01"], 2)).toEqual(["0000-01-01", "0000-01-01"]);
+  });
 });
 
 describe("fillLine: text", () => {
