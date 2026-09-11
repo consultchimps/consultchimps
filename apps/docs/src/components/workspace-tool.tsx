@@ -706,8 +706,8 @@ export function WorkspaceTool() {
   return (
     <ToolShell
       description="Start a workspace in this tab, or open one you saved before, import a worksheet or a .csv file into it, then save it back to a single file. The workspace is an in-memory database that never leaves your browser"
-      guideHref="/docs/libraries#build-a-local-database"
-      guideLabel="Read about the local database"
+      guideHref="/docs/tools/data-workspace"
+      guideLabel="Read the workspace guide"
       kicker="Online tool · Data workspace"
       title="Data workspace"
     >

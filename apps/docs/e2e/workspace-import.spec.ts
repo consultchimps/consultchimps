@@ -589,7 +589,7 @@ test.describe("/workspace import", () => {
     // Discarding follows the link that was held.
     await page.getByTestId("guide-link").click();
     await page.getByTestId("workspace-confirm-discard").click();
-    await expect(page).toHaveURL(/\/docs\/libraries/u);
+    await expect(page).toHaveURL(/\/docs\/tools\/data-workspace/u);
   });
 
   test("follows a link at once when nothing is unsaved", async ({ page }) => {
@@ -599,7 +599,7 @@ test.describe("/workspace import", () => {
     await expect(page.getByTestId("workspace-summary")).toBeVisible();
 
     await page.getByTestId("guide-link").click();
-    await expect(page).toHaveURL(/\/docs\/libraries/u);
+    await expect(page).toHaveURL(/\/docs\/tools\/data-workspace/u);
     await expect(page.getByTestId("workspace-confirm")).toHaveCount(0);
   });
 
@@ -746,7 +746,7 @@ test.describe("/workspace import", () => {
 
     // And with nothing at stake the link is followed rather than held.
     await page.getByTestId("guide-link").click();
-    await expect(page).toHaveURL(/\/docs\/libraries/u);
+    await expect(page).toHaveURL(/\/docs\/tools\/data-workspace/u);
   });
 
   test("names a one-worksheet workbook after the file it came from", async ({
@@ -829,7 +829,7 @@ test.describe("/workspace import", () => {
     // copy of the workspace before it reaches the page before it.
     await page.getByTestId("guide-link").click();
     await page.getByTestId("workspace-confirm-discard").click();
-    await expect(page).toHaveURL(/\/docs\/libraries/u);
+    await expect(page).toHaveURL(/\/docs\/tools\/data-workspace/u);
 
     await page.goBack();
     await expect(page).toHaveURL(/\/workspace$/u);
@@ -854,7 +854,7 @@ test.describe("/workspace import", () => {
     // Saving clears the flag but cannot remove the entry the change armed, so
     // the clean way out has to retire it too.
     await page.getByTestId("guide-link").click();
-    await expect(page).toHaveURL(/\/docs\/libraries/u);
+    await expect(page).toHaveURL(/\/docs\/tools\/data-workspace/u);
 
     await page.goBack();
     await expect(page).toHaveURL(/\/workspace$/u);

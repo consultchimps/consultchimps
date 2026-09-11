@@ -950,7 +950,7 @@ test.describe("/workspace record grid", () => {
     // With nothing at stake the page is left without a question, which is what
     // says the hold was released rather than merely hidden.
     await page.getByTestId("guide-link").click();
-    await expect(page).toHaveURL(/\/docs\/libraries/u);
+    await expect(page).toHaveURL(/\/docs\/tools\/data-workspace/u);
     await expect(page.getByTestId("workspace-confirm")).toHaveCount(0);
   });
 });
