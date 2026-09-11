@@ -133,12 +133,19 @@ option when that is the cure. An empty workbook is never a success.
 
 Capacity is a separate operational gate, with `PBI_EXPORT_LIMIT_EXCEEDED` for an
 export that cannot fit the configured limits. The shared byte engine accepts
-positive, finite byte limits for input bytes, decoded bytes, output bytes, and
-estimated peak working memory. Browser defaults are fixed, measured values
-shipped with the implementation, not guesses based on available device memory.
-Build items 1 and 8 must establish the limits and their estimator fixtures
-before item 9 can claim browser support. Larger limits require an explicit
-caller option and are outside the default browser envelope.
+positive, safe-integer byte limits for input bytes, decoded bytes, output bytes,
+and estimated peak working memory. Omitted limits use the shipped defaults.
+Validate supplied limits before reading input or allocating export buffers.
+Reject a wrong type, zero, negative value, fraction, unsafe integer, `NaN`, or
+infinity with `PBI_INVALID_OPTIONS`. Its details list each invalid option name
+and the requirement for a positive safe integer, in the limit order above; the
+message tells the caller to omit the option or supply a valid byte count. These
+option errors produce no artifacts or destination writes and are distinct from
+exceeding a valid limit. Browser defaults are fixed, measured values shipped
+with the implementation, not guesses based on available device memory. Build
+items 1 and 8 must establish the limits and their estimator fixtures before item
+9 can claim browser support. Larger limits require an explicit caller option and
+are outside the default browser envelope.
 
 Check the input size before reading a browser `File` into an array. Use
 validated container sizes, model row counts, and dictionary/value widths to
@@ -282,14 +289,23 @@ carry it into that day. For other timestamps, form the rounded candidate and
 write a date serial only if that candidate is valid in the 1900 system and the
 serialized double reads back to that same millisecond through the workbook
 reader. A candidate in year 10000 or any failed round trip also selects text.
-Every date-text fallback uses the original timestamp's ISO 8601 text with its
-stored fractional-second precision. Do not attach a timezone that the source
-does not carry. Count these cells as `PBI_DATE_AS_TEXT` instead of
-`PBI_DATE_ROUNDED`; the fallback keeps the original timestamp rather than the
-rounded candidate. The writer must not generate Excel's fictitious 1900-02-29.
-Build-item 7 fixtures cover both date-system limits, `1899-12-31T23:59:59.9996`
-remaining text, and a serial whose double conversion crosses a millisecond
-boundary.
+Every date-text fallback is derived from the original decoded timestamp, before
+millisecond rounding, using the proleptic Gregorian calendar and the canonical
+form `YYYY-MM-DDTHH:mm:ss.nnnnnnnnn`. Use two digits for each month, day, hour,
+minute, and second, and exactly nine fractional digits, including trailing
+zeros, from the decoded nanosecond units. Years 0000 through 9999 use four
+digits; other years use a mandatory sign followed by the absolute year's decimal
+digits, padded to a minimum width of six with no additional leading zeros. Thus
+year 10000 is `+010000`, and year -1 is `-000001`. For example, one tenth of a
+second is `.100000000`, and a whole second ends in `.000000000`. This spelling
+does not depend on an original text representation or host locale. Do not attach
+a timezone that the source does not carry. Count these cells as
+`PBI_DATE_AS_TEXT` instead of `PBI_DATE_ROUNDED`; the fallback keeps the
+original timestamp rather than the rounded candidate. The writer must not
+generate Excel's fictitious 1900-02-29. Build-item 7 fixtures cover both
+date-system limits, `1899-12-31T23:59:59.9996` remaining text, canonical
+fractional zeros and expanded years, and a serial whose double conversion
+crosses a millisecond boundary.
 
 Honouring display format strings would mean implementing Power BI's
 format-string language, which is out of proportion for a first version.
@@ -456,8 +472,8 @@ Right-sized pull requests, in order, each with a contract agreed before code and
 an independent review before push:
 
 1. Package skeleton, zip and part reader, refusal contract
-   (`PBI_INVALID_CONTAINER`, `PBI_MODEL_UNREADABLE`, `PBI_NO_MODEL`,
-   `PBI_MODEL_ENCRYPTED`, `PBI_NO_EXPORTABLE_TABLES`,
+   (`PBI_INVALID_OPTIONS`, `PBI_INVALID_CONTAINER`, `PBI_MODEL_UNREADABLE`,
+   `PBI_NO_MODEL`, `PBI_MODEL_ENCRYPTED`, `PBI_NO_EXPORTABLE_TABLES`,
    `PBI_EXPORT_LIMIT_EXCEEDED`) and error codes. Ships a real, testable refusal
    before any decode.
 2. Vendored XPress9 source, Emscripten build script, committed binary, the
