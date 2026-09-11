@@ -181,27 +181,34 @@ before `_10`, and 27 before `_2_2`. These constraints follow
 
 ## Decision 6: value formatting
 
-**Decision: a finite numeric value is written as an Excel number only when Excel
-will read back exactly the stored value, which means its exact decimal form has
-at most fifteen significant digits; otherwise it is written as exact decimal
-text and counted in the manifest. Dates are the one stated exception, rounded to
-the millisecond. Power BI display format strings are ignored in the first
-version.**
+**Decision: write a finite numeric value as an Excel number only when it passes
+all three checks: at most fifteen significant decimal digits, the numeric range
+below, and an exact source-value round trip after workbook serialization. If any
+check fails, write lossless decimal text and count `PBI_NUMERIC_AS_TEXT`. Dates
+follow the separate rounding and fallback rules below. Power BI display format
+strings are ignored in the first version.**
 
-Two limits stack. An Excel numeric cell is an IEEE-754 double, so a number
-format changes only the display, never the stored precision; and Excel itself
-keeps only fifteen significant decimal digits of a number it reads, so a value
-the double carries exactly can still lose its trailing digit on open
-(`1234567890123456` becomes `1234567890123450`). The fifteen-digit test
-therefore subsumes the double test, and it is one test for every numeric type,
-not a per-type range: whole numbers are 64-bit integers; currency is a 64-bit
-count of ten-thousandths, whose decimal form is the integer with the point moved
-four places (`123456789012.3456` has sixteen significant digits and is written
-as text). The writer keeps the stored integer as an integer, forms the exact
-decimal text, and counts its significant digits; at most fifteen is written as a
-number (currency with a four-decimal format), and anything else is written as
-that exact decimal text and counted under its column in the manifest, so the
-workbook never silently alters a value.
+Use a conservative numeric-cell range based on
+[Excel's published limits](https://support.microsoft.com/en-us/excel/excel-specifications-and-limits):
+positive zero, or an absolute value from `2.2251e-308` through
+`9.99999999999999e307`, inclusive. Thus `1e308` and `1e-310`, and their negative
+counterparts, become text even when their decimal spelling is short. Preserve
+negative zero as the text `-0`, also counted as `PBI_NUMERIC_AS_TEXT`.
+
+An Excel number format changes display, not stored precision. Keep whole numbers
+as their stored 64-bit integers and currency as its stored integer count of
+ten-thousandths while forming the exact decimal text. For finite doubles, use
+the locale-independent shortest decimal spelling that reconstructs the same
+IEEE-754 value. Count significant digits in the coefficient, excluding leading
+and trailing zeros and excluding the exponent. For example, `1234567890123456`
+and the currency value `123456789012.3456` exceed the fifteen-digit limit and
+become text. A value that passes the precision and range checks still must
+survive serialization and reading back: compare whole numbers and scaled
+currency in their original integer units, and doubles by their original finite
+value. If it fails, use the prepared text instead. Currency numeric cells use a
+four-decimal format. Build item 7 covers both numeric-range boundaries,
+high-precision integers and currency, finite doubles, and both signs of zero;
+build item 8 verifies the emitted cells with an independent reader.
 
 Non-finite doubles are text: `NaN`, `Infinity`, and `-Infinity`, with their
 affected-value count recorded as `PBI_NONFINITE_AS_TEXT`. These spellings
