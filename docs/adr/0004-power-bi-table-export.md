@@ -150,11 +150,12 @@ and rows follow storage order.
 
 ## Decision 6: value formatting
 
-**Decision: a numeric value is written as an Excel number only when Excel will
-read back exactly the stored value, which means its exact decimal form has at
-most fifteen significant digits; otherwise it is written as exact decimal text
-and counted in the manifest. Dates are the one stated exception, rounded to the
-millisecond. Power BI display format strings are ignored in the first version.**
+**Decision: a finite numeric value is written as an Excel number only when Excel
+will read back exactly the stored value, which means its exact decimal form has
+at most fifteen significant digits; otherwise it is written as exact decimal
+text and counted in the manifest. Dates are the one stated exception, rounded to
+the millisecond. Power BI display format strings are ignored in the first
+version.**
 
 Two limits stack. An Excel numeric cell is an IEEE-754 double, so a number
 format changes only the display, never the stored precision; and Excel itself
@@ -171,13 +172,22 @@ number (currency with a four-decimal format), and anything else is written as
 that exact decimal text and counted under its column in the manifest, so the
 workbook never silently alters a value.
 
+Non-finite doubles are text: `NaN`, `Infinity`, and `-Infinity`, with their
+affected-value count recorded as `PBI_NONFINITE_AS_TEXT`. These spellings
+preserve the numeric category and infinity's sign; NaN payload bits are not
+preserved. They are neither blank cells nor Excel errors. Null remains blank and
+is not counted as a numeric conversion.
+
 Dates are the exception because no exact representation exists: the model stores
 them to the nanosecond and an Excel serial date is itself a double count of
 days, so they are rounded to the millisecond by stated policy (the spike's only
 cell differences were sub-millisecond remainders) and written as serials with a
-date number format. Honouring display format strings would mean implementing
-Power BI's format-string language, which is out of proportion for a first
-version.
+date number format. Round to the nearest millisecond, resolving an exact half
+millisecond toward the later instant. Count only emitted, non-null dates whose
+stored timestamp changes under that rounding as `PBI_DATE_ROUNDED`; dates
+already on a millisecond boundary do not increment it. Honouring display format
+strings would mean implementing Power BI's format-string language, which is out
+of proportion for a first version.
 
 Binary values use standard padded base64 text without line breaks. Null remains
 a blank cell; an empty byte sequence encodes as an empty string. The manifest
@@ -229,12 +239,17 @@ The manifest uses this reason-code vocabulary:
 | `PBI_COLUMN_ROW_ALIGNMENT_UNRECOVERABLE` | Column | Decoded values cannot be assigned reliably to source rows     |
 | `PBI_BINARY_CELL_TOO_LONG`               | Column | Column excluded because a base64 value exceeds the text limit |
 | `PBI_NUMERIC_AS_TEXT`                    | Values | Numeric values written as exact text under Decision 6         |
+| `PBI_NONFINITE_AS_TEXT`                  | Values | Non-finite doubles written with the defined text spelling     |
+| `PBI_DATE_ROUNDED`                       | Values | Dates changed by rounding to the nearest millisecond          |
 | `PBI_BINARY_AS_BASE64`                   | Values | Non-null binary values written as base64 text                 |
 | `PBI_TEXT_TRUNCATED`                     | Values | Ordinary text values shortened to the worksheet cell limit    |
 
-Table entries precede column entries within each table. Tables and columns
-follow catalog order; reasons within either scope sort by code in ascending
-ASCII order. Worksheet parts remain in source row order. DAX expressions and
+For each table in catalog order, emit its Table-scope reasons in ascending ASCII
+code order. Then visit its columns in catalog order, emitting each column's
+Column-scope reasons followed by its Values-scope aggregates, each group sorted
+by code in ascending ASCII order. Values scope means a count attached to that
+column, not a separate per-cell entry or unordered list. Omit aggregates with a
+zero count. Worksheet parts remain in source row order. DAX expressions and
 worksheet provenance are metadata, not additional reason codes.
 
 Apply table exclusions in order: hidden policy, source column limit, then no
@@ -249,10 +264,11 @@ these same table and column exclusions in its structured details.
 
 This replaces per-value reporting: a million high-precision identifiers add one
 count for their column, not a million manifest entries. Counts cover exact
-numeric text, base64 conversion, and ordinary-text truncation separately. The
-manifest does not duplicate those cell values or collect row-index lists. Its
-size still depends on table and column counts, worksheet parts, and DAX text, so
-its full size remains part of the browser memory measurement.
+numeric text, non-finite text, date rounding, base64 conversion, and
+ordinary-text truncation separately. The manifest does not duplicate those cell
+values or collect row-index lists. Its size still depends on table and column
+counts, worksheet parts, and DAX text, so its full size remains part of the
+browser memory measurement.
 
 ## Known limits
 

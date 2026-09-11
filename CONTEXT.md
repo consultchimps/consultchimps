@@ -85,5 +85,5 @@ First draft, added with ADR 0004. The verb and nouns are proposed, not final.
   were produced by a DAX expression rather than loaded from a source. Exported
   as data.
 - **Manifest**: the record an export returns alongside the workbook, naming
-  skipped tables and columns, worksheet splits, and counts of values truncated
-  or encoded as text, grouped by column and reason.
+  skipped tables and columns, worksheet splits, and counts of values rounded,
+  truncated, or encoded as text, grouped by column and reason.
