@@ -24,28 +24,34 @@ describe("cellText", () => {
 });
 
 describe("encodeTsv", () => {
-  it("joins cells with tabs and rows with CRLF, with no trailing newline", () => {
+  it("joins cells with tabs and terminates every row with CRLF", () => {
     expect(
       encodeTsv([
         ["a", "b"],
         ["c", "d"],
       ]),
-    ).toBe("a\tb\r\nc\td");
+    ).toBe("a\tb\r\nc\td\r\n");
   });
 
-  it("writes a single cell as itself", () => {
-    expect(encodeTsv([["North"]])).toBe("North");
+  it("terminates a single row too, which is what Excel's own clipboard does", () => {
+    // The terminator is what makes a block ending in a blank row readable back:
+    // without it, "North\r\n" would have to mean both one row and two.
+    expect(encodeTsv([["North"]])).toBe("North\r\n");
+  });
+
+  it("writes a block of no rows as no text", () => {
+    expect(encodeTsv([])).toBe("");
   });
 
   it("quotes a field holding a tab, a newline, a carriage return, or a quote", () => {
-    expect(encodeTsv([["a\tb"]])).toBe('"a\tb"');
-    expect(encodeTsv([["a\nb"]])).toBe('"a\nb"');
-    expect(encodeTsv([["a\rb"]])).toBe('"a\rb"');
-    expect(encodeTsv([['say "hi"']])).toBe('"say ""hi"""');
+    expect(encodeTsv([["a\tb"]])).toBe('"a\tb"\r\n');
+    expect(encodeTsv([["a\nb"]])).toBe('"a\nb"\r\n');
+    expect(encodeTsv([["a\rb"]])).toBe('"a\rb"\r\n');
+    expect(encodeTsv([['say "hi"']])).toBe('"say ""hi"""\r\n');
   });
 
   it("leaves an ordinary field unquoted", () => {
-    expect(encodeTsv([["1 North Street", ""]])).toBe("1 North Street\t");
+    expect(encodeTsv([["1 North Street", ""]])).toBe("1 North Street\t\r\n");
   });
 });
 
@@ -57,15 +63,28 @@ describe("parseTsv", () => {
     ]);
   });
 
+  it("reads a line break as the end of the row before it, as Excel means it", () => {
+    // A single cell copied from Excel arrives terminated. It is one row, not a
+    // row and a blank one, and this is the case the rule is chosen for.
+    expect(parseTsv("A\r\n")).toEqual([["A"]]);
+    expect(parseTsv("A\tB\r\n")).toEqual([["A", "B"]]);
+  });
+
+  it("reads a second line break as a blank row, because the first ended a row", () => {
+    expect(parseTsv("A\r\n\r\n")).toEqual([["A"], [""]]);
+    expect(parseTsv("\r\n")).toEqual([[""]]);
+    expect(parseTsv("\r\nA\r\n")).toEqual([[""], ["A"]]);
+  });
+
   it("reads a bare carriage return and a bare newline alike", () => {
     expect(parseTsv("a\rb")).toEqual([["a"], ["b"]]);
     expect(parseTsv("a\nb")).toEqual([["a"], ["b"]]);
     expect(parseTsv("a\r\nb\nc\rd")).toEqual([["a"], ["b"], ["c"], ["d"]]);
   });
 
-  it("drops one trailing row separator and no more", () => {
-    expect(parseTsv("a\r\n")).toEqual([["a"]]);
-    expect(parseTsv("a\r\n\r\n")).toEqual([["a"], [""]]);
+  it("keeps a row the text did not terminate", () => {
+    expect(parseTsv("a")).toEqual([["a"]]);
+    expect(parseTsv("a\r\nb")).toEqual([["a"], ["b"]]);
   });
 
   it("keeps an empty trailing field", () => {
@@ -112,5 +131,78 @@ describe("parseTsv", () => {
     ];
 
     expect(parseTsv(encodeTsv(block))).toEqual(block);
+  });
+});
+
+describe("the round trip", () => {
+  // The property the two halves exist to keep: whatever the grid copies, a
+  // paste of it is the same block. The blank cases are the ones a copy runs
+  // into and the ones the earlier encoding lost, so they are named rather than
+  // left to a general claim.
+  const blocks: ReadonlyArray<{
+    readonly what: string;
+    readonly block: string[][];
+  }> = [
+    { what: "one value", block: [["North"]] },
+    {
+      what: "a rectangle",
+      block: [
+        ["a", "b"],
+        ["c", "d"],
+      ],
+    },
+    { what: "a blank cell", block: [[""]] },
+    { what: "a blank row after a value", block: [["A"], [""]] },
+    { what: "a blank row before a value", block: [[""], ["A"]] },
+    {
+      what: "a blank last column",
+      block: [
+        ["A", ""],
+        ["B", ""],
+      ],
+    },
+    {
+      what: "a blank first column",
+      block: [
+        ["", "A"],
+        ["", "B"],
+      ],
+    },
+    {
+      what: "nothing but blanks",
+      block: [
+        ["", ""],
+        ["", ""],
+      ],
+    },
+    { what: "no rows at all", block: [] },
+    {
+      what: "fields holding the separators themselves",
+      block: [
+        ["a\tb", "c\r\nd"],
+        ['say "hi"', ""],
+      ],
+    },
+    {
+      what: "a trailing blank row of several cells",
+      block: [
+        ["a", "b"],
+        ["", ""],
+      ],
+    },
+  ];
+
+  for (const { what, block } of blocks) {
+    it(`survives a copy and a paste of ${what}`, () => {
+      expect(parseTsv(encodeTsv(block))).toEqual(block);
+    });
+  }
+
+  it("stays the same block however many times it goes round", () => {
+    const block = [["A"], [""]];
+    const once = encodeTsv(block);
+
+    expect(encodeTsv(parseTsv(once))).toBe(once);
+    expect(parseTsv(encodeTsv(parseTsv(once)))).toEqual(block);
   });
 });

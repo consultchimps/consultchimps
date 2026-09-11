@@ -13,8 +13,19 @@
  * **Line endings.** Excel on Windows writes CRLF. Tabulator's built-in range
  * parser splits on "\n" and leaves the "\r" attached to the last field of every
  * row, so a multi-row paste quietly corrupts its last column. This parser
- * accepts CRLF, a bare CR, and a bare LF, in any mix, and drops one trailing
- * separator, because a copy usually ends with one and it is not an empty row.
+ * accepts CRLF, a bare CR, and a bare LF, in any mix.
+ *
+ * **What a trailing line break means, said once.** It terminates the last row
+ * rather than starting an empty one, which is the convention Excel's own
+ * clipboard follows: a single copied cell arrives as "A\r\n" and is one row. The
+ * encoder therefore terminates every row, including the last, because the
+ * alternative cannot be read back: without a terminator, "A\r\n" would have to
+ * mean both a block of one row and a block whose second row is blank, and a
+ * copied range ending in a blank row is an ordinary thing to copy. Terminating
+ * always costs two characters and makes the round trip exact: "A\r\n\r\n" is a
+ * row then a blank row, "\r\n" is a single blank cell, and empty text is no
+ * block at all. Text that arrives without a terminator (some applications write
+ * none) loses nothing either: a row the text did not terminate is still a row.
  *
  * **Quoting.** A text column here may hold a tab or a newline, and the built-in
  * copy joins with those characters and quotes nothing, so such a cell would
@@ -34,10 +45,11 @@ import type { CellValue } from "@consultchimps/tabular";
 const CELL_SEPARATOR = "\t";
 
 /**
- * Rows joined by this. CRLF because that is what Excel writes and what every
- * spreadsheet reads; the parser below is the lenient half of the pair.
+ * What terminates a row. CRLF because that is what Excel writes and what every
+ * spreadsheet reads; the parser below is the lenient half of the pair, taking a
+ * bare CR or LF as well.
  */
-const ROW_SEPARATOR = "\r\n";
+const ROW_TERMINATOR = "\r\n";
 
 /** The characters that make a field ambiguous unless it is quoted. */
 const NEEDS_QUOTING = /["\t\r\n]/u;
@@ -63,23 +75,36 @@ function encodeField(field: string): string {
 /**
  * Encode a rectangular block as clipboard text. Rows are given top to bottom
  * and cells left to right, exactly as they sit in the grid.
+ *
+ * Every row is terminated, the last one included, for the reason the note above
+ * gives: an unterminated last row makes a block ending in a blank row
+ * indistinguishable from a block without it, and `parseTsv(encodeTsv(block))`
+ * has to be the block. A block of no rows is no text.
  */
 export function encodeTsv(rows: ReadonlyArray<readonly string[]>): string {
   return rows
-    .map((row) => row.map(encodeField).join(CELL_SEPARATOR))
-    .join(ROW_SEPARATOR);
+    .map(
+      (row) => `${row.map(encodeField).join(CELL_SEPARATOR)}${ROW_TERMINATOR}`,
+    )
+    .join("");
 }
 
 /**
  * Parse clipboard text into a block of fields.
  *
  * Written as a scan rather than a split because a quoted field may contain both
- * separators, so no amount of splitting can find the boundaries first. Anything
- * the grammar does not describe is read the way a spreadsheet reads it rather
- * than refused: a quote inside an unquoted field is a literal quote (`12" pipe`
- * is a length, not a mistake), text after a closing quote continues the same
- * field, and a quote that is never closed takes the rest of the text with it.
- * Refusing those would turn an ordinary paste into an error message.
+ * a tab and a line break, so no amount of splitting can find the boundaries
+ * first. Anything the grammar does not describe is read the way a spreadsheet
+ * reads it rather than refused: a quote inside an unquoted field is a literal
+ * quote (`12" pipe` is a length, not a mistake), text after a closing quote
+ * continues the same field, and a quote that is never closed takes the rest of
+ * the text with it. Refusing those would turn an ordinary paste into an error
+ * message.
+ *
+ * A line break ends the row it follows and nothing else, so text that ends with
+ * one holds no extra row and text that ends without one still holds its last.
+ * That is the encoder's rule read backwards, and it is the whole of how a blank
+ * last row survives the round trip.
  */
 export function parseTsv(text: string): string[][] {
   if (text === "") {
@@ -91,6 +116,9 @@ export function parseTsv(text: string): string[][] {
   let field = "";
   let quoted = false;
   let index = 0;
+  // Whether the character just consumed ended a row. What decides, at the end,
+  // between text that terminated its last row and text that did not.
+  let terminated = false;
 
   const endField = (): void => {
     row.push(field);
@@ -104,6 +132,10 @@ export function parseTsv(text: string): string[][] {
 
   while (index < text.length) {
     const character = text[index] as string;
+    // Cleared here and set again only by the terminator branch, so it always
+    // describes the character just consumed and no branch has to remember to
+    // clear it. Inside quotes a line break is content, which this covers too.
+    terminated = false;
 
     if (quoted) {
       if (character === '"') {
@@ -134,7 +166,8 @@ export function parseTsv(text: string): string[][] {
     }
     if (character === "\r" || character === "\n") {
       endRow();
-      // CRLF is one separator, not two.
+      terminated = true;
+      // CRLF is one terminator, not two.
       index += character === "\r" && text[index + 1] === "\n" ? 2 : 1;
       continue;
     }
@@ -142,10 +175,10 @@ export function parseTsv(text: string): string[][] {
     index += 1;
   }
 
-  // Whatever is left is the last field, unless the text ended on a separator:
-  // a copy usually ends with one, and it means the end of the last row rather
-  // than an empty row after it.
-  if (field !== "" || row.length > 0 || rows.length === 0) {
+  // A row the text did not terminate is still a row. One the text did terminate
+  // is already in `rows`, so there is nothing left to add: that is what stops a
+  // terminated block growing a blank row every time it is copied.
+  if (!terminated) {
     endRow();
   }
 

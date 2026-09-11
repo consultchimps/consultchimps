@@ -62,6 +62,18 @@ describe("fillLine: numbers", () => {
     ]);
   });
 
+  it("extends a source with more values than an argument list takes", () => {
+    // A fill's source is as tall as the selection and nothing caps what a
+    // gesture reads, so measuring the decimals by spreading the line into
+    // Math.max threw a raw RangeError somewhere above 125,000 values and the
+    // drag died instead of filling its one cell.
+    const source = Array.from({ length: 130_000 }, (_unused, index) =>
+      String(index),
+    );
+
+    expect(fillLine(source, [source.length])).toEqual(["130000"]);
+  });
+
   it("copies a number written in exponent notation", () => {
     expect(down(["1e+21", "2e+21"], 2)).toEqual(["1e+21", "2e+21"]);
   });

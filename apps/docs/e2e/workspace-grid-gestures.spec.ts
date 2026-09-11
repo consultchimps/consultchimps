@@ -214,9 +214,11 @@ test.describe("/workspace record grid gestures", () => {
       { recordId: "TSK-0002", field: "owner" },
     );
 
-    // Tabs between cells, CRLF between rows, no header row, and no trailing
-    // newline: the text a spreadsheet reads back as the block it was.
-    expect(await copySelection(page)).toBe("T-007\tNorth\r\nB-1\tSouth");
+    // Tabs between cells, every row terminated by CRLF, and no header
+    // row: the text a spreadsheet reads back as the block it was. The last
+    // row is terminated like the rest, which is what a spreadsheet does and
+    // what makes a block ending in a blank row survive the round trip.
+    expect(await copySelection(page)).toBe("T-007\tNorth\r\nB-1\tSouth\r\n");
 
     // A block from Excel on Windows, ending in a line break as one usually does.
     // The built-in parser leaves that "\r" on the last field of every row, which

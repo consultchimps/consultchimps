@@ -244,6 +244,20 @@ describe("planPaste", () => {
     expect(refusal(plan)).toContain("smaller");
   });
 
+  it("refuses a clipboard with more rows than an argument list takes", () => {
+    // A spreadsheet hands over blocks this tall, and measuring the widest row by
+    // spreading them into Math.max threw a raw RangeError somewhere above
+    // 125,000 rows, before the refusal below could be reached.
+    const rows = 130_000;
+    const plan = planPaste({
+      grid: grid(rows, ["name"]),
+      ranges: [rect(0, 1)],
+      block: Array.from({ length: rows }, () => ["x"]),
+    });
+
+    expect(refusal(plan)).toContain(String(WORKSPACE_MAX_GESTURE_CELLS));
+  });
+
   it("allows a paste of exactly the largest step", () => {
     const columns = Array.from({ length: 10 }, (_unused, index) => `c${index}`);
     const rows = WORKSPACE_MAX_GESTURE_CELLS / 10;

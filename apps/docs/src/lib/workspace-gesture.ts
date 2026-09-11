@@ -214,7 +214,13 @@ export function planPaste(options: PastePlanOptions): GesturePlan {
     return refused(ONE_RECTANGLE_ONLY);
   }
   const blockHeight = block.length;
-  const blockWidth = Math.max(0, ...block.map((row) => row.length));
+  // Reduced rather than spread: a clipboard from a spreadsheet can hold more
+  // rows than an argument list takes (V8 gives up around 125,000), and a raw
+  // RangeError thrown here would replace the refusal the visitor should get.
+  const blockWidth = block.reduce(
+    (widest, row) => Math.max(widest, row.length),
+    0,
+  );
   if (blockHeight === 0 || blockWidth === 0) {
     // Nothing on the clipboard is nothing to do, not a failure to explain.
     return writes([]);

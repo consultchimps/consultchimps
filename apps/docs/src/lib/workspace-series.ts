@@ -200,7 +200,15 @@ function numberRule(source: readonly string[]): LineRule | null {
   }
   // Compared at the most decimal places any of them uses, so 1 and 1.50 are
   // still a step of 0.50 rather than two numbers that cannot be subtracted.
-  const scale = Math.max(...parsed.map((number) => number.scale));
+  //
+  // Reduced rather than spread, for the reason `planPaste` gives: a source line
+  // is as tall as the selection, nothing caps what a gesture reads, and an
+  // argument list gives up around 125,000 entries. A drag off a selection that
+  // long would die with a raw RangeError instead of filling its one cell.
+  const scale = parsed.reduce(
+    (widest, number) => Math.max(widest, number.scale),
+    0,
+  );
   const units = parsed.map((number) => rescale(number, scale));
   const step = (units[1] as bigint) - (units[0] as bigint);
   for (let position = 1; position < units.length; position += 1) {

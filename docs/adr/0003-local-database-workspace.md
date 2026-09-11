@@ -180,15 +180,25 @@ becoming one command per cell. Selection and copy stay available while the page
 is busy, because neither writes; a paste or a fill made then is refused and says
 so. The Record ID is selectable and never a write target.
 
-**Clipboard.** Cells joined by tabs, rows by CRLF, no trailing newline, and no
-header row. A field holding a tab, a newline, a carriage return, or a quote is
-wrapped in double quotes with internal quotes doubled, which is what Excel reads
-and writes. A cell contributes its stored value's text rather than its rendered
+**Clipboard.** Cells joined by tabs, every row terminated by CRLF, and no header
+row. A field holding a tab, a newline, a carriage return, or a quote is wrapped
+in double quotes with internal quotes doubled, which is what Excel reads and
+writes. A cell contributes its stored value's text rather than its rendered
 label, so a foreign-key cell copies the Record ID that pastes back and resolves.
-The parser accepts CRLF, a bare CR, and a bare LF in any mix, drops one trailing
-separator, and reads the unwritten cases the way a spreadsheet does rather than
-refusing: a quote inside an unquoted field is literal, text after a closing
-quote continues the field, and an unterminated quote takes the rest of the text.
+
+What a line break means is one rule, stated once and read by both halves: it
+ends the row before it rather than starting an empty one, which is the
+convention Excel's own clipboard follows, since a single copied cell arrives
+there as `A` and a break. So the encoder terminates the last row too. The
+alternative cannot be read back: with no terminator, `A` and a break would have
+to mean both a block of one row and a block whose second row is blank, and a
+range ending in a blank row is an ordinary thing to copy. Terminating always
+makes the round trip exact, and it is what a test now pins for every block,
+blank rows, blank columns and blank blocks included. The parser accepts CRLF, a
+bare CR, and a bare LF in any mix, keeps a last row the text did not terminate,
+and reads the unwritten cases the way a spreadsheet does rather than refusing: a
+quote inside an unquoted field is literal, text after a closing quote continues
+the field, and an unterminated quote takes the rest of the text.
 
 A paste of a single value fills the selection; a block whose height and width
 both divide the selection tiles across it; anything else is written from the
