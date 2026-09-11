@@ -6,9 +6,9 @@ proved the reading works, before being written here.
 Consultants receive Power BI files (`.pbix`) whose data they need in Excel, and
 the only supported way to get it out is to open the file in Power BI Desktop on
 Windows and query the running engine. This ADR adds the toolkit's first Power BI
-operation: export every table held in a `.pbix` file's model to a workbook, one
-worksheet per table, entirely in the browser, with the file never leaving the
-machine.
+operation: export each exportable table of a `.pbix` file's model to a workbook,
+as one or more worksheets per table, entirely in the browser, with the file
+never leaving the machine.
 
 A `.pbix` is a zip. The loaded rows live in its `DataModel` part: an Analysis
 Services backup, compressed with Microsoft's XPress9 algorithm, holding a SQLite
@@ -97,6 +97,14 @@ reader has not seen, the operation still produces the workbook and lists each
 skipped table or column in the manifest with a stable code. One exotic column
 must not cost the user the whole model.
 
+A workbook is only produced when at least one table is exportable. When the
+model holds tables but every one of them is excluded, whether hidden under the
+default policy, over the column limit, or in an encoding the reader cannot
+decode, the operation fails with a stable code (`PBI_NO_EXPORTABLE_TABLES`)
+whose message lists each table with the reason it was excluded, and names the
+include-hidden option when that is the cure. An empty workbook is never a
+success.
+
 ## Decision 5: tables larger than a worksheet
 
 Excel holds 1,048,576 rows per worksheet and Power BI models routinely exceed
@@ -119,11 +127,18 @@ date number format; currency stays a scaled integer until it is written with a
 four-decimal number format; Power BI display format strings are ignored in the
 first version.** The model stores dates to the nanosecond and an Excel serial
 cannot carry that detail (the spike's only cell differences were sub-millisecond
-date remainders), so the rounding is stated rather than pretended away. Currency
-is stored as an integer count of ten-thousandths and is kept exact until
-formatting, since dividing early loses precision above 2^53. Honouring display
-format strings would mean implementing Power BI's format-string language, which
-is out of proportion for a first version.
+date remainders), so the rounding is stated rather than pretended away.
+
+Currency is stored as an integer count of ten-thousandths. An Excel numeric cell
+is an IEEE-754 double, so a number format changes only the display, never the
+stored precision, and a scaled integer beyond 2^53 cannot survive as a number.
+The policy: a currency value whose scaled integer lies within the safe-integer
+range is written as a number with a four-decimal format; a value outside that
+range is written as its exact decimal text (for example `123456789012345.6789`)
+and counted in the manifest, so the workbook never silently alters an amount.
+The scaled integer is kept as an integer until that choice is made. Honouring
+display format strings would mean implementing Power BI's format-string
+language, which is out of proportion for a first version.
 
 ## Decision 7: hidden tables
 

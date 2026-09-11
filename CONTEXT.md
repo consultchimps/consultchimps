@@ -70,8 +70,12 @@ still to agree.
 
 First draft, added with ADR 0004. The verb and nouns are proposed, not final.
 
-- **Export (Power BI)**: write every table held in a Power BI file's model to a
-  workbook, one worksheet per table. Never called "extract" or "convert".
+- **Export (Power BI)**: write each exportable table of a Power BI file's model
+  to a workbook, as one or more worksheets per table. Never called "extract" or
+  "convert".
+- **Exportable table**: a model table the export policy admits: not hidden
+  (unless hidden tables are included), within the column limit, and in an
+  encoding the reader can decode.
 - **Model**: the tables and their loaded rows carried inside a `.pbix` file. A
   template (`.pbit`) or a live-connection file carries no model.
 - **Model table**: one named table of the model, with its columns and rows.
@@ -81,4 +85,5 @@ First draft, added with ADR 0004. The verb and nouns are proposed, not final.
   were produced by a DAX expression rather than loaded from a source. Exported
   as data.
 - **Manifest**: the record an export returns alongside the workbook, naming
-  every table or column that was skipped, split, or truncated, and why.
+  every table, column, or value that was skipped, split, truncated, or written
+  as text, and why.
