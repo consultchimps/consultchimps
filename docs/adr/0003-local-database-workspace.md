@@ -210,15 +210,15 @@ screen at all falls into three groups. The range tints, the range borders and
 the row header wait on the interaction work that draws them; the column-resize
 guide waits on an option Tabulator leaves off by default; and the refused cell
 waits on a Tabulator validator the library never lets run, because it turns a
-bad value away first.
-Of those, the fill handle's colour is answered against both of the surfaces it
-straddles, and the rest share the two tokens it is answered on. A tint is also
-the one case where the 3 to 1 mark is the wrong question, since a range is drawn
-inside a border in the indicator colour and a tint strong enough to clear 3 to 1
-against a plain cell would be a tint nobody could read a number through. Cell
-gridlines are excluded on the same record: the site's border token is a 15 to 18
-percent alpha and reads at about 1.4 to 1, and a table gridline is a decorative
-separator rather than a boundary that carries state.
+bad value away first. Of those, the fill handle's colour is answered against
+both of the surfaces it straddles, and the rest share the two tokens it is
+answered on. A tint is also the one case where the 3 to 1 mark is the wrong
+question, since a range is drawn inside a border in the indicator colour and a
+tint strong enough to clear 3 to 1 against a plain cell would be a tint nobody
+could read a number through. Cell gridlines are excluded on the same record: the
+site's border token is a 15 to 18 percent alpha and reads at about 1.4 to 1, and
+a table gridline is a decorative separator rather than a boundary that carries
+state.
 
 Two things the old stylesheet made unreadable are fixed by the same binding. The
 empty-table placeholder sat near 1.6 to 1 on the light surface and vanished on
