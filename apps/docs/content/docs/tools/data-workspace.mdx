@@ -77,13 +77,13 @@ The grid works the way a spreadsheet does:
   refused whole, because records and columns are not added by a paste.
 - **Fill** by dragging the handle on the corner of a selection. Numbers with a
   constant difference extend it; dates sharing the same time of day step by a
-  constant number of months when every date falls on the 28th or earlier and
-  otherwise by a constant number of days, and a single date steps by one day;
-  dates with differing times of day repeat; text ending in a number steps the
-  number when the selected values share the same text before it and step by a
-  constant difference, and a single such value steps by one; everything else
-  repeats. A column that refers to another table is copied rather than counted,
-  because a Record ID is a name and not a number.
+  constant number of months when every date falls on the same day of the month,
+  the 28th or earlier, and otherwise by a constant number of days, and a single
+  date steps by one day; dates with differing times of day repeat; text ending
+  in a number steps the number when the selected values share the same text
+  before it and step by a constant difference, and a single such value steps by
+  one; everything else repeats. A column that refers to another table is copied
+  rather than counted, because a Record ID is a name and not a number.
 
 A paste or a fill is one movement, so it reaches the workspace as one step: the
 cells it could write are written together, and any it could not are explained
