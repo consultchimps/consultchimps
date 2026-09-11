@@ -214,8 +214,38 @@ reference, not evaluated.
 an entry or a copy of the source value for each affected cell.** Each aggregate
 holds a stable reason code and the affected-value count. The manifest also
 records excluded tables and columns with their reasons, ordered worksheet parts
-and their source row ranges, and the DAX expressions from Decision 8. Entries
-follow catalog order and a fixed reason-code order within each column.
+and their source row ranges, and the DAX expressions from Decision 8.
+
+The manifest uses this reason-code vocabulary:
+
+| Code                                     | Scope  | Meaning                                                       |
+| ---------------------------------------- | ------ | ------------------------------------------------------------- |
+| `PBI_TABLE_HIDDEN`                       | Table  | Hidden table excluded by the default policy                   |
+| `PBI_TABLE_TOO_WIDE`                     | Table  | Source table exceeds 16,384 columns                           |
+| `PBI_TABLE_NO_EXPORTABLE_COLUMNS`        | Table  | No column remains decodable and representable                 |
+| `PBI_TABLE_SPLIT`                        | Table  | Rows span several worksheets; entry lists parts and ranges    |
+| `PBI_COLUMN_UNSUPPORTED_ENCODING`        | Column | Reader does not support the column's encoding                 |
+| `PBI_COLUMN_UNREADABLE`                  | Column | Corrupt or truncated column data prevents complete decoding   |
+| `PBI_COLUMN_ROW_ALIGNMENT_UNRECOVERABLE` | Column | Decoded values cannot be assigned reliably to source rows     |
+| `PBI_BINARY_CELL_TOO_LONG`               | Column | Column excluded because a base64 value exceeds the text limit |
+| `PBI_NUMERIC_AS_TEXT`                    | Values | Numeric values written as exact text under Decision 6         |
+| `PBI_BINARY_AS_BASE64`                   | Values | Non-null binary values written as base64 text                 |
+| `PBI_TEXT_TRUNCATED`                     | Values | Ordinary text values shortened to the worksheet cell limit    |
+
+Table entries precede column entries within each table. Tables and columns
+follow catalog order; reasons within either scope sort by code in ascending
+ASCII order. Worksheet parts remain in source row order. DAX expressions and
+worksheet provenance are metadata, not additional reason codes.
+
+Apply table exclusions in order: hidden policy, source column limit, then no
+exportable columns. A skipped column has one exclusion code: unsupported
+encoding first, unreadable data next, unrecoverable alignment next, then the
+binary text limit. Later checks apply only after earlier checks succeed. Keep
+the column exclusions when they cause `PBI_TABLE_NO_EXPORTABLE_COLUMNS` so the
+user can see why no columns remain. Value-change counts describe emitted cells
+only; discard conversion counts for an excluded column. The binary-limit entry
+instead counts its oversized values. A `PBI_NO_EXPORTABLE_TABLES` error returns
+these same table and column exclusions in its structured details.
 
 This replaces per-value reporting: a million high-precision identifiers add one
 count for their column, not a million manifest entries. Counts cover exact
