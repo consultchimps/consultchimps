@@ -18,11 +18,11 @@ one empty or open one you saved before, import the rows of a worksheet or a
 spreadsheet, and save the whole thing back to a single file. The file is an
 ordinary SQLite database, so anything that reads SQLite can read it too.
 
-It is the stateful half of ConsultChimps. Every other tool here takes files in
-and writes files out, keeping nothing between runs. The workspace keeps
-something: a file you come back to, edit in place, and put back in the shared
-folder it lives in. The design behind it is recorded in ADR 0003 in the
-repository, and the library it is built on is described in
+It is the stateful half of ConsultChimps. Every other tool here is stateless: it
+reads what you give it, produces its result, and keeps nothing between runs. The
+workspace keeps something: a file you come back to, edit in place, and put back
+in the shared folder it lives in. The design behind it is recorded in ADR 0003
+in the repository, and the library it is built on is described in
 [Build a local database](/docs/libraries#build-a-local-database).
 
 ## Start or open a workspace
@@ -38,20 +38,22 @@ browser's own warning.
 ## Import a worksheet or a .csv file
 
 Choose an Excel `.xlsx` or `.xlsm` workbook or a `.csv` file. A workbook offers
-its visible worksheets and you pick the ones to import; hidden worksheets are
-not offered. Each becomes one table, and you give each table a name and a Record
-ID prefix before anything is written.
+its visible worksheets that hold rows under a header, and you pick the ones to
+import; hidden worksheets, and blank or header-only ones, are not offered. Each
+becomes one table, and you give each table a name, a Record ID prefix, and the
+padding for its counter before anything is written.
 
 Every row is given a **Record ID**: a short generated identifier such as
-`CUST-0001`, made from the prefix you chose and a zero-padded counter. It is
-assigned once, never edited, and is what other tables refer to. Every column
-takes the type its own values agree on, one of text, whole number, number, yes
-or no, and date, or text when they do not. A worksheet holding cells whose
-formulas have no cached result, or cells holding an error value, is refused
-before anything is imported, and the page says how many such cells the worksheet
-holds, because a table with holes in it is not the table you saw in Excel. Open
-the workbook in Excel, recalculate, fix the errors, and save it before importing
-again.
+`CUST-0001`, made from the prefix you chose and a counter zero-padded to the
+width you chose, which is four unless you change it, and can be zero for an
+identifier such as `CUST-1`. It is assigned once, never edited, and is what
+other tables refer to. Every column takes the type its own values agree on, one
+of text, whole number, number, yes or no, and date, or text when they do not. A
+worksheet holding cells whose formulas have no cached result, or cells holding
+an error value, is refused before anything is imported, and the page says how
+many such cells the worksheet holds, because a table with holes in it is not the
+table you saw in Excel. Open the workbook in Excel, recalculate, fix the errors,
+and save it before importing again.
 
 ## Edit records in the grid
 
@@ -68,10 +70,11 @@ The grid works the way a spreadsheet does:
   arrow keys.
 - **Copy and paste** as the tab-separated text Excel reads and writes, so a
   range copied here pastes into Excel and a range copied from Excel pastes here.
-  A single value pastes into every selected cell; a block that tiles the
-  selection tiles it; anything else is written from the top left cell. A paste
-  that would run past the last record or the last column is refused whole,
-  because records and columns are not added by a paste.
+  A copy or a paste works on one selected rectangle, and is refused while
+  several are selected. A single value pastes into every selected cell; a block
+  that tiles the selection tiles it; anything else is written from the top left
+  cell. A paste that would run past the last record or the last column is
+  refused whole, because records and columns are not added by a paste.
 - **Fill** by dragging the handle on the corner of a selection. Numbers with a
   constant difference extend it; dates step by the constant month or day
   difference the source states, and a single date steps by one day; text ending
