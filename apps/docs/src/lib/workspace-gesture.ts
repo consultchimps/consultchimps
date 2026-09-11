@@ -294,34 +294,15 @@ export function planFill(options: FillPlanOptions): GesturePlan {
     return refused(ONE_RECTANGLE_ONLY);
   }
 
-  const row = clamp(pointer.row, 0, grid.recordIds.length - 1);
-  const column = clamp(pointer.column, 0, grid.columns.length - 1);
-  const below = row - source.bottom;
-  const above = source.top - row;
-  const right = column - source.right;
-  const left = source.left - column;
-  const vertical = Math.max(below, above);
-  const horizontal = Math.max(right, left);
-  if (vertical <= 0 && horizontal <= 0) {
+  const found = fillTarget(source, pointer, {
+    rows: grid.recordIds.length,
+    columns: grid.columns.length,
+  });
+  if (found === null) {
     // The drag never left the source, so there is nothing to fill.
     return writes([]);
   }
-
-  const target: GestureRect =
-    // A tie goes to the vertical: a column is the fill a drag usually means.
-    vertical >= horizontal
-      ? {
-          top: below > 0 ? source.bottom + 1 : row,
-          bottom: below > 0 ? row : source.top - 1,
-          left: source.left,
-          right: source.right,
-        }
-      : {
-          top: source.top,
-          bottom: source.bottom,
-          left: right > 0 ? source.right + 1 : column,
-          right: right > 0 ? column : source.left - 1,
-        };
+  const { axis, target } = found;
 
   const problem = checkTarget(grid, target, "fill");
   if (problem !== null) {
@@ -332,13 +313,91 @@ export function planFill(options: FillPlanOptions): GesturePlan {
   }
 
   return writes(
-    vertical >= horizontal
+    axis === "vertical"
       ? fillDown(grid, source, target)
       : fillAcross(grid, source, target),
     // The source too: a fill leaves the whole of what it made selected, so the
     // handle is at the corner of it and a second drag carries on from there.
     union(source, target),
   );
+}
+
+/** How many rows and columns a grid shows, which is where a pointer is clamped. */
+export interface GestureExtent {
+  readonly rows: number;
+  readonly columns: number;
+}
+
+/** The cells a fill writes, and along which axis it was read. */
+export interface FillTarget {
+  readonly axis: "vertical" | "horizontal";
+  readonly target: GestureRect;
+}
+
+/**
+ * Where a fill from `source` toward `pointer` writes.
+ *
+ * One axis, the one the pointer has moved furthest along beyond the source,
+ * with a tie going to the vertical because a column is the fill a drag usually
+ * means. The target is the run of cells between the source and the pointer on
+ * that axis, above or below, before or after, and a pointer past the grid's
+ * edge is clamped to it. Null when the pointer never left the source.
+ *
+ * Stated once and exported because two things read it: the planner, which
+ * writes exactly this, and the fill handle, which outlines it while the drag is
+ * still going. A preview computed any other way, from the source's corner to
+ * the pointer say, would promise cells an upward, a leftward, or a diagonal
+ * drag never writes.
+ */
+export function fillTarget(
+  source: GestureRect,
+  pointer: GesturePointer,
+  extent: GestureExtent,
+): FillTarget | null {
+  const row = clamp(pointer.row, 0, extent.rows - 1);
+  const column = clamp(pointer.column, 0, extent.columns - 1);
+  const below = row - source.bottom;
+  const above = source.top - row;
+  const right = column - source.right;
+  const left = source.left - column;
+  const vertical = Math.max(below, above);
+  const horizontal = Math.max(right, left);
+  if (vertical <= 0 && horizontal <= 0) {
+    return null;
+  }
+  return vertical >= horizontal
+    ? {
+        axis: "vertical",
+        target: {
+          top: below > 0 ? source.bottom + 1 : row,
+          bottom: below > 0 ? row : source.top - 1,
+          left: source.left,
+          right: source.right,
+        },
+      }
+    : {
+        axis: "horizontal",
+        target: {
+          top: source.top,
+          bottom: source.bottom,
+          left: right > 0 ? source.right + 1 : column,
+          right: right > 0 ? column : source.left - 1,
+        },
+      };
+}
+
+/**
+ * Everything a fill from `source` toward `pointer` leaves selected: the source
+ * and its target together, or the source alone when there is nothing to fill.
+ * It is what the planner reports as covered and what the handle outlines.
+ */
+export function fillCoverage(
+  source: GestureRect,
+  pointer: GesturePointer,
+  extent: GestureExtent,
+): GestureRect {
+  const found = fillTarget(source, pointer, extent);
+  return found === null ? source : union(source, found.target);
 }
 
 function clamp(value: number, low: number, high: number): number {

@@ -21,7 +21,8 @@
  * on; the accepted writes commit together. A failure that is not a refusal is a
  * fault nobody planned for, so it rolls the whole transaction back and
  * propagates, rather than committing the half of the gesture that happened to
- * run before it.
+ * run before it. An error saying the workspace itself is damaged counts as a
+ * fault, not a refusal, even though the library raised it.
  */
 import {
   isConsultChimpsError,
@@ -95,13 +96,28 @@ export function updateRecords(
       } catch (error) {
         // A refusal belongs to its request. Anything else is a fault, and
         // rethrowing it here is what takes the whole transaction back off.
-        if (!isConsultChimpsError(error)) {
+        if (!isRefusal(error)) {
           throw error;
         }
         return refusalOf(request, error);
       }
     }),
   );
+}
+
+/**
+ * Whether an error says the request was wrong, as opposed to the file.
+ *
+ * Every code this package raises for a damaged workspace begins `DB_CORRUPT_`:
+ * a stored schema that does not match its tables, a stored value the column's
+ * type cannot read back, a Record ID counter that has gone wrong. Such an
+ * error is a library error, but it is about the workspace and not about the
+ * request that happened to find it, and committing the requests beside it
+ * would write into a file already known to be broken. So it is a fault here,
+ * and the transaction goes back.
+ */
+function isRefusal(error: unknown): error is ConsultChimpsError {
+  return isConsultChimpsError(error) && !error.code.startsWith("DB_CORRUPT_");
 }
 
 function refusalOf(

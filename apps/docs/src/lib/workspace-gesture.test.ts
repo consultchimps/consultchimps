@@ -7,6 +7,8 @@ import {
   type GestureGrid,
   type GesturePlan,
   type GestureRect,
+  fillCoverage,
+  fillTarget,
 } from "./workspace-gesture";
 import { WORKSPACE_MAX_GESTURE_CELLS } from "./workspace-protocol";
 
@@ -441,5 +443,69 @@ describe("planFill", () => {
     });
 
     expect(written(plan)).toEqual(["REC-0003/a=a-3", "REC-0003/b=b-3"]);
+  });
+});
+
+describe("fillTarget", () => {
+  // The rule the planner writes by and the handle outlines by, so a preview
+  // cannot promise cells the fill never touches. A two-row, one-column source
+  // in a grid of six rows and four columns, the Record ID among them.
+  const source = { top: 2, left: 1, bottom: 3, right: 1 };
+  const extent = { rows: 6, columns: 4 };
+
+  it("fills downward from the row under the source to the pointer", () => {
+    expect(fillTarget(source, { row: 5, column: 1 }, extent)).toEqual({
+      axis: "vertical",
+      target: { top: 4, left: 1, bottom: 5, right: 1 },
+    });
+  });
+
+  it("fills upward from the pointer to the row above the source", () => {
+    // The source keeps every row it has: an upward drag never drops its bottom.
+    expect(fillTarget(source, { row: 0, column: 1 }, extent)).toEqual({
+      axis: "vertical",
+      target: { top: 0, left: 1, bottom: 1, right: 1 },
+    });
+    expect(fillCoverage(source, { row: 0, column: 1 }, extent)).toEqual({
+      top: 0,
+      left: 1,
+      bottom: 3,
+      right: 1,
+    });
+  });
+
+  it("fills leftward across the source's own rows", () => {
+    expect(fillTarget(source, { row: 3, column: 0 }, extent)).toEqual({
+      axis: "horizontal",
+      target: { top: 2, left: 0, bottom: 3, right: 0 },
+    });
+  });
+
+  it("gives a diagonal drag to the axis the pointer moved furthest along, and a tie to the vertical", () => {
+    // Two columns right and one row down: horizontal wins.
+    expect(fillTarget(source, { row: 4, column: 3 }, extent)?.axis).toBe(
+      "horizontal",
+    );
+    // One column right and one row down: a tie, so vertical.
+    expect(fillTarget(source, { row: 4, column: 2 }, extent)).toEqual({
+      axis: "vertical",
+      target: { top: 4, left: 1, bottom: 4, right: 1 },
+    });
+  });
+
+  it("answers nothing while the pointer is still inside the source", () => {
+    expect(fillTarget(source, { row: 3, column: 1 }, extent)).toBeNull();
+    expect(fillCoverage(source, { row: 2, column: 1 }, extent)).toEqual(source);
+  });
+
+  it("clamps a pointer past the grid's edge to the last row or column", () => {
+    expect(fillTarget(source, { row: 40, column: 1 }, extent)).toEqual({
+      axis: "vertical",
+      target: { top: 4, left: 1, bottom: 5, right: 1 },
+    });
+    expect(fillTarget(source, { row: 2, column: -7 }, extent)).toEqual({
+      axis: "horizontal",
+      target: { top: 2, left: 0, bottom: 3, right: 0 },
+    });
   });
 });

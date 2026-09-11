@@ -238,6 +238,32 @@ describe("updateRecords", () => {
     database.close();
   });
 
+  it("rolls every write back when the workspace turns out to be damaged", async () => {
+    const database = await seeded();
+    // A refusal is about a request. A corruption error is a library error too,
+    // but it is about the file, found by whichever request happened to reach
+    // it, and the writes beside it must not commit into a file known to be
+    // broken. The registry is damaged here the way an advanced caller with the
+    // raw handle could damage it.
+    database.sql.run(
+      `UPDATE "_consultchimps_tables" SET definition = 'not json' WHERE name = 'Customer';`,
+    );
+
+    expect(() =>
+      updateRecords(database, [
+        {
+          table: "Region",
+          recordId: "REG-0001",
+          values: { name: "Far North" },
+        },
+        { table: "Customer", recordId: "CUST-0001", values: { headcount: 5 } },
+      ]),
+    ).toThrow(expect.objectContaining({ code: "DB_CORRUPT_WORKSPACE" }));
+
+    expect(stored(database, "Region", "REG-0001", "name")).toBe("North");
+    database.close();
+  });
+
   it("writes nothing and reports nothing for an empty batch", async () => {
     const database = await seeded();
 

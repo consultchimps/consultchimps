@@ -27,7 +27,11 @@
  * because the handle itself is under the pointer for the whole drag and the
  * singular call would only ever return the handle.
  */
-import type { GesturePointer, GestureRect } from "@/lib/workspace-gesture";
+import {
+  fillCoverage,
+  type GesturePointer,
+  type GestureRect,
+} from "@/lib/workspace-gesture";
 import type { RangeComponent, Tabulator } from "tabulator-tables";
 
 /** The handle's side, in pixels: big enough to grab, small enough to sit on a corner. */
@@ -251,13 +255,21 @@ export function attachFillHandle(options: FillHandleOptions): () => void {
   };
 
   /**
-   * Outline everything the drag would cover, from the source's top left corner
-   * to the cell under the pointer. Both of those are rendered, which is what
-   * makes their rectangles readable: a row further down the table may not be.
+   * Outline everything the drag would cover: the source and the cells the fill
+   * will write, by the planner's own target rule, so the outline is the
+   * rectangle the fill makes and not the one between two corners. The corners
+   * read here are the cell under the pointer or a cell of the source, both of
+   * them rendered, which is what makes their rectangles readable: a row further
+   * down the table may not be.
    */
   const showPreview = (pointer: GesturePointer, source: GestureRect): void => {
-    const first = cellElementAt(source.top, source.left);
-    const last = cellElementAt(pointer.row, pointer.column);
+    const shape = geometry();
+    const covered = fillCoverage(source, pointer, {
+      rows: shape.rows.length,
+      columns: shape.columns.length,
+    });
+    const first = cellElementAt(covered.top, covered.left);
+    const last = cellElementAt(covered.bottom, covered.right);
     if (first === null || last === null) {
       preview.style.display = "none";
       return;
