@@ -46,8 +46,10 @@
   `border-color` or one side's `-color`, `outline-color`, and `fill`. Never a
   shorthand. Tabulator's widths, arrow geometry, and right-to-left side flipping
   all survive untouched, so a rule cannot erase structure it was never about.
-  `box-shadow` is the one colour exception, because CSS gives it no colour
-  longhand, so the popup's shadow is restated whole.
+  `box-shadow` is the exception, twice, because CSS gives it no colour longhand:
+  the popup's shadow is restated whole, and the focus ring below is drawn with
+  one. Both therefore carry their own geometry as well as their colour, which is
+  disclosed here rather than left to be discovered.
 
   Three declarations here are not about colour at all, and are called out where
   they appear: the pixel font sizes and radii Tabulator hardcodes, restated on
@@ -478,18 +480,48 @@
   color: var(--workspace-grid-picked-ink);
 }
 
+/*
+  Keyboard focus on an option.
+
+  The ring that a visitor sees is the inset one. Tabulator's own is an outline,
+  and an outline is painted outside the border, which for these options is
+  outside the popup's clip: the list element is its own scroll container, with
+  `overflow-y: auto` and no padding of its own, so an option's border box
+  reaches the clip edge and the left and right sides of any outline on it are
+  cut away. What survives is the horizontal edge between two options. The
+  outline is still bound, because Tabulator gives it a colour and no colour of
+  Tabulator's may reach the screen, but it is not what marks focus.
+*/
 .tabulator-edit-list.tabulator-edit-list .tabulator-edit-list-item.focused {
+  box-shadow: inset 0 0 0 2px var(--workspace-grid-indicator);
   outline-color: var(--workspace-grid-indicator);
 }
 
 /*
-  Keyboard focus on the option already picked. The outline is the picked ink at
-  full strength rather than a half-transparent one, which on the picked surface
-  fell below the 3 to 1 an indicator answers to.
+  Keyboard focus on the option the cell already holds, which is the one focused
+  option whose ring is not drawn on the popup: this option is filled, so the
+  ring above would be a ring in the fill's own colour, which reads as the block
+  growing rather than as focus arriving. The ring here takes the ink that
+  already carries this option's text, which is chosen to be seen against that
+  fill.
+
+  A single colour cannot serve both options. Against the light popup a colour
+  needs a relative luminance of at most 0.277 to clear 3 to 1; against the light
+  fill it needs at least 0.400, or else no more than 0.000. Only pure black
+  satisfies both, and only just, at exactly 3.00 to 1 on the fill. It is also a
+  literal, which this file may not hold. So each focused option is rung in the
+  ink that suits the surface it is drawn on, and the two rules differ in that
+  ink alone.
+
+  The outline is restated for the same reason as the rule above, and this rule
+  has to exist to restate it: Tabulator's own half-transparent white is written
+  for this pair of classes, so without a rule at this specificity it would
+  outrank the one above on source order and reach the screen.
 */
 .tabulator-edit-list.tabulator-edit-list
   .tabulator-edit-list-item.active.focused {
-  outline-color: var(--workspace-grid-picked-ink);
+  box-shadow: inset 0 0 0 2px var(--workspace-grid-picked-ink);
+  outline-color: var(--workspace-grid-indicator);
 }
 
 /* "No matching record", and the group heading above a set of options. */

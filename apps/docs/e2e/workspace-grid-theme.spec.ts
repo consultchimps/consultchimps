@@ -128,11 +128,26 @@ function paint(page: Page, ...colours: string[]): Promise<string> {
     if (context === null) {
       throw new Error("This browser gave the test no 2d canvas to measure in");
     }
+    // A canvas ignores a value it cannot parse and keeps the one it had, which
+    // would quietly turn a misread colour into whatever was painted before it.
+    // Offering the same value against two different standing colours catches
+    // that: a value the canvas takes reads back the same both times.
+    const parses = (colour: string): boolean => {
+      context.fillStyle = "#000000";
+      context.fillStyle = colour;
+      const first = context.fillStyle;
+      context.fillStyle = "#ffffff";
+      context.fillStyle = colour;
+      return context.fillStyle === first;
+    };
     // The page is painted on the browser's white base, so anything still
     // translucent once every layer is applied lands on white here too.
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, 1, 1);
     for (const colour of values) {
+      if (!parses(colour)) {
+        throw new Error(`This browser cannot read the colour "${colour}"`);
+      }
       context.fillStyle = colour;
       context.fillRect(0, 0, 1, 1);
     }
@@ -141,6 +156,20 @@ function paint(page: Page, ...colours: string[]): Promise<string> {
       .map((part) => part.toString(16).padStart(2, "0"))
       .join("")}`;
   }, colours);
+}
+
+/**
+ * The colour of a computed `box-shadow`, which the browser reports first, ahead
+ * of the offsets: "rgb(252, 249, 243) 0px 0px 0px 2px inset". Only the first
+ * shadow of a list is read, which is all the layer ever sets. A misread would
+ * not slip through: `paint` refuses a value the canvas cannot parse.
+ */
+function shadowColour(shadow: string): string {
+  const colour = /^(.*?\))\s+[-\d]/.exec(shadow)?.[1];
+  if (colour === undefined) {
+    throw new Error(`No colour at the front of the shadow "${shadow}"`);
+  }
+  return colour;
 }
 
 function styleOf(locator: Locator, property: string): Promise<string> {
@@ -318,7 +347,7 @@ test.describe("/workspace record grid theme", () => {
 
       // A boolean column reads as a value rather than as a verdict.
       expect(await paintedStyle(page, tick, "fill")).toBe(
-        await token(page, "var(--color-fd-foreground)"),
+        await token(page, "var(--color-fd-card-foreground)"),
       );
       expect(await paintedStyle(page, cross, "fill")).toBe(
         await token(page, "var(--color-fd-muted-foreground)"),
@@ -379,22 +408,57 @@ test.describe("/workspace record grid theme", () => {
         4.5,
       );
 
-      // Keyboard focus lands on the chosen option first, which is the case
-      // where the focus outline has the least to work with.
-      await page.keyboard.press("ArrowDown");
-      const focused = popup
-        .locator(".tabulator-edit-list-item.focused")
-        .first();
-      await expect(focused).toBeVisible();
-      const focusedSurface = await surfaceOf(page, focused);
-      const outline = await paintedStyle(page, focused, "outline-color");
-      measure(
-        "the focus outline on a picker option",
-        contrastRatio(outline, focusedSurface),
-        3,
-        outline,
-        focusedSurface,
+      // The focus ring on each kind of option, measured against the surface it
+      // is drawn on, which is the option's own fill: the ring that a visitor
+      // sees is an inset one, because the popup clips the sides of an outline
+      // (see the layer's own note on it). The two options are filled
+      // differently, so each is measured against its own.
+      //
+      // The list opens with the option the cell holds already noted as focused
+      // while no element carries the class yet, so the first press steps past
+      // it onto the next option and the second press comes back to it. That is
+      // also why the fixture gives the first customer the first region: were it
+      // the last option in the list, the first press would have nowhere to go,
+      // and the count below would fail rather than quietly measure nothing.
+      const focused = popup.locator(".tabulator-edit-list-item.focused");
+      const focusedAndChosen = popup.locator(
+        ".tabulator-edit-list-item.active.focused",
       );
+      for (const [what, key, isChosen] of [
+        ["an option the cell does not hold", "ArrowDown", false],
+        ["the option the cell holds", "ArrowUp", true],
+      ] as const) {
+        await page.keyboard.press(key);
+        await expect(focused).toHaveCount(1);
+        await expect(focusedAndChosen).toHaveCount(isChosen ? 1 : 0);
+
+        const fill = await surfaceOf(page, focused);
+        const shadow = await styleOf(focused, "box-shadow");
+        expect(shadow, `${what} should carry a focus ring`).toMatch(/inset/);
+        const ring = await paint(page, shadowColour(shadow));
+        measure(
+          `the focus ring on ${what}`,
+          contrastRatio(ring, fill),
+          3,
+          ring,
+          fill,
+        );
+
+        // Tabulator's own outline is bound too, and the horizontal edge of it
+        // between two options is the part the popup does not clip. On the
+        // option the cell holds it would be its own fill colour and say
+        // nothing, so it is answered here, where it is a ring on the popup.
+        if (!isChosen) {
+          const outline = await paintedStyle(page, focused, "outline-color");
+          measure(
+            `the outline on ${what}, where the popup does not clip it`,
+            contrastRatio(outline, pickerSurface),
+            3,
+            outline,
+            pickerSurface,
+          );
+        }
+      }
 
       await page.keyboard.press("Escape");
       await expect(popup).toBeHidden();
@@ -425,7 +489,12 @@ test.describe("/workspace record grid theme", () => {
         4.5,
       );
 
-      // The open editor: the field a visitor types in, on the cell it covers.
+      // The open editor: the field a visitor types in, and the border that says
+      // which cell is open. The border is read off the open cell rather than
+      // worked out from a token, so it is measured against the row it is drawn
+      // on rather than against a surface assumed for it. The click that opened
+      // the editor leaves the pointer on the row, so that surface is the hover
+      // one, which is the least favourable a cell wears today.
       const editing = cellOf(page, "CUST-0001", "name");
       const input = editing.locator("input");
       await expect(async () => {
@@ -433,6 +502,19 @@ test.describe("/workspace record grid theme", () => {
         await expect(input).toBeVisible({ timeout: 2_000 });
       }).toPass({ timeout: 30_000 });
       await record("the open editor's own text", input, 4.5);
+      const editingSurface = await surfaceOf(page, editing);
+      const editingBorder = await paintedStyle(
+        page,
+        editing,
+        "border-top-color",
+      );
+      measure(
+        "the open-editor border",
+        contrastRatio(editingBorder, editingSurface),
+        3,
+        editingBorder,
+        editingSurface,
+      );
       await page.keyboard.press("Escape");
 
       // The Record ID tooltip. It is the element that actually inherited the
@@ -461,13 +543,35 @@ test.describe("/workspace record grid theme", () => {
       await page.getByTestId("workspace-table-select").selectOption("Customer");
       await expect(cellOf(page, "CUST-0001", "name")).toBeVisible();
 
-      // Indicators are not text, so they answer to the 3 to 1 mark instead.
-      for (const [what, declaration] of [
-        ["the open-editor border", "var(--color-fd-ring)"],
-        ["the range handle", "var(--color-fd-primary)"],
-      ] as const) {
-        const colour = await token(page, declaration);
-        measure(what, contrastRatio(colour, card), 3, colour, card);
+      // The bound-ahead indicators, of which the fill handle stands here for the
+      // rest: the range borders and the row header wait on the interaction work
+      // that draws them, the resize guide on an option Tabulator leaves off,
+      // and the refused cell on a Tabulator validator the library never lets
+      // run, because it turns a bad value away first. None can be put on
+      // screen, so the handle is answered by its colour alone, and against both
+      // of the surfaces it straddles rather than the kinder one: it is drawn on
+      // the corner of a range, half over the selected cell and half over the
+      // cell outside it, which may be hovered.
+      const handle = await token(page, "var(--color-fd-primary)");
+      const straddled = [
+        [
+          "a selected cell",
+          "color-mix(in srgb, var(--color-fd-accent) 60%, var(--color-fd-card))",
+        ],
+        [
+          "a hovered cell",
+          "color-mix(in srgb, var(--color-fd-foreground) 8%, var(--color-fd-card))",
+        ],
+      ] as const;
+      for (const [where, declaration] of straddled) {
+        const surface = await token(page, declaration);
+        measure(
+          `the range handle, on ${where}`,
+          contrastRatio(handle, surface),
+          3,
+          handle,
+          surface,
+        );
       }
 
       // Nothing Tabulator hardcoded survives on any surface the grid paints.
@@ -551,10 +655,16 @@ test.describe("/workspace record grid theme", () => {
       await openGrid(page, mode);
       await page.getByTestId("workspace-grid-section").scrollIntoViewIfNeeded();
 
-      // The picker is open in the dark shot, because a white popup carrying the
-      // page's light text was the plainest of the faults this layer fixes.
+      // The picker is open in the dark shot, with the option the cell holds
+      // focused, so the ring that marks it is in the evidence rather than only
+      // in the numbers.
       if (mode === "dark") {
         await openPicker(page, pickerOf(page));
+        await page.keyboard.press("ArrowDown");
+        await page.keyboard.press("ArrowUp");
+        await expect(
+          page.locator(".tabulator-edit-list-item.active.focused"),
+        ).toHaveCount(1);
       }
 
       const file = testInfo.outputPath(`grid-${mode}.png`);

@@ -203,16 +203,22 @@ from `@consultchimps/theme`. Text answers to 4.5 to 1: cell text on the plain
 surface, on the zebra stripe and on a hovered row, header text, the open
 editor's own text, both kinds of picker option, the header tooltip, and the
 empty-table placeholder. Indicators answer to 3 to 1: the open-editor border,
-the range handle, the chosen picker option against the surface it sits on, and
-the focus outline on it. The range and row-selection tints are the one bound
-family the suite cannot put on screen, because the interaction work that turns
-them on has not landed; a tint is also the one case where the 3 to 1 mark is the
-wrong question, since a range is drawn inside a border in the indicator colour
-and a tint strong enough to clear 3 to 1 against a plain cell would be a tint
-nobody could read a number through. Cell gridlines are excluded on the same
-record: the site's border token is a 15 to 18 percent alpha and reads at about
-1.4 to 1, and a table gridline is a decorative separator rather than a boundary
-that carries state.
+the chosen picker option against the surface it sits on, and the focus ring on
+either kind of option, each against the fill it is drawn on, with Tabulator's
+own outline answered where the popup does not clip it. What cannot be put on
+screen at all falls into three groups. The range tints, the range borders and
+the row header wait on the interaction work that draws them; the column-resize
+guide waits on an option Tabulator leaves off by default; and the refused cell
+waits on a Tabulator validator the library never lets run, because it turns a
+bad value away first.
+Of those, the fill handle's colour is answered against both of the surfaces it
+straddles, and the rest share the two tokens it is answered on. A tint is also
+the one case where the 3 to 1 mark is the wrong question, since a range is drawn
+inside a border in the indicator colour and a tint strong enough to clear 3 to 1
+against a plain cell would be a tint nobody could read a number through. Cell
+gridlines are excluded on the same record: the site's border token is a 15 to 18
+percent alpha and reads at about 1.4 to 1, and a table gridline is a decorative
+separator rather than a boundary that carries state.
 
 Two things the old stylesheet made unreadable are fixed by the same binding. The
 empty-table placeholder sat near 1.6 to 1 on the light surface and vanished on
