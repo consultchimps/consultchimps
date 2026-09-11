@@ -103,6 +103,28 @@ command when `out/` is missing.
   dispatching the browser's own copy and paste events with a `DataTransfer` on
   them, rather than through the system clipboard, which needs permissions the
   export never asks for.
+- `workspace-grid-theme.spec.ts`: the grid wearing the site's theme rather than
+  Tabulator's hardcoded hex, in light mode and in dark. It checks the painted
+  surfaces against the site's own tokens (the cell surface is the card token,
+  the second row is the zebra recipe over it, the header is the muted token, the
+  picker is the popover token, and a boolean column's tick and cross are ink
+  rather than a green and a red), asserts that none of the hexes Tabulator would
+  have painted survives on any of them, and measures contrast with
+  `contrastRatio` from `@consultchimps/theme`: text at 4.5 to 1 and state
+  indicators at 3 to 1, with any translucent layer flattened onto what is behind
+  it first. Dark mode is reached the way a visitor reaches it, through
+  `prefers-color-scheme` and the site's system default, and a separate test adds
+  the `.dark` class to a page that is already up, marks the cell elements first,
+  and finds the same elements repainted, which is what shows the grid is themed
+  by CSS rather than re-rendered. The measured set covers the states a visitor
+  can reach: both kinds of picker option, the focus ring on each of them against
+  its own fill and Tabulator's outline where the popup does not clip it, the
+  open editor's own text, the header tooltip (the one element that really did
+  inherit the page's ink onto a light panel before this layer), and the
+  empty-table placeholder, which is why the fixture carries a table with no
+  records in it. Two further tests save a screenshot of the grid per mode, the
+  foreign-key picker open in the dark one, as the attached evidence a reviewer
+  can look at.
 - `tools-navigation.spec.ts`: the `/tools` index, the sub-bar tabs, the
   tool-named "Try ... online" button each guide gains from the tool registry,
   and the single button a guide shared by two operations offers.
