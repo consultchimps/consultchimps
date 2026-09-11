@@ -84,17 +84,22 @@ decision.
 
 ## Decision 4: refusal and partial export
 
-**Decision: the operation refuses in exactly three cases, each with its own
+**Decision: the operation has three model-policy refusals, each with its own
 stable code: the file holds no model, the model is encrypted, or the model has
-no exportable table. Any model with at least one exportable table produces a
-workbook, and every excluded table or column is reported in a manifest.** A
-`.pbix` or `.pbit` without a `DataModel` part is refused with a code that names
-the actual reason (template, live connection, or DirectQuery-only file), never a
-generic parse error. The presence of a `Connections` part is not a
-live-connection signal: a current Microsoft sample carries one alongside a full
-model, and the spike hit that false positive. The sound test is the presence of
-the model part. An encrypted or password-protected model is refused
-(`PBI_MODEL_ENCRYPTED`); the reader does not attempt it.
+no exportable table. Any readable model with at least one exportable table
+produces a workbook, and every excluded table or column is reported in a
+manifest.** Before policy applies, input that cannot be read at all is refused
+with a validation code rather than a leaked parser error: a file that is not a
+zip or lacks the parts a `.pbix` must have (`PBI_INVALID_CONTAINER`), and a
+model part whose compressed stream, backup container, or catalog is truncated or
+corrupt (`PBI_MODEL_UNREADABLE`). A `.pbix` or `.pbit` without a `DataModel`
+part is refused with a code that names the actual reason (template, live
+connection, or DirectQuery-only file), never a generic parse error. The presence
+of a `Connections` part is not a live-connection signal: a current Microsoft
+sample carries one alongside a full model, and the spike hit that false
+positive. The sound test is the presence of the model part. An encrypted or
+password-protected model is refused (`PBI_MODEL_ENCRYPTED`); the reader does not
+attempt it.
 
 When a file decodes partially, for example one column uses an encoding the
 reader has not seen, the operation still produces the workbook and lists each
@@ -119,10 +124,13 @@ across numbered worksheets; export the first million rows with a manifest entry.
 `Sales_3`), with the split recorded in the manifest. The decision-maker chose
 this over refusing the table, so that no rows are ever withheld; the cost,
 accepted knowingly, is that lookups and pivots across the parts are the user's
-job. Column count above 16,384 refuses the table (such a model is pathological),
-and cell text above 32,767 characters is truncated and counted in the manifest.
-Worksheet names follow Excel's rules (31 characters, forbidden characters
-replaced, case-insensitive uniqueness with numeric suffixes).
+job. Every part carries the header row, so a part holds at most 1,048,575 data
+rows (the worksheet limit less the header), and the last part is never asked to
+hold a row the worksheet cannot address. Column count above 16,384 refuses the
+table (such a model is pathological), and cell text above 32,767 characters is
+truncated and counted in the manifest. Worksheet names follow Excel's rules (31
+characters, forbidden characters replaced, case-insensitive uniqueness with
+numeric suffixes).
 
 Worksheet allocation is deterministic. Tables are processed in the model's own
 catalog order (the order the file stores them), never in decode-completion
@@ -136,24 +144,26 @@ and rows follow storage order.
 
 ## Decision 6: value formatting
 
-**Decision: a numeric value is written as an Excel number only when that number
-reads back as exactly the stored value; otherwise it is written as exact decimal
-text and counted in the manifest. Dates are the one stated exception, rounded to
-the millisecond. Power BI display format strings are ignored in the first
-version.**
+**Decision: a numeric value is written as an Excel number only when Excel will
+read back exactly the stored value, which means its exact decimal form has at
+most fifteen significant digits; otherwise it is written as exact decimal text
+and counted in the manifest. Dates are the one stated exception, rounded to the
+millisecond. Power BI display format strings are ignored in the first version.**
 
-An Excel numeric cell is an IEEE-754 double, so a number format changes only the
-display, never the stored precision. The rule therefore applies to every numeric
-type by the same test, not by a per-type range: whole numbers are 64-bit
-integers, of which only those within the safe-integer range survive as doubles;
-currency is a 64-bit count of ten-thousandths, and dividing even a safe integer
-by ten thousand can land two distinct amounts on one double (`9007199254740002`
-and `9007199254740003` both become `900719925474.0002`), so the range check
-alone is not enough. The writer keeps the stored integer as an integer, forms
-the candidate double, and converts it back; only an exact round trip is written
-as a number (currency with a four-decimal format). Any other value is written as
-its exact decimal text (for example `900719925474.0003`) with a manifest entry,
-so the workbook never silently alters a value.
+Two limits stack. An Excel numeric cell is an IEEE-754 double, so a number
+format changes only the display, never the stored precision; and Excel itself
+keeps only fifteen significant decimal digits of a number it reads, so a value
+the double carries exactly can still lose its trailing digit on open
+(`1234567890123456` becomes `1234567890123450`). The fifteen-digit test
+therefore subsumes the double test, and it is one test for every numeric type,
+not a per-type range: whole numbers are 64-bit integers; currency is a 64-bit
+count of ten-thousandths, whose decimal form is the integer with the point moved
+four places (`123456789012.3456` has sixteen significant digits and is written
+as text). The writer keeps the stored integer as an integer, forms the exact
+decimal text, and counts its significant digits; at most fifteen is written as a
+number (currency with a four-decimal format), and anything else is written as
+that exact decimal text with a manifest entry, so the workbook never silently
+alters a value.
 
 Dates are the exception because no exact representation exists: the model stores
 them to the nanosecond and an Excel serial date is itself a double count of
@@ -197,18 +207,25 @@ first build must treat each as unverified until a fixture is found:
 - encrypted or password-protected models, which are refused, not read.
 
 The pipeline was verified in Chromium only. Nothing in it is Chromium-specific,
-but that is reasoning, not evidence. Peak browser memory tracks the largest
-single table, not the whole model; the spike's naive representation peaked at
-284 MB on a 383,000-row model, and a representation that keeps column codes and
-one dictionary per column is expected to be several times lower.
+but that is reasoning, not evidence. The spike measured only the decoder's
+working set: it tracks the largest single table, not the whole model, and the
+naive representation peaked at 284 MB on a 383,000-row model, with a
+column-codes-and-dictionary representation expected to be several times lower.
+That is not the whole bound. The browser surface must also hold the finished
+workbook bytes, which accumulate across every exported worksheet, and the writer
+materializes the workbook while producing them, so a model of many moderate
+tables can exhaust a tab well below what the decoder figure implies. The build
+must measure and bound decoder working set plus workbook and zip memory
+together, on the corpus, before the browser surface is declared to work.
 
 ## Build list
 
 Right-sized pull requests, in order, each with a contract agreed before code and
 an independent review before push:
 
-1. Package skeleton, zip and part reader, refusal contract (template, no model,
-   encrypted) and error codes. Ships a real, testable refusal before any decode.
+1. Package skeleton, zip and part reader, refusal contract (invalid container,
+   unreadable model, template, no model, encrypted) and error codes. Ships a
+   real, testable refusal before any decode.
 2. Vendored XPress9 source, Emscripten build script, committed binary, the
    same-origin copy script, and the licence attributions.
 3. XPress9 chunk framing (single and multithreaded), the backup container, and a
