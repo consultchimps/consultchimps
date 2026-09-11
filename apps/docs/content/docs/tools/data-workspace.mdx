@@ -75,8 +75,9 @@ The grid works the way a spreadsheet does:
   that tiles the selection tiles it; anything else is written from the top left
   cell. A paste that would run past the last record or the last column is
   refused whole, because records and columns are not added by a paste.
-- **Fill** by dragging the handle on the corner of a selection. Numbers with a
-  constant difference extend it; dates sharing the same time of day step by a
+- **Fill** by dragging the handle on the corner of a selection. Numbers written
+  as plain decimals with a constant difference extend it, and a number written
+  in exponent form repeats; dates sharing the same time of day step by a
   constant number of months when every date falls on the same day of the month,
   the 28th or earlier, and otherwise by a constant number of days, and a single
   date steps by one day; dates with differing times of day repeat; text ending
@@ -96,9 +97,12 @@ target.
 Saving writes the workspace back to a single file. In a browser with the File
 System Access API, which today means Chromium browsers such as Chrome and Edge,
 Save writes back to the same file you opened, in place, and Save as asks where
-to put it; after a Save as, Save writes to the file you chose there. In every
-other browser the page downloads a copy, because the browser gives it no way to
-write the original.
+to put it; after a Save as, Save writes to the file you chose there, and the
+first Save of a new workspace asks where to put it, since there is no file yet.
+In every other browser the page downloads a copy, because the browser gives it
+no way to write the original: the download lands wherever your browser puts
+downloads, and it is up to you to move it into the shared folder in place of the
+file you opened.
 
 The file is the only copy that matters. Two people can take turns on a file in a
 shared folder, one at a time. Editing is single-writer by design: the workspace
