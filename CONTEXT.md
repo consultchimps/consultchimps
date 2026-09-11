@@ -74,8 +74,8 @@ First draft, added with ADR 0004. The verb and nouns are proposed, not final.
   to a workbook, as one or more worksheets per table. Never called "extract" or
   "convert".
 - **Exportable table**: a model table the export policy admits: not hidden
-  (unless hidden tables are included), within the column limit, and in an
-  encoding the reader can decode.
+  (unless hidden tables are included), within the column limit, and with at
+  least one column whose values can be decoded and represented in the workbook.
 - **Model**: the tables and their loaded rows carried inside a `.pbix` file. A
   template (`.pbit`) or a live-connection file carries no model.
 - **Model table**: one named table of the model, with its columns and rows.
@@ -85,5 +85,5 @@ First draft, added with ADR 0004. The verb and nouns are proposed, not final.
   were produced by a DAX expression rather than loaded from a source. Exported
   as data.
 - **Manifest**: the record an export returns alongside the workbook, naming
-  every table, column, or value that was skipped, split, truncated, or written
-  as text, and why.
+  skipped tables and columns, worksheet splits, and counts of values truncated
+  or encoded as text, grouped by column and reason.

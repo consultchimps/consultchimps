@@ -1,7 +1,7 @@
 # Power BI table export
 
-Status: Proposed. Every decision below was agreed on its own, after a spike
-proved the reading works, before being written here.
+Status: Proposed. The initial decisions followed a reading spike. The
+clarifications below address review findings before acceptance.
 
 Consultants receive Power BI files (`.pbix`) whose data they need in Excel, and
 the only supported way to get it out is to open the file in Power BI Desktop on
@@ -92,27 +92,32 @@ manifest.** Before policy applies, input that cannot be read at all is refused
 with a validation code rather than a leaked parser error: a file that is not a
 zip or lacks the parts a `.pbix` must have (`PBI_INVALID_CONTAINER`), and a
 model part whose compressed stream, backup container, or catalog is truncated or
-corrupt (`PBI_MODEL_UNREADABLE`). A `.pbix` or `.pbit` without a `DataModel`
-part is refused with a code that names the actual reason (template, live
-connection, or DirectQuery-only file), never a generic parse error. The presence
-of a `Connections` part is not a live-connection signal: a current Microsoft
-sample carries one alongside a full model, and the spike hit that false
-positive. The sound test is the presence of the model part. An encrypted or
-password-protected model is refused (`PBI_MODEL_ENCRYPTED`); the reader does not
-attempt it.
+corrupt (`PBI_MODEL_UNREADABLE`). A valid Power BI container without a
+`DataModel` part is refused with `PBI_NO_MODEL`. A missing `DataModel` is not an
+invalid container. The message says the file has no embedded model to export and
+asks for a `.pbix` saved with imported data. Templates, live connections, and
+DirectQuery-only files are possible causes, not diagnoses inferred from an
+extension or a missing part. They share this code until fixtures establish
+reliable distinctions. The presence of a `Connections` part is not a
+live-connection signal: a current Microsoft sample carries one alongside a full
+model, and the spike hit that false positive. An encrypted or password-protected
+model is refused (`PBI_MODEL_ENCRYPTED`); the reader does not attempt it.
 
 When a file decodes partially, for example one column uses an encoding the
 reader has not seen, the operation still produces the workbook and lists each
-skipped table or column in the manifest with a stable code. One exotic column
-must not cost the user the whole model.
+skipped table or column in the manifest with a stable code. A table remains
+exportable when at least one column can be decoded and represented. Retained
+columns keep their row positions and nulls; dropping a column never shifts or
+drops rows. A column whose complete values or row alignment cannot be recovered
+is skipped as a whole. If no columns remain, the table is excluded. A table with
+zero rows and at least one output column produces a header-only worksheet.
 
 A workbook is only produced when at least one table is exportable. When the
 model holds tables but every one of them is excluded, whether hidden under the
-default policy, over the column limit, or in an encoding the reader cannot
-decode, the operation fails with a stable code (`PBI_NO_EXPORTABLE_TABLES`)
-whose message lists each table with the reason it was excluded, and names the
-include-hidden option when that is the cure. An empty workbook is never a
-success.
+default policy, over the column limit, or without any usable output columns, the
+operation fails with a stable code (`PBI_NO_EXPORTABLE_TABLES`) whose message
+lists each table with the reason it was excluded, and names the include-hidden
+option when that is the cure. An empty workbook is never a success.
 
 ## Decision 5: tables larger than a worksheet
 
@@ -127,9 +132,10 @@ accepted knowingly, is that lookups and pivots across the parts are the user's
 job. Every part carries the header row, so a part holds at most 1,048,575 data
 rows (the worksheet limit less the header), and the last part is never asked to
 hold a row the worksheet cannot address. Column count above 16,384 refuses the
-table (such a model is pathological), and cell text above 32,767 characters is
-truncated and counted in the manifest. Worksheet names follow Excel's rules (31
-characters, forbidden characters replaced, case-insensitive uniqueness with
+table (such a model is pathological), and ordinary cell text above 32,767
+characters is truncated and counted in the manifest. Binary encodings follow
+Decision 6 instead and are never truncated. Worksheet names follow Excel's rules
+(31 characters, forbidden characters replaced, case-insensitive uniqueness with
 numeric suffixes).
 
 Worksheet allocation is deterministic. Tables are processed in the model's own
@@ -162,8 +168,8 @@ four places (`123456789012.3456` has sixteen significant digits and is written
 as text). The writer keeps the stored integer as an integer, forms the exact
 decimal text, and counts its significant digits; at most fifteen is written as a
 number (currency with a four-decimal format), and anything else is written as
-that exact decimal text with a manifest entry, so the workbook never silently
-alters a value.
+that exact decimal text and counted under its column in the manifest, so the
+workbook never silently alters a value.
 
 Dates are the exception because no exact representation exists: the model stores
 them to the nanosecond and an Excel serial date is itself a double count of
@@ -173,6 +179,15 @@ date number format. Honouring display format strings would mean implementing
 Power BI's format-string language, which is out of proportion for a first
 version.
 
+Binary values use standard padded base64 text without line breaks. Null remains
+a blank cell; an empty byte sequence encodes as an empty string. The manifest
+records the encoding and number of non-null encoded values for each binary
+column. If any encoded value exceeds 32,767 characters, exclude that entire
+column with `PBI_BINARY_CELL_TOO_LONG`, retain the other columns, and report the
+number of oversized values. Do not truncate base64 or emit a partial column. The
+build must verify byte-for-byte recovery, null and empty values, and the
+text-length boundary before binary support is declared to work.
+
 ## Decision 7: hidden tables
 
 Power BI generates hidden date tables (`LocalDateTable_*`,
@@ -180,10 +195,11 @@ Power BI generates hidden date tables (`LocalDateTable_*`,
 tables were these.
 
 **Decision: skip tables the model marks hidden by default, with an option to
-include them; hidden columns are always exported.** Hidden tables are noise to
-every user, and the model's own hidden flag is the criterion, not a name prefix,
-so tables a user hid deliberately are treated the same way. Hidden columns hold
-real data and stay. The manifest lists what was skipped.
+include them; hiding a column does not exclude it from export.** Hidden tables
+are noise to every user, and the model's own hidden flag is the criterion, not a
+name prefix, so tables a user hid deliberately are treated the same way. Hidden
+columns hold real data and follow the same decoding and representation rules as
+visible columns. The manifest lists what was skipped.
 
 ## Decision 8: calculated tables and columns
 
@@ -191,6 +207,22 @@ real data and stay. The manifest lists what was skipped.
 their DAX expressions are recorded in the manifest.** They decode like any other
 data and are data as far as the user is concerned; the expression is kept for
 reference, not evaluated.
+
+## Decision 9: a manifest bounded by the model structure
+
+**Decision: aggregate value changes by table, column, and reason. Do not retain
+an entry or a copy of the source value for each affected cell.** Each aggregate
+holds a stable reason code and the affected-value count. The manifest also
+records excluded tables and columns with their reasons, ordered worksheet parts
+and their source row ranges, and the DAX expressions from Decision 8. Entries
+follow catalog order and a fixed reason-code order within each column.
+
+This replaces per-value reporting: a million high-precision identifiers add one
+count for their column, not a million manifest entries. Counts cover exact
+numeric text, base64 conversion, and ordinary-text truncation separately. The
+manifest does not duplicate those cell values or collect row-index lists. Its
+size still depends on table and column counts, worksheet parts, and DAX text, so
+its full size remains part of the browser memory measurement.
 
 ## Known limits
 
@@ -215,16 +247,20 @@ That is not the whole bound. The browser surface must also hold the finished
 workbook bytes, which accumulate across every exported worksheet, and the writer
 materializes the workbook while producing them, so a model of many moderate
 tables can exhaust a tab well below what the decoder figure implies. The build
-must measure and bound decoder working set plus workbook and zip memory
-together, on the corpus, before the browser surface is declared to work.
+must measure and bound decoder working set, workbook, zip, and manifest memory
+together, including final serialization. The corpus must include many moderate
+tables and a column with millions of values requiring exact text, to verify that
+manifest entries grow with columns and reasons rather than row count. This is
+required before the browser surface is declared to work.
 
 ## Build list
 
 Right-sized pull requests, in order, each with a contract agreed before code and
 an independent review before push:
 
-1. Package skeleton, zip and part reader, refusal contract (invalid container,
-   unreadable model, template, no model, encrypted) and error codes. Ships a
+1. Package skeleton, zip and part reader, refusal contract
+   (`PBI_INVALID_CONTAINER`, `PBI_MODEL_UNREADABLE`, `PBI_NO_MODEL`,
+   `PBI_MODEL_ENCRYPTED`, `PBI_NO_EXPORTABLE_TABLES`) and error codes. Ships a
    real, testable refusal before any decode.
 2. Vendored XPress9 source, Emscripten build script, committed binary, the
    same-origin copy script, and the licence attributions.
@@ -236,9 +272,10 @@ an independent review before push:
    numeric dictionaries, value encoding, nulls.
 6. String dictionaries: the Huffman kernel port and all three page encodings.
 7. Typed values: integers, doubles, dates, currency, booleans, binary; the
-   formatting policy; concatenation across partitions and segments.
+   formatting policy including lossless base64 and whole-column exclusion for
+   oversized binary cells; concatenation across partitions and segments.
 8. Workbook emission through `@consultchimps/xlsx`: limits, worksheet splitting,
-   the manifest, deterministic bytes, a corpus test.
+   the aggregated manifest, deterministic bytes, a corpus test.
 9. The browser tool page, worker wiring, progress, cancellation, and the
    registry entry with its category.
 
