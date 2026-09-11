@@ -141,6 +141,87 @@ that normalizes line endings, because the built-in `range` parser does not strip
 layer that maps our CSS variables onto Tabulator's selectors, since it ships
 hardcoded hex rather than variables. All three are moderate, additive work.
 
+### Theme
+
+The third of those pieces is this subsection's subject, and it was built on a
+spike of its own (2026-09-11, Tabulator 6.5.2, the installed stylesheet read
+rather than remembered). Three findings shaped it.
+
+Tabulator 6.5.2 exposes no CSS custom property at all: the stylesheet it ships
+carries 155 hardcoded colour values and not one variable, so this is a selector
+override layer and not a variable handoff. The site, for its part, has no
+`data-theme` attribute and no `prefers-color-scheme` rule anywhere: fumadocs
+mounts `next-themes` with `attribute: "class"` and a system default, so dark
+mode is the `.dark` class on `<html>` and nothing else. And Tabulator renders
+its popups (the foreign-key edit list, the header tooltip) into the document
+body rather than into the table, because its own container clips them, so a
+variable block on the grid element could never reach the picker.
+
+**Decision: one document-level stylesheet,
+`apps/docs/src/app/workspace-grid.css`, imported by `global.css`, which binds
+every colour Tabulator can paint in this grid to a `--workspace-grid-*` role,
+and gives each role a site design token or a `color-mix` of site tokens.** No
+colour literal appears in it. The grid component imports it not at all and is
+unchanged by it, which keeps the file's ownership clear of the interaction work
+in the same component.
+
+There is no light block and no dark block. A role declared on `:root` is
+substituted on the element that declares it, which is the same element
+`next-themes` marks, so a role aliasing `--color-fd-card` already resolves to
+the light or the dark value on its own. The mode switch is therefore CSS alone,
+with no re-render, which the end-to-end suite pins by marking the cell elements,
+adding the class, and finding the same elements repainted.
+
+Only colour longhands are overridden, never a shorthand, so Tabulator's widths,
+arrow geometry, and right-to-left side flipping survive untouched. `box-shadow`
+is the single exception, because CSS gives it no colour longhand.
+
+Each override repeats the first class of Tabulator's own selector, which is
+exactly source specificity plus one for every rule. That is load bearing rather
+than defensive: in the static export the layer lands in the global stylesheet
+and Tabulator's in a page chunk loaded after it, so on equal specificity the
+hardcoded hex would win. Raising every reachable rule by the same amount also
+preserves Tabulator's own cascade between its rules rather than flattening it.
+
+What the grid cannot render is deliberately not bound, and is listed with the
+option it waits on (no footer, no pagination, no grouping, no tree data, no
+frozen or movable columns, no editable titles, no menus, no print view). A unit
+test parses the installed stylesheet and fails unless every colour it declares
+is either bound or on that list, so a Tabulator upgrade that adds a colour has
+to be classified rather than quietly shipped.
+
+The range, range-header, and range-handle colours are bound ahead of the
+Excel-grade interaction work that turns them on, so that work inherits a themed
+selection rather than a blue one.
+
+Accessibility is measured in a browser rather than derived in a test, because a
+`color-mix` over a token and an alpha border are only real once something paints
+them. The end-to-end suite puts each state on screen in both modes, reads the
+computed styles, composites every layer behind the text onto a pixel so an alpha
+is resolved the way the compositor resolves it, and gates on `contrastRatio`
+from `@consultchimps/theme`. Text answers to 4.5 to 1: cell text on the plain
+surface, on the zebra stripe and on a hovered row, header text, the open
+editor's own text, both kinds of picker option, the header tooltip, and the
+empty-table placeholder. Indicators answer to 3 to 1: the open-editor border,
+the range handle, the chosen picker option against the surface it sits on, and
+the focus outline on it. The range and row-selection tints are the one bound
+family the suite cannot put on screen, because the interaction work that turns
+them on has not landed; a tint is also the one case where the 3 to 1 mark is the
+wrong question, since a range is drawn inside a border in the indicator colour
+and a tint strong enough to clear 3 to 1 against a plain cell would be a tint
+nobody could read a number through. Cell gridlines are excluded on the same
+record: the site's border token is a 15 to 18 percent alpha and reads at about
+1.4 to 1, and a table gridline is a decorative separator rather than a boundary
+that carries state.
+
+Two things the old stylesheet made unreadable are fixed by the same binding. The
+empty-table placeholder sat near 1.6 to 1 on the light surface and vanished on
+the dark one. And the header tooltip, which Tabulator gives a background but no
+text colour, took the page's own ink onto that light panel, so in dark mode it
+was near-white on near-white. The foreign-key picker, by contrast, was legible
+throughout: Tabulator sets its option text explicitly, so it was a light island
+rather than an unreadable one.
+
 ## Decision 5: theme package
 
 Exports carry a client's brand colours, which is a real consulting need, but the
@@ -155,6 +236,27 @@ the Excel export and the site can consume it later without a wrong dependency
 direction. Neutral placeholder palettes only are committed; a client's colours
 are supplied at runtime and never enter the repo, per the repository's
 no-client-references rule.
+
+The site's own chrome is not a consumer of this package, and the record grid is
+the first place that distinction had to be made. The grid's surfaces, borders,
+selection, and indicators are site design tokens (Decision 4's theme
+subsection); the states that look semantic are either not drawn by the grid at
+all (a refused edit, an unsaved workspace, and a locked page are the page's own
+elements) or are a value rather than a status (a boolean column's tick and
+cross, which take ink colours, because painting a false value critical red
+asserts a judgement the data does not carry). Routing any of those through this
+package would mean a client's brand recolouring the application's error notices,
+and the neutral palette's semantic roles could not pass the grid's own contrast
+gate anyway: they are mode invariant and deliberately not contrast gated,
+because the data-viz method they come from pairs a status colour with an icon
+and a label. What the package does supply the grid is `contrastRatio`, as the
+authority the theme tests gate on.
+
+The seam for later is the role names. When a data-bearing grid surface arrives
+(conditional formatting, a dashboard preview), a palette may set the
+`--workspace-grid-*` roles, and the rule is that it must pass `validatePalette`
+for both modes first, and must set both modes at once so the switch stays free
+of JavaScript.
 
 ## Decision 6: charts
 
