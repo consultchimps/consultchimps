@@ -340,6 +340,31 @@ test.describe("/workspace record grid gestures", () => {
     await expect(cellOf(page, "TSK-0004", "effort")).toHaveText("2");
   });
 
+  test("lets a cell fill again after a fill from it was refused before sending", async ({
+    page,
+  }) => {
+    await forceDownloadFallback(page);
+    await page.goto("/workspace");
+    await openWorkspace(page, await workspaceFixture());
+
+    // Dragged onto the Record ID, which no gesture may write, so the fill is
+    // refused whole before anything is sent. That refusal is about the gesture
+    // and not about the value the source cell holds.
+    await selectRange(page, { recordId: "TSK-0002", field: "code" });
+    await dragFillHandleTo(page, "TSK-0002", "record_id");
+    await expect(page.getByTestId("workspace-grid-error")).toContainText(
+      "Record ID",
+    );
+    await expect(cellOf(page, "TSK-0002", "record_id")).toHaveText("TSK-0002");
+
+    // So the same cell fills the other way as if nothing had happened, and the
+    // notice about the earlier gesture comes down with it.
+    await selectRange(page, { recordId: "TSK-0002", field: "code" });
+    await dragFillHandleTo(page, "TSK-0003", "code");
+    await expect(cellOf(page, "TSK-0003", "code")).toHaveText("B-2");
+    await expect(page.getByTestId("workspace-grid-error")).toHaveCount(0);
+  });
+
   test("refuses a whole gesture that names a workspace the worker does not hold", async ({
     page,
   }) => {

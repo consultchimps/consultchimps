@@ -14,6 +14,12 @@
  *   the database accepts, and replaces it if the database refuses again.
  * - A success anywhere else leaves it standing. Several cells can be refused
  *   and each keeps its own explanation until it is dealt with.
+ * - A gesture refused before anything was sent, because the page was busy, a
+ *   target was the Record ID, or two rectangles were selected, is recorded
+ *   against the cell it started from under its own kind. It says nothing about
+ *   the value that cell holds, so a reader asking whether the cell's value was
+ *   refused does not find it, and it is answered when a later gesture from that
+ *   cell is sent, because whatever refused the earlier one no longer applies.
  * - The visitor can dismiss the lot.
  *
  * Before this there was one string, cleared by any success. Commit an invalid
@@ -59,6 +65,29 @@ export function cellKey(
 /** Which table a read was a read of. */
 export function tableKey(table: string): string {
   return JSON.stringify(["table", table]);
+}
+
+/** The cell a gesture started from: the anchor of the selection it acted on. */
+export interface GestureAnchor {
+  readonly recordId: string;
+  readonly column: string;
+}
+
+/**
+ * Which gesture a notice is about, by the cell it started from, or by the
+ * table alone when the selection had no cell to name.
+ *
+ * Its own kind, apart from `cellKey` and `tableKey`: a gesture refused before
+ * it was sent is not a refusal of its anchor's value, and a reader asking
+ * about that value must not be told it was.
+ */
+export function gestureKey(
+  table: string,
+  anchor: GestureAnchor | null,
+): string {
+  return anchor === null
+    ? JSON.stringify(["gesture", table])
+    : JSON.stringify(["gesture", table, anchor.recordId, anchor.column]);
 }
 
 /**

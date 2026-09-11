@@ -253,7 +253,10 @@ well inside a second. The grid checks that ceiling before sending so the refusal
 costs no round trip, and the worker checks it again, because a limit the worker
 does not enforce is a limit it cannot keep. Nothing is painted before the reply,
 and a gesture the grid refuses before sending is not work in flight and reports
-nothing to the state model.
+nothing to the state model. Its explanation stands against the gesture, keyed by
+the cell it started from, and not against that cell's value, so it never stops
+the next fill from that cell; it comes down when a gesture from there goes
+ahead.
 
 Undo is not in this item. After a paste that was partly refused, each refused
 cell is explained against itself and still holds the value the workspace holds,

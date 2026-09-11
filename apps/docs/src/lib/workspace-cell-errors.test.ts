@@ -7,6 +7,7 @@ import {
   dismissFailures,
   failureReport,
   failuresAt,
+  gestureKey,
   NO_FAILURES,
   NOTHING_REFUSED,
   recordFailure,
@@ -270,5 +271,47 @@ describe("a gesture's worth of explanations", () => {
 
     expect(failuresAt(recorded, 5)).toBe(NO_FAILURES);
     expect(answerFailures(recorded, 5, [headcount])).toBe(recorded);
+  });
+});
+
+describe("a gesture's notice", () => {
+  const fromHeadcount = gestureKey("Customer", {
+    recordId: "CUST-0001",
+    column: "headcount",
+  });
+
+  it("is not a refusal of the cell the gesture started from", () => {
+    const recorded = recordFailure(
+      NOTHING_REFUSED,
+      4,
+      fromHeadcount,
+      "The page is busy",
+    );
+
+    // The notice is shown, and the cell's own value is not marked refused: a
+    // fill from that cell is not spreading anything the workspace turned away.
+    expect(failureReport(failuresAt(recorded, 4))).toBe("The page is busy");
+    expect(failuresAt(recorded, 4).has(headcount)).toBe(false);
+  });
+
+  it("is told apart from the table's own read failure", () => {
+    expect(gestureKey("Customer", null)).not.toBe(tableKey("Customer"));
+    expect(gestureKey("Customer", null)).not.toBe(fromHeadcount);
+  });
+
+  it("comes down when a gesture from that cell goes ahead, leaving the cell's own refusal standing", () => {
+    const both = recordFailure(
+      recordFailure(NOTHING_REFUSED, 4, headcount, "Not a whole number"),
+      4,
+      fromHeadcount,
+      "The page is busy",
+    );
+
+    expect([
+      ...failuresAt(answerFailure(both, 4, fromHeadcount), 4).keys(),
+    ]).toEqual([headcount]);
+    expect([
+      ...failuresAt(answerFailure(both, 4, headcount), 4).keys(),
+    ]).toEqual([fromHeadcount]);
   });
 });

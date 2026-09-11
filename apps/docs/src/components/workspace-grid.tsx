@@ -104,6 +104,7 @@ import {
   dismissFailures,
   failureReport,
   failuresAt,
+  gestureKey,
   NOTHING_REFUSED,
   recordFailure,
   recordFailures,
@@ -909,15 +910,30 @@ export function WorkspaceGrid({
         recordFailure(
           previous,
           data.generation,
-          // Against the cell the gesture started from, or against the table when
-          // there is no such cell: a selection this grid cannot read has no cell
-          // to name, and a refusal nobody is told about is worse than one filed
-          // against the table it happened in.
-          anchor === null
-            ? tableKey(data.name)
-            : cellKey(data.name, anchor.recordId, anchor.column),
+          // Against the gesture, by the cell it started from, or by the table
+          // alone when there is no such cell: a selection this grid cannot read
+          // has no cell to name, and a refusal nobody is told about is worse
+          // than one filed against the table it happened in. Never under the
+          // cell's own key: a gesture refused before it was sent says nothing
+          // about the value that cell holds, and `refused` above must not read
+          // it as if it did, or the next fill from that cell would be refused
+          // for a reason that was never about the cell.
+          gestureKey(data.name, anchor),
           message,
         ),
+      );
+    };
+
+    /**
+     * A gesture from this anchor is going ahead, so whatever refused the last
+     * one from here no longer applies and its notice comes down. The cells'
+     * own explanations are untouched: those are answered by the reply.
+     */
+    const answerGesture = (
+      anchor: { recordId: string; column: string } | null,
+    ): void => {
+      setRecorded((previous) =>
+        answerFailure(previous, data.generation, gestureKey(data.name, anchor)),
       );
     };
 
@@ -1024,6 +1040,7 @@ export function WorkspaceGrid({
       for (const key of keys) {
         latest.set(key, stamp);
       }
+      answerGesture(anchor);
       // Before the command is posted, and inside the event that caused it: the
       // shell has to be holding for this work by the time anything else is
       // clicked.
@@ -1149,6 +1166,7 @@ export function WorkspaceGrid({
       }
       event.clipboardData.setData("text/plain", encodeTsv(rows));
       event.preventDefault();
+      answerGesture(anchorAt(rect));
     };
 
     /** Write a pasted block into the selection, or say why it was not written. */
