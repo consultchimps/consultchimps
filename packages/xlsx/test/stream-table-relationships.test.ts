@@ -27,6 +27,8 @@ function table(name: string): string {
 async function workbook(options: {
   readonly tableParts: string;
   readonly relationships: string;
+  readonly packageRelationships?: string;
+  readonly workbookRelationships?: string;
 }): Promise<Uint8Array> {
   const zip = new JSZip();
   zip.file(
@@ -35,7 +37,7 @@ async function workbook(options: {
   );
   zip.file(
     "_rels/.rels",
-    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="office" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${options.packageRelationships ?? '<Relationship Id="office" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'}</Relationships>`,
   );
   zip.file(
     "xl/workbook.xml",
@@ -43,11 +45,15 @@ async function workbook(options: {
   );
   zip.file(
     "xl/_rels/workbook.xml.rels",
-    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="sheet" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${options.workbookRelationships ?? '<Relationship Id="sheet" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'}</Relationships>`,
   );
   zip.file(
     "xl/worksheets/sheet1.xml",
     `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Value</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Active</t></is></c></row></sheetData>${options.tableParts}</worksheet>`,
+  );
+  zip.file(
+    "xl/worksheets/sheet2.xml",
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Substituted</t></is></c></row></sheetData></worksheet>',
   );
   zip.file(
     "xl/worksheets/_rels/sheet1.xml.rels",
@@ -64,6 +70,83 @@ const orphanRelationship =
   '<Relationship Id="orphan" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../tables/table2.xml"/>';
 
 describe("streamed worksheet table relationships", () => {
+  it("rejects more than one office document relationship", async () => {
+    const bytes = await workbook({
+      tableParts: "",
+      relationships: "",
+      packageRelationships:
+        '<Relationship Id="office-one" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/><Relationship Id="office-two" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/substituted.xml"/>',
+    });
+
+    await expect(
+      inspectWorkbookStream(source(bytes), { scratch }),
+    ).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+      cause: expect.objectContaining({
+        message: expect.stringMatching(/officeDocument.*more than once/iu),
+      }),
+    });
+  });
+
+  it.each(["styles", "sharedStrings"])(
+    "rejects more than one %s relationship",
+    async (role) => {
+      const bytes = await workbook({
+        tableParts: "",
+        relationships: "",
+        workbookRelationships: `<Relationship Id="sheet" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="first" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${role}" Target="first.xml"/><Relationship Id="second" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${role}" Target="second.xml"/>`,
+      });
+
+      await expect(
+        inspectWorkbookStream(source(bytes), { scratch }),
+      ).rejects.toMatchObject({
+        code: "XLSX_READ_FAILED",
+        cause: expect.objectContaining({
+          message: expect.stringMatching(
+            new RegExp(`${role}.*more than once`, "iu"),
+          ),
+        }),
+      });
+    },
+  );
+
+  it("rejects a duplicate workbook relationship ID with conflicting targets", async () => {
+    const bytes = await workbook({
+      tableParts: "",
+      relationships: "",
+      workbookRelationships:
+        '<Relationship Id="sheet" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="sheet" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>',
+    });
+
+    await expect(
+      inspectWorkbookStream(source(bytes), { scratch }),
+    ).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+      cause: expect.objectContaining({
+        message: expect.stringMatching(/relationship.*sheet.*more than once/iu),
+      }),
+    });
+  });
+
+  it("rejects a duplicate inactive worksheet relationship ID", async () => {
+    const bytes = await workbook({
+      tableParts: "",
+      relationships:
+        '<Relationship Id="duplicate" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://one.invalid" TargetMode="External"/><Relationship Id="duplicate" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://two.invalid" TargetMode="External"/>',
+    });
+
+    await expect(
+      inspectWorkbookStream(source(bytes), { scratch }),
+    ).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+      cause: expect.objectContaining({
+        message: expect.stringMatching(
+          /relationship.*duplicate.*more than once/iu,
+        ),
+      }),
+    });
+  });
+
   it("ignores stale table relationships that the worksheet does not activate", async () => {
     const bytes = await workbook({
       tableParts:

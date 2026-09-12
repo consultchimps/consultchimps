@@ -75,24 +75,28 @@ export function validateImportRecipe(recipe: ImportRecipe): void {
   }
 }
 
-function objectValue(value: unknown, label: string): Record<string, unknown> {
+function objectValue(
+  value: unknown,
+  label: string,
+  errorCode = "DB_INVALID_DOCUMENT",
+): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw databaseError(
-      "DB_INVALID_DOCUMENT",
-      `The ${label} must be a JSON object.`,
-      { label },
-    );
+    throw databaseError(errorCode, `The ${label} must be a JSON object.`, {
+      label,
+    });
   }
   return value as Record<string, unknown>;
 }
 
-function stringValue(value: unknown, label: string): string {
+function stringValue(
+  value: unknown,
+  label: string,
+  errorCode = "DB_INVALID_DOCUMENT",
+): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw databaseError(
-      "DB_INVALID_DOCUMENT",
-      `The ${label} must be non-empty text.`,
-      { label },
-    );
+    throw databaseError(errorCode, `The ${label} must be non-empty text.`, {
+      label,
+    });
   }
   return value;
 }
@@ -473,8 +477,9 @@ export function parseImportDecisions(
 }
 
 export function parseDeliveryContext(value: unknown): DeliveryContext {
-  const document = objectValue(value, "delivery context");
-  const scope = objectValue(document["scope"], "delivery scope");
+  const errorCode = "DB_INVALID_DELIVERY_CONTEXT";
+  const document = objectValue(value, "delivery context", errorCode);
+  const scope = objectValue(document["scope"], "delivery scope", errorCode);
   let parsedScope: DeliveryContext["scope"];
   switch (scope["kind"]) {
     case "full":
@@ -486,13 +491,18 @@ export function parseDeliveryContext(value: unknown): DeliveryContext {
         description: stringValue(
           scope["description"],
           "partial delivery description",
+          errorCode,
         ),
       };
       break;
     case "changes":
       parsedScope = {
         kind: "changes",
-        baseline: stringValue(scope["baseline"], "delivery baseline"),
+        baseline: stringValue(
+          scope["baseline"],
+          "delivery baseline",
+          errorCode,
+        ),
       };
       break;
     case "unknown":
@@ -522,7 +532,7 @@ export function parseDeliveryContext(value: unknown): DeliveryContext {
   let parsedAttributes:
     Record<string, string | number | boolean | null> | undefined;
   if (attributes !== undefined) {
-    const object = objectValue(attributes, "delivery attributes");
+    const object = objectValue(attributes, "delivery attributes", errorCode);
     parsedAttributes = Object.create(null) as Record<
       string,
       string | number | boolean | null
@@ -540,11 +550,18 @@ export function parseDeliveryContext(value: unknown): DeliveryContext {
           { attribute: name },
         );
       }
+      if (typeof attribute === "number" && !Number.isFinite(attribute)) {
+        throw databaseError(
+          "DB_INVALID_DELIVERY_CONTEXT",
+          `The delivery attribute "${name}" must be a finite number.`,
+          { attribute: name },
+        );
+      }
       parsedAttributes[name] = attribute;
     }
   }
   return {
-    label: stringValue(document["label"], "delivery label"),
+    label: stringValue(document["label"], "delivery label", errorCode),
     scope: parsedScope,
     ...(effectiveDate === undefined ? {} : { effectiveDate }),
     ...(receivedDate === undefined ? {} : { receivedDate }),

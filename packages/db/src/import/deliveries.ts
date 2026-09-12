@@ -65,6 +65,7 @@ export async function recordDelivery(options: {
   readonly context: DeliveryContext;
   readonly requestId: string;
 }): Promise<DeliveryResult> {
+  const context = parseDeliveryContext(options.context);
   if (options.requestId.trim().length === 0) {
     throw databaseError(
       "DB_DELIVERY_REQUEST_ID_REQUIRED",
@@ -98,7 +99,7 @@ export async function recordDelivery(options: {
         reusedCaptureIds: memberships.reusedCaptureIds,
       };
       if (
-        canonicalJson(delivery.context) !== canonicalJson(options.context) ||
+        canonicalJson(delivery.context) !== canonicalJson(context) ||
         JSON.stringify(delivery.captureIds) !== JSON.stringify(uniqueCaptures)
       ) {
         throw databaseError(
@@ -134,7 +135,7 @@ export async function recordDelivery(options: {
     const id = await allocateDelivery(transaction);
     await transaction.execute(
       `INSERT INTO ${DELIVERY_TABLE} VALUES (?, ?, ?)`,
-      [id, options.requestId, canonicalJson(options.context)],
+      [id, options.requestId, canonicalJson(context)],
     );
     for (const captureId of uniqueCaptures) {
       await transaction.execute(
@@ -149,7 +150,7 @@ export async function recordDelivery(options: {
     const delivery: DeliveryRecord = {
       id,
       requestId: options.requestId,
-      context: options.context,
+      context,
       captureIds: memberships.captureIds,
       reusedCaptureIds: memberships.reusedCaptureIds,
     };

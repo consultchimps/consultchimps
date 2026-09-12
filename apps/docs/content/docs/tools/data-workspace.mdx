@@ -280,6 +280,10 @@ rows. Scope can be `full`, `partial` with a description, `changes` with a
 baseline, or `unknown`. A partial submission does not remove observations absent
 from it.
 
+Delivery labels, partial descriptions, and change baselines must contain text.
+Reported numeric attributes must be finite. Invalid context is rejected before
+an import or delivery event changes the database.
+
 When you leave a completed event's request ID unchanged, the browser's **Record
 another delivery** action generates a fresh ID. An interrupted request keeps its
 saved ID for recovery. Replaying an existing ID reports that the event was

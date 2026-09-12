@@ -55,6 +55,7 @@ function relationshipPart(ownerPart: string): string {
 
 function parseRelationships(xml: string): readonly Relationship[] {
   const relationships: Relationship[] = [];
+  const relationshipIds = new Set<string>();
   parseXml(xml, (parser) => {
     parser.on("opentag", (tag) => {
       if (localName(tag.name) !== "Relationship") return;
@@ -66,6 +67,10 @@ function parseRelationships(xml: string): readonly Relationship[] {
           "A workbook relationship is missing Id, Type, or Target.",
         );
       }
+      if (relationshipIds.has(id)) {
+        throw new Error(`Relationship ID "${id}" is declared more than once.`);
+      }
+      relationshipIds.add(id);
       relationships.push({
         id,
         type,
@@ -219,9 +224,17 @@ function relationshipBySuffix(
   relationships: readonly Relationship[],
   suffix: string,
 ): Relationship | undefined {
-  return relationships.find((relationship) =>
-    relationship.type.endsWith(suffix),
-  );
+  let match: Relationship | undefined;
+  for (const relationship of relationships) {
+    if (!relationship.type.endsWith(suffix)) continue;
+    if (match !== undefined) {
+      throw new Error(
+        `Relationship role "${suffix.slice(1)}" is declared more than once.`,
+      );
+    }
+    match = relationship;
+  }
+  return match;
 }
 
 export async function loadWorkbookMetadata(
@@ -308,28 +321,22 @@ export async function loadWorkbookMetadata(
           `Worksheet "${sheet.name}" is missing its worksheet part.`,
         );
       }
-      const relationshipsById = new Map<string, Relationship[]>();
-      for (const relationship of sheetRelationships) {
-        const matching = relationshipsById.get(relationship.id) ?? [];
-        matching.push(relationship);
-        relationshipsById.set(relationship.id, matching);
-      }
+      const relationshipsById = new Map(
+        sheetRelationships.map((relationship) => [
+          relationship.id,
+          relationship,
+        ]),
+      );
       const activeIds = await activeTableRelationshipIds(
         sheetEntry,
         new Set(relationshipsById.keys()),
         options,
       );
       for (const id of activeIds) {
-        const matching = relationshipsById.get(id) ?? [];
-        const relationship = matching[0];
+        const relationship = relationshipsById.get(id);
         if (relationship === undefined) {
           throw new Error(
             `Worksheet "${sheet.name}" references missing table relationship "${id}".`,
-          );
-        }
-        if (matching.length > 1) {
-          throw new Error(
-            `Worksheet "${sheet.name}" has table relationship "${id}" more than once.`,
           );
         }
         if (!relationship.type.endsWith("/table")) {

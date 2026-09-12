@@ -39,6 +39,7 @@ import {
   sortTablesByReferences,
 } from "../records.js";
 import { formatRecordId, identifierKey, type TableSchema } from "../schema.js";
+import { parseDeliveryContext } from "../validators.js";
 import { parseImportCellsJson, valueForColumn } from "./inference.js";
 import {
   orderRoutesByReferences,
@@ -111,6 +112,10 @@ export async function applyImport(
       "Give the import a request ID so retrying it cannot apply the same plan twice.",
     );
   }
+  const delivery =
+    options.delivery === undefined
+      ? undefined
+      : parseDeliveryContext(options.delivery);
   if (options.approved.state !== "ready") {
     throw databaseError(
       "DB_IMPORT_NEEDS_REVIEW",
@@ -174,9 +179,9 @@ export async function applyImport(
       if (deliveries[0] !== undefined) {
         deliveryId = valueAsString(deliveries[0]["delivery_id"], "delivery ID");
         if (
-          options.delivery !== undefined &&
+          delivery === undefined ||
           valueAsString(deliveries[0]["context_json"], "delivery context") !==
-            canonicalJson(options.delivery)
+            canonicalJson(delivery)
         ) {
           throw databaseError(
             "DB_REQUEST_ID_CONFLICT",
@@ -184,7 +189,7 @@ export async function applyImport(
             { requestId: options.requestId },
           );
         }
-      } else if (options.delivery !== undefined) {
+      } else if (delivery !== undefined) {
         throw databaseError(
           "DB_REQUEST_ID_CONFLICT",
           "This request ID was already used without delivery details. Choose a new request ID.",
@@ -652,12 +657,12 @@ export async function applyImport(
         BigInt(rowsImported + rowsReused),
       ],
     );
-    if (options.delivery !== undefined) {
+    if (delivery !== undefined) {
       deliveryId = await allocate(transaction, "delivery", "DEL");
       deliveriesRecorded = 1;
       await transaction.execute(
         `INSERT INTO ${DELIVERY_TABLE} VALUES (?, ?, ?)`,
-        [deliveryId, options.requestId, canonicalJson(options.delivery)],
+        [deliveryId, options.requestId, canonicalJson(delivery)],
       );
       for (const captureId of new Set(captureIdByBinding.values())) {
         await transaction.execute(
