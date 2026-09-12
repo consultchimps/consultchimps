@@ -75,6 +75,49 @@ builds twice in clean copies with that pinned environment and compares both
 outputs with the committed binary. Toolchain upgrades update the pin and rebuilt
 binary together in a reviewed PR.
 
+The byte engine's options include `runtime?: PbiRuntimeConfig`. This public type
+has `sql?: SqlEngineConfig`, reusing `@consultchimps/db`, and
+`xpress9?: Xpress9RuntimeConfig`. `Xpress9RuntimeConfig` offers
+`locateFile?: (fileName: string) => string` and `wasmBinary?: Uint8Array`. For
+each explicitly supplied runtime config, require exactly one source: a locator
+function or nonempty binary bytes. Reject malformed or conflicting sources with
+`PBI_INVALID_OPTIONS` before processing input. The locator receives the fixed
+asset name, `sql-wasm.wasm` or `xpress9.wasm`; injected bytes require no fetch.
+A browser caller must configure both runtimes. Omitting configuration in Node
+resolves sql.js beside its installed package and XPress9 beside the installed
+`@consultchimps/pbi` package, independent of the process directory.
+
+The documentation browser worker uses a serializable asset mapping,
+`{ sqlWasmUrl: string, xpress9WasmUrl: string }`, with absolute same-origin URLs
+that include the site's deployment base path. The worker constructs both
+`locateFile` functions locally; functions never cross `postMessage`. The asset
+copy step serves the two pinned binaries at those URLs. External browser hosts
+provide their own mapping or inject the binaries directly into the byte engine.
+Configuration belongs to that engine invocation; a custom runtime must not
+silently reuse a cached binary from a different configuration.
+
+The pinned sql.js loader caches its first initialization internally, so merely
+calling it again with custom options does not establish that isolation. Build
+item 1 must repair this at the database boundary before exposing runtime
+configuration: use isolated runtime instances or reject incompatible
+reconfiguration explicitly. The Power BI boundary reports such a conflict as
+`PBI_RUNTIME_UNAVAILABLE` at the load stage and suggests using the original
+configuration or a fresh worker/process. A same-process fixture initializes the
+default or one custom source, then requests different bytes or a different
+locator. It must use the requested source or fail explicitly, never silently
+return the first runtime. Test both successful and failed first initialization;
+separate-process injection tests do not prove this behavior.
+
+Unavailable, failed-to-load, or invalid WebAssembly produces
+`PBI_RUNTIME_UNAVAILABLE`, with a controlled runtime label and load, compile, or
+instantiate stage, and instructions to configure or serve the pinned asset. Do
+not expose URLs or raw runtime errors in diagnostics. Runtime binary copies,
+initialization, and linear memory count toward `peakBytes`. Build items 1, 2,
+and 8 test Node defaults from another working directory, binary injection
+without network access, both locators, and failures. Item 9 tests the real
+worker under a non-root base path and accounts for runtime initialization in its
+memory bound before claiming browser support.
+
 ## Decision 3: a named tool in a new "Power BI" category
 
 Options considered: a named registry operation with its own category; a `.pbix`
@@ -599,10 +642,10 @@ Right-sized pull requests, in order, each with a contract agreed before code and
 an independent review before push:
 
 1. Package skeleton, zip and part reader, refusal contract
-   (`PBI_INVALID_OPTIONS`, `PBI_INVALID_CONTAINER`, `PBI_MODEL_UNREADABLE`,
-   `PBI_NO_MODEL`, `PBI_MODEL_ENCRYPTED`, `PBI_NO_EXPORTABLE_TABLES`,
-   `PBI_EXPORT_LIMIT_EXCEEDED`) and error codes. Ships a real, testable refusal
-   before any decode.
+   (`PBI_INVALID_OPTIONS`, `PBI_RUNTIME_UNAVAILABLE`, `PBI_INVALID_CONTAINER`,
+   `PBI_MODEL_UNREADABLE`, `PBI_NO_MODEL`, `PBI_MODEL_ENCRYPTED`,
+   `PBI_NO_EXPORTABLE_TABLES`, `PBI_EXPORT_LIMIT_EXCEEDED`) and error codes.
+   Ships a real, testable refusal before any decode.
 2. Vendored XPress9 source, Emscripten build script, committed binary, the
    same-origin copy script, and the licence attributions.
 3. XPress9 chunk framing (single and multithreaded), the backup container, and a
