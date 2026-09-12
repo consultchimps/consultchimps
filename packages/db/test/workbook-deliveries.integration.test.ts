@@ -9,7 +9,7 @@ import {
 import { writeTable } from "@consultchimps/xlsx";
 import { afterEach, expect, test } from "vitest";
 
-import { inspectDatabase } from "../src/database.js";
+import { engineOf, inspectDatabase } from "../src/database.js";
 import { recordDelivery, listDeliveries } from "../src/import/deliveries.js";
 import {
   prepareImport,
@@ -26,6 +26,7 @@ import {
   openDatabase,
 } from "../src/node.js";
 import { createWorkbookImportSource } from "../src/workbook.js";
+import { COUNTERS_TABLE } from "../src/metadata.js";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -133,14 +134,16 @@ for (const format of ["sqlite", "duckdb"] as const) {
           },
           requestId: "delivery-a",
         });
+        expect(first.delivery.reusedCaptureIds).toEqual([]);
         expect(retried.delivery).toEqual(first.delivery);
         expect(retried.metrics.deliveriesRecorded).toBe(0);
-        await recordDelivery({
+        const repeated = await recordDelivery({
           database,
           captureIds: applied.captureIds,
           context,
           requestId: "delivery-b",
         });
+        expect(repeated.delivery.reusedCaptureIds).toEqual(applied.captureIds);
         const firstPage = await listDeliveries({ database, limit: 1 });
         const secondPage = await listDeliveries({
           database,
@@ -148,8 +151,58 @@ for (const format of ["sqlite", "duckdb"] as const) {
           cursor: firstPage.nextCursor,
         });
         expect(firstPage.deliveries[0]?.id).toBe(first.delivery.id);
+        expect(firstPage.deliveries[0]?.reusedCaptureIds).toEqual([]);
         expect(secondPage.deliveries[0]?.requestId).toBe("delivery-b");
+        expect(secondPage.deliveries[0]?.reusedCaptureIds).toEqual(
+          applied.captureIds,
+        );
         expect(secondPage.nextCursor).toBeUndefined();
+        expect(
+          (
+            await recordDelivery({
+              database,
+              captureIds: applied.captureIds,
+              context,
+              requestId: "delivery-a",
+            })
+          ).delivery.reusedCaptureIds,
+        ).toEqual([]);
+        await engineOf(database).execute(
+          `UPDATE ${COUNTERS_TABLE} SET next_value = ? WHERE counter_name = ?`,
+          [999_999n, "delivery"],
+        );
+        const lastPadded = await recordDelivery({
+          database,
+          captureIds: applied.captureIds,
+          context,
+          requestId: "delivery-999999",
+        });
+        const firstUnpadded = await recordDelivery({
+          database,
+          captureIds: applied.captureIds,
+          context,
+          requestId: "delivery-1000000",
+        });
+        expect(lastPadded.delivery.id).toBe("DEL-999999");
+        expect(firstUnpadded.delivery.id).toBe("DEL-1000000");
+        const naturalFirstPage = await listDeliveries({
+          database,
+          limit: 3,
+        });
+        expect(
+          naturalFirstPage.deliveries.map((delivery) => delivery.id),
+        ).toEqual(["DEL-000001", "DEL-000002", "DEL-999999"]);
+        const naturalSecondPage = await listDeliveries({
+          database,
+          limit: 1,
+          cursor: naturalFirstPage.nextCursor,
+        });
+        expect(
+          naturalSecondPage.deliveries.map((delivery) => delivery.id),
+        ).toEqual(["DEL-1000000"]);
+        expect(naturalSecondPage.deliveries[0]?.reusedCaptureIds).toEqual(
+          applied.captureIds,
+        );
         await expect(
           recordDelivery({
             database,
@@ -190,7 +243,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         ).rejects.toMatchObject({ code: "DB_INVALID_CURSOR" });
         const inspection = await inspectDatabase({ database });
         expect(inspection.tables[0]?.rowCount).toBe(2n);
-        expect(inspection.deliveries).toBe(2n);
+        expect(inspection.deliveries).toBe(4n);
         await expect(
           createPreparedImport({
             path: databasePath,
@@ -206,7 +259,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         try {
           expect(
             (await inspectDatabase({ database: reopened })).deliveries,
-          ).toBe(2n);
+          ).toBe(4n);
         } finally {
           await reopened.close();
         }

@@ -18,6 +18,32 @@ import type { DeliveryContext, DeliveryPage, DeliveryRecord } from "./types.js";
 import { parseDeliveryContext } from "../validators.js";
 import type { DeliveryResult } from "./types.js";
 
+const DELIVERY_PRECEDES =
+  "(LENGTH(prior.delivery_id) < LENGTH(membership.delivery_id) OR (LENGTH(prior.delivery_id) = LENGTH(membership.delivery_id) AND prior.delivery_id < membership.delivery_id))";
+
+async function deliveryMemberships(
+  reader: Pick<EngineTransaction, "query">,
+  deliveryId: string,
+): Promise<{
+  readonly captureIds: readonly string[];
+  readonly reusedCaptureIds: readonly string[];
+}> {
+  const rows = await reader.query(
+    `SELECT membership.capture_id, CASE WHEN EXISTS (SELECT 1 FROM ${DELIVERY_MEMBERSHIP_TABLE} AS prior WHERE prior.capture_id = membership.capture_id AND ${DELIVERY_PRECEDES}) THEN 1 ELSE 0 END AS reused_capture FROM ${DELIVERY_MEMBERSHIP_TABLE} AS membership WHERE membership.delivery_id = ? ORDER BY membership.capture_id`,
+    [deliveryId],
+  );
+  const captureIds: string[] = [];
+  const reusedCaptureIds: string[] = [];
+  for (const row of rows) {
+    const captureId = valueAsString(row["capture_id"], "capture ID");
+    captureIds.push(captureId);
+    if (valueAsBigInt(row["reused_capture"], "capture reuse flag") !== 0n) {
+      reusedCaptureIds.push(captureId);
+    }
+  }
+  return { captureIds, reusedCaptureIds };
+}
+
 async function allocateDelivery(
   transaction: EngineTransaction,
 ): Promise<string> {
@@ -59,10 +85,7 @@ export async function recordDelivery(options: {
     );
     if (existing[0] !== undefined) {
       const id = valueAsString(existing[0]["delivery_id"], "delivery ID");
-      const memberships = await transaction.query(
-        `SELECT capture_id FROM ${DELIVERY_MEMBERSHIP_TABLE} WHERE delivery_id = ? ORDER BY capture_id`,
-        [id],
-      );
+      const memberships = await deliveryMemberships(transaction, id);
       const delivery: DeliveryRecord = {
         id,
         requestId: options.requestId,
@@ -71,9 +94,8 @@ export async function recordDelivery(options: {
             valueAsString(existing[0]["context_json"], "delivery context"),
           ),
         ),
-        captureIds: memberships.map((row) =>
-          valueAsString(row["capture_id"], "capture ID"),
-        ),
+        captureIds: memberships.captureIds,
+        reusedCaptureIds: memberships.reusedCaptureIds,
       };
       if (
         canonicalJson(delivery.context) !== canonicalJson(options.context) ||
@@ -120,6 +142,7 @@ export async function recordDelivery(options: {
         [id, captureId],
       );
     }
+    const memberships = await deliveryMemberships(transaction, id);
     await transaction.execute(
       `UPDATE ${DATABASE_METADATA_TABLE} SET revision = revision + 1`,
     );
@@ -127,7 +150,8 @@ export async function recordDelivery(options: {
       id,
       requestId: options.requestId,
       context: options.context,
-      captureIds: uniqueCaptures,
+      captureIds: memberships.captureIds,
+      reusedCaptureIds: memberships.reusedCaptureIds,
     };
     return {
       operation: "db.delivery.record",
@@ -161,28 +185,33 @@ export async function listDeliveries(options: {
     throw databaseError("DB_INVALID_CURSOR", "The delivery cursor is invalid.");
   }
   const engine = engineOf(options.database);
+  const cursorClause =
+    options.cursor === undefined
+      ? ""
+      : " WHERE LENGTH(delivery_id) > LENGTH(?) OR (LENGTH(delivery_id) = LENGTH(?) AND delivery_id > ?)";
   const rows = await engine.query(
-    `SELECT delivery_id, request_id, context_json FROM ${DELIVERY_TABLE}${options.cursor === undefined ? "" : " WHERE delivery_id > ?"} ORDER BY delivery_id LIMIT ?`,
+    `SELECT delivery_id, request_id, context_json FROM ${DELIVERY_TABLE}${cursorClause} ORDER BY LENGTH(delivery_id), delivery_id LIMIT ?`,
     options.cursor === undefined
       ? [BigInt(options.limit + 1)]
-      : [options.cursor, BigInt(options.limit + 1)],
+      : [
+          options.cursor,
+          options.cursor,
+          options.cursor,
+          BigInt(options.limit + 1),
+        ],
   );
   const deliveries: DeliveryRecord[] = [];
   for (const row of rows.slice(0, options.limit)) {
     const id = valueAsString(row["delivery_id"], "delivery ID");
-    const memberships = await engine.query(
-      `SELECT capture_id FROM ${DELIVERY_MEMBERSHIP_TABLE} WHERE delivery_id = ? ORDER BY capture_id`,
-      [id],
-    );
+    const memberships = await deliveryMemberships(engine, id);
     deliveries.push({
       id,
       requestId: valueAsString(row["request_id"], "delivery request ID"),
       context: parseDeliveryContext(
         JSON.parse(valueAsString(row["context_json"], "delivery context")),
       ),
-      captureIds: memberships.map((membership) =>
-        valueAsString(membership["capture_id"], "capture ID"),
-      ),
+      captureIds: memberships.captureIds,
+      reusedCaptureIds: memberships.reusedCaptureIds,
     });
   }
   return {

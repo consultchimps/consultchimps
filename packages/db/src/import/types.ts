@@ -280,6 +280,7 @@ export interface DeliveryRecord {
   readonly requestId: string;
   readonly context: DeliveryContext;
   readonly captureIds: readonly string[];
+  readonly reusedCaptureIds: readonly string[];
 }
 
 export interface DeliveryPage {

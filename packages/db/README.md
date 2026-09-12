@@ -60,6 +60,11 @@ if capture, source verification, or cancellation fails before publication. List
 filesystem-backed source, recipe, and context files in `protectedInputPaths` so
 overwrite validation can reject those destinations.
 
+Use `openPreparedImport({ path, readonly: true })` for inspection. This opens
+the saved plan without enabling SQLite's writable journal mode. Omit `readonly`
+when preparing, resolving, or applying a plan, because those operations update
+its saved state. The CLI uses read-only access for `db inspect`.
+
 The Node runtime refuses to replace a database or plan held open through the
 same runtime, including filesystem aliases, with `DB_NATIVE_FILE_BUSY`. Close
 those handles before replacement. Callers must also prevent other processes from
@@ -77,6 +82,10 @@ Captured source values and generated observation IDs remain distinct from vendor
 identifiers and delivery events. Identical content can be reused while another
 delivery records a new touch point. Changed files append observations; automatic
 business-record reconciliation is outside these operations.
+
+`listDeliveries` returns delivery pages in allocation order. Each record lists
+the capture IDs that also appeared in an earlier delivery as `reusedCaptureIds`,
+including when that earlier delivery is on another page.
 
 The former in-memory spike API and analytics grid have been retired. Browser
 storage is an OPFS working copy; it does not synchronize to a selected OS file.

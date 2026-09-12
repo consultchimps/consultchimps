@@ -428,15 +428,8 @@ function deliveryContext(input: WorkspaceDeliveryContext): DeliveryContext {
   };
 }
 
-function deliveryDto(
-  delivery: DeliveryRecord,
-  seen: Set<string>,
-): WorkspaceDeliverySummary {
+function deliveryDto(delivery: DeliveryRecord): WorkspaceDeliverySummary {
   const attributes = delivery.context.attributes ?? {};
-  const reusedCapture = delivery.captureIds.some((capture) =>
-    seen.has(capture),
-  );
-  for (const capture of delivery.captureIds) seen.add(capture);
   const coverage =
     delivery.context.scope.kind === "full"
       ? "full"
@@ -455,7 +448,7 @@ function deliveryDto(
     effectiveDate: delivery.context.effectiveDate ?? null,
     receivedDate: delivery.context.receivedDate ?? null,
     captureIds: delivery.captureIds,
-    reusedCapture,
+    reusedCapture: delivery.reusedCaptureIds.length > 0,
   };
 }
 
@@ -1103,9 +1096,8 @@ async function deliveryHistory(
     limit: command.limit,
     ...(command.cursor === null ? {} : { cursor: command.cursor }),
   });
-  const seen = new Set<string>();
   const dto: WorkspaceDeliveryPage = {
-    deliveries: page.deliveries.map((delivery) => deliveryDto(delivery, seen)),
+    deliveries: page.deliveries.map(deliveryDto),
     nextCursor: page.nextCursor ?? null,
   };
   scope.postMessage({ type: "deliveries", id, page: dto });
@@ -1249,7 +1241,7 @@ async function handle(id: number, command: WorkspaceCommand): Promise<void> {
         scope.postMessage({
           type: "deliveryRecorded",
           id,
-          delivery: deliveryDto(record.delivery, new Set()),
+          delivery: deliveryDto(record.delivery),
           summary: await summaryOf(current()),
         });
         return;

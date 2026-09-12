@@ -335,14 +335,7 @@ async function writeSource(
     for (let offset = 0; offset < source.size; offset += COPY_CHUNK_BYTES) {
       throwIfAborted(signal, "db.browser.import");
       const length = Math.min(COPY_CHUNK_BYTES, source.size - offset);
-      const bytes = await source.readAt(offset, length, signal);
-      if (bytes.length !== length) {
-        throw databaseError(
-          "DB_SOURCE_SHORT_READ",
-          "The database source ended while it was being copied.",
-          { offset, expected: length, actual: bytes.length },
-        );
-      }
+      const bytes = await readSourceChunk(source, offset, length, signal);
       await writable.write({ type: "write", position: offset, data: bytes });
       onProgress?.({
         operation: "db.browser.import",
@@ -361,6 +354,23 @@ async function writeSource(
     }
     throw error;
   }
+}
+
+async function readSourceChunk(
+  source: RandomAccessSource,
+  offset: number,
+  length: number,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
+  const bytes = await source.readAt(offset, length, signal);
+  if (bytes.length !== length) {
+    throw databaseError(
+      "DB_SOURCE_SHORT_READ",
+      "The database source returned a different number of bytes than requested.",
+      { offset, expected: length, actual: bytes.length },
+    );
+  }
+  return bytes;
 }
 
 async function sqlitePoolDirectory(
@@ -458,7 +468,8 @@ async function detectSourceFormat(
   source: RandomAccessSource,
   signal?: AbortSignal,
 ): Promise<DatabaseFormat> {
-  const header = await source.readAt(
+  const header = await readSourceChunk(
+    source,
     0,
     Math.min(SQLITE_HEADER.length, source.size),
     signal,
@@ -1095,12 +1106,13 @@ export async function configureBrowserDatabaseRuntime(
                 COPY_CHUNK_BYTES,
                 importOptions.source.size - offset,
               );
-              const bytes = await importOptions.source.readAt(
+              const bytes = await readSourceChunk(
+                importOptions.source,
                 offset,
                 length,
                 importOptions.signal,
               );
-              offset += bytes.length;
+              offset += length;
               importOptions.onProgress?.({
                 operation: "db.browser.import",
                 stage: "copying",

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import {
+  chmod,
   copyFile,
   mkdtemp,
   readFile,
@@ -227,6 +228,32 @@ test("inspects an ordinary SQLite database without adopting or changing it", asy
     ],
   });
   expect(await readFile(file)).toEqual(before);
+});
+
+test("inspects a read-only saved plan without changing its journal mode or files", async () => {
+  const root = await directory();
+  const database = path.join(root, "inventory.sqlite");
+  const source = path.join(root, "inventory.xlsx");
+  const plan = path.join(root, "review.ccplan");
+  await writeFile(source, workbook([["Name"], ["Synthetic"]]));
+  await run(["create", "-o", database]);
+  await run(["plan", database, "--input", source, "-o", plan]);
+  const connection = new Sqlite(plan);
+  try {
+    connection.pragma("journal_mode = DELETE");
+  } finally {
+    connection.close();
+  }
+  const before = await readFile(plan);
+  const files = (await readdir(root)).sort();
+  await chmod(plan, 0o444);
+  try {
+    expect((await run(["inspect", plan]))["capturedRows"]).toBe("1");
+    expect(await readFile(plan)).toEqual(before);
+    expect((await readdir(root)).sort()).toEqual(files);
+  } finally {
+    await chmod(plan, 0o644);
+  }
 });
 
 for (const format of ["sqlite", "duckdb"]) {

@@ -456,9 +456,10 @@ export async function prepareImportFile(
 
 async function openPreparedImportUnlocked(options: {
   readonly path: string;
+  readonly readonly?: boolean | undefined;
 }): Promise<PreparedImport> {
   const input = path.resolve(options.path);
-  const engine = NodeSqliteEngine.open(input);
+  const engine = NodeSqliteEngine.open(input, options.readonly);
   try {
     const prepared = await openPreparedImportHandle(engine);
     return prepared;
@@ -470,10 +471,11 @@ async function openPreparedImportUnlocked(options: {
 
 export async function openPreparedImport(options: {
   readonly path: string;
+  readonly readonly?: boolean | undefined;
 }): Promise<PreparedImport> {
   const input = path.resolve(options.path);
   return nativeFiles.open(input, () =>
-    openPreparedImportUnlocked({ path: input }),
+    openPreparedImportUnlocked({ path: input, readonly: options.readonly }),
   );
 }
 

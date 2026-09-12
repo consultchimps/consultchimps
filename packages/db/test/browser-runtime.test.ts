@@ -678,6 +678,139 @@ describe("browser database runtime", () => {
     await reopened.close();
   });
 
+  test("rejects malformed source reads without replacing an existing SQLite database", async () => {
+    const runtime = await createRuntime();
+    const original = await runtime.createDatabase({
+      name: "short-read.sqlite",
+      format: "sqlite",
+      schema: {
+        version: 1,
+        tables: [
+          {
+            name: "Preserved",
+            columns: [{ name: "value", type: "text" }],
+            recordId: { prefix: "KEEP", padding: 3 },
+          },
+        ],
+      },
+    });
+    const originalId = original.database.id;
+    const exported = new MemoryFile("source.sqlite");
+    await runtime.exportDatabase({
+      database: original.database,
+      name: exported.name,
+      destination: exported,
+      format: "sqlite",
+    });
+    await original.database.close();
+    const originalBytes = harness.databases.get("/short-read.sqlite")?.slice();
+    if (originalBytes === undefined) throw new Error("Missing original bytes");
+
+    const copyChunkBytes = 1024 * 1024;
+    const cases: ReadonlyArray<{
+      readonly name: string;
+      readonly source: RandomAccessSource;
+      readonly expected: { offset: number; expected: number; actual: number };
+    }> = [
+      {
+        name: "zero",
+        source: {
+          name: "zero.sqlite",
+          size: exported.size,
+          async readAt() {
+            return new Uint8Array();
+          },
+        },
+        expected: { offset: 0, expected: SQLITE_HEADER.length, actual: 0 },
+      },
+      {
+        name: "partial",
+        source: {
+          name: "partial.sqlite",
+          size: exported.size,
+          async readAt(offset, length) {
+            return (await exported.readAt(offset, length)).slice(0, length - 1);
+          },
+        },
+        expected: {
+          offset: 0,
+          expected: SQLITE_HEADER.length,
+          actual: SQLITE_HEADER.length - 1,
+        },
+      },
+      {
+        name: "oversized",
+        source: {
+          name: "oversized.sqlite",
+          size: exported.size,
+          async readAt(offset, length) {
+            const bytes = new Uint8Array(length + 1);
+            bytes.set(await exported.readAt(offset, length));
+            return bytes;
+          },
+        },
+        expected: {
+          offset: 0,
+          expected: SQLITE_HEADER.length,
+          actual: SQLITE_HEADER.length + 1,
+        },
+      },
+      {
+        name: "later-partial",
+        source: {
+          name: "later-partial.sqlite",
+          size: copyChunkBytes + 32,
+          async readAt(offset, length) {
+            if (length === SQLITE_HEADER.length) {
+              return exported.readAt(0, length);
+            }
+            if (offset === 0) {
+              const bytes = new Uint8Array(length);
+              bytes.set(
+                (await exported.readAt(0, exported.size)).subarray(0, length),
+              );
+              return bytes;
+            }
+            return new Uint8Array(length - 1);
+          },
+        },
+        expected: { offset: copyChunkBytes, expected: 32, actual: 31 },
+      },
+    ];
+
+    for (const malformed of cases) {
+      await expect(
+        runtime.importDatabase({
+          name: "short-read.sqlite",
+          source: malformed.source,
+          overwrite: true,
+        }),
+        malformed.name,
+      ).rejects.toMatchObject({
+        code: "DB_SOURCE_SHORT_READ",
+        details: malformed.expected,
+      });
+      expect(harness.databases.get("/short-read.sqlite")).toEqual(
+        originalBytes,
+      );
+      expect(
+        [...harness.databases.keys()].some((name) =>
+          name.includes(".consultchimps-import-"),
+        ),
+      ).toBe(false);
+      const reopened = await runtime.openDatabase({
+        name: "short-read.sqlite",
+      });
+      expect(reopened.id).toBe(originalId);
+      expect(
+        (await inspectDatabase({ database: reopened })).tables.map(
+          (table) => table.name,
+        ),
+      ).toEqual(["Preserved"]);
+      await reopened.close();
+    }
+  });
+
   test("restores persisted SQLite bytes when replacement publication fails", async () => {
     const runtime = await createRuntime();
     const original = await runtime.createDatabase({

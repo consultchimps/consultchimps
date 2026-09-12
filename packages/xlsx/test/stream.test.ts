@@ -158,8 +158,9 @@ async function workbookFixture(
 
 async function workbookFixtureWithParts(
   parts: Readonly<Record<string, string>>,
+  options: WorkbookFixtureOptions = {},
 ): Promise<Uint8Array> {
-  const zip = await JSZip.loadAsync(await workbookFixture());
+  const zip = await JSZip.loadAsync(await workbookFixture(options));
   for (const [name, contents] of Object.entries(parts)) {
     zip.file(name, contents);
   }
@@ -620,6 +621,66 @@ describe("bounded workbook streaming", () => {
       raw: "1",
       iso: "1900-01-01",
     });
+  });
+
+  it("refuses Excel's fictitious 1900 leap day while retaining adjacent dates", async () => {
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Before</t></is></c><c r='B1' t='inlineStr'><is><t>Fake</t></is></c><c r='C1' t='inlineStr'><is><t>FakeFraction</t></is></c><c r='D1' t='inlineStr'><is><t>After</t></is></c><c r='E1' t='inlineStr'><is><t>Exponent</t></is></c></row>" +
+      "<row r='2'><c r='A2' s='2'><v>59</v></c><c r='B2' s='2'><v>60</v></c><c r='C2' s='2'><v>60.5</v></c><c r='D2' s='2'><v>61</v></c><c r='E2' s='2'><v>6.1E1</v></c></row>" +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts(
+        { "xl/worksheets/sheet1.xml": worksheet },
+        { date1904: false },
+      ),
+    );
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { range: "'Data & More'!A1:E2" },
+      { scratch: new MemoryScratch() },
+    );
+
+    expect(await rows(reader)).toEqual([
+      {
+        sourceRow: 2,
+        cells: {
+          Before: { kind: "date", raw: "59", iso: "1900-02-28" },
+          Fake: { kind: "number", raw: "60" },
+          FakeFraction: { kind: "number", raw: "60.5" },
+          After: { kind: "date", raw: "61", iso: "1900-03-01" },
+          Exponent: { kind: "date", raw: "6.1E1", iso: "1900-03-01" },
+        },
+      },
+    ]);
+  });
+
+  it("treats serial 60 as a real date in the 1904 date system", async () => {
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Epoch</t></is></c><c r='B1' t='inlineStr'><is><t>Sixty</t></is></c></row>" +
+      "<row r='2'><c r='A2' s='2'><v>0</v></c><c r='B2' s='2'><v>60</v></c></row>" +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { range: "'Data & More'!A1:B2" },
+      { scratch: new MemoryScratch() },
+    );
+
+    expect(await rows(reader)).toEqual([
+      {
+        sourceRow: 2,
+        cells: {
+          Epoch: { kind: "date", raw: "0", iso: "1904-01-01" },
+          Sixty: { kind: "date", raw: "60", iso: "1904-03-01" },
+        },
+      },
+    ]);
   });
 
   it("refuses an external relationship when it is the selected table target", async () => {

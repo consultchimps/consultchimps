@@ -1,6 +1,7 @@
 import { attribute, localName, parseXml } from "./xml.js";
 import { readMetadataText, type ZipPackage } from "./zip.js";
 import type { FileEntry } from "@zip.js/zip.js";
+import { calendarIsoText, serialCalendarParts } from "../model/calendar.js";
 
 export interface WorkbookStyles {
   readonly date1904: boolean;
@@ -45,46 +46,24 @@ function formatHasTime(format: {
     : hasTime(format.code);
 }
 
-function pad(value: number, length = 2): string {
-  return String(value).padStart(length, "0");
-}
-
 function serialDate(
   raw: string,
   date1904: boolean,
   includeTime: boolean,
 ): string | undefined {
-  if (!/^-?(?:\d+(?:\.\d*)?|\.\d+)$/u.test(raw)) return undefined;
+  if (!/^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?$/u.test(raw)) {
+    return undefined;
+  }
   const serial = Number(raw);
-  if (!Number.isFinite(serial) || serial < 0) return undefined;
-  const wholeDays = Math.floor(serial);
-  let fractionalMilliseconds = Math.round((serial - wholeDays) * 86_400_000);
-  let dayAdjustment = 0;
-  if (fractionalMilliseconds === 86_400_000) {
-    fractionalMilliseconds = 0;
-    dayAdjustment = 1;
-  }
-  if (!date1904 && wholeDays === 60) {
-    const time = new Date(fractionalMilliseconds).toISOString().slice(11, 23);
-    return includeTime || fractionalMilliseconds !== 0
-      ? `1900-02-29T${time}`
-      : "1900-02-29";
-  }
-  const adjustedDays = date1904
-    ? wholeDays + dayAdjustment
-    : wholeDays + dayAdjustment - (wholeDays >= 60 ? 1 : 0);
-  const epoch = Date.UTC(
-    date1904 ? 1904 : 1899,
-    date1904 ? 0 : 11,
-    date1904 ? 1 : 31,
-  );
-  const date = new Date(
-    epoch + adjustedDays * 86_400_000 + fractionalMilliseconds,
-  );
-  if (!Number.isFinite(date.getTime())) return undefined;
-  const datePart = `${pad(date.getUTCFullYear(), 4)}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
-  if (!includeTime && fractionalMilliseconds === 0) return datePart;
-  return `${datePart}T${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}.${pad(date.getUTCMilliseconds(), 3)}`;
+  const parts = serialCalendarParts(serial, date1904);
+  if (parts === undefined) return undefined;
+  const iso = calendarIsoText(parts);
+  const carriesTime =
+    parts.hour !== 0 ||
+    parts.minute !== 0 ||
+    parts.second !== 0 ||
+    parts.millisecond !== 0;
+  return !includeTime && !carriesTime ? iso.slice(0, 10) : iso.slice(0, -1);
 }
 
 export async function loadWorkbookStyles(

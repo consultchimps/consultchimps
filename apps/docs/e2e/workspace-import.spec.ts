@@ -425,7 +425,7 @@ test.describe("reviewed workbook imports", () => {
     await prepare(page, [workbook]);
     await resolveAndApply(page);
 
-    for (let delivery = 2; delivery <= 27; delivery += 1) {
+    for (let delivery = 2; delivery <= 26; delivery += 1) {
       await prepare(page, [workbook]);
       await expect(
         page.getByTestId("workspace-import-duplicate"),
@@ -441,19 +441,45 @@ test.describe("reviewed workbook imports", () => {
       );
     }
 
+    await prepare(page, [
+      await inventoryWorkbook("fresh-capture.xlsx", [
+        ["Payments", "Payment ID", "true"],
+      ]),
+    ]);
+    await page.getByTestId("workspace-import-resolve").click();
+    await expect(page.getByTestId("workspace-import-review")).toContainText(
+      "ready",
+    );
+    await page.getByTestId("workspace-delivery-vendor").fill("Vendor B");
+    await page.getByTestId("workspace-delivery-phase").fill("Fresh capture");
+    await page.getByTestId("workspace-import-apply").click();
+    await expect(page.getByTestId("workspace-delivery-count")).toHaveText("27");
+
     await page.getByTestId("workspace-deliveries-refresh").click();
     await expect(page.getByTestId("workspace-delivery")).toHaveCount(25);
     await expect(page.getByTestId("workspace-delivery").first()).toContainText(
       "Iteration 1",
+    );
+    await expect(
+      page.getByTestId("workspace-delivery").first(),
+    ).not.toContainText("Reused captured data");
+    await expect(page.getByTestId("workspace-delivery").last()).toContainText(
+      "Reused captured data",
     );
     await page.getByTestId("workspace-deliveries-next").click();
     await expect(page.getByTestId("workspace-delivery")).toHaveCount(2);
     await expect(page.getByTestId("workspace-delivery").first()).toContainText(
       "Delivery 26",
     );
-    await expect(page.getByTestId("workspace-delivery").last()).toContainText(
-      "Delivery 27",
+    await expect(page.getByTestId("workspace-delivery").first()).toContainText(
+      "Reused captured data",
     );
+    await expect(page.getByTestId("workspace-delivery").last()).toContainText(
+      "Fresh capture",
+    );
+    await expect(
+      page.getByTestId("workspace-delivery").last(),
+    ).not.toContainText("Reused captured data");
 
     await page.getByTestId("workspace-deliveries-refresh").click();
     await expect(page.getByTestId("workspace-delivery")).toHaveCount(25);

@@ -340,7 +340,10 @@ export function registerDbCommands(
             );
           }
         } else if (kind.kind === "prepared-import") {
-          const prepared = await openPreparedImport({ path: file });
+          const prepared = await openPreparedImport({
+            path: file,
+            readonly: true,
+          });
           try {
             const database =
               options.database === undefined

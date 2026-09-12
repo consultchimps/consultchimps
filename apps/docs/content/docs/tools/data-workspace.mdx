@@ -55,9 +55,9 @@ refused even with `--force`.
 
 `db plan` writes a private staging file; it does not add the captured rows to
 the working tables. `db inspect` shows its routes, column mappings, row counts,
-conflicts, and a bounded preview. `db apply` approves a resolved plan and
-commits its rows. Keep `.ccplan` files as carefully as the workbooks because
-they contain source values.
+conflicts, and a bounded preview using a read-only handle. `db apply` approves a
+resolved plan and commits its rows. Keep `.ccplan` files as carefully as the
+workbooks because they contain source values.
 
 For a repeated import, preview the reused rows with
 `consultchimps db inspect review.ccplan --database inventory.duckdb`. These rows
