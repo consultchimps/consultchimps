@@ -17,7 +17,12 @@ import type {
   ImportSource,
 } from "../src/import/types.js";
 import { createDatabase, createPreparedImport } from "../src/node.js";
-import { PREPARED_ROW_TABLE, preparedEngineOf } from "../src/prepared.js";
+import {
+  PREPARED_BINDING_TABLE,
+  PREPARED_CAPTURE_TABLE,
+  PREPARED_ROW_TABLE,
+  preparedEngineOf,
+} from "../src/prepared.js";
 
 const directories: string[] = [];
 
@@ -81,6 +86,45 @@ function recipeFor(...selections: readonly string[]): ImportRecipe {
   };
 }
 
+function multiBatchSource(options: {
+  readonly shouldFail: () => boolean;
+  readonly failure: Error;
+}): ImportSource {
+  const source = sourceWithSelections([
+    ["Inventory", { kind: "string", value: "unused" }],
+  ]);
+  return {
+    ...source,
+    selections: [
+      {
+        key: "Inventory",
+        label: "Inventory",
+        async open() {
+          return {
+            columns: ["Value"],
+            async *batches() {
+              yield Array.from({ length: 2_000 }, (_, index) => ({
+                sourceRow: index + 2,
+                cells: {
+                  Value: { kind: "string" as const, value: `Row ${index + 1}` },
+                },
+              }));
+              if (options.shouldFail()) throw options.failure;
+              yield [
+                {
+                  sourceRow: 2_002,
+                  cells: { Value: { kind: "string", value: "Final row" } },
+                },
+              ];
+            },
+            async close() {},
+          };
+        },
+      },
+    ],
+  };
+}
+
 for (const format of ["sqlite", "duckdb"] as const) {
   test(`${format}: a row failure rolls back the complete import`, async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "cc-import-rollback-"));
@@ -135,6 +179,74 @@ for (const format of ["sqlite", "duckdb"] as const) {
       expect(inspection.captures).toBe(0n);
       expect(inspection.completedImports).toBe(0n);
       expect(inspection.revision).toBe(0n);
+    } finally {
+      await prepared.close();
+      await database.close();
+    }
+  });
+
+  test(`${format}: a later capture batch failure removes earlier committed batches and permits retry`, async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "cc-capture-batch-rollback-"),
+    );
+    directories.push(directory);
+    const { database } = await createDatabase({
+      path: path.join(directory, `workspace.${format}`),
+      format,
+    });
+    const recipe = recipeFor("Inventory");
+    const prepared = await createPreparedImport({
+      path: path.join(directory, "review.data"),
+      database,
+      recipe,
+      baselineRevision: 0n,
+    });
+    const failure = new Error("synthetic later-batch failure");
+    let fail = true;
+    const source = multiBatchSource({ shouldFail: () => fail, failure });
+    try {
+      await expect(
+        prepareImport({ database, prepared, recipe, sources: [source] }),
+      ).rejects.toBe(failure);
+
+      const preparedEngine = preparedEngineOf(prepared);
+      for (const table of [
+        PREPARED_ROW_TABLE,
+        PREPARED_CAPTURE_TABLE,
+        PREPARED_BINDING_TABLE,
+      ]) {
+        await expect(
+          preparedEngine.query(`SELECT count(*) AS count FROM ${table}`),
+        ).resolves.toEqual([{ count: 0n }]);
+      }
+      expect(await inspectDatabase({ database })).toMatchObject({
+        revision: 0n,
+        tables: [],
+        captures: 0n,
+        completedImports: 0n,
+      });
+
+      fail = false;
+      const retried = await prepareImport({
+        database,
+        prepared,
+        recipe,
+        sources: [source],
+      });
+      expect(retried.prepared.state).toBe("ready");
+      expect(retried.result.metrics.rowsCaptured).toBe(2_001);
+      if (retried.prepared.state !== "ready") {
+        throw new Error("Retried plan failed review");
+      }
+      await applyImport({
+        database,
+        prepared,
+        approved: retried.prepared,
+        requestId: `${format}-capture-batch-retry`,
+      });
+      expect((await inspectDatabase({ database })).tables).toMatchObject([
+        { name: "Inventory", rowCount: 2_001n },
+      ]);
     } finally {
       await prepared.close();
       await database.close();

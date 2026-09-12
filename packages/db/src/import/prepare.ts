@@ -187,11 +187,13 @@ export async function prepareImport(
               JSON.stringify(row.cells),
             ]);
           }
-          await preparedEngine.bulkInsert({
-            table: PREPARED_ROW_TABLE,
-            columns: ["capture_id", "source_row", "values_json"],
-            rows,
-            signal: options.signal,
+          await preparedEngine.transaction(async (transaction) => {
+            await transaction.bulkInsert({
+              table: PREPARED_ROW_TABLE,
+              columns: ["capture_id", "source_row", "values_json"],
+              rows,
+              signal: options.signal,
+            });
           });
           rowCount += batch.length;
           rowsCaptured += batch.length;
