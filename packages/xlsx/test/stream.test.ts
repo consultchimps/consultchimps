@@ -514,6 +514,84 @@ describe("bounded workbook streaming", () => {
     },
   );
 
+  it("retains prototype-shaped column names in sole and mixed selections", async () => {
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>__proto__</t></is></c><c r='B1' t='inlineStr'><is><t>Regular</t></is></c><c r='C1' t='inlineStr'><is><t>constructor</t></is></c><c r='D1' t='inlineStr'><is><t>toString</t></is></c></row>" +
+      "<row r='2'><c r='A2' t='inlineStr'><is><t>prototype value</t></is></c><c r='B2' t='inlineStr'><is><t>regular value</t></is></c><c r='C2' t='inlineStr'><is><t>constructor value</t></is></c><c r='D2' t='inlineStr'><is><t>toString value</t></is></c></row>" +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+    const soleReader = await openWorkbookRegionStream(
+      input.source,
+      { range: "'Data & More'!A1:A2" },
+      { scratch: new MemoryScratch() },
+    );
+    const soleRows = await rows(soleReader);
+    expect(soleRows).toHaveLength(1);
+    expect(Object.keys(soleRows[0]?.cells ?? {})).toEqual(["__proto__"]);
+    expect(soleRows[0]?.cells["__proto__"]).toEqual({
+      kind: "string",
+      value: "prototype value",
+    });
+    expect(Object.getPrototypeOf(soleRows[0]?.cells)).toBeNull();
+
+    const mixedReader = await openWorkbookRegionStream(
+      input.source,
+      { range: "'Data & More'!A1:D2" },
+      { scratch: new MemoryScratch() },
+    );
+    const mixedCells = (await rows(mixedReader))[0]?.cells;
+    expect(Object.keys(mixedCells ?? {})).toEqual([
+      "__proto__",
+      "Regular",
+      "constructor",
+      "toString",
+    ]);
+    expect(mixedCells?.["__proto__"]).toEqual({
+      kind: "string",
+      value: "prototype value",
+    });
+    expect(mixedCells?.constructor).toEqual({
+      kind: "string",
+      value: "constructor value",
+    });
+    expect(mixedCells?.toString).toEqual({
+      kind: "string",
+      value: "toString value",
+    });
+    expect(Object.getPrototypeOf(mixedCells)).toBeNull();
+  });
+
+  it.each([
+    ["text between column and row", "A!1"],
+    ["an empty value", ""],
+    ["a trailing space", "A1 "],
+    ["a trailing newline", "A1&#10;"],
+  ])("rejects a cell reference with %s", async (_case, reference) => {
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      `<row r='1'><c r='A1' t='inlineStr'><is><t>Value</t></is></c><c r='${reference}' t='inlineStr'><is><t>Alias</t></is></c></row>` +
+      "<row r='2'><c r='A2'><v>1</v></c></row>" +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+
+    await expect(
+      openWorkbookRegionStream(
+        input.source,
+        { range: "'Data & More'!A1:A2" },
+        { scratch: new MemoryScratch() },
+      ),
+    ).rejects.toMatchObject({ code: "XLSX_READ_FAILED" });
+  });
+
   it("excludes inline phonetic guides from the cell value", async () => {
     const worksheet =
       "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +

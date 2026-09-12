@@ -15,14 +15,8 @@ import {
   utcCalendarParts,
   worksheetDateValue,
 } from "../model/calendar.js";
-import { encodeCell } from "../model/references.js";
-import {
-  attribute,
-  BoundedXmlText,
-  cellRow,
-  columnIndex,
-  localName,
-} from "./xml.js";
+import { decodeCell, encodeCell } from "../model/references.js";
+import { attribute, BoundedXmlText, localName } from "./xml.js";
 import { entryChunks, type StreamLimits } from "./zip.js";
 
 type PendingScalarCell =
@@ -58,6 +52,10 @@ interface CurrentCell {
   valueBytes: number;
   formulaBytes: number;
   inlineBytes: number;
+}
+
+function cellRecord<Cell>(): Record<string, Cell> {
+  return Object.create(null) as Record<string, Cell>;
 }
 
 function scalarCell(
@@ -136,7 +134,7 @@ async function hydrateRows(
 ): Promise<readonly StreamRow[]> {
   const result: StreamRow[] = [];
   for (const row of rows) {
-    const cells: Record<string, StreamCell> = {};
+    const cells = cellRecord<StreamCell>();
     for (const [name, cell] of Object.entries(row.cells)) {
       cells[name] = await hydrateCell(cell, sharedStrings);
     }
@@ -170,7 +168,7 @@ export async function* parseWorksheetBatches(
   let activeRow = 0;
   let nextImplicitRow = 1;
   let nextImplicitColumn = 0;
-  let cells: Record<string, PendingCell> = {};
+  let cells = cellRecord<PendingCell>();
   let current: CurrentCell | undefined;
   let passedLastRow = false;
   const parser = new SaxesParser();
@@ -197,19 +195,29 @@ export async function* parseWorksheetBatches(
       }
       nextImplicitRow = activeRow + 1;
       nextImplicitColumn = 0;
-      cells = {};
+      cells = cellRecord<PendingCell>();
       if (activeRow > options.lastRow) passedLastRow = true;
     } else if (name === "c") {
       const explicitReference = attribute(tag, "r");
-      const parsedColumn = explicitReference
-        ? columnIndex(explicitReference)
-        : nextImplicitColumn;
-      const parsedRow = explicitReference
-        ? cellRow(explicitReference)
-        : activeRow;
-      if (parsedColumn === undefined || parsedRow !== activeRow) {
+      const parsedReference =
+        explicitReference === undefined
+          ? { column: nextImplicitColumn, row: activeRow }
+          : decodeCell(explicitReference);
+      if (
+        parsedReference === undefined ||
+        parsedReference.column < 0 ||
+        parsedReference.column >= 16_384 ||
+        !Number.isSafeInteger(parsedReference.row) ||
+        parsedReference.row < 1 ||
+        parsedReference.row > 1_048_576 ||
+        parsedReference.row !== activeRow ||
+        (explicitReference !== undefined &&
+          encodeCell(parsedReference.column, parsedReference.row) !==
+            explicitReference.toUpperCase())
+      ) {
         throw new Error("A worksheet cell has an invalid reference.");
       }
+      const parsedColumn = parsedReference.column;
       nextImplicitColumn = parsedColumn + 1;
       const rawStyle = attribute(tag, "s") ?? "0";
       const style = Number(rawStyle);
