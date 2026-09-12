@@ -148,15 +148,15 @@ positive, safe-integer byte limits for input bytes, decoded bytes, output bytes,
 and estimated peak working memory. Omitted limits use the shipped defaults.
 Validate supplied limits before reading input or allocating export buffers.
 Reject a wrong type, zero, negative value, fraction, unsafe integer, `NaN`, or
-infinity with `PBI_INVALID_OPTIONS`. Its details list each invalid option name
-and the requirement for a positive safe integer, in the limit order above; the
-message tells the caller to omit the option or supply a valid byte count. These
-option errors produce no artifacts or destination writes and are distinct from
-exceeding a valid limit. Browser defaults are fixed, measured values shipped
-with the implementation, not guesses based on available device memory. Build
-items 1 and 8 must establish the limits and their estimator fixtures before item
-9 can claim browser support. Larger limits require an explicit caller option and
-are outside the default browser envelope.
+infinity with `PBI_INVALID_OPTIONS`. For capacity errors, its details list each
+invalid option name and the requirement for a positive safe integer, in the
+limit order above; the message tells the caller to omit the option or supply a
+valid byte count. These option errors produce no artifacts or destination writes
+and are distinct from exceeding a valid limit. Browser defaults are fixed,
+measured values shipped with the implementation, not guesses based on available
+device memory. Build items 1 and 8 must establish the limits and their estimator
+fixtures before item 9 can claim browser support. Larger limits require an
+explicit caller option and are outside the default browser envelope.
 
 The capacity option keys and accounting units are fixed as follows. Each limit
 is inclusive; a bound equal to its limit passes that check.
@@ -280,18 +280,30 @@ English and Turkish browser locales; both must allocate `I`, then `i_2`.
 
 Name allocation reserves suffix space before truncation, as the existing
 workbook merge allocator does. Replace forbidden worksheet-name characters with
-`_`, remove leading and trailing whitespace and apostrophes, and use `Sheet` for
-an empty base. The first part has no part suffix; later parts use `_2`, `_3`,
-and so on. If a candidate is already claimed, append a collision suffix starting
-at `_2` and increment until free. For each attempt, concatenate the part and
-collision suffixes, shorten the sanitized base to leave room for that entire
-suffix within 31 UTF-16 code units, then append it. Keep the longest prefix that
-does not split a surrogate pair, and remove trailing whitespace or apostrophes
-exposed by truncation. Treat the reserved name `History` as already claimed.
-Each attempt starts from the original sanitized base, not a previously shortened
-candidate. For example, a 31-character base leaves 29 characters before `_2`, 28
-before `_10`, and 27 before `_2_2`. These constraints follow
+`_`, including `[`, `]`, `:`, `*`, `?`, `/`, and backslash. Also replace each C0
+or C1 control code unit, U+0000 through U+001F and U+007F through U+009F,
+U+FFFE, U+FFFF, and each unpaired surrogate with `_`. Preserve valid surrogate
+pairs. Perform these replacements before trimming or allocating suffixes, and
+retain the original table name only in the manifest. Remove leading and trailing
+ECMAScript whitespace and apostrophes, and use `Sheet` for an empty base. The
+first part has no part suffix; later parts use `_2`, `_3`, and so on. If a
+candidate is already claimed, append a collision suffix starting at `_2` and
+increment until free. For each attempt, concatenate the part and collision
+suffixes, shorten the sanitized base to leave room for that entire suffix within
+31 UTF-16 code units, then append it. Keep the longest prefix that does not
+split a surrogate pair, and remove trailing whitespace or apostrophes exposed by
+truncation. Treat the reserved name `History` as already claimed. Each attempt
+starts from the original sanitized base, not a previously shortened candidate.
+For example, a 31-character base leaves 29 characters before `_2`, 28 before
+`_10`, and 27 before `_2_2`. These constraints follow
 [Excel's worksheet-name rules](https://support.microsoft.com/en-us/excel/rename-a-worksheet).
+The writer must encode the allocated name in the `workbook.xml` attribute so XML
+entity decoding and SpreadsheetML escape decoding recover that exact name.
+Protect literal `_xHHHH_` sequences at serialization, as for cell strings;
+escaping does not change the logical 31-unit limit. Build item 8 tests forbidden
+controls, noncharacters, isolated surrogates, valid pairs, escape-looking names,
+and collisions introduced by replacement, comparing both the manifest mapping
+and names read back from the workbook.
 
 ## Decision 6: value formatting
 
@@ -400,6 +412,18 @@ are noise to every user, and the model's own hidden flag is the criterion, not a
 name prefix, so tables a user hid deliberately are treated the same way. Hidden
 columns hold real data and follow the same decoding and representation rules as
 visible columns. The manifest lists what was skipped.
+
+The library and byte-engine property is `includeHiddenTables?: boolean`;
+omission means `false`. The browser checkbox is labelled `Include hidden tables`
+and starts unchecked. The eventual CLI flag is `--include-hidden-tables`, absent
+by default and setting the same property to `true` when present. Recovery text
+names the control or flag for the active surface. Reject a supplied non-boolean
+property, including string values, with `PBI_INVALID_OPTIONS` before input
+reads. Its details identify `includeHiddenTables` and the boolean requirement,
+never the supplied value. When several options are invalid, capacity details
+appear in Decision 4's order, followed by this property. Build items 1 and 9
+test the default, both boolean values, invalid values, and the browser-to-engine
+mapping; the CLI adds the flag-mapping test when it ships.
 
 ## Decision 8: calculated tables and columns
 
