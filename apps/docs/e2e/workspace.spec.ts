@@ -7,6 +7,8 @@ import { promisify } from "node:util";
 import { inspectDatabase } from "@consultchimps/db";
 import { openDatabase as openNativeDatabase } from "@consultchimps/db/node";
 
+import { createWorkbookUpload } from "./fixtures";
+
 const execFileAsync = promisify(execFile);
 const CLI_PATH = path.resolve(
   import.meta.dirname,
@@ -197,6 +199,326 @@ test.describe("persistent database workspace", () => {
     );
     await expect(page.getByTestId("workspace-schema-apply")).toBeDisabled();
     await expect(page.getByTestId("workspace-table")).toHaveCount(1);
+  });
+
+  test("publishes browser replacements without losing the prior database", async ({
+    page,
+    context,
+  }) => {
+    await page.goto("/workspace");
+    await page.getByTestId("workspace-new-format").selectOption("sqlite");
+    await page.getByTestId("workspace-new-name").fill("collision.sqlite");
+    await page.getByTestId("workspace-new").click();
+    await page
+      .getByTestId("workspace-schema-input")
+      .fill(JSON.stringify(SCHEMA));
+    await page.getByTestId("workspace-schema-plan").click();
+    await page.getByTestId("workspace-schema-apply").click();
+    await expect(page.getByTestId("workspace-table")).toHaveCount(1);
+
+    await page.getByTestId("workspace-import-input").setInputFiles(
+      await createWorkbookUpload("old-data.xlsx", [
+        {
+          name: "datasets",
+          rows: [["name"], ["Persisted row"]],
+        },
+      ]),
+    );
+    await page
+      .getByTestId("workspace-import-source")
+      .getByTestId("workspace-import-role")
+      .fill("inventory");
+    await page
+      .getByTestId("workspace-import-source")
+      .getByTestId("workspace-import-revision")
+      .fill("Initial");
+    await page.getByTestId("workspace-import-prepare").click();
+    await expect(page.getByTestId("workspace-import-review")).toBeVisible();
+    await page.getByTestId("workspace-import-route").selectOption("append");
+    await page.getByTestId("workspace-import-table").fill("datasets");
+    await page.getByTestId("workspace-import-resolve").click();
+    await expect(page.getByTestId("workspace-import-review")).toContainText(
+      "ready",
+    );
+    await page.getByTestId("workspace-delivery-vendor").fill("Vendor A");
+    await page.getByTestId("workspace-delivery-entity").fill("Entity North");
+    await page.getByTestId("workspace-delivery-phase").fill("Initial");
+    await page.getByTestId("workspace-delivery-coverage").selectOption("full");
+    await page.getByTestId("workspace-import-apply").click();
+    await expect(page.getByTestId("workspace-table")).toContainText("1 row");
+
+    await page.getByTestId("workspace-new-format").selectOption("duckdb");
+    await page.getByTestId("workspace-new-name").fill("collision.sqlite");
+    await page.getByTestId("workspace-new").click();
+    await expect(page.getByTestId("workspace-error")).toContainText(
+      /already exists/iu,
+    );
+    const workerUrl = page.workers()[0]?.url();
+    expect(workerUrl).toBeDefined();
+    expect(workerUrl).toContain("/_next/");
+    await page.close();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const direct = await context.newPage();
+    await direct.goto("/workspace");
+    const result = await direct.evaluate(
+      async ({ url, schema }) => {
+        const worker = new Worker(url);
+        const request = (command: Record<string, unknown>) =>
+          new Promise<Record<string, unknown>>((resolve, reject) => {
+            const timer = setTimeout(
+              () => reject(new Error("Direct workspace worker timed out")),
+              10_000,
+            );
+            const receive = (event: MessageEvent<Record<string, unknown>>) => {
+              if (event.data["id"] !== command["id"]) return;
+              if (event.data["type"] === "progress") return;
+              clearTimeout(timer);
+              worker.removeEventListener("message", receive);
+              resolve(event.data);
+            };
+            worker.addEventListener(
+              "error",
+              (event) => {
+                clearTimeout(timer);
+                reject(new Error(event.message));
+              },
+              { once: true },
+            );
+            worker.addEventListener("message", receive);
+            worker.postMessage(command);
+          });
+        const invalid = await request({
+          id: 1,
+          type: "create",
+          name: "collision.sqlite",
+          format: "sqlite",
+          overwrite: true,
+          schema,
+        });
+        const reopened = await request({
+          id: 2,
+          type: "reopen",
+          name: "collision.sqlite",
+        });
+        await request({ id: 3, type: "close" });
+        const cancellation = request({
+          id: 4,
+          type: "create",
+          name: "collision.sqlite",
+          format: "sqlite",
+          overwrite: true,
+          schema: {
+            version: 1,
+            tables: Array.from({ length: 100 }, (_, index) => ({
+              name: `replacement_${String(index)}`,
+              recordId: { prefix: `R${String(index)}`, padding: 4 },
+              columns: [{ name: "value", type: "text" }],
+            })),
+          },
+        });
+        worker.postMessage({ id: 5, type: "cancel", targetId: 4 });
+        const cancelled = await cancellation;
+        const reopenedAfterCancel = await request({
+          id: 6,
+          type: "reopen",
+          name: "collision.sqlite",
+        });
+        await request({ id: 7, type: "close" });
+        await request({
+          id: 8,
+          type: "create",
+          name: "import-source.duckdb",
+          format: "duckdb",
+          schema: {
+            version: 1,
+            tables: [
+              {
+                name: "import_source",
+                recordId: { prefix: "SOURCE", padding: 4 },
+                columns: [{ name: "value", type: "text" }],
+              },
+            ],
+          },
+        });
+        const sourceExport = await request({
+          id: 9,
+          type: "export",
+          format: "duckdb",
+        });
+        await request({ id: 10, type: "close" });
+        const importCollision = await request({
+          id: 11,
+          type: "open",
+          name: "collision.sqlite",
+          file: sourceExport["file"],
+        });
+        const reopenedAfterImportCollision = await request({
+          id: 12,
+          type: "reopen",
+          name: "collision.sqlite",
+        });
+        await request({ id: 13, type: "close" });
+        const importedReplacement = await request({
+          id: 14,
+          type: "open",
+          name: "collision.sqlite",
+          file: sourceExport["file"],
+          overwrite: true,
+        });
+        await request({ id: 15, type: "close" });
+        const reopenedImport = await request({
+          id: 16,
+          type: "reopen",
+          name: "collision.sqlite",
+        });
+        await request({ id: 17, type: "close" });
+        const replaced = await request({
+          id: 18,
+          type: "create",
+          name: "collision.sqlite",
+          format: "sqlite",
+          overwrite: true,
+          schema: {
+            version: 1,
+            tables: [
+              {
+                name: "replacement",
+                recordId: { prefix: "NEW", padding: 4 },
+                columns: [{ name: "value", type: "text" }],
+              },
+            ],
+          },
+        });
+        await request({ id: 19, type: "close" });
+        const reopenedReplacement = await request({
+          id: 20,
+          type: "reopen",
+          name: "collision.sqlite",
+        });
+        await request({ id: 21, type: "close" });
+        const firstCreate = request({
+          id: 22,
+          type: "create",
+          name: "race.sqlite",
+          format: "sqlite",
+          schema: {
+            version: 1,
+            tables: [
+              {
+                name: "first_winner",
+                recordId: { prefix: "FIRST", padding: 4 },
+                columns: [{ name: "value", type: "text" }],
+              },
+            ],
+          },
+        });
+        const secondCreate = request({
+          id: 23,
+          type: "create",
+          name: "race.sqlite",
+          format: "sqlite",
+          schema: {
+            version: 1,
+            tables: [
+              {
+                name: "second_winner",
+                recordId: { prefix: "SECOND", padding: 4 },
+                columns: [{ name: "value", type: "text" }],
+              },
+            ],
+          },
+        });
+        const raced = await Promise.all([firstCreate, secondCreate]);
+        await request({ id: 24, type: "close" });
+        const reopenedRace = await request({
+          id: 25,
+          type: "reopen",
+          name: "race.sqlite",
+        });
+        worker.terminate();
+        return {
+          invalid,
+          reopened,
+          cancelled,
+          reopenedAfterCancel,
+          importCollision,
+          reopenedAfterImportCollision,
+          importedReplacement,
+          reopenedImport,
+          replaced,
+          reopenedReplacement,
+          raced,
+          reopenedRace,
+        };
+      },
+      {
+        url: workerUrl!,
+        schema: {
+          version: 1,
+          tables: [
+            {
+              name: "left_table",
+              recordId: { prefix: "LEFT", padding: 4 },
+              columns: [{ name: "right_id", type: "text" }],
+              foreignKeys: [
+                { column: "right_id", referencesTable: "right_table" },
+              ],
+            },
+            {
+              name: "right_table",
+              recordId: { prefix: "RIGHT", padding: 4 },
+              columns: [{ name: "left_id", type: "text" }],
+              foreignKeys: [
+                { column: "left_id", referencesTable: "left_table" },
+              ],
+            },
+          ],
+        },
+      },
+    );
+    expect(result.invalid["type"]).toBe("error");
+    expect(result.reopened["type"]).toBe("ready");
+    expect(result.reopened["summary"]).toMatchObject({
+      format: "sqlite",
+      tables: [{ name: "datasets", rowCount: 1 }],
+    });
+    expect(result.cancelled).toMatchObject({
+      type: "error",
+      code: "OPERATION_ABORTED",
+    });
+    expect(result.reopenedAfterCancel["summary"]).toMatchObject({
+      format: "sqlite",
+      tables: [{ name: "datasets", rowCount: 1 }],
+    });
+    expect(result.importCollision).toMatchObject({
+      type: "error",
+      code: "DB_OUTPUT_EXISTS",
+    });
+    expect(result.reopenedAfterImportCollision["summary"]).toMatchObject({
+      format: "sqlite",
+      tables: [{ name: "datasets", rowCount: 1 }],
+    });
+    expect(result.importedReplacement["type"]).toBe("ready");
+    expect(result.reopenedImport["summary"]).toMatchObject({
+      format: "duckdb",
+      tables: [{ name: "import_source", rowCount: 0 }],
+    });
+    expect(result.replaced["type"]).toBe("ready");
+    expect(result.reopenedReplacement["summary"]).toMatchObject({
+      format: "sqlite",
+      tables: [{ name: "replacement", rowCount: 0 }],
+    });
+    expect(result.raced.map((event) => event["type"]).sort()).toEqual([
+      "error",
+      "ready",
+    ]);
+    expect(
+      result.raced.find((event) => event["type"] === "error"),
+    ).toMatchObject({ code: "DB_OUTPUT_EXISTS" });
+    expect(result.reopenedRace["summary"]).toEqual(
+      result.raced.find((event) => event["type"] === "ready")?.["summary"],
+    );
   });
 
   test("refuses a file that is not a database", async ({ page }) => {

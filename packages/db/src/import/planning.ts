@@ -219,6 +219,9 @@ async function plannedRecordRanges(options: {
     ]),
   );
   const ranges = new Map<string, Array<readonly [bigint, bigint]>>();
+  const schemaByName = new Map(
+    options.schemas.map((schema) => [identifierKey(schema.name), schema]),
+  );
   for (const route of orderRoutesByReferences(
     options.recipe.routes,
     options.schemas,
@@ -230,7 +233,9 @@ async function plannedRecordRanges(options: {
         candidate.selectionKey === route.selection,
     );
     if (capture === undefined) continue;
-    const table = destinationName(route);
+    const requestedTable = destinationName(route);
+    const table =
+      schemaByName.get(identifierKey(requestedTable))?.name ?? requestedTable;
     const applied = await engine.query(
       `SELECT import_id FROM ${APPLICATION_TABLE} WHERE capture_id = ? AND table_name = ? LIMIT 1`,
       [capture.captureId, table],
@@ -328,6 +333,20 @@ export async function evaluateConflicts(
       table: plannedTables.get(table)?.name ?? table,
     });
   }
+  const capturedRoutes = new Set(
+    captures.map((capture) =>
+      routeKey(capture.sourceKey, capture.selectionKey),
+    ),
+  );
+  for (const route of recipe.routes) {
+    const key = routeKey(route.source, route.selection);
+    if (capturedRoutes.has(key)) continue;
+    addConflict(`source-selection:${key}`, {
+      kind: "source-selection-not-found",
+      source: route.source,
+      selection: route.selection,
+    });
+  }
   for (const route of recipe.routes) {
     if (route.destination.kind !== "new-table") continue;
     for (const foreignKey of route.destination.schema.foreignKeys ?? []) {
@@ -372,7 +391,8 @@ export async function evaluateConflicts(
     let destination: TableSchema | undefined;
     if (route.destination.kind === "new-table") {
       destination = route.destination.schema;
-      if (tables.has(identifierKey(destination.name))) {
+      const registeredDestination = tables.get(identifierKey(destination.name));
+      if (registeredDestination !== undefined) {
         const reusable = await findReusableCapture({
           database,
           contentHash: capture.contentHash,
@@ -381,12 +401,15 @@ export async function evaluateConflicts(
         });
         const existingApplication = await engineOf(database).query(
           `SELECT import_id FROM ${APPLICATION_TABLE} WHERE capture_id = ? AND table_name = ? LIMIT 1`,
-          [reusable?.captureId ?? capture.captureId, destination.name],
+          [
+            reusable?.captureId ?? capture.captureId,
+            registeredDestination.name,
+          ],
         );
         if (existingApplication.length > 0) continue;
         addConflict(`table-exists:${identifierKey(destination.name)}`, {
           kind: "table-exists",
-          table: destination.name,
+          table: registeredDestination.name,
         });
         continue;
       }

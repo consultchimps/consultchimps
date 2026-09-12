@@ -124,9 +124,9 @@ export async function applyImport(
   }
   const target = engineOf(options.database);
   const preparedEngine = preparedEngineOf(options.prepared);
-  const { recipe, conflicts, decisions } = await readPreparedRecipe(
-    options.prepared,
-  );
+  const preparedPlan = await readPreparedRecipe(options.prepared);
+  let recipe = preparedPlan.recipe;
+  const { conflicts, decisions } = preparedPlan;
   const captures = await preparedCaptures(options.prepared);
   let rowsImported = 0;
   let rowsReused = 0;
@@ -208,6 +208,53 @@ export async function applyImport(
         "The database changed after this import was prepared. Prepare it again before applying.",
       );
     }
+    const registeredRows = await transaction.query(
+      `SELECT table_name, schema_json FROM ${TABLE_REGISTRY_TABLE}`,
+    );
+    const canonicalTableNames = new Map(
+      registeredRows.map((row) => {
+        const name = valueAsString(row["table_name"], "table name");
+        return [identifierKey(name), name] as const;
+      }),
+    );
+    for (const route of recipe.routes) {
+      if (route.destination.kind !== "new-table") continue;
+      const name = route.destination.schema.name;
+      if (!canonicalTableNames.has(identifierKey(name))) {
+        canonicalTableNames.set(identifierKey(name), name);
+      }
+    }
+    recipe = {
+      ...recipe,
+      routes: recipe.routes.map((route) => {
+        if (route.destination.kind === "existing-table") {
+          return {
+            ...route,
+            destination: {
+              kind: "existing-table" as const,
+              table:
+                canonicalTableNames.get(
+                  identifierKey(route.destination.table),
+                ) ?? route.destination.table,
+            },
+          };
+        }
+        if (route.destination.kind === "new-table") {
+          const name =
+            canonicalTableNames.get(
+              identifierKey(route.destination.schema.name),
+            ) ?? route.destination.schema.name;
+          return {
+            ...route,
+            destination: {
+              ...route.destination,
+              schema: { ...route.destination.schema, name },
+            },
+          };
+        }
+        return route;
+      }),
+    };
     const captureIdByBinding = new Map<string, string>();
     const publishedCaptures = new Map<
       string,
@@ -372,9 +419,6 @@ export async function applyImport(
         { planId: options.approved.id },
       );
     }
-    const registeredRows = await transaction.query(
-      `SELECT table_name, schema_json FROM ${TABLE_REGISTRY_TABLE}`,
-    );
     const registeredNames = new Set<string>();
     const routeSchemas = new Map<string, TableSchema>();
     for (const row of registeredRows) {

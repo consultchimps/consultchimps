@@ -264,6 +264,7 @@ export function parseImportConflicts(
     const kind = conflict["kind"];
     switch (kind) {
       case "missing-destination":
+      case "source-selection-not-found":
         return {
           kind,
           source: stringValue(conflict["source"], "source key"),

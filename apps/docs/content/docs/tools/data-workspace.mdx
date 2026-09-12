@@ -122,6 +122,10 @@ Use `new-table` with an explicit schema to create a destination, or
 `new-table-infer` with a name and Record ID configuration to propose a schema.
 An existing table name is a decision to review, not permission to replace that
 table. Resolving a captured plan changes routing without reading Excel again.
+`db resolve --recipe` replaces the saved plan's table routes. A selection
+omitted from the replacement recipe is excluded from table loading. Its captured
+rows remain in the plan and become received evidence in the managed database and
+are linked to a delivery when one is recorded during apply.
 
 If another import changes the database after you prepare a plan, re-review its
 captured data against the current database before applying it:

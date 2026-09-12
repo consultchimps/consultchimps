@@ -11,6 +11,7 @@ import type {
   OperationControlOptions,
   OperationResult,
 } from "@consultchimps/core";
+import { throwIfAborted } from "@consultchimps/core";
 
 import {
   createDatabaseHandle,
@@ -39,7 +40,12 @@ import {
 import { DATABASE_METADATA_TABLE } from "./metadata.js";
 import type { DatabaseFormat, DatabaseSchema } from "./schema.js";
 import { readSchemaFingerprint } from "./records.js";
-import type { ImportRecipe } from "./import/types.js";
+import { prepareImport } from "./import/prepare.js";
+import type {
+  ImportRecipe,
+  ImportSource,
+  PrepareImportOutcome,
+} from "./import/types.js";
 
 const SQLITE_HEADER = new TextEncoder().encode("SQLite format 3\0");
 const databasePaths = new WeakMap<Database, string>();
@@ -355,6 +361,75 @@ export async function createPreparedImport(options: {
   } catch (error) {
     await prepared?.close().catch(() => undefined);
     await engine.close().catch(() => undefined);
+    await rm(temporary, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+export interface PrepareImportFileOptions extends OperationControlOptions {
+  readonly path: string;
+  readonly database: Database;
+  readonly sources: readonly ImportSource[];
+  readonly recipe: ImportRecipe;
+  readonly baselineRevision: bigint;
+  readonly overwrite?: boolean | undefined;
+  readonly protectedInputPaths?: readonly string[] | undefined;
+}
+
+export async function prepareImportFile(
+  options: PrepareImportFileOptions,
+): Promise<PrepareImportOutcome> {
+  throwIfAborted(options.signal, "db.prepare");
+  const output = await ensureParentDirectory(options.path);
+  const databasePath = databasePaths.get(options.database);
+  const publication = await planFilePublication({
+    output,
+    inputs: [
+      ...(databasePath === undefined ? [] : [databasePath]),
+      ...(options.protectedInputPaths ?? []),
+    ],
+    overwrite: options.overwrite,
+  });
+  const temporary = path.join(
+    path.dirname(output),
+    `.${path.basename(output)}.cc-prepare-${globalThis.crypto.randomUUID()}`,
+  );
+  let prepared: PreparedImport | undefined;
+  try {
+    prepared = await createPreparedImport({
+      path: temporary,
+      database: options.database,
+      recipe: options.recipe,
+      baselineRevision: options.baselineRevision,
+      protectedInputPaths: options.protectedInputPaths,
+    });
+    const outcome = await prepareImport({
+      database: options.database,
+      prepared,
+      sources: options.sources,
+      recipe: options.recipe,
+      signal: options.signal,
+      onProgress: options.onProgress,
+    });
+    await prepared.close();
+    prepared = undefined;
+    throwIfAborted(options.signal, "db.prepare");
+    await publishStagedFile({ temporary, plan: publication });
+    return {
+      prepared: outcome.prepared,
+      result: {
+        ...outcome.result,
+        artifacts: [
+          {
+            kind: "file",
+            path: output,
+            mediaType: "application/vnd.consultchimps.import-plan",
+          },
+        ],
+      },
+    };
+  } catch (error) {
+    await prepared?.close().catch(() => undefined);
     await rm(temporary, { force: true }).catch(() => undefined);
     throw error;
   }

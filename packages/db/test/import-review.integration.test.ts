@@ -4,7 +4,8 @@ import path from "node:path";
 
 import { afterEach, expect, test } from "vitest";
 
-import { inspectDatabase } from "../src/database.js";
+import { engineOf, inspectDatabase } from "../src/database.js";
+import { inspectImport } from "../src/import/inspection.js";
 import {
   applyImport,
   prepareImport,
@@ -16,7 +17,17 @@ import type {
   ImportRecipe,
   ImportSource,
 } from "../src/import/types.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import {
+  APPLICATION_TABLE,
+  CAPTURE_ROW_TABLE,
+  CAPTURE_TABLE,
+  DELIVERY_MEMBERSHIP_TABLE,
+} from "../src/metadata.js";
+import {
+  createDatabase,
+  createPreparedImport,
+  openPreparedImport,
+} from "../src/node.js";
 
 const directories: string[] = [];
 
@@ -73,16 +84,401 @@ async function fixture(format: "sqlite" | "duckdb", recipe: ImportRecipe) {
     path: path.join(directory, `workspace.${format}`),
     format,
   });
+  const planPath = path.join(directory, "review.ccplan");
   const prepared = await createPreparedImport({
-    path: path.join(directory, "review.ccplan"),
+    path: planPath,
     database,
     recipe,
     baselineRevision: 0n,
   });
-  return { database, prepared };
+  return { database, prepared, planPath };
 }
 
 for (const format of ["sqlite", "duckdb"] as const) {
+  test(`${format}: existing table names use their registered spelling through apply and audit`, async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "cc-import-case-"));
+    directories.push(directory);
+    const { database } = await createDatabase({
+      path: path.join(directory, `workspace.${format}`),
+      format,
+      schema: {
+        version: 1,
+        tables: [
+          {
+            name: "Sales",
+            columns: [{ name: "Value", type: "text", nullable: false }],
+            recordId: { prefix: "SAL", padding: 6 },
+          },
+        ],
+      },
+    });
+    const recipe: ImportRecipe = {
+      version: 1,
+      routes: [
+        {
+          source: "submission",
+          selection: "Data",
+          destination: { kind: "existing-table", table: "sales" },
+          columns: [{ source: "Value", target: "Value", type: "text" }],
+        },
+      ],
+    };
+    const prepared = await createPreparedImport({
+      path: path.join(directory, "review.ccplan"),
+      database,
+      recipe,
+      baselineRevision: (await inspectDatabase({ database })).revision,
+    });
+    const submission = source({
+      Data: [
+        {
+          sourceRow: 2,
+          cells: { Value: { kind: "string", value: "North" } },
+        },
+      ],
+    });
+    try {
+      const outcome = await prepareImport({
+        database,
+        prepared,
+        recipe,
+        sources: [submission],
+      });
+      expect(outcome.prepared.state).toBe("ready");
+      await expect(
+        resolveImport({
+          database,
+          prepared,
+          decisions: [
+            {
+              kind: "exclude",
+              source: "submission",
+              selection: "Dtaa",
+              reason: "Typo in the selection key",
+            },
+          ],
+        }),
+      ).rejects.toMatchObject({ code: "DB_IMPORT_DECISION_NOT_FOUND" });
+      const resolved = await resolveImport({
+        database,
+        prepared,
+        decisions: [
+          {
+            kind: "route",
+            source: "submission",
+            selection: "Data",
+            destination: { kind: "existing-table", table: "sales" },
+            columns: [{ source: "Value", target: "Value", type: "text" }],
+          },
+        ],
+      });
+      expect(resolved.state).toBe("ready");
+      if (resolved.state !== "ready") throw new Error("Plan not ready");
+      await applyImport({
+        database,
+        prepared,
+        approved: resolved,
+        requestId: `${format}-canonical-table`,
+      });
+      expect(
+        await engineOf(database).query('SELECT count(*) AS count FROM "Sales"'),
+      ).toEqual([{ count: 1n }]);
+      const saved = await inspectAppliedImportPlan({
+        database,
+        planId: resolved.id,
+        planRevision: resolved.planRevision,
+      });
+      expect(saved?.recipe.routes[0]?.destination).toEqual({
+        kind: "existing-table",
+        table: "Sales",
+      });
+      expect(saved?.decisions[0]).toMatchObject({
+        kind: "route",
+        destination: { kind: "existing-table", table: "sales" },
+      });
+
+      const replayRecipe: ImportRecipe = {
+        version: 1,
+        routes: [
+          {
+            source: "submission",
+            selection: "Data",
+            destination: {
+              kind: "new-table",
+              schema: {
+                name: "sales",
+                columns: [{ name: "Value", type: "text", nullable: false }],
+                recordId: { prefix: "SAL", padding: 6 },
+              },
+            },
+            columns: [{ source: "Value", target: "Value", type: "text" }],
+          },
+        ],
+      };
+      const replay = await createPreparedImport({
+        path: path.join(directory, "replay.ccplan"),
+        database,
+        recipe: replayRecipe,
+        baselineRevision: (await inspectDatabase({ database })).revision,
+      });
+      try {
+        const replayed = await prepareImport({
+          database,
+          prepared: replay,
+          recipe: replayRecipe,
+          sources: [submission],
+        });
+        expect(replayed.prepared.state).toBe("ready");
+        expect(replayed.result.metrics).toMatchObject({
+          sourcesReused: 1,
+          rowsCaptured: 0,
+        });
+        if (replayed.prepared.state !== "ready") {
+          throw new Error("Replay plan not ready");
+        }
+        const replayResult = await applyImport({
+          database,
+          prepared: replay,
+          approved: replayed.prepared,
+          requestId: `${format}-canonical-table-replay`,
+        });
+        expect(replayResult.metrics).toMatchObject({
+          rowsImported: 0,
+          rowsReused: 1,
+          tablesCreated: 0,
+        });
+        expect(await inspectDatabase({ database })).toMatchObject({
+          completedImports: 1n,
+          tables: [{ name: "Sales", rowCount: 1n }],
+        });
+        expect(
+          (
+            await inspectAppliedImportPlan({
+              database,
+              planId: replayed.prepared.id,
+              planRevision: replayed.prepared.planRevision,
+            })
+          )?.recipe.routes[0]?.destination,
+        ).toMatchObject({
+          kind: "new-table",
+          schema: { name: "Sales" },
+        });
+      } finally {
+        await replay.close();
+      }
+    } finally {
+      await prepared.close();
+      await database.close();
+    }
+  });
+
+  test(`${format}: a recipe route without a captured selection requires review`, async () => {
+    const recipe: ImportRecipe = {
+      version: 1,
+      routes: [
+        {
+          source: "unknown-source",
+          selection: "Unknown",
+          destination: {
+            kind: "new-table",
+            schema: {
+              name: "Unknown",
+              columns: [{ name: "Value", type: "text" }],
+              recordId: { prefix: "UNK", padding: 6 },
+            },
+          },
+          columns: [{ source: "Value", target: "Value", type: "text" }],
+        },
+      ],
+    };
+    const { database, prepared, planPath } = await fixture(format, recipe);
+    try {
+      const outcome = await prepareImport({
+        database,
+        prepared,
+        recipe,
+        sources: [
+          source({
+            Data: [
+              {
+                sourceRow: 2,
+                cells: { Value: { kind: "string", value: "North" } },
+              },
+            ],
+          }),
+        ],
+      });
+      expect(outcome.prepared.state).toBe("needs-review");
+      expect(
+        (await inspectImport({ prepared, page: { limit: 10 } })).conflicts,
+      ).toContainEqual({
+        kind: "source-selection-not-found",
+        source: "unknown-source",
+        selection: "Unknown",
+      });
+      expect(
+        await resolveImport({ database, prepared, decisions: [] }),
+      ).toMatchObject({ state: "needs-review" });
+      expect(
+        (await inspectImport({ prepared, page: { limit: 10 } })).conflicts,
+      ).toEqual(
+        expect.arrayContaining([
+          {
+            kind: "source-selection-not-found",
+            source: "unknown-source",
+            selection: "Unknown",
+          },
+          {
+            kind: "missing-destination",
+            source: "submission",
+            selection: "Data",
+          },
+        ]),
+      );
+      const reopened = await openPreparedImport({ path: planPath });
+      try {
+        expect(
+          (await inspectImport({ prepared: reopened, page: { limit: 10 } }))
+            .conflicts,
+        ).toContainEqual({
+          kind: "source-selection-not-found",
+          source: "unknown-source",
+          selection: "Unknown",
+        });
+      } finally {
+        await reopened.close();
+      }
+      await expect(
+        resolveImport({
+          database,
+          prepared,
+          decisions: [
+            {
+              kind: "exclude",
+              source: "unknown-source",
+              selection: "Unknown",
+              reason: "The recipe entry does not belong to this source",
+            },
+            {
+              kind: "exclude",
+              source: "submission",
+              selection: "Data",
+              reason: "This captured selection is intentionally omitted",
+            },
+          ],
+        }),
+      ).resolves.toMatchObject({ state: "ready" });
+      expect((await inspectDatabase({ database })).tables).toEqual([]);
+    } finally {
+      await prepared.close();
+      await database.close();
+    }
+  });
+
+  test(`${format}: exclusion skips table loading and retains delivery evidence`, async () => {
+    const recipe: ImportRecipe = {
+      version: 1,
+      routes: [
+        {
+          source: "submission",
+          selection: "Inventory",
+          destination: {
+            kind: "new-table",
+            schema: {
+              name: "Inventory",
+              columns: [{ name: "Value", type: "text" }],
+              recordId: { prefix: "INV", padding: 6 },
+            },
+          },
+          columns: [{ source: "Value", target: "Value", type: "text" }],
+        },
+      ],
+    };
+    const { database, prepared } = await fixture(format, recipe);
+    try {
+      const preparedOutcome = await prepareImport({
+        database,
+        prepared,
+        recipe,
+        sources: [
+          source({
+            Inventory: [
+              {
+                sourceRow: 2,
+                cells: { Value: { kind: "string", value: "North" } },
+              },
+            ],
+          }),
+        ],
+      });
+      expect(preparedOutcome.prepared.state).toBe("ready");
+      const resolved = await resolveImport({
+        database,
+        prepared,
+        decisions: [
+          {
+            kind: "exclude",
+            source: "submission",
+            selection: "Inventory",
+            reason: "Keep as received evidence without loading a table",
+          },
+        ],
+      });
+      expect(resolved.state).toBe("ready");
+      if (resolved.state !== "ready") throw new Error("Plan not ready");
+      const applied = await applyImport({
+        database,
+        prepared,
+        approved: resolved,
+        requestId: `${format}-excluded-selection`,
+        delivery: { label: "Inventory delivery", scope: { kind: "full" } },
+      });
+      expect(applied.metrics.rowsImported).toBe(0);
+      expect(applied.importIds).toEqual([]);
+      expect(applied.captureIds).toHaveLength(1);
+
+      const engine = engineOf(database);
+      await expect(
+        engine.query(`SELECT count(*) AS count FROM ${APPLICATION_TABLE}`),
+      ).resolves.toEqual([{ count: 0n }]);
+      for (const table of [
+        CAPTURE_TABLE,
+        CAPTURE_ROW_TABLE,
+        DELIVERY_MEMBERSHIP_TABLE,
+      ]) {
+        await expect(
+          engine.query(`SELECT count(*) AS count FROM ${table}`),
+        ).resolves.toEqual([{ count: 1n }]);
+      }
+      expect(await inspectDatabase({ database })).toMatchObject({
+        tables: [],
+        captures: 1n,
+        completedImports: 0n,
+        deliveries: 1n,
+      });
+      expect(
+        await inspectAppliedImportPlan({
+          database,
+          planId: resolved.id,
+          planRevision: resolved.planRevision,
+        }),
+      ).toMatchObject({
+        recipe: { routes: [] },
+        decisions: [
+          {
+            kind: "exclude",
+            source: "submission",
+            selection: "Inventory",
+          },
+        ],
+        bindings: [{ captureId: applied.captureIds[0] }],
+      });
+    } finally {
+      await prepared.close();
+      await database.close();
+    }
+  });
+
   test(`${format}: mapping and value errors block readiness before apply`, async () => {
     const recipe: ImportRecipe = {
       version: 1,
@@ -257,7 +653,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         {
           source: "first",
           selection: "Data",
-          destination: { kind: "existing-table", table: "Shared" },
+          destination: { kind: "existing-table", table: "shared" },
           columns: [{ source: "Value", target: "Value", type: "text" }],
         },
         {
@@ -310,6 +706,15 @@ for (const format of ["sqlite", "duckdb"] as const) {
       expect((await inspectDatabase({ database })).tables).toMatchObject([
         { name: "Shared", rowCount: 2n },
       ]);
+      const saved = await inspectAppliedImportPlan({
+        database,
+        planId: outcome.prepared.id,
+        planRevision: outcome.prepared.planRevision,
+      });
+      expect(saved?.recipe.routes[0]?.destination).toEqual({
+        kind: "existing-table",
+        table: "Shared",
+      });
     } finally {
       await prepared.close();
       await database.close();

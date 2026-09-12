@@ -259,6 +259,8 @@ function conflictText(conflict: ImportConflict): string {
   switch (conflict.kind) {
     case "missing-destination":
       return "Choose a destination table";
+    case "source-selection-not-found":
+      return `Source ${conflict.source} selection ${conflict.selection} was not captured; choose an available source and selection`;
     case "missing-column":
       return `Destination column ${conflict.column} does not exist`;
     case "source-column-not-found":
@@ -552,6 +554,12 @@ async function handleCreate(
   ).createDatabase({
     name: command.name,
     format: command.format,
+    ...(command.schema === undefined
+      ? {}
+      : { schema: parseDatabaseSchema(command.schema) }),
+    ...(command.overwrite === undefined
+      ? {}
+      : { overwrite: command.overwrite }),
     signal,
   });
   const next = {
@@ -567,12 +575,18 @@ async function handleOpen(
   command: Extract<WorkspaceCommand, { readonly type: "open" }>,
   signal: AbortSignal,
 ): Promise<void> {
-  const name = safeWorkingName(command.file.name);
+  const name =
+    command.name === undefined
+      ? safeWorkingName(command.file.name)
+      : command.name;
   const database = await (
     await runtime()
   ).importDatabase({
     name,
     source: new BrowserBlobSource(command.file.name, command.file),
+    ...(command.overwrite === undefined
+      ? {}
+      : { overwrite: command.overwrite }),
     signal,
     onProgress: onProgress(id),
   });

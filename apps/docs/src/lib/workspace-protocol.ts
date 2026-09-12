@@ -183,8 +183,15 @@ export type WorkspaceCommand =
       readonly type: "create";
       readonly format: WorkspaceDatabaseFormat;
       readonly name: string;
+      readonly schema?: WorkspaceSchemaDocument;
+      readonly overwrite?: boolean;
     })
-  | (WorkspaceCommandBase & { readonly type: "open"; readonly file: File })
+  | (WorkspaceCommandBase & {
+      readonly type: "open";
+      readonly file: File;
+      readonly name?: string;
+      readonly overwrite?: boolean;
+    })
   | (WorkspaceCommandBase & {
       readonly type: "reopen";
       readonly name: string;

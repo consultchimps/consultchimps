@@ -21,6 +21,7 @@ import {
   planConversion,
   prepareImport,
   recordDelivery,
+  replaceImportRecipe,
   resolveImport,
   type DatabaseFormat,
   type PreparedImportRef,
@@ -33,6 +34,7 @@ import {
   inspectFileKind,
   openDatabase,
   openPreparedImport,
+  prepareImportFile,
 } from "@consultchimps/db/node";
 import { planFilePublication } from "@consultchimps/files";
 import { Option, type Command } from "commander";
@@ -185,17 +187,36 @@ async function prepare(
           temporary = await mkdtemp(path.join(tmpdir(), "cc-import-plan-"));
         const planPath =
           options.output ?? path.join(temporary ?? "", "review.ccplan");
+        const protectedInputPaths = [
+          ...inputs.paths,
+          ...(options.recipe ? [options.recipe] : []),
+          ...(options.context ? [options.context] : []),
+        ];
+        if (!apply) {
+          const outcome = await prepareImportFile({
+            path: planPath,
+            database,
+            sources: sourceList,
+            recipe,
+            baselineRevision: inspected.revision,
+            overwrite: options.force,
+            protectedInputPaths,
+            ...controls,
+          });
+          output.result(outcome.result);
+          if (!output.json())
+            process.stdout.write(
+              "Review this plan with db inspect, then apply it with db apply. The captured plan can contain source values; keep it private.\n",
+            );
+          return;
+        }
         const prepared = await createPreparedImport({
           path: planPath,
           database,
           recipe,
           baselineRevision: inspected.revision,
           overwrite: options.force,
-          protectedInputPaths: [
-            ...inputs.paths,
-            ...(options.recipe ? [options.recipe] : []),
-            ...(options.context ? [options.context] : []),
-          ],
+          protectedInputPaths,
         });
         try {
           const outcome = await prepareImport({
@@ -205,23 +226,6 @@ async function prepare(
             recipe,
             ...controls,
           });
-          if (!apply) {
-            output.result({
-              ...outcome.result,
-              artifacts: [
-                {
-                  kind: "file",
-                  path: path.resolve(planPath),
-                  mediaType: "application/vnd.consultchimps.import-plan",
-                },
-              ],
-            });
-            if (!output.json())
-              process.stdout.write(
-                "Review this plan with db inspect, then apply it with db apply. The captured plan can contain source values; keep it private.\n",
-              );
-            return;
-          }
           const approved = requireReady(
             outcome.prepared.state === "ready"
               ? outcome.prepared
@@ -473,7 +477,7 @@ export function registerDbCommands(
     .requiredOption("--plan <file>", "saved .ccplan artifact")
     .option(
       "--recipe <file>",
-      "revised versioned import recipe; omit to re-review captured data",
+      "replacement import recipe; omitted routes stop table loading; omit this option to re-review captured data",
     )
     .action(
       async (
@@ -488,16 +492,19 @@ export function registerDbCommands(
           const prepared = await openPreparedImport({ path: options.plan });
           try {
             output.data(
-              await resolveImport({
-                database,
-                prepared,
-                decisions:
-                  recipe?.routes.map((route) => ({
-                    kind: "route",
-                    ...route,
-                  })) ?? [],
-                rebase: true,
-              }),
+              recipe === undefined
+                ? await resolveImport({
+                    database,
+                    prepared,
+                    decisions: [],
+                    rebase: true,
+                  })
+                : await replaceImportRecipe({
+                    database,
+                    prepared,
+                    recipe,
+                    rebase: true,
+                  }),
             );
           } finally {
             await prepared.close();

@@ -93,6 +93,11 @@ export type ImportConflict =
       readonly selection: string;
     }
   | {
+      readonly kind: "source-selection-not-found";
+      readonly source: string;
+      readonly selection: string;
+    }
+  | {
       readonly kind: "missing-column";
       readonly source: string;
       readonly selection: string;

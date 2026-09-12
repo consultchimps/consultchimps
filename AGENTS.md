@@ -593,6 +593,13 @@ Treat the CI gate strictly:
 - If GitHub reports conflicting status signals, inspect the required status
   checks, check runs, and latest head SHA before deciding the pull request is
   ready.
+- Read pull request reviews and inline review threads separately from CI check
+  results. Passing CI does not mean an automated code review has no findings.
+- When a configured reviewer starts after a draft is marked ready, wait for its
+  result before reporting review completion. Assess actionable findings, add
+  regressions for accepted fixes, and verify them on the pull request branch.
+- Recheck review activity after pushing fixes. Resolve a thread only after its
+  finding is fixed and verified, or its rejection is supported by evidence.
 - Merge with failing or incomplete required checks only under a documented
   exception permitted by repository policy and branch protection, after the user
   explicitly authorizes it with the exact non-green checks and rationale

@@ -48,6 +48,12 @@ export async function resolveImport(options: {
       decision,
     ]),
   );
+  const knownSelections = new Set([
+    ...routes.keys(),
+    ...captures.map((capture) =>
+      routeKey(capture.sourceKey, capture.selectionKey),
+    ),
+  ]);
   for (const conflict of current.conflicts) {
     if (conflict.kind !== "inferred-schema") continue;
     const key = routeKey(conflict.source, conflict.selection);
@@ -90,6 +96,13 @@ export async function resolveImport(options: {
   for (const decision of options.decisions) {
     const key = routeKey(decision.source, decision.selection);
     if (decision.kind === "exclude") {
+      if (!knownSelections.has(key)) {
+        throw databaseError(
+          "DB_IMPORT_DECISION_NOT_FOUND",
+          `The exclusion for source "${decision.source}" selection "${decision.selection}" does not match a captured selection or an existing recipe route. Check the source alias and selection key.`,
+          { source: decision.source, selection: decision.selection },
+        );
+      }
       routes.delete(key);
     } else {
       routes.set(key, {
@@ -102,8 +115,16 @@ export async function resolveImport(options: {
     reviewDecisions.set(key, decision);
   }
   const recipe: ImportRecipe = { version: 1, routes: [...routes.values()] };
-  const included = captures.filter((capture) =>
-    routes.has(routeKey(capture.sourceKey, capture.selectionKey)),
+  const excluded = new Set(
+    [...reviewDecisions.values()].flatMap((decision) =>
+      decision.kind === "exclude"
+        ? [routeKey(decision.source, decision.selection)]
+        : [],
+    ),
+  );
+  const included = captures.filter(
+    (capture) =>
+      !excluded.has(routeKey(capture.sourceKey, capture.selectionKey)),
   );
   const conflicts = await evaluateConflicts(
     options.database,
@@ -123,5 +144,54 @@ export async function resolveImport(options: {
           baselineRevision: baseline.inspection.revision,
           baselineSchemaFingerprint: baseline.schemaFingerprint,
         }),
+  });
+}
+
+export async function replaceImportRecipe(options: {
+  readonly database: PrepareImportOptions["database"];
+  readonly prepared: PrepareImportOptions["prepared"];
+  readonly recipe: ImportRecipe;
+  readonly rebase?: boolean | undefined;
+}): ReturnType<typeof resolveImport> {
+  const current = await readPreparedRecipe(options.prepared);
+  const captures = await preparedCaptures(options.prepared);
+  const replacementKeys = new Set(
+    options.recipe.routes.map((route) =>
+      routeKey(route.source, route.selection),
+    ),
+  );
+  const existing = new Map(
+    [
+      ...current.recipe.routes,
+      ...captures.map((capture) => ({
+        source: capture.sourceKey,
+        selection: capture.selectionKey,
+      })),
+    ].map((route) => [
+      routeKey(route.source, route.selection),
+      { source: route.source, selection: route.selection },
+    ]),
+  );
+  return resolveImport({
+    database: options.database,
+    prepared: options.prepared,
+    decisions: [
+      ...options.recipe.routes.map((route): ImportDecision => ({
+        kind: "route",
+        ...route,
+      })),
+      ...[...existing.values()]
+        .filter(
+          ({ source, selection }) =>
+            !replacementKeys.has(routeKey(source, selection)),
+        )
+        .map(({ source, selection }): ImportDecision => ({
+          kind: "exclude",
+          source,
+          selection,
+          reason: "Omitted from the replacement recipe.",
+        })),
+    ],
+    rebase: options.rebase,
   });
 }

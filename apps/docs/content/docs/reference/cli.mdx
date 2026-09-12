@@ -380,8 +380,10 @@ applied after removing the Excel inputs. Source documents are not modified.
 `--context <file>` for a delivery event and `--request-id <id>` for a retry key.
 Without an explicit key, the prepared plan's ID identifies the application.
 Unresolved conflicts prevent application. `db resolve` requires `--plan` and
-accepts `--recipe` for changed routing or mappings. Omit the recipe to re-review
-captured data against the current database without rereading Excel.
+accepts `--recipe` to replace the saved routes and mappings. Omitted selections
+stop loading into destination tables; their captured evidence remains available.
+Omit the recipe to re-review captured data against the current database without
+rereading Excel.
 
 ### Database export options
 

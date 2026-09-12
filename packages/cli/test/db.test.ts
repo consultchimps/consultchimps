@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
-import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +15,7 @@ import { promisify } from "node:util";
 import { afterEach, expect, test } from "vitest";
 import * as XLSX from "xlsx";
 import Sqlite from "better-sqlite3";
+import JSZip from "jszip";
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../dist/index.js", import.meta.url));
@@ -58,6 +66,21 @@ function workbook(
     "Inventory",
   );
   return XLSX.write(book, { type: "buffer", bookType: "xlsx" }) as Uint8Array;
+}
+
+async function workbookWithInvalidNumericCell(): Promise<Uint8Array> {
+  const archive = await JSZip.loadAsync(workbook([["Name"], ["North"]]));
+  const worksheet = archive.file("xl/worksheets/sheet1.xml");
+  if (!worksheet) throw new Error("The generated workbook has no worksheet.");
+  const xml = await worksheet.async("string");
+  const invalid = xml.replace(
+    '<c r="A2" t="str"><v>North</v></c>',
+    '<c r="A2"><v>not-a-number</v></c>',
+  );
+  if (invalid === xml)
+    throw new Error("The generated workbook cell was not found.");
+  archive.file("xl/worksheets/sheet1.xml", invalid);
+  return archive.generateAsync({ type: "uint8array", compression: "DEFLATE" });
 }
 
 test("inspects an ordinary SQLite database without adopting or changing it", async () => {
@@ -408,6 +431,214 @@ test("one recipe can select several distinct regions in the same workbook", asyn
     expect.objectContaining({ name: "left_side", rowCount: "1" }),
     expect.objectContaining({ name: "right_side", rowCount: "1" }),
   ]);
+});
+
+test("a replacement recipe excludes routes it omits", async () => {
+  const root = await directory();
+  const database = path.join(root, "routes.sqlite");
+  const source = path.join(root, "routes.xlsx");
+  const initialRecipe = path.join(root, "initial.json");
+  const replacementRecipe = path.join(root, "replacement.json");
+  const plan = path.join(root, "routes.ccplan");
+  const selection = (column: string) =>
+    JSON.stringify({ range: `Inventory!${column}1:${column}2` });
+  const route = (column: "A" | "B", table: string) => ({
+    source: "inventory",
+    selection: selection(column),
+    destination: {
+      kind: "new-table",
+      schema: {
+        name: table,
+        recordId: { prefix: column, padding: 4 },
+        columns: [{ name: "value", type: "text" }],
+      },
+    },
+    columns: [
+      {
+        source: column === "A" ? "Left" : "Right",
+        target: "value",
+        type: "text",
+      },
+    ],
+  });
+  const left = route("A", "left_side");
+  const right = route("B", "right_side");
+  const unavailable = {
+    ...route("B", "unavailable"),
+    source: "missing",
+  };
+  await writeFile(
+    source,
+    workbook([
+      ["Left", "Right"],
+      ["North", "South"],
+    ]),
+  );
+  await writeFile(
+    initialRecipe,
+    JSON.stringify({ version: 1, routes: [left, right, unavailable] }),
+  );
+  await writeFile(
+    replacementRecipe,
+    JSON.stringify({ version: 1, routes: [left] }),
+  );
+  await run(["create", "-o", database]);
+  await run([
+    "plan",
+    database,
+    "--input",
+    `inventory=${source}`,
+    "--recipe",
+    initialRecipe,
+    "-o",
+    plan,
+  ]);
+  const resolved = await run([
+    "resolve",
+    database,
+    "--plan",
+    plan,
+    "--recipe",
+    replacementRecipe,
+  ]);
+  expect(resolved).toMatchObject({ state: "ready" });
+  await rm(source);
+  const applied = await run(["apply", database, "--plan", plan]);
+  expect(applied["metrics"]).toMatchObject({ rowsImported: 1 });
+  expect((await run(["inspect", database]))["tables"]).toEqual([
+    expect.objectContaining({ name: "left_side", rowCount: "1" }),
+  ]);
+});
+
+test("an empty replacement recipe excludes every captured route", async () => {
+  const root = await directory();
+  const database = path.join(root, "empty.sqlite");
+  const source = path.join(root, "empty.xlsx");
+  const initialRecipe = path.join(root, "initial.json");
+  const replacementRecipe = path.join(root, "empty.json");
+  const plan = path.join(root, "empty.ccplan");
+  await writeFile(source, workbook([["Name"], ["North"]]));
+  const selection = JSON.stringify({ sheet: "Inventory", headerRow: 1 });
+  const destination = (name: string) => ({
+    kind: "new-table-infer",
+    name,
+    recordId: { prefix: name.slice(0, 3).toUpperCase(), padding: 4 },
+  });
+  await writeFile(
+    initialRecipe,
+    JSON.stringify({
+      version: 1,
+      routes: [
+        {
+          source: "inventory",
+          selection,
+          destination: destination("inventory"),
+          columns: [],
+        },
+        {
+          source: "missing",
+          selection: "Unavailable",
+          destination: destination("unavailable"),
+          columns: [],
+        },
+      ],
+    }),
+  );
+  await writeFile(
+    replacementRecipe,
+    JSON.stringify({ version: 1, routes: [] }),
+  );
+  await run(["create", "-o", database]);
+  await run([
+    "plan",
+    database,
+    "--input",
+    `inventory=${source}`,
+    "--recipe",
+    initialRecipe,
+    "-o",
+    plan,
+  ]);
+  const resolved = await run([
+    "resolve",
+    database,
+    "--plan",
+    plan,
+    "--recipe",
+    replacementRecipe,
+  ]);
+  expect(resolved).toMatchObject({ state: "ready" });
+  const applied = await run(["apply", database, "--plan", plan]);
+  expect(applied["metrics"]).toMatchObject({ rowsImported: 0 });
+  expect((await run(["inspect", database]))["tables"]).toEqual([]);
+});
+
+test("forced plan replacement preserves the old plan until capture succeeds", async () => {
+  const root = await directory();
+  const database = path.join(root, "safe.sqlite");
+  const source = path.join(root, "safe.xlsx");
+  const plan = path.join(root, "safe.ccplan");
+  await writeFile(source, workbook([["Name"], ["North"]]));
+  await run(["create", "-o", database]);
+  await run(["plan", database, "--input", `inventory=${source}`, "-o", plan]);
+  const originalPlan = await readFile(plan);
+  await writeFile(source, await workbookWithInvalidNumericCell());
+  await expect(
+    execute(process.execPath, [
+      cli,
+      "--json",
+      "db",
+      "plan",
+      database,
+      "--input",
+      `inventory=${source}`,
+      "-o",
+      plan,
+      "-f",
+    ]),
+  ).rejects.toMatchObject({
+    code: 1,
+    stdout: expect.stringContaining("XLSX_READ_FAILED"),
+  });
+  expect(await readFile(plan)).toEqual(originalPlan);
+  expect((await run(["inspect", plan]))["capturedRows"]).toBe("1");
+  expect(
+    (await readdir(root)).filter((name) =>
+      name.startsWith(`.${path.basename(plan)}.`),
+    ),
+  ).toEqual([]);
+
+  const originalSource = await readFile(source);
+  await expect(
+    execute(process.execPath, [
+      cli,
+      "--json",
+      "db",
+      "plan",
+      database,
+      "--input",
+      `inventory=${source}`,
+      "-o",
+      source,
+      "-f",
+    ]),
+  ).rejects.toMatchObject({
+    code: 1,
+    stdout: expect.stringContaining("FILES_INPUT_OVERWRITE"),
+  });
+  expect(await readFile(source)).toEqual(originalSource);
+
+  await writeFile(source, workbook([["Name"], ["North"], ["South"]]));
+  await run([
+    "plan",
+    database,
+    "--input",
+    `inventory=${source}`,
+    "-o",
+    plan,
+    "-f",
+  ]);
+  expect((await run(["inspect", plan]))["capturedRows"]).toBe("2");
 });
 
 test("a recipe naming an unavailable source fails instead of accepting an empty import", async () => {

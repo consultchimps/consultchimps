@@ -62,6 +62,7 @@ export {
   listDeliveries,
   prepareImport,
   recordDelivery,
+  replaceImportRecipe,
   resolveImport,
 } from "./import/index.js";
 export type {
