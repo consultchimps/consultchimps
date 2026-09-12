@@ -29,12 +29,6 @@ function missing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
-function nativePathKey(filePath: string): string {
-  return process.platform === "win32" || process.platform === "darwin"
-    ? filePath.toLowerCase()
-    : filePath;
-}
-
 async function nativeFileIdentity(
   filePath: string,
 ): Promise<NativeFileIdentity> {
@@ -45,16 +39,14 @@ async function nativeFileIdentity(
       stat(resolved, { bigint: true }),
     ]);
     return {
-      pathKey: nativePathKey(canonical),
+      pathKey: canonical,
       ...(status.ino === 0n ? {} : { device: status.dev, inode: status.ino }),
     };
   } catch (error) {
     if (!missing(error)) throw error;
     const canonicalParent = await realpath(path.dirname(resolved));
     return {
-      pathKey: nativePathKey(
-        path.join(canonicalParent, path.basename(resolved)),
-      ),
+      pathKey: path.join(canonicalParent, path.basename(resolved)),
     };
   }
 }
@@ -63,18 +55,31 @@ function sameNativeFile(
   left: NativeFileIdentity,
   right: NativeFileIdentity,
 ): boolean {
-  return (
-    left.pathKey === right.pathKey ||
-    (left.inode !== undefined &&
-      right.inode !== undefined &&
-      left.inode === right.inode &&
-      left.device === right.device)
-  );
+  if (
+    left.inode !== undefined &&
+    right.inode !== undefined &&
+    left.inode === right.inode &&
+    left.device === right.device
+  ) {
+    return true;
+  }
+  return left.pathKey === right.pathKey;
 }
+
+type NativeFileIdentityResolver = (
+  filePath: string,
+) => Promise<NativeFileIdentity>;
 
 export class NativeFileRegistry {
   readonly #openHandles = new Set<OpenNativeHandle>();
+  readonly #resolveIdentity: NativeFileIdentityResolver;
   #tail: Promise<void> = Promise.resolve();
+
+  constructor(
+    resolveIdentity: NativeFileIdentityResolver = nativeFileIdentity,
+  ) {
+    this.#resolveIdentity = resolveIdentity;
+  }
 
   async #exclusive<T>(work: () => Promise<T>): Promise<T> {
     const previous = this.#tail;
@@ -104,7 +109,7 @@ export class NativeFileRegistry {
   }
 
   async #assertNotOpen(filePath: string): Promise<void> {
-    const identity = await nativeFileIdentity(filePath);
+    const identity = await this.#resolveIdentity(filePath);
     if (
       !this.#liveHandles().some((entry) =>
         sameNativeFile(entry.identity, identity),
@@ -121,7 +126,7 @@ export class NativeFileRegistry {
 
   async #register(filePath: string, handle: NativeFileHandle): Promise<void> {
     this.#openHandles.add({
-      identity: await nativeFileIdentity(filePath),
+      identity: await this.#resolveIdentity(filePath),
       reference: new WeakRef(handle),
     });
   }

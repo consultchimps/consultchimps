@@ -259,6 +259,17 @@ function regionId(source: string, selection: string): string {
   return JSON.stringify([source, selection]);
 }
 
+function reviewRowCount(regions: readonly RegionMetadata[]): bigint {
+  const countedCaptures = new Set<string>();
+  let total = 0n;
+  for (const region of regions) {
+    if (countedCaptures.has(region.captureId)) continue;
+    countedCaptures.add(region.captureId);
+    total += region.rowCount;
+  }
+  return total;
+}
+
 function conflictText(conflict: ImportConflict): string {
   switch (conflict.kind) {
     case "missing-destination":
@@ -391,7 +402,7 @@ async function importDto(held: HeldImport): Promise<WorkspacePreparedImport> {
     duplicateOf: held.duplicate ? "existing-capture" : null,
     captureIds: held.regions.map((region) => region.captureId),
     regions,
-    totalRows: boundedNumber(inspection.capturedRows, "captured row count"),
+    totalRows: boundedNumber(reviewRowCount(held.regions), "review row count"),
     warningCount: inspection.conflicts.length,
   };
 }

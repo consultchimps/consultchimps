@@ -1,4 +1,4 @@
-import { link, mkdtemp, rm } from "node:fs/promises";
+import { access, link, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -106,6 +106,82 @@ test("refuses database replacement through a live path or hard-link alias", asyn
     expect(
       (await inspectDatabase({ database })).tables.map((table) => table.name),
     ).toEqual(["replacement"]);
+  } finally {
+    await database.close();
+  }
+});
+
+test("uses filesystem case behavior instead of assuming macOS is insensitive", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "cc-native-case-"));
+  directories.push(directory);
+  const databasePath = path.join(directory, "Case.sqlite");
+  const caseVariantPath = path.join(directory, "case.sqlite");
+  const { database } = await createDatabase({
+    path: databasePath,
+    format: "sqlite",
+    schema: schema("original"),
+  });
+  try {
+    let caseVariantExists = true;
+    try {
+      await access(caseVariantPath);
+    } catch {
+      caseVariantExists = false;
+    }
+    if (caseVariantExists) {
+      await expect(
+        createDatabase({
+          path: caseVariantPath,
+          format: "sqlite",
+          schema: schema("replacement"),
+          overwrite: true,
+        }),
+      ).rejects.toMatchObject({ code: "DB_NATIVE_FILE_BUSY" });
+    } else {
+      const distinct = await createDatabase({
+        path: caseVariantPath,
+        format: "sqlite",
+        schema: schema("distinct"),
+      });
+      try {
+        expect(
+          (await inspectDatabase({ database: distinct.database })).tables.map(
+            (table) => table.name,
+          ),
+        ).toEqual(["distinct"]);
+      } finally {
+        await distinct.database.close();
+      }
+    }
+    expect(
+      (await inspectDatabase({ database })).tables.map((table) => table.name),
+    ).toEqual(["original"]);
+  } finally {
+    await database.close();
+  }
+});
+
+test("recognizes a database opened through a symbolic-link alias", async () => {
+  if (process.platform === "win32") return;
+  const directory = await mkdtemp(path.join(tmpdir(), "cc-native-link-"));
+  directories.push(directory);
+  const databasePath = path.join(directory, "database.sqlite");
+  const aliasPath = path.join(directory, "alias.sqlite");
+  const created = await createDatabase({
+    path: databasePath,
+    format: "sqlite",
+  });
+  await created.database.close();
+  await symlink(databasePath, aliasPath);
+  const database = await openDatabase({ path: aliasPath });
+  try {
+    await expect(
+      createDatabase({
+        path: databasePath,
+        format: "sqlite",
+        overwrite: true,
+      }),
+    ).rejects.toMatchObject({ code: "DB_NATIVE_FILE_BUSY" });
   } finally {
     await database.close();
   }

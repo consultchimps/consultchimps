@@ -266,6 +266,9 @@ test.describe("reviewed workbook imports", () => {
 
     await prepare(page, [workbook]);
     await expect(page.getByTestId("workspace-import-duplicate")).toBeVisible();
+    await expect(page.getByTestId("workspace-import-review")).toContainText(
+      "Review 2 source rows",
+    );
     await page.getByTestId("workspace-delivery-vendor").fill("Vendor A");
     await page.getByTestId("workspace-delivery-phase").fill("Iteration 2");
     await page.evaluate(() => {
@@ -294,6 +297,27 @@ test.describe("reviewed workbook imports", () => {
     await expect(page.getByTestId("workspace-delivery").last()).toContainText(
       "Reused captured data",
     );
+  });
+
+  test("counts fresh and reused regions in the review total", async ({
+    page,
+  }) => {
+    await create(page, "sqlite");
+    const inventory = await inventoryWorkbook();
+    await prepare(page, [inventory]);
+    await resolveAndApply(page);
+
+    await prepare(page, [inventory, await mappingWorkbook()]);
+    await expect(page.getByTestId("workspace-import-region")).toHaveCount(2);
+    await expect(page.getByTestId("workspace-import-review")).toContainText(
+      "Review 3 source rows",
+    );
+    await expect(
+      page.getByTestId("workspace-import-region").first(),
+    ).toContainText("2 rows");
+    await expect(
+      page.getByTestId("workspace-import-region").last(),
+    ).toContainText("1 rows");
   });
 
   test("keeps an earlier pending review after preparing another", async ({
