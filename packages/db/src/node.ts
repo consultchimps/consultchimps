@@ -459,7 +459,17 @@ async function openPreparedImportUnlocked(options: {
   readonly readonly?: boolean | undefined;
 }): Promise<PreparedImport> {
   const input = path.resolve(options.path);
-  const engine = NodeSqliteEngine.open(input, options.readonly);
+  let engine: NodeSqliteEngine;
+  try {
+    engine = NodeSqliteEngine.open(input, options.readonly);
+  } catch (cause) {
+    throw databaseError(
+      "DB_INVALID_PREPARED_IMPORT",
+      "The import plan could not be opened. Check that the file exists, that you have access to it, and that it is a saved ConsultChimps .ccplan file. Restore a verified copy or prepare the workbook again if it is damaged.",
+      undefined,
+      cause,
+    );
+  }
   try {
     const prepared = await openPreparedImportHandle(engine);
     return prepared;

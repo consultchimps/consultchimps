@@ -2,7 +2,15 @@ import { copyFile, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { afterAll, afterEach, beforeAll, expect, test } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from "vitest";
 
 import { engineOf, inspectDatabase } from "../src/database.js";
 import { NodeDuckDbEngine } from "../src/engines/duckdb/node.js";
@@ -154,22 +162,43 @@ const storageCorruptions = [
   },
 ] as const;
 
-for (const format of ["sqlite", "duckdb"] as const) {
-  test.each(storageCorruptions)(
-    `${format}: rejects $suffix without changing the database`,
-    async (corruption) => {
-      const filePath = await damagedWorkspace(
+function registerCorruptionTest(
+  format: DatabaseFormat,
+  corruption: {
+    readonly suffix: string;
+    readonly mutate: (engine: DatabaseEngine) => Promise<void>;
+  },
+  options: { readonly openReadonly: boolean; readonly code: string },
+) {
+  describe(`${format} ${corruption.suffix} corruption`, () => {
+    let filePath: string;
+    let before: Uint8Array;
+
+    beforeEach(async () => {
+      filePath = await damagedWorkspace(
         format,
         corruption.suffix,
         corruption.mutate,
       );
-      const before = await readFile(filePath);
+      before = await readFile(filePath);
+    });
+
+    test(`${format}: rejects '${corruption.suffix}' without changing the database`, async () => {
       await expect(
-        openDatabase({ path: filePath, readonly: corruption.readonly }),
-      ).rejects.toMatchObject({ code: "DB_SCHEMA_DRIFT" });
+        openDatabase({ path: filePath, readonly: options.openReadonly }),
+      ).rejects.toMatchObject({ code: options.code });
       expect(await readFile(filePath)).toEqual(before);
-    },
-  );
+    });
+  });
+}
+
+for (const format of ["sqlite", "duckdb"] as const) {
+  for (const corruption of storageCorruptions) {
+    registerCorruptionTest(format, corruption, {
+      openReadonly: corruption.readonly,
+      code: "DB_SCHEMA_DRIFT",
+    });
+  }
 
   test(`${format}: inspection allows an extra column but planning a write refuses it`, async () => {
     const extraColumn = await damagedWorkspace(
@@ -191,21 +220,12 @@ for (const format of ["sqlite", "duckdb"] as const) {
     await opened.close();
   });
 
-  test.each(scalarCorruptions)(
-    `${format}: rejects $suffix without changing the database`,
-    async (corruption) => {
-      const filePath = await damagedWorkspace(
-        format,
-        corruption.suffix,
-        corruption.mutate,
-      );
-      const before = await readFile(filePath);
-      await expect(
-        openDatabase({ path: filePath, readonly: true }),
-      ).rejects.toMatchObject({ code: "DB_CORRUPT_DATABASE" });
-      expect(await readFile(filePath)).toEqual(before);
-    },
-  );
+  for (const corruption of scalarCorruptions) {
+    registerCorruptionTest(format, corruption, {
+      openReadonly: true,
+      code: "DB_CORRUPT_DATABASE",
+    });
+  }
 
   test(`${format}: a registry edit invalidates an approved schema plan before DDL`, async () => {
     const { filePath } = await workspace(format);

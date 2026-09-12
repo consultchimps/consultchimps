@@ -77,7 +77,10 @@ resolved plan and commits its rows. Keep `.ccplan` files as carefully as the
 workbooks because they contain source values.
 
 An already-ready plan is opened read-only during `db apply`. A plan that still
-needs automatic resolution is reopened writable so its review can be updated.
+needs automatic resolution is reopened writable so its review can be updated. If
+a plan is missing, inaccessible, or not a supported plan file, opening it
+returns `DB_INVALID_PREPARED_IMPORT`. Check the path and access, restore a
+verified copy, or prepare the workbook again.
 
 For a repeated import, preview the reused rows with
 `consultchimps db inspect review.ccplan --database inventory.duckdb`. These rows

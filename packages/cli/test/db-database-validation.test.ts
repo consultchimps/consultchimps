@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -138,5 +138,55 @@ test.each(["sqlite", "duckdb"] as const)(
     expect(JSON.parse(failure.stderr)).toEqual(expected);
     expect(failure.stdout).not.toContain(databasePath);
     expect(failure.stderr).not.toContain("SyntaxError");
+  },
+);
+
+test.each(["missing", "invalid", "duckdb"] as const)(
+  "db apply reports a stable error for a %s plan without changing the database",
+  async (kind) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "cc-cli-plan-open-"));
+    directories.push(directory);
+    const databasePath = path.join(directory, "workspace.sqlite");
+    const planPath = path.join(directory, "review.ccplan");
+    const { database } = await createDatabase({
+      path: databasePath,
+      format: "sqlite",
+    });
+    await database.close();
+    if (kind === "invalid")
+      await writeFile(planPath, "Synthetic non-database input");
+    if (kind === "duckdb") {
+      const created = await createDatabase({
+        path: planPath,
+        format: "duckdb",
+      });
+      await created.database.close();
+    }
+    const before = await readFile(databasePath);
+    const planBefore =
+      kind === "missing" ? undefined : await readFile(planPath);
+    const failure = await runFailure([
+      "--json",
+      "db",
+      "apply",
+      databasePath,
+      "--plan",
+      planPath,
+    ]);
+    for (const output of [failure.stdout, failure.stderr]) {
+      expect(JSON.parse(output)).toMatchObject({
+        ok: false,
+        error: {
+          code: "DB_INVALID_PREPARED_IMPORT",
+          message: expect.stringMatching(/import plan/u),
+        },
+      });
+      expect(output).not.toContain(planPath);
+      expect(output).not.toContain("SqliteError");
+    }
+    expect(await readFile(databasePath)).toEqual(before);
+    if (planBefore !== undefined)
+      expect(await readFile(planPath)).toEqual(planBefore);
+    else await expect(stat(planPath)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );

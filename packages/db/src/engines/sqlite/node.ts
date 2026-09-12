@@ -46,9 +46,14 @@ export class NodeSqliteEngine implements DatabaseEngine {
 
   private constructor(database: BetterSqlite3.Database, readonly: boolean) {
     this.#database = database;
-    if (!readonly) database.pragma("journal_mode = WAL");
-    database.pragma("foreign_keys = ON");
-    database.defaultSafeIntegers(true);
+    try {
+      if (!readonly) database.pragma("journal_mode = WAL");
+      database.pragma("foreign_keys = ON");
+      database.defaultSafeIntegers(true);
+    } catch (cause) {
+      database.close();
+      throw cause;
+    }
   }
 
   static create(path: string): NodeSqliteEngine {

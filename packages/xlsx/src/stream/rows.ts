@@ -84,6 +84,7 @@ function scalarCell(
 ): PendingScalarCell {
   const raw = current.type === "inlineStr" ? current.inline : current.value;
   if (current.type === "s") {
+    if (!current.hasValue) return { kind: "blank" };
     if (!/^\d+$/u.test(raw)) {
       throw new Error(
         `Cell ${current.reference} has an invalid shared-string index.`,
