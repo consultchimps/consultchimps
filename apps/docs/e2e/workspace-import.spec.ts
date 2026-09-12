@@ -421,6 +421,92 @@ test.describe("reviewed workbook imports", () => {
     await expect(page.getByTestId("workspace-table")).toContainText("2 rows");
   });
 
+  test("keeps source columns after a renamed destination review is resumed", async ({
+    page,
+  }) => {
+    await create(page, "sqlite");
+    await prepare(page, [
+      await singleColumnWorkbook(
+        "renamed-column.xlsx",
+        "Source Data",
+        "Original",
+        ["Preserved value"],
+      ),
+    ]);
+    await page.getByLabel("Original destination").fill("Renamed");
+    await page.getByTestId("workspace-import-resolve").click();
+    await expect(page.getByTestId("workspace-import-review")).toContainText(
+      "ready",
+    );
+
+    await page.reload();
+    await page.getByTestId("workspace-reopen").first().click();
+    await page.getByTestId("workspace-import-resume").click();
+    await expect(page.getByLabel("Original destination")).toHaveValue(
+      "Renamed",
+    );
+    await page.getByTestId("workspace-import-preview").click();
+    await expect(
+      page.getByTestId("workspace-import-preview-page"),
+    ).toContainText("Original");
+    await expect(
+      page.getByTestId("workspace-import-preview-page"),
+    ).toContainText("Preserved value");
+    await resolveAndApply(page);
+    await expect(page.getByTestId("workspace-table")).toContainText("1 row");
+    await expect(page.getByTestId("workspace-table")).toContainText(
+      "Renamed (text)",
+    );
+  });
+
+  test("preserves exact numeric preview text after resume", async ({
+    page,
+  }) => {
+    await create(page, "sqlite");
+    await prepare(page, [
+      await createWorkbookUpload("precise-numbers.xlsx", [
+        {
+          name: "Precise Numbers",
+          rows: [
+            ["Integer", "Decimal", "Formula"],
+            [
+              { numericText: "9007199254740993" },
+              { numericText: "1234567890.123456789" },
+              {
+                formula: "A2/10",
+                cachedNumber: "900719925474099.3",
+              },
+            ],
+          ],
+        },
+      ]),
+    ]);
+    await page.getByTestId("workspace-import-preview").click();
+    await expect(
+      page.getByTestId("workspace-import-preview-page"),
+    ).toContainText("9007199254740993");
+    await expect(
+      page.getByTestId("workspace-import-preview-page"),
+    ).toContainText("1234567890.123456789");
+    await expect(
+      page.getByTestId("workspace-import-preview-page"),
+    ).toContainText("900719925474099.3");
+
+    await page.reload();
+    await page.getByTestId("workspace-reopen").first().click();
+    await page.getByTestId("workspace-import-resume").click();
+    await page.getByTestId("workspace-import-preview").click();
+    await expect(
+      page.getByTestId("workspace-import-preview-page"),
+    ).toContainText("9007199254740993");
+    await expect(
+      page.getByTestId("workspace-import-preview-page"),
+    ).toContainText("1234567890.123456789");
+    await expect(
+      page.getByTestId("workspace-import-preview-page"),
+    ).toContainText("900719925474099.3");
+  });
+
   test("appends a changed submission to an existing table", async ({
     page,
   }) => {

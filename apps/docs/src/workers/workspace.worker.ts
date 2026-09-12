@@ -80,6 +80,7 @@ interface RegionMetadata {
   readonly fileName: string;
   readonly label: string;
   readonly schema: TableSchema;
+  readonly destinationSchema?: TableSchema | undefined;
   readonly rowCount: bigint;
   readonly captureId: string;
 }
@@ -323,10 +324,14 @@ function columnsFor(
       tableName !== undefined &&
       identifierKey(table.name) === identifierKey(tableName),
   );
+  const proposedTable =
+    route?.destination.kind === "new-table"
+      ? route.destination.schema
+      : undefined;
   return region.schema.columns.map((column) => {
     const mapped = route?.columns.find((entry) => entry.source === column.name);
     const destination = mapped?.target ?? column.name;
-    const target = destinationTable?.columns.find(
+    const target = (destinationTable?.columns ?? proposedTable?.columns)?.find(
       (candidate) =>
         identifierKey(candidate.name) === identifierKey(destination),
     );
@@ -469,10 +474,7 @@ function cellValue(
   if (cell === undefined || cell.kind === "blank") return null;
   if (cell.kind === "boolean") return cell.value;
   if (cell.kind === "string") return cell.value;
-  if (cell.kind === "number") {
-    const numeric = Number(cell.raw);
-    return Number.isFinite(numeric) ? numeric : cell.raw;
-  }
+  if (cell.kind === "number") return cell.raw;
   if (cell.kind === "date") return cell.iso;
   if (cell.kind === "error") return cell.error;
   return cell.cached.kind === "missing"
@@ -498,6 +500,13 @@ function decisionFor(
     const inferred = region.schema.columns.find(
       (candidate) => candidate.name === column.source,
     );
+    const destination = region.destinationSchema?.columns.find(
+      (candidate) =>
+        identifierKey(candidate.name) === identifierKey(column.target),
+    );
+    if (destination?.type === column.type) {
+      return { ...destination, name: column.target };
+    }
     if (column.type === "decimal") {
       return {
         name: column.target,
@@ -525,7 +534,7 @@ function decisionFor(
         : {
             kind: "new-table",
             schema: {
-              ...region.schema,
+              ...(region.destinationSchema ?? region.schema),
               name: decision.route.table,
               columns: schemaColumns,
             },
@@ -686,35 +695,27 @@ function heldFromInspection(
     ),
   };
   const regions = inspection.routes.map((route): RegionMetadata => {
-    const inferred = inspection.conflicts.find(
-      (
-        conflict,
-      ): conflict is Extract<
-        ImportConflict,
-        { readonly kind: "inferred-schema" }
-      > =>
-        conflict.kind === "inferred-schema" &&
-        conflict.source === route.source &&
-        conflict.selection === route.selection,
-    );
     const inferredName = suggestedTable(route.label);
-    const schema =
+    const destinationSchema =
       route.destination?.kind === "new-table"
         ? route.destination.schema
-        : (inferred?.schema ?? {
-            name:
-              route.destination?.kind === "new-table-infer"
-                ? route.destination.name
-                : inferredName,
-            recordId:
-              route.destination?.kind === "new-table-infer"
-                ? route.destination.recordId
-                : {
-                    prefix: inferredName.slice(0, 8).toUpperCase(),
-                    padding: 6,
-                  },
-            columns: route.inferredColumns,
-          });
+        : undefined;
+    const schema: TableSchema = {
+      name:
+        destinationSchema?.name ??
+        (route.destination?.kind === "new-table-infer"
+          ? route.destination.name
+          : inferredName),
+      recordId:
+        destinationSchema?.recordId ??
+        (route.destination?.kind === "new-table-infer"
+          ? route.destination.recordId
+          : {
+              prefix: inferredName.slice(0, 8).toUpperCase(),
+              padding: 6,
+            }),
+      columns: route.inferredColumns,
+    };
     return {
       id: regionId(route.source, route.selection),
       source: route.source,
@@ -722,6 +723,7 @@ function heldFromInspection(
       fileName: route.source.split(" | ", 1)[0] ?? route.source,
       label: route.label,
       schema,
+      ...(destinationSchema === undefined ? {} : { destinationSchema }),
       rowCount: route.rowCount,
       captureId: route.captureId,
     };
