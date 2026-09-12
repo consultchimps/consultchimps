@@ -4,7 +4,6 @@ import {
   type DuckDBConnection,
   type DuckDBValue,
 } from "@duckdb/node-api";
-import { copyFile } from "node:fs/promises";
 
 import { throwIfAborted } from "@consultchimps/core";
 
@@ -17,6 +16,40 @@ import type {
 import { quoteIdentifier } from "../../schema.js";
 
 const APPENDER_FLUSH_ROWS = 2_048;
+
+function quoteStringLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+async function copyDatabase(
+  connection: DuckDBConnection,
+  source: string,
+  destination: string,
+): Promise<void> {
+  const destinationName = `cc_export_${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
+  const quotedDestinationName = quoteIdentifier(destinationName);
+  let attached = false;
+  try {
+    await connection.run(
+      `ATTACH ${quoteStringLiteral(destination)} AS ${quotedDestinationName}`,
+    );
+    attached = true;
+    await connection.run(
+      `COPY FROM DATABASE ${quoteIdentifier(source)} TO ${quotedDestinationName}`,
+    );
+    await connection.run(`DETACH ${quotedDestinationName}`);
+    attached = false;
+  } catch (error) {
+    if (attached) {
+      try {
+        await connection.run(`DETACH ${quotedDestinationName}`);
+      } catch {
+        // Preserve the copy failure while releasing the attached destination when possible.
+      }
+    }
+    throw error;
+  }
+}
 
 function normalizeValue(value: unknown): EngineValue {
   if (
@@ -52,6 +85,7 @@ export class NodeDuckDbEngine implements DatabaseEngine {
   readonly #instance: DuckDBInstance;
   readonly #connection: DuckDBConnection;
   readonly #path: string;
+  readonly #readonly: boolean;
   #tail: Promise<void> = Promise.resolve();
   #closed = false;
 
@@ -59,10 +93,12 @@ export class NodeDuckDbEngine implements DatabaseEngine {
     instance: DuckDBInstance,
     connection: DuckDBConnection,
     path: string,
+    readonly: boolean,
   ) {
     this.#instance = instance;
     this.#connection = connection;
     this.#path = path;
+    this.#readonly = readonly;
   }
 
   static async create(
@@ -72,7 +108,12 @@ export class NodeDuckDbEngine implements DatabaseEngine {
     const instance = await DuckDBInstance.create(path, {
       access_mode: readonly ? "READ_ONLY" : "READ_WRITE",
     });
-    return new NodeDuckDbEngine(instance, await instance.connect(), path);
+    return new NodeDuckDbEngine(
+      instance,
+      await instance.connect(),
+      path,
+      readonly,
+    );
   }
 
   async #exclusive<T>(work: () => Promise<T>): Promise<T> {
@@ -251,8 +292,32 @@ export class NodeDuckDbEngine implements DatabaseEngine {
 
   async copyTo(destination: string): Promise<void> {
     await this.#exclusive(async () => {
-      await this.#execute("CHECKPOINT");
-      await copyFile(this.#path, destination);
+      if (!this.#readonly) {
+        await this.#execute("CHECKPOINT");
+        const rows = await this.#query(
+          "SELECT current_database() AS database_name",
+        );
+        const source = rows[0]?.["database_name"];
+        if (typeof source !== "string") {
+          throw new Error("DuckDB returned an invalid database name");
+        }
+        await copyDatabase(this.#connection, source, destination);
+        return;
+      }
+
+      const instance = await DuckDBInstance.create(":memory:");
+      const connection = await instance.connect();
+      const sourceName = `cc_source_${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
+      try {
+        await connection.run(
+          `ATTACH ${quoteStringLiteral(this.#path)} AS ${quoteIdentifier(sourceName)} (READ_ONLY)`,
+        );
+        await copyDatabase(connection, sourceName, destination);
+        await connection.run(`DETACH ${quoteIdentifier(sourceName)}`);
+      } finally {
+        connection.closeSync();
+        instance.closeSync();
+      }
     });
   }
 

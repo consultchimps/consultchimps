@@ -39,6 +39,14 @@ function generatedRows(count: number): ReadonlyArray<readonly string[]> {
   ]);
 }
 
+function repeatedRows(count: number): ReadonlyArray<readonly string[]> {
+  return Array.from({ length: count }, (_, index) => [
+    `Dataset ${String(index % 8)}`,
+    `Attribute ${String(index % 8)}`,
+    index % 2 === 0 ? "true" : "false",
+  ]);
+}
+
 async function create(page: Page, format: "duckdb" | "sqlite"): Promise<void> {
   await page.goto("/workspace");
   await page.getByTestId("workspace-new-format").selectOption(format);
@@ -282,7 +290,7 @@ test.describe("reviewed workbook imports", () => {
   test("cancels a SQLite apply and rolls back its table", async ({ page }) => {
     await create(page, "sqlite");
     await prepare(page, [
-      await inventoryWorkbook("large-apply.xlsx", generatedRows(2_500)),
+      await inventoryWorkbook("large-apply.xlsx", repeatedRows(2_500)),
     ]);
     await page.getByTestId("workspace-import-resolve").click();
     await expect(page.getByTestId("workspace-import-review")).toContainText(

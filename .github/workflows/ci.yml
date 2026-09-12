@@ -114,8 +114,9 @@ jobs:
 
       # Built without NEXT_PUBLIC_BASE_PATH so the export serves from "/",
       # which is what the suite's static server and the tests assume.
-      - name: Build the documentation site
-        run: pnpm --filter @consultchimps/docs... build
+      - name: Build the documentation site and CLI for file interchange tests
+        run:
+          pnpm --filter @consultchimps/docs... --filter consultchimps... build
 
       - name: Run the browser smoke tests
         run: pnpm --filter @consultchimps/docs e2e

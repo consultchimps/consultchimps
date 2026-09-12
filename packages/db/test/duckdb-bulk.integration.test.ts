@@ -138,3 +138,49 @@ test("DuckDB appender errors and cancellation roll back their transaction", asyn
     await engine.close();
   }
 });
+
+test("DuckDB copies a consistent database while its source handle stays open", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "cc-duckdb-copy-"));
+  directories.push(directory);
+  const sourcePath = path.join(directory, "source.duckdb");
+  const firstCopyPath = path.join(directory, "first ' copy.duckdb");
+  const secondCopyPath = path.join(directory, "readonly-copy.duckdb");
+  const source = await NodeDuckDbEngine.create(sourcePath);
+  await source.execute("CREATE TABLE values_table (value INTEGER PRIMARY KEY)");
+  await source.execute("CREATE MACRO doubled(value) AS value * 2");
+  await source.execute("INSERT INTO values_table VALUES (1)");
+  await source.copyTo(firstCopyPath);
+  await source.execute("INSERT INTO values_table VALUES (2)");
+
+  const firstCopy = await NodeDuckDbEngine.create(firstCopyPath, true);
+  try {
+    expect(
+      await firstCopy.query(
+        "SELECT value, doubled(value) AS doubled FROM values_table ORDER BY value",
+      ),
+    ).toEqual([{ value: 1, doubled: 2 }]);
+  } finally {
+    await firstCopy.close();
+  }
+  await source.close();
+
+  const readonlySource = await NodeDuckDbEngine.create(sourcePath, true);
+  try {
+    await readonlySource.copyTo(secondCopyPath);
+  } finally {
+    await readonlySource.close();
+  }
+  const secondCopy = await NodeDuckDbEngine.create(secondCopyPath, true);
+  try {
+    expect(
+      await secondCopy.query(
+        "SELECT value, doubled(value) AS doubled FROM values_table ORDER BY value",
+      ),
+    ).toEqual([
+      { value: 1, doubled: 2 },
+      { value: 2, doubled: 4 },
+    ]);
+  } finally {
+    await secondCopy.close();
+  }
+});
