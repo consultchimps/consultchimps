@@ -632,11 +632,13 @@ export function registerDbCommands(
           force?: boolean;
         },
       ) => {
-        await planFilePublication({
-          output: options.output,
-          inputs: [databasePath],
-          overwrite: options.force,
-        });
+        if (options.dryRun !== true) {
+          await planFilePublication({
+            output: options.output,
+            inputs: [databasePath],
+            overwrite: options.force,
+          });
+        }
         await withControls(output, async (controls) => {
           const database = await openDatabase({
             path: databasePath,

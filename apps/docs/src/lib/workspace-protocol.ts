@@ -145,6 +145,7 @@ export interface WorkspaceImportResult {
   readonly skippedRows: number;
   readonly unresolvedRows: number;
   readonly schemaChanges: number;
+  readonly deliveriesRecorded: number;
   readonly captureIds: readonly string[];
   readonly summary: WorkspaceSummary;
 }
@@ -155,7 +156,11 @@ export interface WorkspaceDeliverySummary {
   readonly vendor: string;
   readonly entity: string;
   readonly phase: string;
-  readonly coverage: WorkspaceDeliveryContext["coverage"];
+  readonly scope:
+    | { readonly kind: "full" }
+    | { readonly kind: "partial"; readonly description: string }
+    | { readonly kind: "changes"; readonly baseline: string }
+    | { readonly kind: "unknown" };
   readonly effectiveDate: string | null;
   readonly receivedDate: string | null;
   readonly captureIds: readonly string[];
@@ -229,7 +234,7 @@ export type WorkspaceCommand =
     })
   | (WorkspaceCommandBase & {
       readonly type: "recordDelivery";
-      readonly captureIds: readonly string[];
+      readonly planId: string;
       readonly delivery: WorkspaceDeliveryContext;
     })
   | (WorkspaceCommandBase & {
@@ -284,11 +289,6 @@ export type WorkspaceEvent =
   | (WorkspaceEventBase & {
       readonly type: "importApplied";
       readonly result: WorkspaceImportResult;
-    })
-  | (WorkspaceEventBase & {
-      readonly type: "deliveryRecorded";
-      readonly delivery: WorkspaceDeliverySummary;
-      readonly summary: WorkspaceSummary;
     })
   | (WorkspaceEventBase & {
       readonly type: "deliveries";

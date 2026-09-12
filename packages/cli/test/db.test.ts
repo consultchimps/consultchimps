@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { afterEach, expect, test } from "vitest";
+import { DuckDBInstance } from "@duckdb/node-api";
 import * as XLSX from "xlsx";
 import Sqlite from "better-sqlite3";
 import JSZip from "jszip";
@@ -205,6 +206,30 @@ async function workbookWithInvalidNumericCell(): Promise<Uint8Array> {
   return archive.generateAsync({ type: "uint8array", compression: "DEFLATE" });
 }
 
+async function addUnsupportedObject(
+  file: string,
+  format: "sqlite" | "duckdb",
+): Promise<void> {
+  if (format === "sqlite") {
+    const database = new Sqlite(file);
+    try {
+      database.exec("CREATE VIEW unsupported_view AS SELECT 1 AS value");
+    } finally {
+      database.close();
+    }
+    return;
+  }
+
+  const instance = await DuckDBInstance.create(file);
+  const connection = await instance.connect();
+  try {
+    await connection.run("CREATE MACRO unsupported_macro(value) AS value + 1");
+  } finally {
+    connection.closeSync();
+    instance.closeSync();
+  }
+}
+
 test("inspects an ordinary SQLite database without adopting or changing it", async () => {
   const root = await directory();
   const file = path.join(root, "external.sqlite");
@@ -256,7 +281,123 @@ test("inspects a read-only saved plan without changing its journal mode or files
   }
 });
 
-for (const format of ["sqlite", "duckdb"]) {
+for (const format of ["sqlite", "duckdb"] as const) {
+  test(`${format}: dry-run reviews conversion without reserving or changing output files`, async () => {
+    const root = await directory();
+    const source = path.join(root, `source.${format}`);
+    const targetFormat = format === "sqlite" ? "duckdb" : "sqlite";
+    const output = path.join(root, `existing.${targetFormat}`);
+    const sentinel = Buffer.from("existing destination");
+    await run(["create", "-o", source, "--format", format]);
+    if (format === "sqlite") {
+      const database = new Sqlite(source);
+      try {
+        database.pragma("journal_mode = DELETE");
+      } finally {
+        database.close();
+      }
+    }
+
+    const sourceBeforeAliasReview = await readFile(source);
+    const filesBeforeAliasReview = (await readdir(root)).sort();
+    const aliasPlan = await run([
+      "export",
+      source,
+      "-o",
+      source,
+      "--format",
+      format,
+      "--dry-run",
+    ]);
+    expect(aliasPlan).toMatchObject({
+      sourceFormat: format,
+      targetFormat: format,
+      state: "ready",
+    });
+    expect(await readFile(source)).toEqual(sourceBeforeAliasReview);
+    expect((await readdir(root)).sort()).toEqual(filesBeforeAliasReview);
+
+    await writeFile(output, sentinel);
+    const sourceBeforeConversionReview = await readFile(source);
+    const filesBeforeConversionReview = (await readdir(root)).sort();
+    const conversionPlan = await run([
+      "export",
+      source,
+      "-o",
+      output,
+      "--format",
+      targetFormat,
+      "--dry-run",
+    ]);
+    expect(conversionPlan).toMatchObject({
+      sourceFormat: format,
+      targetFormat,
+      state: "ready",
+      issues: [],
+    });
+    expect(await readFile(source)).toEqual(sourceBeforeConversionReview);
+    expect(await readFile(output)).toEqual(sentinel);
+    expect((await readdir(root)).sort()).toEqual(filesBeforeConversionReview);
+
+    const publicationFailure = await runFailure([
+      "--json",
+      "db",
+      "export",
+      source,
+      "-o",
+      output,
+      "--format",
+      targetFormat,
+    ]);
+    expect(publicationFailure.stdout).toContain("OUTPUT_EXISTS");
+    expect(await readFile(source)).toEqual(sourceBeforeConversionReview);
+    expect(await readFile(output)).toEqual(sentinel);
+    expect((await readdir(root)).sort()).toEqual(filesBeforeConversionReview);
+
+    const conflict = await runFailure([
+      "--json",
+      "db",
+      "export",
+      source,
+      "-o",
+      output,
+      "--format",
+      format,
+      "--dry-run",
+    ]);
+    expect(conflict.stdout).toContain("DB_FORMAT_CONFLICT");
+    expect(await readFile(source)).toEqual(sourceBeforeConversionReview);
+    expect(await readFile(output)).toEqual(sentinel);
+    expect((await readdir(root)).sort()).toEqual(filesBeforeConversionReview);
+
+    await addUnsupportedObject(source, format);
+    const sourceBeforeUnsupportedReview = await readFile(source);
+    const filesBeforeUnsupportedReview = (await readdir(root)).sort();
+    const unsupportedPlan = await run([
+      "export",
+      source,
+      "-o",
+      output,
+      "--format",
+      targetFormat,
+      "--dry-run",
+    ]);
+    expect(unsupportedPlan).toMatchObject({
+      sourceFormat: format,
+      targetFormat,
+      state: "unsupported",
+      issues: [
+        expect.objectContaining({
+          kind: "unsupported-object",
+          name: format === "sqlite" ? "unsupported_view" : "unsupported_macro",
+        }),
+      ],
+    });
+    expect(await readFile(source)).toEqual(sourceBeforeUnsupportedReview);
+    expect(await readFile(output)).toEqual(sentinel);
+    expect((await readdir(root)).sort()).toEqual(filesBeforeUnsupportedReview);
+  });
+
   test(`${format}: previews reused captures from the target database without Excel`, async () => {
     const root = await directory();
     const database = path.join(root, `inventory.${format}`);

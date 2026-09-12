@@ -271,6 +271,7 @@ test.describe("reviewed workbook imports", () => {
     );
     await page.getByTestId("workspace-delivery-vendor").fill("Vendor A");
     await page.getByTestId("workspace-delivery-phase").fill("Iteration 2");
+    const pendingRequestId = await page.getByLabel("Request ID").inputValue();
     await page.evaluate(() => {
       window.localStorage.setItem("drop-import-applied", "yes");
     });
@@ -281,10 +282,12 @@ test.describe("reviewed workbook imports", () => {
 
     await page.reload();
     await page.getByTestId("workspace-reopen").first().click();
+    await expect(page.getByTestId("workspace-delivery-count")).toHaveText("2");
     await expect(page.getByTestId("workspace-import-resume")).toContainText(
       "Finish recovery",
     );
     await page.getByTestId("workspace-import-resume").click();
+    await expect(page.getByLabel("Request ID")).toHaveValue(pendingRequestId);
     await expect(page.getByTestId("workspace-delivery-phase")).toHaveValue(
       "Iteration 2",
     );
@@ -292,11 +295,85 @@ test.describe("reviewed workbook imports", () => {
     await expect(page.getByTestId("workspace-import-result")).toContainText(
       "reused the captured rows",
     );
+    await expect(page.getByTestId("workspace-delivery-count")).toHaveText("2");
     await page.getByTestId("workspace-deliveries-refresh").click();
     await expect(page.getByTestId("workspace-delivery")).toHaveCount(2);
     await expect(page.getByTestId("workspace-delivery").last()).toContainText(
       "Reused captured data",
     );
+
+    await expect(page.getByLabel("Request ID")).toHaveValue(pendingRequestId);
+    await page.getByTestId("workspace-delivery-record-reuse").click();
+    await expect(page.getByTestId("workspace-delivery-count")).toHaveText("3");
+    await expect(page.getByTestId("workspace-table")).toContainText("2 rows");
+    await page.getByTestId("workspace-deliveries-refresh").click();
+    await expect(page.getByTestId("workspace-delivery")).toHaveCount(3);
+
+    const secondRequestId = await page.getByLabel("Request ID").inputValue();
+    expect(secondRequestId).not.toBe(pendingRequestId);
+    await page.evaluate(() => {
+      window.localStorage.setItem("drop-import-applied", "yes");
+    });
+    await page.getByTestId("workspace-delivery-record-reuse").click();
+    await expect(page.getByTestId("workspace-error")).toContainText(
+      "worker is no longer available",
+    );
+    const recoveredDeliveryRequestId = await page
+      .getByLabel("Request ID")
+      .inputValue();
+    expect(recoveredDeliveryRequestId).not.toBe(secondRequestId);
+
+    await page.reload();
+    await page.getByTestId("workspace-reopen").first().click();
+    await expect(page.getByTestId("workspace-delivery-count")).toHaveText("4");
+    await expect(page.getByTestId("workspace-import-resume")).toContainText(
+      "Finish recovery",
+    );
+    await page.getByTestId("workspace-import-resume").click();
+    await expect(page.getByLabel("Request ID")).toHaveValue(
+      recoveredDeliveryRequestId,
+    );
+    await page.getByTestId("workspace-delivery-record-reuse").click();
+    await expect(page.getByTestId("workspace-import-result")).toContainText(
+      "already recorded",
+    );
+    await expect(page.getByTestId("workspace-delivery-count")).toHaveText("4");
+    await expect(page.getByTestId("workspace-table")).toContainText("2 rows");
+    await page.getByTestId("workspace-deliveries-refresh").click();
+    await expect(page.getByTestId("workspace-delivery")).toHaveCount(4);
+    await expect(page.getByLabel("Request ID")).toHaveValue(
+      recoveredDeliveryRequestId,
+    );
+
+    await page.getByLabel("Request ID").fill(pendingRequestId);
+    await page.getByTestId("workspace-delivery-vendor").fill("Vendor B");
+    await page.getByTestId("workspace-delivery-record-reuse").click();
+    await expect(page.getByTestId("workspace-error")).toContainText(
+      "request ID",
+    );
+    await expect(page.getByTestId("workspace-delivery-count")).toHaveText("4");
+
+    await page.getByLabel("Request ID").fill("corrected-delivery-request");
+    await page.getByTestId("workspace-delivery-record-reuse").click();
+    await expect(page.getByTestId("workspace-import-result")).toContainText(
+      "Recorded a separate delivery event",
+    );
+    await expect(page.getByTestId("workspace-delivery-count")).toHaveText("5");
+    await expect(page.getByTestId("workspace-table")).toContainText("2 rows");
+
+    await page.getByTestId("workspace-delivery-vendor").fill("Vendor A");
+    await page.getByLabel("Request ID").fill(pendingRequestId);
+    await page.getByTestId("workspace-delivery-record-reuse").click();
+    await expect(page.getByTestId("workspace-import-result")).toContainText(
+      "already recorded",
+    );
+    await expect(page.getByTestId("workspace-import-result")).toContainText(
+      "reused the captured rows",
+    );
+    await expect(page.getByTestId("workspace-delivery-count")).toHaveText("5");
+    await expect(page.getByTestId("workspace-table")).toContainText("2 rows");
+    await page.getByTestId("workspace-deliveries-refresh").click();
+    await expect(page.getByTestId("workspace-delivery")).toHaveCount(5);
   });
 
   test("counts fresh and reused regions in the review total", async ({

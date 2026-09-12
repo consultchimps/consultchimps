@@ -5,7 +5,6 @@ import type {
   WorkspaceDatabaseFormat,
   WorkspaceDeliveryContext,
   WorkspaceDeliveryPage,
-  WorkspaceDeliverySummary,
   WorkspaceEvent,
   WorkspaceImportFile,
   WorkspaceImportListing,
@@ -271,19 +270,16 @@ export class WorkspaceClient {
   }
 
   async recordDelivery(
-    captureIds: readonly string[],
+    planId: string,
     delivery: WorkspaceDeliveryContext,
-  ): Promise<{
-    readonly delivery: WorkspaceDeliverySummary;
-    readonly summary: WorkspaceSummary;
-  }> {
-    const event = await this.#request({
-      type: "recordDelivery",
-      captureIds,
-      delivery,
-    });
-    if (event.type !== "deliveryRecorded") throw unexpected("delivery");
-    return { delivery: event.delivery, summary: event.summary };
+    options?: WorkspaceRunOptions,
+  ): Promise<WorkspaceImportResult> {
+    const event = await this.#request(
+      { type: "recordDelivery", planId, delivery },
+      options,
+    );
+    if (event.type !== "importApplied") throw unexpected("delivery");
+    return event.result;
   }
 
   async listDeliveries(cursor: string | null): Promise<WorkspaceDeliveryPage> {

@@ -446,12 +446,6 @@ function deliveryContext(input: WorkspaceDeliveryContext): DeliveryContext {
 
 function deliveryDto(delivery: DeliveryRecord): WorkspaceDeliverySummary {
   const attributes = delivery.context.attributes ?? {};
-  const coverage =
-    delivery.context.scope.kind === "full"
-      ? "full"
-      : delivery.context.scope.kind === "partial"
-        ? "partial"
-        : "unknown";
   return {
     id: delivery.id,
     requestId: delivery.requestId,
@@ -460,7 +454,7 @@ function deliveryDto(delivery: DeliveryRecord): WorkspaceDeliverySummary {
     entity:
       typeof attributes["entity"] === "string" ? attributes["entity"] : "",
     phase: typeof attributes["phase"] === "string" ? attributes["phase"] : "",
-    coverage,
+    scope: delivery.context.scope,
     effectiveDate: delivery.context.effectiveDate ?? null,
     receivedDate: delivery.context.receivedDate ?? null,
     captureIds: delivery.captureIds,
@@ -1094,7 +1088,46 @@ async function applyPreparedImport(
       skippedRows: result.metrics.rowsReused,
       unresolvedRows: 0,
       schemaChanges: result.metrics.tablesCreated,
+      deliveriesRecorded: result.metrics.deliveriesRecorded,
       captureIds: result.captureIds,
+      summary: await summaryOf(current()),
+    },
+  });
+}
+
+async function recordPreparedDelivery(
+  id: number,
+  command: Extract<WorkspaceCommand, { readonly type: "recordDelivery" }>,
+  signal: AbortSignal,
+): Promise<void> {
+  const held = imports.get(command.planId);
+  if (held === undefined || held.ref.state !== "ready") {
+    throw new Error("Resolve the import review before recording its delivery");
+  }
+  signal.throwIfAborted();
+  const record = await recordDelivery({
+    database: current().database,
+    captureIds: [...new Set(held.regions.map((region) => region.captureId))],
+    context: deliveryContext(command.delivery),
+    requestId: command.delivery.requestId,
+  });
+  await current().database.checkpoint();
+  scope.postMessage({
+    type: "importApplied",
+    id,
+    result: {
+      importId: record.delivery.id,
+      receiptId: record.delivery.id,
+      outcome: "duplicate",
+      appendedRows: 0,
+      skippedRows: boundedNumber(
+        reviewRowCount(held.regions),
+        "review row count",
+      ),
+      unresolvedRows: 0,
+      schemaChanges: 0,
+      deliveriesRecorded: record.metrics.deliveriesRecorded,
+      captureIds: record.delivery.captureIds,
       summary: await summaryOf(current()),
     },
   });
@@ -1243,22 +1276,9 @@ async function handle(id: number, command: WorkspaceCommand): Promise<void> {
       case "applyImport":
         await applyPreparedImport(id, command, controller.signal);
         return;
-      case "recordDelivery": {
-        const record = await recordDelivery({
-          database: current().database,
-          captureIds: command.captureIds,
-          context: deliveryContext(command.delivery),
-          requestId: command.delivery.requestId,
-        });
-        await current().database.checkpoint();
-        scope.postMessage({
-          type: "deliveryRecorded",
-          id,
-          delivery: deliveryDto(record.delivery),
-          summary: await summaryOf(current()),
-        });
+      case "recordDelivery":
+        await recordPreparedDelivery(id, command, controller.signal);
         return;
-      }
       case "listDeliveries":
         await deliveryHistory(id, command);
         return;

@@ -13,6 +13,7 @@ import { isConsultChimpsError } from "@consultchimps/core";
 import type {
   WorkspaceDatabaseFormat,
   WorkspaceDeliveryPage,
+  WorkspaceDeliverySummary,
   WorkspaceProgress,
   WorkspaceSchemaDocument,
   WorkspaceSchemaPlan,
@@ -216,6 +217,19 @@ function Summary({ summary }: { readonly summary: WorkspaceSummary }) {
       )}
     </section>
   );
+}
+
+function deliveryScopeText(scope: WorkspaceDeliverySummary["scope"]): string {
+  switch (scope.kind) {
+    case "full":
+      return "Full coverage";
+    case "partial":
+      return `Partial coverage: ${scope.description}`;
+    case "changes":
+      return `Changes since ${scope.baseline}`;
+    case "unknown":
+      return "Unknown coverage";
+  }
 }
 
 export function WorkspaceTool() {
@@ -728,7 +742,7 @@ export function WorkspaceTool() {
                     <p className="mt-1 text-sm">
                       {delivery.entity || "Unspecified entity"} ·{" "}
                       {delivery.phase || "Unspecified phase"} ·{" "}
-                      {delivery.coverage} coverage
+                      {deliveryScopeText(delivery.scope)}
                     </p>
                     {delivery.reusedCapture ? (
                       <p className="mt-1 text-xs text-fd-muted-foreground">

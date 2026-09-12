@@ -240,6 +240,11 @@ delivery; they are not relabeled as counts calculated from imported rows. Scope
 can be `full`, `partial` with a description, `changes` with a baseline, or
 `unknown`. A partial submission does not remove observations absent from it.
 
+When you leave a completed event's request ID unchanged, the browser's **Record
+another delivery** action generates a fresh ID. An interrupted request keeps its
+saved ID for recovery. Replaying an existing ID reports that the event was
+already recorded.
+
 In the browser's delivery history, choose **Refresh** to load the first page and
 **Next deliveries** to view the next page. Each page contains up to 25 events.
 Refreshing returns to the first page; opening another database clears the
@@ -252,6 +257,15 @@ consultchimps db export inventory.duckdb -o shared.duckdb
 consultchimps db export inventory.duckdb -o compatible.sqlite --dry-run
 consultchimps db export inventory.duckdb -o compatible.sqlite
 ```
+
+An export dry run reports the conversion plan without writing the destination.
+It accepts an existing output path, including the source path, without
+`--force`. An actual export still validates collisions and refuses to overwrite
+its source.
+
+For WAL-mode SQLite sources, read-only inspection and dry runs can create `-wal`
+and `-shm` coordination files beside the source database. They do not change its
+tables.
 
 An export produces a separate file. A cross-format conversion reports storage
 representation changes and refuses objects without a supported mapping. Keep the

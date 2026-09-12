@@ -17,6 +17,7 @@ import type {
   WorkspaceSummary,
 } from "@/lib/workspace-protocol";
 import type { WorkspaceClient } from "@/lib/workspace-worker";
+import { isConsultChimpsError } from "@consultchimps/core";
 import {
   FileSpreadsheet,
   LoaderCircle,
@@ -65,6 +66,7 @@ interface PendingImportRequest {
   readonly databaseId: string;
   readonly planId: string;
   readonly delivery: WorkspaceDeliveryContext;
+  readonly operation?: "apply" | "delivery" | undefined;
 }
 
 function isPendingImportRequest(value: unknown): value is PendingImportRequest {
@@ -84,6 +86,9 @@ function isPendingImportRequest(value: unknown): value is PendingImportRequest {
   return (
     typeof request["databaseId"] === "string" &&
     typeof request["planId"] === "string" &&
+    (request["operation"] === undefined ||
+      request["operation"] === "apply" ||
+      request["operation"] === "delivery") &&
     typeof context["requestId"] === "string" &&
     typeof context["vendor"] === "string" &&
     typeof context["entity"] === "string" &&
@@ -141,6 +146,28 @@ function clearPendingImport(databaseId: string, planId: string): void {
   window.localStorage.setItem(PENDING_IMPORTS_KEY, JSON.stringify(next));
 }
 
+async function executePendingImport<T>(
+  request: PendingImportRequest,
+  execute: () => Promise<T>,
+): Promise<T> {
+  writePendingImport(request);
+  try {
+    return await execute();
+  } catch (error) {
+    if (
+      isConsultChimpsError(error) &&
+      [
+        "DB_REQUEST_ID_CONFLICT",
+        "DB_INVALID_DELIVERY_CONTEXT",
+        "DB_DELIVERY_REQUEST_ID_REQUIRED",
+      ].includes(error.code)
+    ) {
+      clearPendingImport(request.databaseId, request.planId);
+    }
+    throw error;
+  }
+}
+
 function emptyDelivery(): WorkspaceDeliveryContext {
   return {
     requestId: "",
@@ -186,6 +213,10 @@ export function WorkspaceImport({
   runLong,
 }: WorkspaceImportProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const lastCompletedRequest = useRef<{
+    readonly planId: string;
+    readonly requestId: string;
+  } | null>(null);
   const [sources, setSources] = useState<readonly ImportSourceState[]>([]);
   const [plan, setPlan] = useState<WorkspacePreparedImport | null>(null);
   const [savedPlans, setSavedPlans] = useState<
@@ -359,16 +390,30 @@ export function WorkspaceImport({
 
   const apply = useCallback(async () => {
     if (plan === null || plan.state !== "ready") return;
-    writePendingImport({
-      databaseId: summary.databaseId,
-      planId: plan.id,
-      delivery,
-    });
+    const pending = pendingImport(summary.databaseId, plan.id);
+    const request = pending?.delivery ?? delivery;
+    const operation = pending?.operation ?? "apply";
+    setDelivery(request);
     const applied = await runLong("Applying import", (options) =>
-      client().applyImport(plan.id, delivery, options),
+      executePendingImport(
+        {
+          databaseId: summary.databaseId,
+          planId: plan.id,
+          delivery: request,
+          operation,
+        },
+        () =>
+          operation === "delivery"
+            ? client().recordDelivery(plan.id, request, options)
+            : client().applyImport(plan.id, request, options),
+      ),
     );
     if (applied === null) return;
     clearPendingImport(summary.databaseId, plan.id);
+    lastCompletedRequest.current = {
+      planId: plan.id,
+      requestId: request.requestId,
+    };
     setSavedPlans((current) =>
       current.filter((candidate) => candidate.id !== plan.id),
     );
@@ -380,6 +425,7 @@ export function WorkspaceImport({
     );
     setPlan({
       ...plan,
+      application: "applied",
       duplicateOf: applied.outcome === "duplicate" ? applied.importId : null,
       captureIds: applied.captureIds,
     });
@@ -387,24 +433,58 @@ export function WorkspaceImport({
 
   const recordAgain = useCallback(async () => {
     if (plan === null || plan.state !== "ready") return;
-    writePendingImport({
-      databaseId: summary.databaseId,
-      planId: plan.id,
-      delivery,
-    });
+    const pending = pendingImport(summary.databaseId, plan.id);
+    const operation =
+      pending === null
+        ? plan.application === "applied"
+          ? "delivery"
+          : "apply"
+        : (pending.operation ?? "apply");
+    const completed = lastCompletedRequest.current;
+    const request =
+      pending?.delivery ??
+      (completed?.planId === plan.id &&
+      completed.requestId === delivery.requestId
+        ? {
+            ...delivery,
+            requestId: `delivery-${globalThis.crypto.randomUUID()}`,
+          }
+        : delivery);
+    setDelivery(request);
     const recorded = await runLong("Recording delivery", (options) =>
-      client().applyImport(plan.id, delivery, options),
+      executePendingImport(
+        {
+          databaseId: summary.databaseId,
+          planId: plan.id,
+          delivery: request,
+          operation,
+        },
+        () =>
+          operation === "delivery"
+            ? client().recordDelivery(plan.id, request, options)
+            : client().applyImport(plan.id, request, options),
+      ),
     );
     if (recorded === null) return;
     clearPendingImport(summary.databaseId, plan.id);
+    lastCompletedRequest.current = {
+      planId: plan.id,
+      requestId: request.requestId,
+    };
     setSavedPlans((current) =>
       current.filter((candidate) => candidate.id !== plan.id),
     );
     onSummary(recorded.summary);
     setResult(
-      "Recorded a separate delivery event and reused the captured rows",
+      recorded.deliveriesRecorded > 0
+        ? "Recorded a separate delivery event and reused the captured rows"
+        : "This delivery was already recorded; reused the captured rows without adding another event",
     );
-    setPlan({ ...plan, captureIds: recorded.captureIds });
+    setPlan({
+      ...plan,
+      application: "applied",
+      captureIds: recorded.captureIds,
+    });
   }, [client, delivery, onSummary, plan, runLong, summary.databaseId]);
 
   const setDeliveryField = useCallback(
@@ -888,6 +968,7 @@ export function WorkspaceImport({
               data-testid="workspace-import-apply"
               disabled={
                 busy ||
+                result !== null ||
                 plan.state !== "ready" ||
                 delivery.requestId.trim() === ""
               }
