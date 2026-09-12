@@ -65,3 +65,25 @@ still to agree.
   a formula rather than entered by hand.
 - **Dashboard** (defined for later): a saved arrangement of charts and figures
   drawn from the database.
+
+## Power BI (draft)
+
+First draft, added with ADR 0004. The verb and nouns are proposed, not final.
+
+- **Export (Power BI)**: write each exportable table of a Power BI file's model
+  to a workbook, as one or more worksheets per table. Never called "extract" or
+  "convert".
+- **Exportable table**: a model table the export policy admits: not hidden
+  (unless hidden tables are included), within the column limit, and with at
+  least one column whose values can be decoded and represented in the workbook.
+- **Model**: the tables and their loaded rows carried inside a `.pbix` file. A
+  template (`.pbit`) or a live-connection file carries no model.
+- **Model table**: one named table of the model, with its columns and rows.
+- **Hidden table**: a model table the file marks as not user-visible, such as
+  the date tables Power BI generates on its own.
+- **Calculated table / calculated column**: a model table or column whose rows
+  were produced by a DAX expression rather than loaded from a source. Exported
+  as data.
+- **Manifest**: the record an export returns alongside the workbook, naming
+  skipped tables and columns, worksheet splits, and counts of values rounded,
+  truncated, or encoded as text, grouped by column and reason.
