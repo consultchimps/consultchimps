@@ -372,18 +372,24 @@ negative zero as the text `-0`, also counted as `PBI_NUMERIC_AS_TEXT`.
 
 An Excel number format changes display, not stored precision. Keep whole numbers
 as their stored 64-bit integers and currency as its stored integer count of
-ten-thousandths while forming the exact decimal text. For finite doubles, use
-the locale-independent shortest decimal spelling that reconstructs the same
-IEEE-754 value. Count significant digits in the coefficient, excluding leading
-and trailing zeros and excluding the exponent. For example, `1234567890123456`
-and the currency value `123456789012.3456` exceed the fifteen-digit limit and
-become text. A value that passes the precision and range checks still must
-survive serialization and reading back: compare whole numbers and scaled
-currency in their original integer units, and doubles by their original finite
-value. If it fails, use the prepared text instead. Currency numeric cells use a
-four-decimal format. Build item 7 covers both numeric-range boundaries,
-high-precision integers and currency, finite doubles, and both signs of zero;
-build item 8 verifies the emitted cells with an independent reader.
+ten-thousandths while forming the exact decimal text. Whole-number text uses
+base-10 integer digits without leading zeros or a positive sign, with `0` for
+zero. Currency text uses that sign and integer convention and exactly four
+fractional digits, without exponent notation. For finite doubles, use ECMAScript
+`Number::toString` in radix 10, preserving its lowercase `e`, exponent sign, and
+fixed-versus-exponential notation choices. For example, `1e308` becomes
+`1e+308`; retain the explicit `-0` rule above. This canonical decimal
+reconstructs the same IEEE-754 value. Count significant digits in the
+coefficient, excluding leading and trailing zeros and excluding the exponent.
+For example, `1234567890123456` and the currency value `123456789012.3456`
+exceed the fifteen-digit limit and become text. A value that passes the
+precision and range checks still must survive serialization and reading back:
+compare whole numbers and scaled currency in their original integer units, and
+doubles by their original finite value. If it fails, use the prepared text
+instead. Currency numeric cells use a four-decimal format. Build item 7 covers
+both numeric-range boundaries, high-precision integers and currency, finite
+doubles, and both signs of zero; build item 8 verifies the emitted cells with an
+independent reader.
 
 Non-finite doubles are text: `NaN`, `Infinity`, and `-Infinity`, with their
 affected-value count recorded as `PBI_NONFINITE_AS_TEXT`. These spellings
