@@ -1,6 +1,9 @@
 # Storage experiment results
 
-Measured on 2026-09-12 on an Apple M4 Pro with 24 GiB RAM and 12 logical CPUs.
+These measurements use generated synthetic fixtures. Personal machine details
+are intentionally omitted, so the timings are illustrative observations rather
+than a hardware-normalized benchmark or a sizing recommendation.
+
 Node was 24.18.0 and Chromium was 151.0.7922.34. DuckDB-Wasm ran engine 1.5.4
 with one worker. Native DuckDB used 1.5.5 and four threads for the format
 comparison. Both used a 1 GB database memory setting.

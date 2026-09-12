@@ -67,12 +67,21 @@ still to agree.
   source row. Distinct imported rows can later be found to describe one entity.
 - **Source File ID**: an identifier for a captured file, distinct from its
   display filename and from an import that may include several files.
+- **Delivery event**: a recorded touch point when a vendor supplies or reaffirms
+  a deliverable or claim. Separate events can reference the same file contents.
+- **Deliverable scope**: the entity, deliverable type, phase, sprint, and
+  covered population that a submission describes. Coverage can be full, partial,
+  an explicit set of changes, or unknown.
+- **Reported metric**: a vendor's stated count with its unit, scope, and date,
+  distinct from a count calculated from delivered rows.
+- **Delivery membership**: the association between a delivery event and the
+  captured observations or relationship assertions it supplied.
 - **Source observation**: what a source row reported in a particular file and
   import context. Later classifications do not replace that observation.
 - **Current inventory view**: the inventory selected as current under an
   explicit revision and curation policy, distinct from all source observations.
 - **Data-quality rule**: a declared rule for checking or correcting imported
-  data. Abbreviated DQ rule in the engagement discussion.
+  data, abbreviated DQ rule.
 - **Table**: a named set of columns and the records held under them.
 - **Record**: one row of a table.
 - **Record ID**: the human-readable, always-generated, immutable identifier for
@@ -85,18 +94,24 @@ still to agree.
 - **Dashboard** (defined for later): a saved arrangement of charts and figures
   drawn from the database.
 
-## Whole of Government import use case
+## Dataset inventory terminology
 
-- **Whole of Government engagement**: a data program involving multiple
-  government entities, with deliverables from several vendors across phases.
-- **Government entity**: a participating organization in the engagement.
-  Distinct from a database record.
-- **Inventory vendor**: the vendor responsible for a government entity's data
-  inventory. This engagement has one inventory vendor per entity.
-- **AI use-case vendor**: the separate vendor defining AI use cases and mapping
-  their data needs to inventories supplied by the inventory vendors.
+- **Entity**: a participating organization in a data inventory. Distinct from a
+  database record.
+- **Inventory vendor**: a supplier of dataset and attribute inventory records.
+- **Use-case contributor**: a person or organization defining use cases and
+  mapping their data needs to submitted inventories.
+- **Critical data element**: a data element designated as critical under a
+  declared classification policy, abbreviated CDE.
 - **Dataset record**: a row representing a dataset in a submitted Excel
-  workbook. The user calls these DC records in the engagement discussion.
+  workbook.
+- **Master dataset**: a resolved dataset identity that can be referenced by
+  several submitted dataset records. Its identity persists through renames,
+  vendor submissions, and phases unless an explicit split or merge changes it.
+- **Master dataset register**: the list of resolved datasets with their current
+  accepted details, attribute and CDE memberships, and cleansing history.
+- **Cleansing event**: a reported or verified cleansing activity for a dataset
+  revision and a declared scope, distinct from receiving its inventory file.
 - **Inventory revision**: a particular version of an entity's inventory,
   including its dataset and attribute descriptions and classifications.
 - **Use-case mapping**: a statement linking an AI use case to the datasets,

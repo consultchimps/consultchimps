@@ -620,6 +620,13 @@ Never commit or expose:
 
 Additional safeguards:
 
+- Treat conversations as private design input. Publish general requirements and
+  explicitly synthetic examples, not a contributor's machine specifications,
+  personal paths, engagement details, delivery schedules, or project counts.
+- Apply this rule to plans, glossaries, benchmark reports, fixtures, and pull
+  request descriptions. Do not label copied private facts as synthetic. Keep
+  software versions and generated measurements when useful, but publish personal
+  hardware or deployment details only with explicit authorization.
 - Do not print secrets in commands, logs, test snapshots, errors, or pull
   request text.
 - Use credential managers and CI secret stores rather than checked-in values.
