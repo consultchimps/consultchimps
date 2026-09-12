@@ -22,6 +22,8 @@ import { entryChunks, type StreamLimits } from "./zip.js";
 type PendingScalarCell =
   StreamScalarCell | { readonly kind: "shared"; readonly index: number };
 
+type CellType = "b" | "d" | "e" | "inlineStr" | "n" | "s" | "str";
+
 type PendingCell =
   | PendingScalarCell
   | {
@@ -38,7 +40,7 @@ interface PendingRow {
 interface CurrentCell {
   readonly reference: string;
   readonly column: number;
-  readonly type: string | undefined;
+  readonly type: CellType | undefined;
   readonly style: number;
   value: string;
   formula: string;
@@ -56,6 +58,22 @@ interface CurrentCell {
 
 function cellRecord<Cell>(): Record<string, Cell> {
   return Object.create(null) as Record<string, Cell>;
+}
+
+function cellType(value: string | undefined): CellType | undefined {
+  switch (value) {
+    case undefined:
+    case "b":
+    case "d":
+    case "e":
+    case "inlineStr":
+    case "n":
+    case "s":
+    case "str":
+      return value;
+    default:
+      throw new Error(`A worksheet cell has unsupported cell type "${value}".`);
+  }
 }
 
 function scalarCell(
@@ -217,6 +235,7 @@ export async function* parseWorksheetBatches(
       if (current !== undefined) {
         throw new Error("A worksheet cell cannot contain another cell.");
       }
+      const type = cellType(attribute(tag, "t"));
       const explicitReference = attribute(tag, "r");
       const parsedReference =
         explicitReference === undefined
@@ -254,7 +273,7 @@ export async function* parseWorksheetBatches(
       current = {
         reference: explicitReference ?? encodeCell(parsedColumn, activeRow),
         column: parsedColumn,
-        type: attribute(tag, "t"),
+        type,
         style,
         value: "",
         formula: "",

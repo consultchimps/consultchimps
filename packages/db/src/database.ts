@@ -3,6 +3,10 @@ import type { OperationResult } from "@consultchimps/core";
 import { assertOpen, databaseError } from "./errors.js";
 import type { DatabaseEngine, EngineTransaction } from "./internal/engine.js";
 import {
+  queryDatabaseMetadata,
+  validateDatabaseLayout,
+} from "./internal/database-layout.js";
+import {
   APPLICATION_TABLE,
   CAPTURE_TABLE,
   COUNTERS_TABLE,
@@ -241,10 +245,11 @@ export async function createDatabaseHandle(
 export async function openDatabaseHandle(
   engine: DatabaseEngine,
 ): Promise<Database> {
-  const metadataTables = await engine.query(
+  const metadataTables = await queryDatabaseMetadata(
+    engine,
     engine.format === "sqlite"
       ? "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1"
-      : "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' AND table_name = ? LIMIT 1",
+      : "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' AND table_type = 'BASE TABLE' AND table_name = ? LIMIT 1",
     [DATABASE_METADATA_TABLE],
   );
   if (metadataTables.length === 0) {
@@ -253,25 +258,18 @@ export async function openDatabaseHandle(
       "This file is not a supported ConsultChimps database.",
     );
   }
-  const rows = await engine.query(
-    `SELECT database_id, format, format_version FROM ${DATABASE_METADATA_TABLE}`,
+  const versionRows = await queryDatabaseMetadata(
+    engine,
+    `SELECT format_version FROM ${DATABASE_METADATA_TABLE}`,
   );
-  const row = rows[0];
-  if (row === undefined || rows.length !== 1) {
+  const versionRow = versionRows[0];
+  if (versionRow === undefined || versionRows.length !== 1) {
     throw databaseError(
-      "DB_NOT_A_DATABASE",
-      "This file is not a supported ConsultChimps database.",
+      "DB_CORRUPT_DATABASE",
+      "The database metadata is missing or duplicated. Restore a verified database copy before retrying.",
     );
   }
-  const format = valueAsString(row["format"], "format");
-  if (format !== engine.format) {
-    throw databaseError(
-      "DB_FORMAT_MISMATCH",
-      `The file contains a ${format} database, but the ${engine.format} engine opened it.`,
-      { expected: engine.format, actual: format },
-    );
-  }
-  const version = valueAsBigInt(row["format_version"], "format version");
+  const version = valueAsBigInt(versionRow["format_version"], "format version");
   if (version !== BigInt(DATABASE_FILE_FORMAT_VERSION)) {
     throw databaseError(
       "DB_UNSUPPORTED_FORMAT_VERSION",
@@ -280,6 +278,26 @@ export async function openDatabaseHandle(
         fileVersion: version.toString(),
         supportedVersion: DATABASE_FILE_FORMAT_VERSION,
       },
+    );
+  }
+  await validateDatabaseLayout(engine);
+  const rows = await queryDatabaseMetadata(
+    engine,
+    `SELECT database_id, format FROM ${DATABASE_METADATA_TABLE}`,
+  );
+  const row = rows[0];
+  if (row === undefined || rows.length !== 1) {
+    throw databaseError(
+      "DB_CORRUPT_DATABASE",
+      "The database metadata is missing or duplicated. Restore a verified database copy before retrying.",
+    );
+  }
+  const format = valueAsString(row["format"], "format");
+  if (format !== engine.format) {
+    throw databaseError(
+      "DB_FORMAT_MISMATCH",
+      `The file contains a ${format} database, but the ${engine.format} engine opened it.`,
+      { expected: engine.format, actual: format },
     );
   }
   return new ManagedDatabase(

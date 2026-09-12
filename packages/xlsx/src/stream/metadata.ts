@@ -364,10 +364,19 @@ export async function loadWorkbookMetadata(
       "/sharedStrings",
     );
     const stylesRelationship = relationshipBySuffix(relationships, "/styles");
-    const partEntry = (relationship: Relationship | undefined) =>
-      relationship
-        ? archive.entries.get(internalTarget(workbookPart, relationship))
-        : undefined;
+    const partEntry = (
+      relationship: Relationship | undefined,
+    ): FileEntry | undefined => {
+      if (relationship === undefined) return undefined;
+      const part = internalTarget(workbookPart, relationship);
+      const entry = archive.entries.get(part);
+      if (entry === undefined) {
+        throw new Error(
+          `Relationship "${relationship.id}" points to missing part "${part}".`,
+        );
+      }
+      return entry;
+    };
     return {
       source,
       archive,

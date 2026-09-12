@@ -44,6 +44,10 @@ application: it carries schema definitions, generated ID counters, source
 captures, and delivery history. Arbitrary third-party databases do not acquire
 this metadata merely by being opened.
 
+Opening a managed database checks its supported format version and required
+internal tables and columns. If that structure is damaged, restore a verified
+copy before importing more data.
+
 This phase supplies database management and import operations. A general query
 editor, editable analytics grid, charts, automatic record reconciliation, and
 master dataset maintenance are outside this phase.

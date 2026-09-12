@@ -167,6 +167,12 @@ async function workbookFixtureWithParts(
   return zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
 }
 
+async function workbookFixtureWithoutPart(part: string): Promise<Uint8Array> {
+  const zip = await JSZip.loadAsync(await workbookFixture());
+  zip.remove(part);
+  return zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+}
+
 async function rows(
   reader: WorkbookRegionReader,
 ): Promise<readonly StreamRow[]> {
@@ -279,6 +285,56 @@ describe("bounded workbook streaming", () => {
       name: "DataRange",
       reference: "'Data & More'!$B$2:$E$4",
     });
+  });
+
+  it.each(["xl/styles.xml", "xl/sharedStrings.xml"])(
+    "rejects a declared metadata relationship whose %s part is missing",
+    async (part) => {
+      const input = source(await workbookFixtureWithoutPart(part));
+
+      await expect(
+        inspectWorkbookStream(input.source, { scratch: new MemoryScratch() }),
+      ).rejects.toMatchObject({
+        code: "XLSX_READ_FAILED",
+        cause: expect.objectContaining({
+          message: expect.stringContaining(part),
+        }),
+      });
+    },
+  );
+
+  it("accepts omitted optional metadata relationships and numeric cell types", async () => {
+    const workbookRelationships =
+      "<Relationships xmlns='http://schemas.openxmlformats.org/package/2006/relationships'>" +
+      "<Relationship Id='sheetRel' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet' Target='worksheets/sheet1.xml'/>" +
+      "<Relationship Id='hiddenRel' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet' Target='worksheets/sheet2.xml'/>" +
+      "</Relationships>";
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Omitted</t></is></c><c r='B1' t='inlineStr'><is><t>ExplicitN</t></is></c></row>" +
+      "<row r='2'><c r='A2'><v>1</v></c><c r='B2' t='n'><v>2.5</v></c></row>" +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/_rels/workbook.xml.rels": workbookRelationships,
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { range: "'Data & More'!A1:B2" },
+      { scratch: new MemoryScratch() },
+    );
+
+    expect(await rows(reader)).toEqual([
+      {
+        sourceRow: 2,
+        cells: {
+          Omitted: { kind: "number", raw: "1" },
+          ExplicitN: { kind: "number", raw: "2.5" },
+        },
+      },
+    ]);
   });
 
   it.each(regionSelections)(
@@ -619,6 +675,40 @@ describe("bounded workbook streaming", () => {
       ).rejects.toMatchObject({ code: "XLSX_READ_FAILED" });
     },
   );
+
+  it.each([
+    ["numeric payload", "unsupported", "<v>42</v>"],
+    ["blank cell", "unknown", ""],
+    ["uncached formula", "formula-result", "<f>1+1</f>"],
+    ["empty type", "", "<v>1</v>"],
+  ])("rejects an unsupported type on a %s", async (_case, type, contents) => {
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Value</t></is></c></row>" +
+      `<row r='2'><c r='A2' t='${type}'>${contents}</c></row>` +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+
+    await expect(
+      (async () => {
+        const reader = await openWorkbookRegionStream(
+          input.source,
+          { range: "'Data & More'!A1:A2" },
+          { scratch: new MemoryScratch() },
+        );
+        return rows(reader);
+      })(),
+    ).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+      cause: expect.objectContaining({
+        message: expect.stringMatching(/unsupported.*cell type/iu),
+      }),
+    });
+  });
 
   it.each([
     [
