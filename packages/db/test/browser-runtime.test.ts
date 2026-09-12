@@ -536,6 +536,123 @@ describe("browser database runtime", () => {
     await imported.close();
   });
 
+  test("rejects invalid database bytes without replacing the prior working copy", async () => {
+    const runtime = await createRuntime();
+    const original = await runtime.createDatabase({
+      name: "protected.sqlite",
+      format: "sqlite",
+      schema: {
+        version: 1,
+        tables: [
+          {
+            name: "Preserved",
+            columns: [{ name: "value", type: "text" }],
+            recordId: { prefix: "KEEP", padding: 3 },
+          },
+        ],
+      },
+    });
+    const originalId = original.database.id;
+    await original.database.close();
+    const originalBytes = harness.databases.get("/protected.sqlite")?.slice();
+    if (originalBytes === undefined) throw new Error("Missing original bytes");
+
+    const corruptSqlite = new Uint8Array(4096);
+    corruptSqlite.set(SQLITE_HEADER);
+    const invalidInputs: ReadonlyArray<{
+      readonly name: string;
+      readonly format: "sqlite" | "duckdb";
+      readonly bytes: Uint8Array;
+    }> = [
+      {
+        name: "corrupt.sqlite",
+        format: "sqlite",
+        bytes: corruptSqlite,
+      },
+      {
+        name: "random.bin",
+        format: "duckdb",
+        bytes: new Uint8Array([1, 2, 3, 4]),
+      },
+      {
+        name: "invalid.duckdb",
+        format: "duckdb",
+        bytes: new TextEncoder().encode("invalid DuckDB test bytes"),
+      },
+    ];
+
+    for (const invalid of invalidInputs) {
+      await expect(
+        runtime.importDatabase({
+          name: "protected.sqlite",
+          source: new MemoryFile(invalid.name, invalid.bytes),
+          overwrite: true,
+        }),
+        invalid.name,
+      ).rejects.toMatchObject({
+        code: "DB_UNSUPPORTED_FILE_FORMAT",
+        details: { detectedFormat: invalid.format },
+      });
+      expect(harness.databases.get("/protected.sqlite")).toEqual(originalBytes);
+      expect(
+        [...harness.databases.keys()].some((name) =>
+          name.includes(".consultchimps-import-"),
+        ),
+      ).toBe(false);
+      const duckDirectory = await harness.directory(
+        "consultchimps",
+        "databases",
+      );
+      expect(
+        [...duckDirectory.files.keys()].some((name) =>
+          name.includes(".consultchimps-import-"),
+        ),
+      ).toBe(false);
+
+      const reopened = await runtime.openDatabase({
+        name: "protected.sqlite",
+      });
+      expect(reopened.id).toBe(originalId);
+      expect(
+        (await inspectDatabase({ database: reopened })).tables.map(
+          (table) => table.name,
+        ),
+      ).toEqual(["Preserved"]);
+      await reopened.close();
+    }
+  });
+
+  test("does not relabel a source callback failure as a database format error", async () => {
+    const runtime = await createRuntime();
+    const failures: readonly unknown[] = [
+      new Error("Injected source read failure"),
+      null,
+    ];
+    for (const [index, sourceFailure] of failures.entries()) {
+      const name = `unreadable-${index}.sqlite`;
+      const source: RandomAccessSource = {
+        name,
+        size: SQLITE_HEADER.length + 1,
+        async readAt(offset, length) {
+          if (offset === 0 && length === SQLITE_HEADER.length) {
+            return SQLITE_HEADER;
+          }
+          throw sourceFailure;
+        },
+      };
+      let rejection: unknown = Symbol("no rejection");
+      try {
+        await runtime.importDatabase({ name, source });
+      } catch (error) {
+        rejection = error;
+      }
+      expect(rejection).toBe(sourceFailure);
+      await expect(runtime.openDatabase({ name })).rejects.toMatchObject({
+        code: "DB_BROWSER_STORAGE_MISSING",
+      });
+    }
+  });
+
   test("refuses to replace a nonempty export destination without overwrite", async () => {
     const runtime = await createRuntime();
     const created = await runtime.createDatabase({

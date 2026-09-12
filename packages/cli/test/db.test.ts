@@ -282,6 +282,96 @@ test("inspects a read-only saved plan without changing its journal mode or files
 });
 
 for (const format of ["sqlite", "duckdb"] as const) {
+  test(`${format}: applies ready plans read-only and reopens unresolved plans for resolution`, async () => {
+    const root = await directory();
+    const database = path.join(root, `inventory.${format}`);
+    const readySource = path.join(root, "ready.xlsx");
+    const readyRecipe = path.join(root, "ready.json");
+    const readyPlan = path.join(root, "ready.ccplan");
+    await writeFile(readySource, workbook([["Name"], ["North"]]));
+    await writeFile(
+      readyRecipe,
+      JSON.stringify({
+        version: 1,
+        routes: [
+          {
+            source: "ready",
+            selection: JSON.stringify({
+              sheet: "Inventory",
+              headerRow: 1,
+            }),
+            destination: {
+              kind: "new-table",
+              schema: {
+                name: "ready",
+                recordId: { prefix: "RDY", padding: 4 },
+                columns: [{ name: "name", type: "text" }],
+              },
+            },
+            columns: [{ source: "Name", target: "name", type: "text" }],
+          },
+        ],
+      }),
+    );
+    await run(["create", "-o", database, "--format", format]);
+    await run([
+      "plan",
+      database,
+      "--input",
+      `ready=${readySource}`,
+      "--recipe",
+      readyRecipe,
+      "-o",
+      readyPlan,
+    ]);
+    expect(await run(["inspect", readyPlan])).toMatchObject({
+      prepared: { state: "ready" },
+    });
+
+    const readyConnection = new Sqlite(readyPlan);
+    try {
+      readyConnection.pragma("journal_mode = DELETE");
+    } finally {
+      readyConnection.close();
+    }
+    const planBefore = await readFile(readyPlan);
+    const filesBefore = (await readdir(root)).sort();
+    await chmod(readyPlan, 0o444);
+    try {
+      const applied = await run(["apply", database, "--plan", readyPlan]);
+      expect(applied["metrics"]).toMatchObject({ rowsImported: 1 });
+      expect(await readFile(readyPlan)).toEqual(planBefore);
+      expect((await readdir(root)).sort()).toEqual(filesBefore);
+    } finally {
+      await chmod(readyPlan, 0o644);
+    }
+
+    const unresolvedSource = path.join(root, "unresolved.xlsx");
+    const unresolvedPlan = path.join(root, "unresolved.ccplan");
+    await writeFile(unresolvedSource, workbook([["Name"], ["South"]]));
+    await run([
+      "plan",
+      database,
+      "--input",
+      `unresolved=${unresolvedSource}`,
+      "-o",
+      unresolvedPlan,
+    ]);
+    expect(await run(["inspect", unresolvedPlan])).toMatchObject({
+      prepared: { state: "needs-review" },
+    });
+
+    const resolved = await run(["apply", database, "--plan", unresolvedPlan]);
+    expect(resolved["metrics"]).toMatchObject({ rowsImported: 1 });
+    expect(await run(["inspect", unresolvedPlan])).toMatchObject({
+      prepared: { state: "ready" },
+    });
+    expect((await run(["inspect", database]))["tables"]).toEqual([
+      expect.objectContaining({ name: "ready", rowCount: "1" }),
+      expect.objectContaining({ name: "unresolved", rowCount: "1" }),
+    ]);
+  });
+
   test(`${format}: dry-run reviews conversion without reserving or changing output files`, async () => {
     const root = await directory();
     const source = path.join(root, `source.${format}`);

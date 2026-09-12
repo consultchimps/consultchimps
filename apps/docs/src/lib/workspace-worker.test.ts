@@ -104,6 +104,28 @@ describe("WorkspaceClient", () => {
     await close;
   });
 
+  it("sends the selected working-copy name and replacement choice", async () => {
+    const client = new WorkspaceClient();
+    const file = new File(["database"], "report.sqlite");
+    const opened = client.open(file, {
+      name: "reviewed-copy.sqlite",
+      overwrite: true,
+    });
+    await settle();
+
+    expect(ScriptedWorker.latest?.posted[0]).toMatchObject({
+      type: "open",
+      file,
+      name: "reviewed-copy.sqlite",
+      overwrite: true,
+    });
+    ScriptedWorker.latest?.reply(0, {
+      type: "ready",
+      summary: EMPTY_SUMMARY,
+    });
+    await expect(opened).resolves.toEqual(EMPTY_SUMMARY);
+  });
+
   it("sends cancellation beside the active command", async () => {
     const controller = new AbortController();
     const client = new WorkspaceClient();

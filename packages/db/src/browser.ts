@@ -1,6 +1,7 @@
 import sqlite3InitModule, { type Sqlite3Static } from "@sqlite.org/sqlite-wasm";
 
 import {
+  isConsultChimpsError,
   throwIfAborted,
   type OperationControlOptions,
   type OperationResult,
@@ -478,6 +479,26 @@ async function detectSourceFormat(
     header.every((byte, index) => byte === SQLITE_HEADER[index])
     ? "sqlite"
     : "duckdb";
+}
+
+function importValidationError(
+  cause: unknown,
+  format: DatabaseFormat,
+): unknown {
+  if (
+    isConsultChimpsError(cause) &&
+    cause.code !== "DB_BROWSER_STORAGE_KIND_MISMATCH" &&
+    cause.code !== "DB_BROWSER_STORAGE_MISSING"
+  ) {
+    return cause;
+  }
+  if (cause instanceof Error && cause.name === "AbortError") return cause;
+  return databaseError(
+    "DB_UNSUPPORTED_FILE_FORMAT",
+    "The selected file is not a supported SQLite or DuckDB database. Choose a valid database file and try again.",
+    { detectedFormat: format },
+    cause,
+  );
 }
 
 export async function configureBrowserDatabaseRuntime(
@@ -1099,29 +1120,40 @@ export async function configureBrowserDatabaseRuntime(
         try {
           if (format === "sqlite") {
             let offset = 0;
-            await pool.importDb(sqliteName(candidate), async () => {
-              if (offset >= importOptions.source.size) return undefined;
-              throwIfAborted(importOptions.signal, "db.browser.import");
-              const length = Math.min(
-                COPY_CHUNK_BYTES,
-                importOptions.source.size - offset,
-              );
-              const bytes = await readSourceChunk(
-                importOptions.source,
-                offset,
-                length,
-                importOptions.signal,
-              );
-              offset += length;
-              importOptions.onProgress?.({
-                operation: "db.browser.import",
-                stage: "copying",
-                completed: offset,
-                total: importOptions.source.size,
-                detail: importOptions.source.name,
+            let sourceFailure: { readonly error: unknown } | undefined;
+            try {
+              await pool.importDb(sqliteName(candidate), async () => {
+                try {
+                  if (offset >= importOptions.source.size) return undefined;
+                  throwIfAborted(importOptions.signal, "db.browser.import");
+                  const length = Math.min(
+                    COPY_CHUNK_BYTES,
+                    importOptions.source.size - offset,
+                  );
+                  const bytes = await readSourceChunk(
+                    importOptions.source,
+                    offset,
+                    length,
+                    importOptions.signal,
+                  );
+                  offset += length;
+                  importOptions.onProgress?.({
+                    operation: "db.browser.import",
+                    stage: "copying",
+                    completed: offset,
+                    total: importOptions.source.size,
+                    detail: importOptions.source.name,
+                  });
+                  return bytes;
+                } catch (error) {
+                  sourceFailure = { error };
+                  throw error;
+                }
               });
-              return bytes;
-            });
+            } catch (error) {
+              if (sourceFailure !== undefined) throw sourceFailure.error;
+              throw importValidationError(error, format);
+            }
           } else {
             const handles = await replaceDuckDbFiles(
               duckDirectory,
@@ -1135,10 +1167,14 @@ export async function configureBrowserDatabaseRuntime(
               importOptions.onProgress,
             );
           }
-          candidateDatabase = await openDatabaseUnlocked(
-            { name: candidate },
-            false,
-          );
+          try {
+            candidateDatabase = await openDatabaseUnlocked(
+              { name: candidate },
+              false,
+            );
+          } catch (error) {
+            throw importValidationError(error, format);
+          }
           await candidateDatabase.checkpoint();
           await candidateDatabase.close();
           throwIfAborted(importOptions.signal, "db.browser.import");

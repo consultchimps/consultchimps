@@ -242,6 +242,8 @@ export function WorkspaceTool() {
   const [workspaceGeneration, setWorkspaceGeneration] = useState(0);
   const [format, setFormat] = useState<WorkspaceDatabaseFormat>("sqlite");
   const [name, setName] = useState("consultchimps.sqlite");
+  const [openName, setOpenName] = useState("");
+  const [openOverwrite, setOpenOverwrite] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [progress, setProgress] = useState<WorkspaceProgress | null>(null);
   const [reviewActive, setReviewActive] = useState(false);
@@ -388,9 +390,18 @@ export function WorkspaceTool() {
 
   const open = useCallback(
     async (file: File) => {
+      const workingCopyName = openName.trim();
       const opened = await runLong(
         "Copying database into browser storage",
-        (options) => client().open(file, options),
+        (options) =>
+          client().open(
+            file,
+            {
+              ...(workingCopyName === "" ? {} : { name: workingCopyName }),
+              overwrite: openOverwrite,
+            },
+            options,
+          ),
       );
       if (opened === null) return;
       setSummary(opened);
@@ -400,10 +411,10 @@ export function WorkspaceTool() {
       clearDeliveries();
       setStatus({
         kind: "notice",
-        message: `Opened "${file.name}" as a persistent browser working copy. The selected file will not change`,
+        message: `Opened "${file.name}" as browser working copy "${opened.workingCopyName}". The selected file will not change`,
       });
     },
-    [clearDeliveries, client, remember, runLong],
+    [clearDeliveries, client, openName, openOverwrite, remember, runLong],
   );
 
   const reopen = useCallback(
@@ -506,7 +517,7 @@ export function WorkspaceTool() {
       title="Data workspace"
     >
       <section className={sectionClass} data-testid="workspace-start">
-        <div className="grid gap-5 lg:grid-cols-[1fr_auto]">
+        <div className="grid gap-6 lg:grid-cols-2">
           <div>
             <h2 className="font-display text-xl font-semibold">New database</h2>
             <div className="mt-4 grid gap-3 sm:grid-cols-[12rem_1fr]">
@@ -543,35 +554,71 @@ export function WorkspaceTool() {
                 />
               </label>
             </div>
+            <div className="mt-3">
+              <button
+                className={primaryButtonClass}
+                data-testid="workspace-new"
+                disabled={disabled || name.trim() === ""}
+                onClick={() => void create()}
+                type="button"
+              >
+                {busy === "Creating database" ? (
+                  <LoaderCircle
+                    aria-hidden="true"
+                    className="size-4 animate-spin"
+                  />
+                ) : (
+                  <FilePlus aria-hidden="true" className="size-4" />
+                )}
+                Create
+              </button>
+            </div>
           </div>
-          <div className="flex flex-wrap items-end gap-3">
-            <button
-              className={primaryButtonClass}
-              data-testid="workspace-new"
-              disabled={disabled || name.trim() === ""}
-              onClick={() => void create()}
-              type="button"
-            >
-              {busy === "Creating database" ? (
-                <LoaderCircle
-                  aria-hidden="true"
-                  className="size-4 animate-spin"
-                />
-              ) : (
-                <FilePlus aria-hidden="true" className="size-4" />
-              )}
-              Create
-            </button>
-            <button
-              className={secondaryButtonClass}
-              data-testid="workspace-open"
-              disabled={disabled}
-              onClick={() => openInputRef.current?.click()}
-              type="button"
-            >
-              <FolderOpen aria-hidden="true" className="size-4" />
-              Open file
-            </button>
+          <div>
+            <h2 className="font-display text-xl font-semibold">
+              Open database file
+            </h2>
+            <label className="mt-4 block text-sm">
+              Imported working copy name
+              <input
+                className={`${inputClass} mt-1`}
+                data-testid="workspace-open-name"
+                disabled={disabled}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setOpenName(next);
+                  if (next.trim() === "") setOpenOverwrite(false);
+                }}
+                placeholder="Create a unique name from the file"
+                value={openName}
+              />
+            </label>
+            <p className="mt-2 text-xs text-fd-muted-foreground">
+              Leave blank to create a unique name from the selected file
+            </p>
+            <label className="mt-3 flex items-start gap-2.5 text-sm font-medium leading-6">
+              <input
+                checked={openOverwrite}
+                className="mt-1 size-4 shrink-0 rounded border-fd-border accent-fd-primary"
+                data-testid="workspace-open-overwrite"
+                disabled={disabled || openName.trim() === ""}
+                onChange={(event) => setOpenOverwrite(event.target.checked)}
+                type="checkbox"
+              />
+              Replace an existing browser working copy with this name
+            </label>
+            <div className="mt-3">
+              <button
+                className={secondaryButtonClass}
+                data-testid="workspace-open"
+                disabled={disabled}
+                onClick={() => openInputRef.current?.click()}
+                type="button"
+              >
+                <FolderOpen aria-hidden="true" className="size-4" />
+                Open file
+              </button>
+            </div>
             <input
               accept={DATABASE_ACCEPT}
               className="sr-only"

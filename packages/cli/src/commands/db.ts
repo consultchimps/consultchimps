@@ -460,13 +460,25 @@ export function registerDbCommands(
             : undefined;
           const database = await openDatabase({ path: databasePath });
           try {
-            const prepared = await openPreparedImport({ path: options.plan });
+            let prepared = await openPreparedImport({
+              path: options.plan,
+              readonly: true,
+            });
             try {
-              const review = await inspectImport({
+              let review = await inspectImport({
                 database,
                 prepared,
                 page: { limit: 1 },
               });
+              if (review.prepared.state !== "ready") {
+                await prepared.close();
+                prepared = await openPreparedImport({ path: options.plan });
+                review = await inspectImport({
+                  database,
+                  prepared,
+                  page: { limit: 1 },
+                });
+              }
               const approved = requireReady(
                 review.prepared.state === "ready"
                   ? review.prepared

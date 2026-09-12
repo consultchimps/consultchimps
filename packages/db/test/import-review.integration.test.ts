@@ -95,6 +95,137 @@ async function fixture(format: "sqlite" | "duckdb", recipe: ImportRecipe) {
 }
 
 for (const format of ["sqlite", "duckdb"] as const) {
+  for (const mode of ["inferred", "explicit"] as const) {
+    test(`${format}: ${mode} dates retain source granularity through saved review and apply`, async () => {
+      const columns = [
+        { name: "DayOnly", type: "date" as const },
+        { name: "CachedDay", type: "date" as const },
+        { name: "Mixed", type: "timestamp" as const },
+        { name: "Midnight", type: "timestamp" as const },
+      ];
+      const recipe: ImportRecipe = {
+        version: 1,
+        routes: [
+          {
+            source: "submission",
+            selection: "Dates",
+            destination:
+              mode === "inferred"
+                ? {
+                    kind: "new-table-infer",
+                    name: "Dates",
+                    recordId: { prefix: "DAT", padding: 6 },
+                  }
+                : {
+                    kind: "new-table",
+                    schema: {
+                      name: "Dates",
+                      columns,
+                      recordId: { prefix: "DAT", padding: 6 },
+                    },
+                  },
+            columns:
+              mode === "inferred"
+                ? []
+                : columns.map(({ name, type }) => ({
+                    source: name,
+                    target: name,
+                    type,
+                  })),
+          },
+        ],
+      };
+      const { database, prepared, planPath } = await fixture(format, recipe);
+      const day: ImportCell = {
+        kind: "date",
+        raw: " 2024-01-02 ",
+        iso: "2024-01-02T00:00:00.000Z",
+      };
+      const midnight: ImportCell = {
+        kind: "date",
+        raw: "2024-01-02T00:00:00Z",
+        iso: "2024-01-02T00:00:00.000Z",
+      };
+      const submission = source({
+        Dates: [
+          {
+            sourceRow: 2,
+            cells: {
+              DayOnly: day,
+              CachedDay: { kind: "formula", formula: "TODAY()", cached: day },
+              Mixed: { kind: "date", raw: "45293", iso: "2024-01-02" },
+              Midnight: midnight,
+            },
+          },
+          {
+            sourceRow: 3,
+            cells: {
+              DayOnly: day,
+              CachedDay: { kind: "formula", formula: "TODAY()", cached: day },
+              Mixed: {
+                kind: "date",
+                raw: "2024-01-02T03:04:05Z",
+                iso: "2024-01-02T03:04:05.000Z",
+              },
+              Midnight: midnight,
+            },
+          },
+        ],
+      });
+      try {
+        await prepareImport({
+          database,
+          prepared,
+          recipe,
+          sources: [submission],
+        });
+      } finally {
+        await prepared.close();
+      }
+      const reopened = await openPreparedImport({ path: planPath });
+      try {
+        const approved = await resolveImport({
+          database,
+          prepared: reopened,
+          decisions: [],
+        });
+        expect(approved.state).toBe("ready");
+        if (approved.state !== "ready") throw new Error("Date plan not ready");
+        await applyImport({
+          database,
+          prepared: reopened,
+          approved,
+          requestId: `${format}-${mode}-dates`,
+        });
+        const table = (await inspectDatabase({ database })).tables.find(
+          ({ name }) => name === "Dates",
+        );
+        expect(
+          table?.schema.columns.map(({ name, type }) => ({ name, type })),
+        ).toEqual(columns);
+        const values = await engineOf(database).query(
+          'SELECT "DayOnly", "CachedDay", CAST("Mixed" AS VARCHAR) AS mixed, CAST("Midnight" AS VARCHAR) AS midnight FROM "Dates" ORDER BY record_id',
+        );
+        expect(values).toHaveLength(2);
+        for (const row of values) {
+          expect(row["DayOnly"]).toBe("2024-01-02");
+          expect(row["CachedDay"]).toBe("2024-01-02");
+          expect(String(row["midnight"]).replace(" ", "T")).toMatch(
+            /^2024-01-02T00:00:00/u,
+          );
+        }
+        expect(String(values[0]?.["mixed"]).replace(" ", "T")).toMatch(
+          /^2024-01-02T00:00:00/u,
+        );
+        expect(String(values[1]?.["mixed"]).replace(" ", "T")).toMatch(
+          /^2024-01-02T03:04:05/u,
+        );
+      } finally {
+        await reopened.close();
+        await database.close();
+      }
+    });
+  }
   test(`${format}: existing table names use their registered spelling through apply and audit`, async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "cc-import-case-"));
     directories.push(directory);

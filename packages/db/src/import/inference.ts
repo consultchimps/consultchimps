@@ -205,6 +205,14 @@ function effectiveCell(
   return cell.cached;
 }
 
+function dateIso(cell: Extract<ImportCell, { readonly kind: "date" }>): string {
+  const source = cell.raw.trim();
+  return /^\d{4}-\d{2}-\d{2}$/u.test(source) &&
+    cell.iso === `${source}T00:00:00.000Z`
+    ? source
+    : cell.iso;
+}
+
 function decimalShape(
   raw: string,
 ): { readonly precision: number; readonly scale: number } | null {
@@ -239,7 +247,7 @@ export function addToProfile(profile: ColumnProfile, input: ImportCell): void {
   profile.seen = true;
   profile.onlyBoolean &&= cell.kind === "boolean";
   profile.onlyDate &&= cell.kind === "date";
-  profile.dateHasTime ||= cell.kind === "date" && cell.iso.includes("T");
+  profile.dateHasTime ||= cell.kind === "date" && dateIso(cell).includes("T");
   profile.onlyNumber &&= cell.kind === "number";
   if (cell.kind !== "number") {
     profile.integerInRange = false;
@@ -360,15 +368,12 @@ export function valueForColumn(
       return value.raw;
     }
   }
-  if (type === "date" && value.kind === "date" && !value.iso.includes("T")) {
-    return value.iso;
-  }
-  if (
-    type === "timestamp" &&
-    value.kind === "date" &&
-    value.iso.includes("T")
-  ) {
-    return value.iso;
+  if (value.kind === "date") {
+    const iso = dateIso(value);
+    if (type === "date" && !iso.includes("T")) return iso;
+    if (type === "timestamp") {
+      return iso.includes("T") ? iso : `${iso}T00:00:00.000Z`;
+    }
   }
   throw databaseError(
     "DB_IMPORT_VALUE_CONFLICT",

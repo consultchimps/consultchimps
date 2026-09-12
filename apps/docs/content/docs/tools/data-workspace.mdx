@@ -28,6 +28,12 @@ priority. Both are persistent file formats. Engine memory still holds working
 buffers, but opening and saving do not require a JavaScript copy of the whole
 database.
 
+In the browser, **Open database file** creates a working copy with a generated
+name by default. Enter an **Imported working copy name** to choose a name. To
+refresh a saved copy, enter its name and select **Replace an existing browser
+working copy with this name**. Replacement affects browser storage; the selected
+file stays unchanged. Leave replacement unchecked to keep an existing copy.
+
 A file created by ConsultChimps includes ordinary data tables and reserved
 `_consultchimps` metadata tables. Keep the metadata when working in another
 application: it carries schema definitions, generated ID counters, source
@@ -58,6 +64,9 @@ the working tables. `db inspect` shows its routes, column mappings, row counts,
 conflicts, and a bounded preview using a read-only handle. `db apply` approves a
 resolved plan and commits its rows. Keep `.ccplan` files as carefully as the
 workbooks because they contain source values.
+
+An already-ready plan is opened read-only during `db apply`. A plan that still
+needs automatic resolution is reopened writable so its review can be updated.
 
 For a repeated import, preview the reused rows with
 `consultchimps db inspect review.ccplan --database inventory.duckdb`. These rows
@@ -195,6 +204,11 @@ Types are `text`, `integer`, `real`, `decimal`, `boolean`, `date`, and
 names a local column and `referencesTable`; it refers to that table's generated
 `record_id`. Several columns can refer to different tables. This does not
 resolve vendor identifiers into those generated IDs automatically.
+
+Date-only source values infer a `date` column, including declared Excel dates
+with cached formula values. A column containing dates and timestamps infers
+`timestamp`; date-only entries become midnight values. An explicit timestamp at
+midnight remains a timestamp.
 
 ## Keep duplicate content and delivery history separate
 

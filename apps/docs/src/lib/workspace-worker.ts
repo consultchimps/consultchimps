@@ -42,6 +42,11 @@ export interface WorkspaceRunOptions {
   readonly onProgress?: (progress: WorkspaceProgress) => void;
 }
 
+export interface WorkspaceOpenOptions {
+  readonly name?: string;
+  readonly overwrite?: boolean;
+}
+
 function unavailable(): ConsultChimpsError {
   return new ConsultChimpsError(
     WORKSPACE_WORKER_UNAVAILABLE,
@@ -176,9 +181,20 @@ export class WorkspaceClient {
 
   async open(
     file: File,
-    options?: WorkspaceRunOptions,
+    openOptions: WorkspaceOpenOptions,
+    runOptions?: WorkspaceRunOptions,
   ): Promise<WorkspaceSummary> {
-    const event = await this.#request({ type: "open", file }, options);
+    const event = await this.#request(
+      {
+        type: "open",
+        file,
+        ...(openOptions.name === undefined ? {} : { name: openOptions.name }),
+        ...(openOptions.overwrite === undefined
+          ? {}
+          : { overwrite: openOptions.overwrite }),
+      },
+      runOptions,
+    );
     if (event.type !== "ready") throw unexpected("open");
     return event.summary;
   }

@@ -1,5 +1,6 @@
 import {
   blobValue,
+  DuckDBBlobValue,
   DuckDBInstance,
   type DuckDBConnection,
   type DuckDBValue,
@@ -51,21 +52,25 @@ async function copyDatabase(
   }
 }
 
-function normalizeValue(value: unknown): EngineValue {
+function normalizeValue(value: DuckDBValue): EngineValue {
   if (
     value === null ||
     typeof value === "string" ||
     typeof value === "number" ||
     typeof value === "bigint" ||
-    typeof value === "boolean" ||
-    value instanceof Uint8Array
+    typeof value === "boolean"
   ) {
     return value;
   }
-  return String(value);
+  if (value instanceof DuckDBBlobValue) {
+    return new Uint8Array(value.bytes);
+  }
+  return value.toString();
 }
 
-function normalizeRows(rows: readonly Record<string, unknown>[]): EngineRow[] {
+function normalizeRows(
+  rows: readonly Record<string, DuckDBValue>[],
+): EngineRow[] {
   return rows.map((row) => {
     const normalized: Record<string, EngineValue> = Object.create(null);
     for (const [name, value] of Object.entries(row)) {
@@ -146,7 +151,7 @@ export class NodeDuckDbEngine implements DatabaseEngine {
       sql,
       values.map(duckDbValue),
     );
-    return normalizeRows(reader.getRowObjectsJS());
+    return normalizeRows(reader.getRowObjects());
   }
 
   async execute(sql: string, values?: readonly EngineValue[]): Promise<void> {
