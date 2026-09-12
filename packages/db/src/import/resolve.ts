@@ -4,7 +4,13 @@ import { APPLICATION_TABLE } from "../metadata.js";
 import { readPreparedRecipe, updatePreparedPlan } from "../prepared.js";
 import type { preparedRef } from "../prepared.js";
 import { readSchemaFingerprint } from "../records.js";
-import { evaluateConflicts, preparedCaptures, routeKey } from "./planning.js";
+import { validateImportRecipe } from "../validators.js";
+import {
+  evaluateConflicts,
+  preparedCaptures,
+  routeColumns,
+  routeKey,
+} from "./planning.js";
 import type {
   ImportDecision,
   ImportRecipe,
@@ -77,11 +83,8 @@ export async function resolveImport(options: {
           existingApplication.length > 0
             ? { kind: "existing-table", table: conflict.schema.name }
             : { kind: "new-table", schema: conflict.schema },
-        columns: conflict.schema.columns.map((column) => ({
-          source: column.name,
-          target: column.name,
-          type: column.type,
-        })),
+        columns:
+          capture === undefined ? route.columns : routeColumns(route, capture),
       } satisfies ImportRecipe["routes"][number];
       routes.set(key, approvedRoute);
       reviewDecisions.set(key, {
@@ -115,6 +118,7 @@ export async function resolveImport(options: {
     reviewDecisions.set(key, decision);
   }
   const recipe: ImportRecipe = { version: 1, routes: [...routes.values()] };
+  validateImportRecipe(recipe);
   const excluded = new Set(
     [...reviewDecisions.values()].flatMap((decision) =>
       decision.kind === "exclude"
@@ -153,6 +157,7 @@ export async function replaceImportRecipe(options: {
   readonly recipe: ImportRecipe;
   readonly rebase?: boolean | undefined;
 }): ReturnType<typeof resolveImport> {
+  validateImportRecipe(options.recipe);
   const current = await readPreparedRecipe(options.prepared);
   const captures = await preparedCaptures(options.prepared);
   const replacementKeys = new Set(

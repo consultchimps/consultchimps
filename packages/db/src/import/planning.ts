@@ -25,6 +25,8 @@ import {
   formatRecordId,
   identifierKey,
   quoteIdentifier,
+  validateTableSchema,
+  type ColumnDefinition,
   type TableSchema,
 } from "../schema.js";
 import {
@@ -39,6 +41,7 @@ import type {
   ImportRecipe,
   PrepareImportOptions,
 } from "./types.js";
+import { validateColumnMappings, validateImportRecipe } from "../validators.js";
 
 const REVIEW_BATCH_ROWS = 2_000;
 const REFERENCE_QUERY_VALUES = 400;
@@ -292,6 +295,7 @@ export async function evaluateConflicts(
   captures: readonly PreparedCapture[],
   recipe: ImportRecipe,
 ): Promise<ImportConflict[]> {
+  validateImportRecipe(recipe);
   const inspection = await inspectDatabase({ database });
   await assertRegisteredColumns(
     engineOf(database),
@@ -379,17 +383,55 @@ export async function evaluateConflicts(
       });
       continue;
     }
+    const mapped = routeColumns(route, capture);
+    validateColumnMappings(route.source, route.selection, mapped);
     if (route.destination.kind === "new-table-infer") {
+      const sourceColumns = new Map(
+        capture.columns.map((column) => [column.name, column]),
+      );
+      const inferredColumns: ColumnDefinition[] = [];
+      let missingSourceColumn = false;
+      for (const column of mapped) {
+        const sourceColumn = sourceColumns.get(column.source);
+        if (sourceColumn === undefined) {
+          missingSourceColumn = true;
+          addConflict(
+            `source:${capture.captureId}:${identifierKey(column.source)}`,
+            {
+              kind: "source-column-not-found",
+              source: capture.sourceKey,
+              selection: capture.selectionKey,
+              column: column.source,
+            },
+          );
+          continue;
+        }
+        inferredColumns.push({
+          name: column.target,
+          type: column.type,
+          ...(column.type === "decimal" &&
+          sourceColumn.precision !== undefined &&
+          sourceColumn.scale !== undefined
+            ? {
+                precision: sourceColumn.precision,
+                scale: sourceColumn.scale,
+              }
+            : {}),
+        });
+      }
+      if (missingSourceColumn) continue;
+      const schema: TableSchema = {
+        name: route.destination.name,
+        columns: inferredColumns,
+        recordId: route.destination.recordId,
+        foreignKeys: [],
+      };
+      validateTableSchema(schema);
       addConflict(`inferred:${capture.sourceKey}:${capture.selectionKey}`, {
         kind: "inferred-schema",
         source: capture.sourceKey,
         selection: capture.selectionKey,
-        schema: {
-          name: route.destination.name,
-          columns: capture.columns,
-          recordId: route.destination.recordId,
-          foreignKeys: [],
-        },
+        schema,
       });
       continue;
     }
@@ -436,14 +478,6 @@ export async function evaluateConflicts(
       destination.columns.map((column) => [identifierKey(column.name), column]),
     );
     const sourceColumns = new Set(capture.columns.map((column) => column.name));
-    const mapped =
-      route.columns.length === 0
-        ? capture.columns.map((column): ColumnRoute => ({
-            source: column.name,
-            target: column.name,
-            type: column.type,
-          }))
-        : route.columns;
     const mappedTargets = new Set(
       mapped.map((column) => identifierKey(column.target)),
     );

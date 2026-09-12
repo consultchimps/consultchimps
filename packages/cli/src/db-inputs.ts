@@ -37,6 +37,24 @@ function isMissingPath(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
+function isFileSystemError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    "syscall" in error &&
+    typeof error.syscall === "string"
+  );
+}
+
+function documentUnreadable(cause: unknown): ConsultChimpsError {
+  return new ConsultChimpsError(
+    "DB_DOCUMENT_UNREADABLE",
+    "The JSON configuration file could not be opened. Check that it exists and that you can read it.",
+    { cause },
+  );
+}
+
 async function parseInput(input: string): Promise<{
   readonly filePath: string;
   readonly key: string;
@@ -62,14 +80,26 @@ async function parseInput(input: string): Promise<{
 }
 
 export async function readDbDocument(filePath: string): Promise<unknown> {
-  const info = await stat(filePath);
+  let info;
+  try {
+    info = await stat(filePath);
+  } catch (error) {
+    if (!isFileSystemError(error)) throw error;
+    throw documentUnreadable(error);
+  }
   if (!info.isFile() || info.size > 8 * 1024 * 1024) {
     throw new ConsultChimpsError(
       "DB_INVALID_DOCUMENT",
       "Choose a JSON configuration file no larger than 8 MiB.",
     );
   }
-  const text = await readFile(filePath, "utf8");
+  let text;
+  try {
+    text = await readFile(filePath, "utf8");
+  } catch (error) {
+    if (!isFileSystemError(error)) throw error;
+    throw documentUnreadable(error);
+  }
   try {
     return JSON.parse(text);
   } catch {

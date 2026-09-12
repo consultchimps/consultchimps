@@ -1,9 +1,13 @@
 import { databaseError } from "./errors.js";
 import {
+  assertRecordIdConfig,
+  assertSafeIdentifier,
   COLUMN_TYPES,
+  identifierKey,
   validateTableSchema,
   type ColumnDefinition,
   type DatabaseSchema,
+  type RecordIdConfig,
   type TableSchema,
 } from "./schema.js";
 import type {
@@ -15,6 +19,61 @@ import type {
   ImportRecipe,
   ImportRoute,
 } from "./import/types.js";
+
+export function validateColumnMappings(
+  source: string,
+  selection: string,
+  columns: readonly ColumnRoute[],
+): void {
+  const targets = new Map<string, string>();
+  for (const column of columns) {
+    assertSafeIdentifier(column.target, "column");
+    const key = identifierKey(column.target);
+    const priorSource = targets.get(key);
+    if (priorSource !== undefined) {
+      throw databaseError(
+        "DB_INVALID_RECIPE",
+        `Source "${source}" selection "${selection}" maps destination column "${column.target}" more than once. Map each destination column once within a route.`,
+        {
+          source,
+          selection,
+          target: column.target,
+          firstSource: priorSource,
+          secondSource: column.source,
+        },
+      );
+    }
+    targets.set(key, column.source);
+  }
+}
+
+function validateImportRoute(route: ImportRoute): void {
+  if (route.destination.kind === "new-table") {
+    validateTableSchema(route.destination.schema);
+  } else if (route.destination.kind === "new-table-infer") {
+    assertSafeIdentifier(route.destination.name, "table");
+    assertRecordIdConfig(route.destination.recordId);
+  } else {
+    assertSafeIdentifier(route.destination.table, "table");
+  }
+  validateColumnMappings(route.source, route.selection, route.columns);
+}
+
+export function validateImportRecipe(recipe: ImportRecipe): void {
+  const keys = new Set<string>();
+  for (const route of recipe.routes) {
+    validateImportRoute(route);
+    const key = JSON.stringify([route.source, route.selection]);
+    if (keys.has(key)) {
+      throw databaseError(
+        "DB_INVALID_RECIPE",
+        `The import recipe routes source "${route.source}" selection "${route.selection}" more than once.`,
+        { source: route.source, selection: route.selection },
+      );
+    }
+    keys.add(key);
+  }
+}
 
 function objectValue(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -78,21 +137,38 @@ function parseColumn(value: unknown): ColumnDefinition {
   };
 }
 
+function parseRecordIdConfig(
+  value: unknown,
+  invalidCode: "DB_INVALID_DOCUMENT" | "DB_INVALID_RECIPE",
+): RecordIdConfig {
+  const recordId = objectValue(value, "Record ID configuration");
+  const padding = recordId["padding"];
+  if (typeof padding !== "number") {
+    throw databaseError(invalidCode, "Record ID padding must be a number.");
+  }
+  const separator = recordId["separator"];
+  if (separator !== undefined && typeof separator !== "string") {
+    throw databaseError(
+      invalidCode,
+      "The Record ID separator must be text when provided.",
+    );
+  }
+  const parsed: RecordIdConfig = {
+    prefix: stringValue(recordId["prefix"], "Record ID prefix"),
+    padding,
+    ...(separator === undefined ? {} : { separator }),
+  };
+  assertRecordIdConfig(parsed);
+  return parsed;
+}
+
 function parseTable(value: unknown): TableSchema {
   const table = objectValue(value, "table schema");
   const columns = table["columns"];
-  const recordId = objectValue(table["recordId"], "Record ID configuration");
   if (!Array.isArray(columns)) {
     throw databaseError(
       "DB_INVALID_DOCUMENT",
       "A table schema needs a columns array.",
-    );
-  }
-  const padding = recordId["padding"];
-  if (typeof padding !== "number") {
-    throw databaseError(
-      "DB_INVALID_DOCUMENT",
-      "Record ID padding must be a number.",
     );
   }
   const foreignKeys = table["foreignKeys"];
@@ -105,13 +181,7 @@ function parseTable(value: unknown): TableSchema {
   const parsed: TableSchema = {
     name: stringValue(table["name"], "table name"),
     columns: columns.map(parseColumn),
-    recordId: {
-      prefix: stringValue(recordId["prefix"], "Record ID prefix"),
-      padding,
-      ...(typeof recordId["separator"] === "string"
-        ? { separator: recordId["separator"] }
-        : {}),
-    },
+    recordId: parseRecordIdConfig(table["recordId"], "DB_INVALID_DOCUMENT"),
     ...(foreignKeys === undefined
       ? {}
       : {
@@ -148,28 +218,16 @@ function parseDestination(value: unknown): ImportDestination {
     return { kind: "new-table", schema: parseTable(destination["schema"]) };
   }
   if (destination["kind"] === "new-table-infer") {
-    const recordId = objectValue(
-      destination["recordId"],
-      "Record ID configuration",
-    );
-    const padding = recordId["padding"];
-    if (typeof padding !== "number") {
-      throw databaseError(
-        "DB_INVALID_RECIPE",
-        "Record ID padding must be a number.",
-      );
-    }
-    return {
+    const parsed: ImportDestination = {
       kind: "new-table-infer",
       name: stringValue(destination["name"], "destination table"),
-      recordId: {
-        prefix: stringValue(recordId["prefix"], "Record ID prefix"),
-        padding,
-        ...(typeof recordId["separator"] === "string"
-          ? { separator: recordId["separator"] }
-          : {}),
-      },
+      recordId: parseRecordIdConfig(
+        destination["recordId"],
+        "DB_INVALID_RECIPE",
+      ),
     };
+    assertSafeIdentifier(parsed.name, "table");
+    return parsed;
   }
   if (destination["kind"] === "existing-table") {
     return {
@@ -207,12 +265,14 @@ function parseRoute(value: unknown): ImportRoute {
       "An import route needs a columns array.",
     );
   }
-  return {
+  const parsed: ImportRoute = {
     source: stringValue(route["source"], "source key"),
     selection: stringValue(route["selection"], "selection key"),
     destination: parseDestination(route["destination"]),
     columns: route["columns"].map(parseColumnRoute),
   };
+  validateImportRoute(parsed);
+  return parsed;
 }
 
 export function parseImportRecipe(value: unknown): ImportRecipe {
@@ -224,19 +284,9 @@ export function parseImportRecipe(value: unknown): ImportRecipe {
     );
   }
   const routes = document["routes"].map(parseRoute);
-  const keys = new Set<string>();
-  for (const route of routes) {
-    const key = JSON.stringify([route.source, route.selection]);
-    if (keys.has(key)) {
-      throw databaseError(
-        "DB_INVALID_RECIPE",
-        `The import recipe routes source "${route.source}" selection "${route.selection}" more than once.`,
-        { source: route.source, selection: route.selection },
-      );
-    }
-    keys.add(key);
-  }
-  return { version: 1, routes };
+  const recipe: ImportRecipe = { version: 1, routes };
+  validateImportRecipe(recipe);
+  return recipe;
 }
 
 function nonNegativeInteger(value: unknown, label: string): number {

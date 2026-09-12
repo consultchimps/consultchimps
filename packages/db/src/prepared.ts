@@ -6,6 +6,7 @@ import {
   parseImportConflicts,
   parseImportDecisions,
   parseImportRecipe,
+  validateImportRecipe,
 } from "./validators.js";
 import type {
   ImportConflict,
@@ -96,6 +97,7 @@ export async function createPreparedImportHandle(options: {
   readonly baselineSchemaFingerprint: string;
   readonly recipe: ImportRecipe;
 }): Promise<PreparedImport> {
+  validateImportRecipe(options.recipe);
   const id = preparedId();
   await options.engine.transaction(async (transaction) => {
     await transaction.execute(
@@ -242,6 +244,7 @@ export async function updatePreparedPlan(options: {
   readonly baselineRevision?: bigint | undefined;
   readonly baselineSchemaFingerprint?: string | undefined;
 }): Promise<PreparedImportRef | ReadyImportRef> {
+  validateImportRecipe(options.recipe);
   const engine = preparedEngineOf(options.prepared);
   const recipeJson = canonicalJson(options.recipe);
   const conflictsJson = canonicalJson(options.conflicts);

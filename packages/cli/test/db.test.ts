@@ -59,6 +59,109 @@ async function run(
   return envelope.result as Record<string, unknown>;
 }
 
+async function runFailure(args: string[]): Promise<{
+  readonly stdout: string;
+  readonly stderr: string;
+}> {
+  try {
+    await execute(process.execPath, [cli, ...args], { encoding: "utf8" });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "stdout" in error &&
+      typeof error.stdout === "string" &&
+      "stderr" in error &&
+      typeof error.stderr === "string"
+    ) {
+      return { stdout: error.stdout, stderr: error.stderr };
+    }
+    throw error;
+  }
+  throw new Error("The command unexpectedly succeeded.");
+}
+
+test.each([
+  {
+    option: "schema",
+    args: (root: string, missing: string) => [
+      "db",
+      "create",
+      "-o",
+      path.join(root, "database.sqlite"),
+      "--schema",
+      missing,
+    ],
+  },
+  {
+    option: "recipe",
+    args: (root: string, missing: string) => [
+      "db",
+      "resolve",
+      path.join(root, "database.sqlite"),
+      "--plan",
+      path.join(root, "review.ccplan"),
+      "--recipe",
+      missing,
+    ],
+  },
+  {
+    option: "context",
+    args: (root: string, missing: string) => [
+      "db",
+      "apply",
+      path.join(root, "database.sqlite"),
+      "--plan",
+      path.join(root, "review.ccplan"),
+      "--context",
+      missing,
+    ],
+  },
+])("missing $option documents have a stable JSON error", async ({ args }) => {
+  const root = await directory();
+  const missing = path.join(root, "private-configuration.json");
+  const failure = await runFailure(["--json", ...args(root, missing)]);
+
+  const expected = {
+    ok: false,
+    error: {
+      code: "DB_DOCUMENT_UNREADABLE",
+      message:
+        "The JSON configuration file could not be opened. Check that it exists and that you can read it.",
+    },
+  };
+  expect(JSON.parse(failure.stdout)).toEqual(expected);
+  expect(JSON.parse(failure.stderr)).toEqual(expected);
+  expect(failure.stdout).not.toContain("private-configuration.json");
+  expect(failure.stderr).not.toContain("private-configuration.json");
+  await expect(
+    readFile(path.join(root, "database.sqlite")),
+  ).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test("a missing database document has an actionable human error", async () => {
+  const root = await directory();
+  const missing = path.join(root, "private-configuration.json");
+  const output = path.join(root, "database.sqlite");
+  await writeFile(output, "existing output");
+  const failure = await runFailure([
+    "db",
+    "create",
+    "-o",
+    output,
+    "--schema",
+    missing,
+    "--force",
+  ]);
+
+  expect(failure.stdout).toBe("");
+  expect(failure.stderr).toContain(
+    "The JSON configuration file could not be opened. Check that it exists and that you can read it.",
+  );
+  expect(failure.stderr).toContain("DB_DOCUMENT_UNREADABLE");
+  expect(failure.stderr).not.toContain("private-configuration.json");
+  expect(await readFile(output, "utf8")).toBe("existing output");
+});
+
 test("an existing workbook path containing an equals sign remains a plain path", async () => {
   const root = await directory();
   const database = path.join(root, "inventory.sqlite");

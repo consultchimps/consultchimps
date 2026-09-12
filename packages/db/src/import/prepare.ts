@@ -25,6 +25,7 @@ import {
   preparedCaptures,
 } from "./planning.js";
 import type { PrepareImportOptions, PrepareImportOutcome } from "./types.js";
+import { validateImportRecipe } from "../validators.js";
 
 const HASH_CHUNK_BYTES = 1024 * 1024;
 const CAPTURE_BATCH_ROWS = 2_000;
@@ -54,6 +55,7 @@ export async function prepareImport(
   options: PrepareImportOptions,
 ): Promise<PrepareImportOutcome> {
   throwIfAborted(options.signal, "db.prepare");
+  validateImportRecipe(options.recipe);
   if (options.prepared.databaseId !== options.database.id) {
     throw databaseError(
       "DB_PREPARED_WRONG_DATABASE",
