@@ -2,7 +2,7 @@
 
 Status: design reference for the persistent import phase. This document records
 the proposed interfaces that guided implementation, including provisional JSON
-examples. [ADR 0004](adr/0004-persistent-database-imports.md) records the
+examples. [ADR 0005](adr/0005-persistent-database-imports.md) records the
 accepted storage decision. The
 [user guide](../apps/docs/content/docs/tools/data-workspace.mdx) and
 [library reference](../apps/docs/content/docs/libraries/index.mdx) describe the

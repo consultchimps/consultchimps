@@ -651,7 +651,7 @@ The original db spike used sql.js and an in-memory database serialized on save.
 Its xlsx reader materialized worksheets, and insertion performed per-row work.
 The persistent implementation replaces these paths with file-backed engines,
 streaming capture, and bounded batch insertion, as recorded in
-[ADR 0004](adr/0004-persistent-database-imports.md).
+[ADR 0005](adr/0005-persistent-database-imports.md).
 
 [ADR 0003](adr/0003-local-database-workspace.md) records the spike's SQLite
 engine, OPFS mirror role, generated text IDs, and foreign-key choices. These

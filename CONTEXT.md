@@ -46,7 +46,7 @@ issues use these terms with exactly these meanings.
 
 ## Database workspace
 
-[ADR 0004](docs/adr/0004-persistent-database-imports.md) defines persistent
+[ADR 0005](docs/adr/0005-persistent-database-imports.md) defines persistent
 storage and import identity. Analytics UI work is paused indefinitely.
 
 - **Workspace**: the stateful page for creating or opening a persistent local
@@ -120,3 +120,25 @@ storage and import identity. Analytics UI work is paused indefinitely.
   use case requires it. Distinct from its existing inventory classification.
 - **Inventory drift**: a relevant change between the inventory a use-case
   mapping was based on and the inventory now held in the database.
+
+## Power BI (draft)
+
+First draft, added with ADR 0004. The verb and nouns are proposed, not final.
+
+- **Export (Power BI)**: write each exportable table of a Power BI file's model
+  to a workbook, as one or more worksheets per table. Never called "extract" or
+  "convert".
+- **Exportable table**: a model table the export policy admits: not hidden
+  (unless hidden tables are included), within the column limit, and with at
+  least one column whose values can be decoded and represented in the workbook.
+- **Model**: the tables and their loaded rows carried inside a `.pbix` file. A
+  template (`.pbit`) or a live-connection file carries no model.
+- **Model table**: one named table of the model, with its columns and rows.
+- **Hidden table**: a model table the file marks as not user-visible, such as
+  the date tables Power BI generates on its own.
+- **Calculated table / calculated column**: a model table or column whose rows
+  were produced by a DAX expression rather than loaded from a source. Exported
+  as data.
+- **Manifest**: the record an export returns alongside the workbook, naming
+  skipped tables and columns, worksheet splits, and counts of values rounded,
+  truncated, or encoded as text, grouped by column and reason.

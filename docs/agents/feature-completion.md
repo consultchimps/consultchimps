@@ -51,7 +51,7 @@ the demonstrated checklist is not mergeable.
 
 ## Persistent database browser operations
 
-[ADR 0004](../adr/0004-persistent-database-imports.md) defines this storage
+[ADR 0005](../adr/0005-persistent-database-imports.md) defines this storage
 contract. These checks supplement the browser checklist and do not require an
 analytics UI.
 
