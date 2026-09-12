@@ -125,11 +125,22 @@ Successful partial exports also populate `OperationResult.warnings` from the
 manifest under Decision 9, so the normal result summary reports the exclusions.
 
 A workbook is only produced when at least one table is exportable. When the
-model holds tables but every one of them is excluded, whether hidden under the
-default policy, over the column limit, or without any usable output columns, the
-operation fails with a stable code (`PBI_NO_EXPORTABLE_TABLES`) whose message
-lists each table with the reason it was excluded, and names the include-hidden
-option when that is the cure. An empty workbook is never a success.
+model has no tables or every table is excluded, whether hidden under the default
+policy, over the column limit, or without any usable output columns, the
+operation fails with `PBI_NO_EXPORTABLE_TABLES`. Its message summarizes counts
+by exclusion reason and names the include-hidden option when that is the cure.
+Its details aggregate table and column counts by stable reason code in ASCII
+code order, without table or column names or identifiers. A model with no tables
+has zero counts and a message saying no tables were found. An empty workbook is
+never a success.
+
+Every Power BI refusal follows the repository's prohibition on document contents
+in errors. Messages, structured details, and exposed error causes omit
+model-provided names, identifiers, DAX, cell values, and raw parser text. Use
+controlled stage labels, option names, reason codes, counts, and recovery steps.
+Named exclusions belong only in a successful export's user-requested manifest.
+Build item 1 tests serialized errors with distinctive confidential names and
+parser text and verifies none appear in the diagnostics.
 
 Capacity is a separate operational gate, with `PBI_EXPORT_LIMIT_EXCEEDED` for an
 export that cannot fit the configured limits. The shared byte engine accepts
@@ -472,7 +483,8 @@ the column exclusions when they cause `PBI_TABLE_NO_EXPORTABLE_COLUMNS` so the
 user can see why no columns remain. Value-change counts describe emitted cells
 only; discard conversion counts for an excluded column. The binary-limit entry
 instead counts its oversized values. A `PBI_NO_EXPORTABLE_TABLES` error returns
-these same table and column exclusions in its structured details.
+only anonymous table and column counts aggregated by these exclusion codes,
+using Decision 4's diagnostic rules, not the named manifest entries.
 
 This replaces per-value reporting: a million high-precision identifiers add one
 count for their column, not a million manifest entries. Counts cover exact
