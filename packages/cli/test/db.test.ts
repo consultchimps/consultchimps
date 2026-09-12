@@ -61,6 +61,15 @@ async function run(
   return envelope.result as Record<string, unknown>;
 }
 
+async function runHuman(args: string[]): Promise<string> {
+  const result = await execute(process.execPath, [cli, "db", ...args], {
+    encoding: "utf8",
+  });
+  expect(result.stderr).toBe("");
+  expect(result.stdout.trim()).not.toMatch(/^\{/u);
+  return result.stdout;
+}
+
 async function runFailure(args: string[]): Promise<{
   readonly stdout: string;
   readonly stderr: string;
@@ -279,6 +288,210 @@ test("inspects a read-only saved plan without changing its journal mode or files
   } finally {
     await chmod(plan, 0o644);
   }
+});
+
+test("renders database review commands as labeled prose while JSON stays structured", async () => {
+  const root = await directory();
+  const database = path.join(root, "inventory.sqlite");
+  const source = path.join(root, "inventory.xlsx");
+  const plan = path.join(root, "review.ccplan");
+  const context = path.join(root, "delivery.json");
+  const schema = path.join(root, "schema.json");
+  await writeFile(
+    source,
+    workbook([
+      ["Name"],
+      ...Array.from({ length: 25 }, (_, index) => [`Region ${index + 1}`]),
+    ]),
+  );
+  await writeFile(
+    context,
+    JSON.stringify({ label: "Synthetic delivery", scope: { kind: "full" } }),
+  );
+  await run(["create", "-o", database]);
+  await run(["plan", database, "--input", `inventory=${source}`, "-o", plan]);
+
+  const planInspection = await runHuman(["inspect", plan, "--limit", "25"]);
+  expect(planInspection).toContain("Saved import plan inspection");
+  expect(planInspection).toContain("Rows newly captured in this plan: 25");
+  expect(planInspection).toContain("Bounded row preview:");
+  expect(planInspection).toContain('Name="Region 1"');
+  expect(planInspection).toContain("source row 26");
+  expect(planInspection).toContain("Selection key:");
+  expect(planInspection).toContain("Capture ID:");
+  expect(planInspection).toContain("captured in this plan");
+  expect(planInspection).toContain("Column mappings: Name -> Name (text)");
+  expect(planInspection).toContain(
+    'Confirm the inferred schema for new table "inventory"',
+  );
+  expect(planInspection).not.toContain("inferred-schema");
+  expect(planInspection).toContain(
+    "Safety: This inspection did not change captured rows, routes, or decisions.",
+  );
+  expect(planInspection).not.toContain('"capturedRows"');
+
+  const firstPreview = await run(["inspect", plan, "--limit", "20"]);
+  const nextCursor = firstPreview["nextCursor"];
+  if (typeof nextCursor !== "string") {
+    throw new Error("The first preview page did not return a cursor.");
+  }
+  const firstPreviewText = await runHuman(["inspect", plan, "--limit", "20"]);
+  expect(firstPreviewText).toContain("More preview rows are available.");
+  const secondPreviewText = await runHuman([
+    "inspect",
+    plan,
+    "--limit",
+    "20",
+    "--cursor",
+    nextCursor,
+  ]);
+  expect(secondPreviewText).toContain("source row 26");
+  expect(secondPreviewText).not.toContain("source row 2:");
+
+  const resolution = await runHuman(["resolve", database, "--plan", plan]);
+  expect(resolution).toContain("Saved import plan resolution");
+  expect(resolution).toContain("Status: Ready");
+  expect(resolution).toContain("No accepted database rows were changed.");
+  expect(resolution).not.toContain('"planRevision"');
+
+  const applied = await run([
+    "apply",
+    database,
+    "--plan",
+    plan,
+    "--context",
+    context,
+    "--request-id",
+    "synthetic-delivery",
+  ]);
+  const captureIds = applied["captureIds"];
+  if (!Array.isArray(captureIds) || typeof captureIds[0] !== "string") {
+    throw new Error("The import did not report its capture ID.");
+  }
+  const deliveryConnection = new Sqlite(database);
+  try {
+    const insertDelivery = deliveryConnection.prepare(
+      "INSERT INTO _consultchimps_delivery_events VALUES (?, ?, ?)",
+    );
+    const insertMembership = deliveryConnection.prepare(
+      "INSERT INTO _consultchimps_delivery_memberships VALUES (?, ?)",
+    );
+    for (let index = 2; index <= 25; index += 1) {
+      const id = `DEL-${index.toString().padStart(6, "0")}`;
+      const deliveryContext =
+        index === 2
+          ? {
+              label: "Selected region delivery",
+              scope: { kind: "partial", description: "Selected regions" },
+            }
+          : index === 3
+            ? {
+                label: "Changed records delivery",
+                effectiveDate: "2026-09-01",
+                receivedDate: "2026-09-02",
+                scope: { kind: "changes", baseline: "August delivery" },
+                attributes: { reportedRows: 25 },
+              }
+            : { label: `Synthetic delivery ${index}`, scope: { kind: "full" } };
+      insertDelivery.run(
+        id,
+        `synthetic-delivery-${index}`,
+        JSON.stringify(deliveryContext),
+      );
+      insertMembership.run(id, captureIds[0]);
+    }
+  } finally {
+    deliveryConnection.close();
+  }
+  const databaseInspection = await runHuman(["inspect", database]);
+  expect(databaseInspection).toContain("Database inspection");
+  expect(databaseInspection).toContain("Recorded deliveries: 25");
+  expect(databaseInspection).toContain(
+    "Safety: This inspection did not change database tables or stored data.",
+  );
+  expect(databaseInspection).not.toContain('"completedImports"');
+
+  const deliveries = await runHuman(["deliveries", database, "--limit", "25"]);
+  expect(deliveries).toContain("Delivery history");
+  expect(deliveries).toContain("Synthetic delivery");
+  expect(deliveries).toContain("DEL-000025");
+  expect(deliveries).toContain("Scope: Partial, Selected regions");
+  expect(deliveries).toContain("Scope: Changes since August delivery");
+  expect(deliveries).toContain("Effective date: 2026-09-01");
+  expect(deliveries).toContain("Received date: 2026-09-02");
+  expect(deliveries).toContain("Reported attributes: reportedRows=25");
+  expect(deliveries).toContain(`Capture IDs: ${captureIds[0]}`);
+  expect(deliveries).not.toContain('"captureIds"');
+
+  await writeFile(
+    schema,
+    JSON.stringify({
+      version: 1,
+      tables: [
+        {
+          name: "inventory",
+          recordId: { prefix: "I", padding: 6 },
+          columns: [{ name: "Name", type: "integer" }],
+        },
+        {
+          name: "reviews",
+          recordId: { prefix: "RVW", separator: ":", padding: 4 },
+          columns: [
+            { name: "inventory_id", type: "text", nullable: false },
+            { name: "score", type: "integer" },
+          ],
+          foreignKeys: [
+            { column: "inventory_id", referencesTable: "inventory" },
+          ],
+        },
+      ],
+    }),
+  );
+
+  const schemaReview = await runHuman([
+    "schema",
+    "apply",
+    database,
+    "--file",
+    schema,
+    "--dry-run",
+  ]);
+  expect(schemaReview).toContain("Database schema review");
+  expect(schemaReview).toContain(
+    'Column "Name" in table "inventory" is text, but the proposed schema declares integer.',
+  );
+  expect(schemaReview).toContain('Create table "reviews"');
+  expect(schemaReview).toContain(
+    'Record IDs: prefix "RVW", separator ":", padding 4',
+  );
+  expect(schemaReview).toContain("inventory_id text required");
+  expect(schemaReview).toContain("score integer optional");
+  expect(schemaReview).toContain("inventory_id -> inventory.record_id");
+  expect(schemaReview).not.toContain("column-type");
+  expect(schemaReview).toContain("Safety: This dry run did not change");
+  expect(schemaReview).not.toContain('"schemaFingerprint"');
+
+  const exportReview = await runHuman([
+    "export",
+    database,
+    "-o",
+    path.join(root, "converted.duckdb"),
+    "--format",
+    "duckdb",
+    "--dry-run",
+  ]);
+  expect(exportReview).toContain("Database export review");
+  expect(exportReview).toContain("Source format: SQLite");
+  expect(exportReview).toContain(
+    "Safety: This dry run did not create or replace an output file.",
+  );
+  expect(exportReview).not.toContain('"sourceFormat"');
+
+  const jsonInspection = await run(["inspect", plan]);
+  expect(jsonInspection).toMatchObject({
+    capturedRows: "25",
+    prepared: { state: "ready" },
+  });
 });
 
 for (const format of ["sqlite", "duckdb"] as const) {

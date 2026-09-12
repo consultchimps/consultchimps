@@ -105,6 +105,12 @@ export async function applyImport(
   options: ApplyImportOptions,
 ): Promise<ImportResult> {
   throwIfAborted(options.signal, "db.apply");
+  if (options.requestId.trim().length === 0) {
+    throw databaseError(
+      "DB_IMPORT_REQUEST_ID_REQUIRED",
+      "Give the import a request ID so retrying it cannot apply the same plan twice.",
+    );
+  }
   if (options.approved.state !== "ready") {
     throw databaseError(
       "DB_IMPORT_NEEDS_REVIEW",

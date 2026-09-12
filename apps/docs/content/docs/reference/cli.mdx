@@ -354,8 +354,10 @@ delivery-context JSON examples.
 - `db inspect --limit <number>` limits the saved plan's row preview to 20 by
   default, with a maximum of 100. Add `--database <file>` to preview rows reused
   from that working database. Without it, the plan reports
-  `DB_PREVIEW_DATABASE_REQUIRED` preview warnings for reused selections.
-  Database inspection reports table and capture summaries.
+  `DB_PREVIEW_DATABASE_REQUIRED` preview warnings for reused selections. Use
+  `--cursor <cursor>` with the reported next preview cursor to continue; quote
+  the cursor for your shell so it remains one argument. Database inspection
+  reports table and capture summaries.
 - `db schema apply --file <schema>` loads a versioned schema. `--dry-run`
   reports additions and conflicts without applying them.
 

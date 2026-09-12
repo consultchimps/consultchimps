@@ -44,6 +44,11 @@ import {
   removeOpfsFile,
   withBrowserExportLease,
 } from "@/lib/workspace-files";
+import {
+  workspaceSourceDescription,
+  workspaceSourceFileName,
+  workspaceSourceKey,
+} from "@/lib/workspace-source";
 import type {
   WorkspaceCommand,
   WorkspaceDeliveryContext,
@@ -276,7 +281,7 @@ function conflictText(conflict: ImportConflict): string {
     case "missing-destination":
       return "Choose a destination table";
     case "source-selection-not-found":
-      return `Source ${conflict.source} selection ${conflict.selection} was not captured; choose an available source and selection`;
+      return `Source ${workspaceSourceDescription(conflict.source)} selection ${conflict.selection} was not captured; choose an available source and selection`;
     case "missing-column":
       return `Destination column ${conflict.column} does not exist`;
     case "source-column-not-found":
@@ -714,7 +719,7 @@ function heldFromInspection(
       id: regionId(route.source, route.selection),
       source: route.source,
       selection: route.selection,
-      fileName: route.source.split(" | ", 1)[0] ?? route.source,
+      fileName: workspaceSourceFileName(route.source),
       label: route.label,
       schema,
       ...(destinationSchema === undefined ? {} : { destinationSchema }),
@@ -776,20 +781,20 @@ async function prepareSources(
   signal: AbortSignal,
 ): Promise<void> {
   const workbookSources = [];
+  const sourceInputs = command.sources.map((source, ordinal) => ({
+    source,
+    key: workspaceSourceKey(source, ordinal),
+  }));
+  const sourceByKey = new Map(
+    sourceInputs.map(({ key, source }) => [key, source] as const),
+  );
   let privatePlan:
     { readonly name: string; readonly prepared: PreparedImport } | undefined;
   try {
-    for (const source of command.sources) {
-      const sourceLabel = [
-        source.file.name,
-        source.role.trim() ? `role=${source.role.trim()}` : "",
-        source.revision.trim() ? `revision=${source.revision.trim()}` : "",
-      ]
-        .filter(Boolean)
-        .join(" | ");
+    for (const { key, source } of sourceInputs) {
       workbookSources.push(
         await createWorkbookImportSource({
-          key: sourceLabel,
+          key,
           bytes: new BrowserBlobSource(source.file.name, source.file),
           scratch: browserScratchFactory,
           signal,
@@ -870,9 +875,8 @@ async function prepareSources(
         source: route.source,
         selection: route.selection,
         fileName:
-          command.sources.find((candidate) =>
-            route.source.startsWith(candidate.file.name),
-          )?.file.name ?? route.source,
+          sourceByKey.get(route.source)?.file.name ??
+          workspaceSourceFileName(route.source),
         label: route.label,
         schema: destinationSchema,
         rowCount: route.rowCount,

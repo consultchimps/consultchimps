@@ -44,13 +44,21 @@ import {
   readDbDocument,
   type DbInputOptions,
 } from "../db-inputs.js";
+import {
+  formatConversionPlan,
+  formatDatabaseInspection,
+  formatDeliveryPage,
+  formatImportInspection,
+  formatImportResolution,
+  formatSchemaPlan,
+} from "../db-report.js";
 import { createCliProgress } from "../progress.js";
 import { withoutTerminalControlsInProse } from "../text.js";
 
 export interface DbCommandOutput {
   json(): boolean;
   result(value: OperationResult): void;
-  data(value: unknown): void;
+  data(value: unknown, humanText: string): void;
 }
 
 interface ImportOptions extends DbInputOptions {
@@ -319,14 +327,21 @@ export function registerDbCommands(
     .argument("<file>", "database or .ccplan file")
     .option("--limit <number>", "maximum preview rows", Number, 20)
     .option(
+      "--cursor <cursor>",
+      "preview cursor returned by a prior saved-plan inspection",
+    )
+    .option(
       "--database <file>",
       "target database containing reused rows for a saved-plan preview",
     )
     .action(
-      async (file: string, options: { limit: number; database?: string }) => {
+      async (
+        file: string,
+        options: { limit: number; cursor?: string; database?: string },
+      ) => {
         const kind = await inspectFileKind({ path: file });
         if (kind.kind === "unmanaged-database") {
-          if (output.json()) output.data(kind);
+          if (output.json()) output.data(kind, "");
           else {
             process.stdout.write(
               `${kind.format === "duckdb" ? "DuckDB" : "SQLite"} database, read-only inspection\nThis file has no ConsultChimps import history. No tables or metadata were added.\n`,
@@ -353,13 +368,12 @@ export function registerDbCommands(
                     readonly: true,
                   });
             try {
-              output.data(
-                await inspectImport({
-                  database,
-                  prepared,
-                  page: { limit: options.limit },
-                }),
-              );
+              const inspection = await inspectImport({
+                database,
+                prepared,
+                page: { limit: options.limit, cursor: options.cursor },
+              });
+              output.data(inspection, formatImportInspection(inspection));
             } finally {
               await database?.close();
             }
@@ -370,16 +384,7 @@ export function registerDbCommands(
           const database = await openDatabase({ path: file, readonly: true });
           try {
             const inspection = await inspectDatabase({ database });
-            if (output.json()) output.data(inspection);
-            else {
-              process.stdout.write(
-                `${inspection.format === "duckdb" ? "DuckDB" : "SQLite"} database\n${inspection.tables.length} tables, ${inspection.captures} source captures, ${inspection.deliveries} recorded deliveries\n`,
-              );
-              for (const table of inspection.tables)
-                process.stdout.write(
-                  `${withoutTerminalControlsInProse(table.name)}: ${table.rowCount} rows, ${table.schema.columns.length} columns\n`,
-                );
-            }
+            output.data(inspection, formatDatabaseInspection(inspection));
           } finally {
             await database.close();
           }
@@ -406,7 +411,7 @@ export function registerDbCommands(
         });
         try {
           const plan = await planSchema({ database, schema });
-          if (options.dryRun) output.data(plan);
+          if (options.dryRun) output.data(plan, formatSchemaPlan(plan));
           else output.result(await applySchema({ database, plan }));
         } finally {
           await database.close();
@@ -528,7 +533,7 @@ export function registerDbCommands(
         try {
           const prepared = await openPreparedImport({ path: options.plan });
           try {
-            output.data(
+            const resolved =
               recipe === undefined
                 ? await resolveImport({
                     database,
@@ -541,8 +546,8 @@ export function registerDbCommands(
                     prepared,
                     recipe,
                     rebase: true,
-                  }),
-            );
+                  });
+            output.data(resolved, formatImportResolution(resolved));
           } finally {
             await prepared.close();
           }
@@ -567,7 +572,8 @@ export function registerDbCommands(
           readonly: true,
         });
         try {
-          output.data(await listDeliveries({ database, ...options }));
+          const deliveries = await listDeliveries({ database, ...options });
+          output.data(deliveries, formatDeliveryPage(deliveries));
         } finally {
           await database.close();
         }
@@ -662,9 +668,10 @@ export function registerDbCommands(
               options.format,
               database.format,
             );
-            if (options.dryRun)
-              output.data(await planConversion({ database, format }));
-            else
+            if (options.dryRun) {
+              const plan = await planConversion({ database, format });
+              output.data(plan, formatConversionPlan(plan));
+            } else
               output.result(
                 await exportDatabase({
                   database,

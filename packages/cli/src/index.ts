@@ -970,12 +970,9 @@ registerDbCommands(program, {
   json: () => program.opts<GlobalOptions>().json === true,
   result: (result) =>
     printResult(result, program.opts<GlobalOptions>().json === true),
-  data: (value) => {
+  data: (value, humanText) => {
     if (program.opts<GlobalOptions>().json === true) printJsonResult(value);
-    else
-      process.stdout.write(
-        `${withoutTerminalControlsInProse(JSON.stringify(value, (_key, item: unknown) => (typeof item === "bigint" ? item.toString() : item), 2))}\n`,
-      );
+    else process.stdout.write(withoutTerminalControlsInProse(humanText));
   },
 });
 
