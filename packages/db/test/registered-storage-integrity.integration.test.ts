@@ -137,30 +137,41 @@ const scalarCorruptions = [
   },
 ] as const;
 
+const storageCorruptions = [
+  {
+    suffix: "dropped-table",
+    readonly: true,
+    mutate: (engine: DatabaseEngine) => engine.execute("DROP TABLE inventory"),
+  },
+  {
+    suffix: "missing-column",
+    readonly: false,
+    mutate: (engine: DatabaseEngine) =>
+      engine.execute("ALTER TABLE inventory DROP COLUMN label"),
+  },
+] as const;
+
 for (const format of ["sqlite", "duckdb"] as const) {
-  test(`${format}: managed tables must retain their declared base table and columns`, async () => {
+  test.each(storageCorruptions)(
+    `${format}: rejects $suffix without changing the database`,
+    async (corruption) => {
+      const created = await workspace(format);
+      const filePath = await damagedCopy(
+        created,
+        format,
+        corruption.suffix,
+        corruption.mutate,
+      );
+      const before = await readFile(filePath);
+      await expect(
+        openDatabase({ path: filePath, readonly: corruption.readonly }),
+      ).rejects.toMatchObject({ code: "DB_SCHEMA_DRIFT" });
+      expect(await readFile(filePath)).toEqual(before);
+    },
+  );
+
+  test(`${format}: inspection allows an extra column but planning a write refuses it`, async () => {
     const created = await workspace(format);
-    const dropped = await damagedCopy(created, format, "dropped", (engine) =>
-      engine.execute("DROP TABLE inventory"),
-    );
-    const droppedBytes = await readFile(dropped);
-    await expect(
-      openDatabase({ path: dropped, readonly: true }),
-    ).rejects.toMatchObject({ code: "DB_SCHEMA_DRIFT" });
-    expect(await readFile(dropped)).toEqual(droppedBytes);
-
-    const missingColumn = await damagedCopy(
-      created,
-      format,
-      "missing-column",
-      (engine) => engine.execute("ALTER TABLE inventory DROP COLUMN label"),
-    );
-    const missingBytes = await readFile(missingColumn);
-    await expect(openDatabase({ path: missingColumn })).rejects.toMatchObject({
-      code: "DB_SCHEMA_DRIFT",
-    });
-    expect(await readFile(missingColumn)).toEqual(missingBytes);
-
     const extraColumn = await damagedCopy(
       created,
       format,
