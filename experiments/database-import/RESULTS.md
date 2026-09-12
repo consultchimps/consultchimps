@@ -97,16 +97,103 @@ a known result. A compatibility export therefore needs declared type mappings.
 It cannot promise unchanged schemas and calculations just because both formats
 accept SQL.
 
-## Engineering decision
+## Current import pipeline
 
-Recommend native DuckDB for the new analytical working file, subject to the
-pending product choice. Keep the existing SQLite workspace behavior while the
-new path is developed. Make SQLite conversion an explicit snapshot export.
+The [pipeline result](results/pipeline.json) runs the current ConsultChimps
+inspect, prepare, resolve, and apply operations. Unlike the direct storage
+measurements above, these runs hash and parse a generated Excel workbook,
+capture review rows in the prepared SQLite file, resolve the inferred schema,
+copy provenance rows into DuckDB, convert captured JSON into typed rows, and
+checkpoint the result.
 
-The next implementation work should establish bounded source reading, persistent
-import receipts, immutable source observations, and file-attributed queries. The
-current in-memory SQLite and whole-workbook reader are useful references for
-semantics, but they are not the large-import runtime.
+| Check                    | 100,000 rows | 1,000,000 rows |
+| ------------------------ | -----------: | -------------: |
+| Source workbook          |       2.1 MB |        21.5 MB |
+| Inspect workbook         |        28 ms |           2 ms |
+| Parse and capture        |     2,196 ms |      21,570 ms |
+| Time awaiting row parser |       981 ms |       9,793 ms |
+| Review captured values   |       172 ms |       1,743 ms |
+| Apply to DuckDB          |     1,064 ms |      11,089 ms |
+| Prepared SQLite file     |      32.1 MB |       335.6 MB |
+| Initial DuckDB file      |      17.3 MB |       110.6 MB |
+| Peak sampled apply RSS   |       535 MB |         894 MB |
+
+The one-million-row source, review file, and initial destination occupy about
+468 MB while the review artifact remains available, or 22 times the compressed
+source size. The destination intentionally contains both one million captured
+JSON rows for provenance and reuse and one million typed destination rows. That
+disk duplication is part of the current model, not appender buffering.
+
+The native appender sustained about 94,000 rows per second at 100,000 rows and
+90,000 rows per second at one million rows through the complete apply path.
+Earlier one-million-row runs completed apply in 11.1 and 12.5 seconds, showing
+the range observed while other checks shared the process host.
+
+At one million rows, a count took less than 1 ms, a full-table boolean group
+took 2 ms, and a join of the 10 percent CDE subset to 10,000 synthetic dataset
+keys took 1 ms. The captured plans at 100,000 rows used sequential scans, hash
+aggregation, and a hash join. The fixture makes `is_cde` true for every tenth
+row, so the join reads 10,000 of 100,000 rows in that run and 100,000 of one
+million rows in the larger run. These narrow, repetitive data make compression
+and grouping especially favorable.
+
+The baseline destination had a composite primary key on captured
+`(capture_id, source_row)` values, plus a `record_id` text primary key and an
+`_imported_row_id` unique key on each imported row. DuckDB backs primary and
+unique constraints with adaptive radix tree indexes even though
+`duckdb_indexes()` does not list those constraint indexes. The current DuckDB
+schema retains the public `record_id` primary key and removes the other two
+redundant constraints. SQLite staging keeps its captured-row composite key, and
+the import reader now rejects non-positive, duplicate, or decreasing source-row
+numbers before staging.
+
+An earlier A/B run before the final parser guards and audit changes measured the
+constraint change at one million rows. It reduced the initial DuckDB file from
+124.5 MB to 105.4 MB, a 15 percent reduction. Apply changed from 11.1 to 12.5
+seconds in the baseline runs to 11.0 seconds in the changed run. Peak apply RSS
+changed from 809 to 866 MB in the baseline runs to 811 MB in the changed run.
+The timing and memory values overlap the observed run-to-run variation, so this
+experiment establishes the storage reduction but does not claim a throughput or
+memory reduction.
+
+The final database replayed its stored capture into a second one-million-row
+table in 9.6 seconds. The file then occupied 165.9 MB. Converting both user
+tables to SQLite copied and verified two million typed rows in 14.9 seconds; the
+resulting SQLite file occupied 484.9 MB. The replay shows that ordered keyset
+reads remain practical for this one-capture fixture without the DuckDB composite
+key. It does not cover shuffled physical rows or many interleaved captures,
+where repeated scans could behave differently despite zone maps.
+
+The final benchmark runs both sizes in one process, so the larger run starts
+with memory retained from the smaller run. The one-million-row apply phase
+increased sampled RSS from about 577 MB during preparation to 894 MB, while
+JavaScript heap during apply stayed below 82 MB. Conversion reached about 916 MB
+RSS. These are sampled process totals, not incremental memory costs. This
+measurement does not isolate record ID index memory from DuckDB's buffers and
+allocator, but it shows that bounded 2,000-row application batches do not bound
+native process memory. Keep the reduced constraint layout for this phase, and
+test browser memory with several interleaved captures before making another
+key-model change.
+
+The benchmark uses numeric, text, boolean, and integer dataset columns. It does
+not put formulas, error cells, rich strings, dates, decimals, blobs, wide rows,
+or a large shared-string dictionary into the scale fixture. Focused reader and
+native adapter tests cover those value forms, but their memory and throughput at
+one million rows remain unmeasured. These native RSS results also do not
+establish a safe DuckDB-Wasm size in a browser process.
+
+## Historical experiment decision
+
+This was the experiment's recommendation. The later product decision in
+[ADR 0004](../../docs/adr/0004-persistent-database-imports.md) supersedes it:
+both formats are persistent working databases, the in-memory spike is retired,
+and the analytics UI is paused. These measurements remain an engine baseline;
+they do not measure the current import metadata and index layout.
+
+The original experiment recommended bounded source reading, persistent import
+receipts, immutable source observations, and file-attributed queries. The
+current pipeline above implements those foundations and replaces the in-memory
+SQLite lifecycle.
 
 The DuckDB Excel extension supplies a useful performance baseline. It still
 needs conformance checks for physical source rows, table regions, formula
@@ -114,7 +201,7 @@ caches, errors, dates, leading-zero identifiers, and shared strings before
 adoption. The browser package's prerelease status also needs a production
 release decision.
 
-The experiment does not implement duplicate prevention, saved mappings, DQ,
-current-inventory selection, relationships, CDE approval, or a user-facing
-import operation. Those remain in the staged plan. No public operation is marked
-available by this change.
+The direct-engine experiments above did not implement the import product. The
+current package adds capture reuse, saved column routes, schemas, relationships,
+and browser and CLI import operations. Business DQ policy, current-inventory
+selection, and CDE approval remain later operations.

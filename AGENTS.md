@@ -111,22 +111,22 @@ Package boundaries are public architectural boundaries, not just folders.
 Put behavior at the lowest reusable layer and keep the CLI as an adapter.
 -->
 
-| Path                | Responsibility                                                 |
-| ------------------- | -------------------------------------------------------------- |
-| `packages/core`     | Shared errors, artifacts, operation results, and contracts     |
-| `packages/files`    | Input discovery and safe output-path handling                  |
-| `packages/tabular`  | Runtime-neutral table models and table operations              |
-| `packages/theme`    | Runtime-neutral palette model and colour validation            |
-| `packages/db`       | Local in-memory database, stable identifiers, and table bridge |
-| `packages/xlsx`     | Excel workbook reading, writing, consolidation, and splitting  |
-| `packages/pptx`     | PowerPoint template inspection and population                  |
-| `packages/pdf`      | PDF splitting and merging                                      |
-| `packages/messages` | Plain-language rendering of operation results and errors       |
-| `packages/cli`      | Command parsing, option mapping, and user-facing CLI output    |
-| `apps/docs`         | Next.js and Fumadocs documentation site                        |
-| `scripts`           | Repository-wide verification and packaging utilities           |
-| `.github`           | CI, security analysis, issue templates, and release automation |
-| `.changeset`        | Pending public package release notes and version intent        |
+| Path                | Responsibility                                                         |
+| ------------------- | ---------------------------------------------------------------------- |
+| `packages/core`     | Shared errors, artifacts, operation results, and contracts             |
+| `packages/files`    | Input discovery and safe output-path handling                          |
+| `packages/tabular`  | Runtime-neutral table models and table operations                      |
+| `packages/theme`    | Runtime-neutral palette model and colour validation                    |
+| `packages/db`       | Persistent SQLite/DuckDB files, schemas, imports, and delivery history |
+| `packages/xlsx`     | Excel workbook reading, writing, consolidation, and splitting          |
+| `packages/pptx`     | PowerPoint template inspection and population                          |
+| `packages/pdf`      | PDF splitting and merging                                              |
+| `packages/messages` | Plain-language rendering of operation results and errors               |
+| `packages/cli`      | Command parsing, option mapping, and user-facing CLI output            |
+| `apps/docs`         | Next.js and Fumadocs documentation site                                |
+| `scripts`           | Repository-wide verification and packaging utilities                   |
+| `.github`           | CI, security analysis, issue templates, and release automation         |
+| `.changeset`        | Pending public package release notes and version intent                |
 
 The xlsx package has a binding architecture document at
 `packages/xlsx/ARCHITECTURE.md`. Read it before changing that package; it

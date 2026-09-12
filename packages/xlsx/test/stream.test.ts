@@ -1,0 +1,560 @@
+import { readFile } from "node:fs/promises";
+
+import { ConsultChimpsError, type RandomAccessFile } from "@consultchimps/core";
+import JSZip from "jszip";
+import { describe, expect, it } from "vitest";
+
+import {
+  inspectWorkbookStream,
+  openWorkbookRegionStream,
+  openWorkbookStream,
+  type ScratchFactory,
+  type StreamRow,
+  type WorkbookRegionReader,
+  type WorkbookSelection,
+} from "../src/stream.js";
+import { BoundedXmlText } from "../src/stream/xml.js";
+
+class MemoryFile implements RandomAccessFile {
+  #bytes = new Uint8Array();
+  closed = false;
+
+  constructor(readonly name: string) {}
+
+  get size(): number {
+    return this.#bytes.byteLength;
+  }
+
+  async readAt(offset: number, length: number): Promise<Uint8Array> {
+    return this.#bytes.slice(offset, offset + length);
+  }
+
+  async writeAt(offset: number, bytes: Uint8Array): Promise<void> {
+    const required = offset + bytes.byteLength;
+    if (required > this.#bytes.byteLength) {
+      const expanded = new Uint8Array(required);
+      expanded.set(this.#bytes);
+      this.#bytes = expanded;
+    }
+    this.#bytes.set(bytes, offset);
+  }
+
+  async truncate(size: number): Promise<void> {
+    const resized = new Uint8Array(size);
+    resized.set(this.#bytes.subarray(0, size));
+    this.#bytes = resized;
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+  }
+}
+
+class MemoryScratch implements ScratchFactory {
+  readonly files: MemoryFile[] = [];
+
+  async create(): Promise<MemoryFile> {
+    const file = new MemoryFile(`scratch-${this.files.length}`);
+    this.files.push(file);
+    return file;
+  }
+}
+
+function source(bytes: Uint8Array, maximumRead = Number.MAX_SAFE_INTEGER) {
+  let largestRead = 0;
+  return {
+    source: {
+      name: "generated.xlsx",
+      size: bytes.byteLength,
+      async readAt(offset: number, length: number) {
+        largestRead = Math.max(largestRead, length);
+        if (length > maximumRead) throw new Error("unbounded read");
+        return bytes.slice(offset, offset + length);
+      },
+    },
+    largestRead: () => largestRead,
+  };
+}
+
+interface WorkbookFixtureOptions {
+  readonly date1904?: boolean;
+  readonly dataSharedString?: string;
+  readonly externalTable?: boolean;
+  readonly inlineValue?: string;
+  readonly malformedWorksheet?: boolean;
+  readonly sharedStringCount?: number;
+  readonly stored?: boolean;
+}
+
+async function workbookFixture(
+  options: WorkbookFixtureOptions = {},
+): Promise<Uint8Array> {
+  const zip = new JSZip();
+  const count = options.sharedStringCount ?? 6;
+  const strings = [
+    "ID & Code",
+    "Exact",
+    "Date",
+    "Formula",
+    options.dataSharedString ?? "A&B",
+    "Rich text",
+    ...Array.from(
+      { length: Math.max(0, count - 6) },
+      (_, index) => `string-${index}`,
+    ),
+  ];
+  zip.file(
+    "[Content_Types].xml",
+    "<Types xmlns='http://schemas.openxmlformats.org/package/2006/content-types'></Types>",
+  );
+  zip.file(
+    "_rels/.rels",
+    "<Relationships xmlns='http://schemas.openxmlformats.org/package/2006/relationships'><Relationship Id='office' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument' Target='/xl/custom/../workbook.xml'></Relationship></Relationships>",
+  );
+  zip.file(
+    "xl/workbook.xml",
+    `<?xml version='1.0'?><x:workbook xmlns:x='http://schemas.openxmlformats.org/spreadsheetml/2006/main' xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships'><x:workbookPr date1904='${options.date1904 === false ? "false" : "true"}'></x:workbookPr><x:sheets><x:sheet r:id='sheetRel' state='visible' name='Data &amp; More'></x:sheet><x:sheet name='Hidden' state='veryHidden' r:id='hiddenRel'></x:sheet></x:sheets><x:definedNames><x:definedName localSheetId='0' name='LocalData'>$B$2:$E$4</x:definedName><x:definedName name='DataRange'>'Data &amp; More'!$B$2:$E$4</x:definedName></x:definedNames></x:workbook>`,
+  );
+  zip.file(
+    "xl/_rels/workbook.xml.rels",
+    `<?xml version='1.0'?><p:Relationships xmlns:p='http://schemas.openxmlformats.org/package/2006/relationships'><p:Relationship Target='worksheets/../worksheets/sheet1.xml' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet' Id='sheetRel'></p:Relationship><p:Relationship Id='hiddenRel' Target='worksheets/sheet2.xml' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet'></p:Relationship><p:Relationship Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings' Target='sharedStrings.xml' Id='stringsRel'></p:Relationship><p:Relationship Target='styles.xml' Id='stylesRel' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles'></p:Relationship></p:Relationships>`,
+  );
+  zip.file(
+    "xl/worksheets/_rels/sheet1.xml.rels",
+    `<?xml version='1.0'?><Relationships xmlns='http://schemas.openxmlformats.org/package/2006/relationships'><Relationship Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink' TargetMode='External' Target='https://example.invalid' Id='external'></Relationship><Relationship ${options.externalTable ? "TargetMode='External' Target='https://example.invalid/table.xml'" : "Target='../tables/table1.xml'"} Id='tableRel' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/table'></Relationship></Relationships>`,
+  );
+  zip.file(
+    "xl/tables/table1.xml",
+    `<?xml version='1.0'?><x:table xmlns:x='http://schemas.openxmlformats.org/spreadsheetml/2006/main' totalsRowCount='1' displayName='InventoryTable' ref='B2:E5' name='InventoryTable'><x:tableColumns count='4'><x:tableColumn name='ID &amp; Code' id='1'></x:tableColumn><x:tableColumn id='2' name='Exact'></x:tableColumn><x:tableColumn name='Date' id='3'></x:tableColumn><x:tableColumn id='4' name='Formula'></x:tableColumn></x:tableColumns></x:table>`,
+  );
+  zip.file(
+    "xl/sharedStrings.xml",
+    `<?xml version='1.0'?><x:sst xmlns:x='http://schemas.openxmlformats.org/spreadsheetml/2006/main' uniqueCount='${strings.length}' count='${strings.length}'>${strings
+      .map((value, index) =>
+        index === 5
+          ? "<x:si><x:r><x:t>Rich </x:t></x:r><x:r><x:t>text</x:t></x:r><x:rPh><x:t>ignored phonetic</x:t></x:rPh></x:si>"
+          : `<x:si><x:t>${value.replaceAll("&", "&amp;")}</x:t></x:si>`,
+      )
+      .join("")}</x:sst>`,
+  );
+  zip.file(
+    "xl/styles.xml",
+    `<?xml version='1.0'?><x:styleSheet xmlns:x='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><x:numFmts count='1'><x:numFmt formatCode='yyyy-mm-dd' numFmtId='164'></x:numFmt></x:numFmts><x:cellXfs count='3'><x:xf numFmtId='0'></x:xf><x:xf applyNumberFormat='1' numFmtId='164'></x:xf><x:xf numFmtId='14'></x:xf></x:cellXfs></x:styleSheet>`,
+  );
+  const worksheet = options.malformedWorksheet
+    ? "<worksheet><sheetData><row r='2'><c r='B2'><v>0</v></c></row>"
+    : `<?xml version='1.0'?><x:worksheet xmlns:x='http://schemas.openxmlformats.org/spreadsheetml/2006/main' xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships'><x:sheetData><x:row r='2'><x:c t='s' r='B2'><x:v>0</x:v></x:c><x:c r='C2' t='s'><x:v>1</x:v></x:c><x:c r='D2' t='s'><x:v>2</x:v></x:c><x:c r='E2' t='s'><x:v>3</x:v></x:c></x:row><x:row r='3'><x:c r='B3' t='s'><x:v>${count > 6 ? count - 1 : 4}</x:v></x:c><x:c r='C3'><x:v>12345678901234567890.123456789</x:v></x:c><x:c s='1' r='D3'><x:v>1</x:v></x:c><x:c r='E3'><x:f>1+1</x:f><x:v>2</x:v></x:c></x:row><x:row r='4'><x:c t='inlineStr' r='B4'><x:is><x:r><x:t>${options.inlineValue ?? "Rich "}</x:t></x:r><x:r><x:t>inline</x:t></x:r></x:is></x:c><x:c r='C4'><x:f>NOW()</x:f></x:c><x:c s='2' r='D4'><x:v>0</x:v></x:c><x:c t='e' r='E4'><x:f>1/0</x:f><x:v>#DIV/0!</x:v></x:c></x:row><x:row r='5'><x:c t='inlineStr' r='B5'><x:is><x:t>Total</x:t></x:is></x:c></x:row></x:sheetData><x:tableParts count='1'><x:tablePart r:id='tableRel'></x:tablePart></x:tableParts></x:worksheet>`;
+  zip.file("xl/worksheets/sheet1.xml", worksheet);
+  zip.file(
+    "xl/worksheets/sheet2.xml",
+    "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData></sheetData></worksheet>",
+  );
+  return zip.generateAsync({
+    type: "uint8array",
+    compression: options.stored ? "STORE" : "DEFLATE",
+    ...(options.stored ? {} : { compressionOptions: { level: 6 } }),
+  });
+}
+
+async function rows(
+  reader: WorkbookRegionReader,
+): Promise<readonly StreamRow[]> {
+  const result: StreamRow[] = [];
+  for await (const batch of reader.batches({ batchSize: 1 })) {
+    result.push(...batch);
+  }
+  await reader.close();
+  return result;
+}
+
+const regionSelections: readonly [WorkbookSelection][] = [
+  [{ table: "inventorytable" }],
+  [{ range: "DataRange" }],
+  [{ range: "LocalData" }],
+  [{ range: "'Data & More'!B2:E4" }],
+  [{ sheet: "data & more", headerRow: 2 }],
+];
+
+describe("bounded workbook streaming", () => {
+  it("counts UTF-8 and CDATA delimiter candidates across input chunks", () => {
+    const encoder = new TextEncoder();
+    const valid = encoder.encode("<t><![CDATA[éA]B]]C]]></t>");
+    const limiter = new BoundedXmlText(
+      new Set(["t"]),
+      8,
+      () => "cell text is too large",
+    );
+    for (let index = 0; index < valid.length; index += 1) {
+      limiter.consume(valid.subarray(index, index + 1));
+    }
+
+    const oversized = new BoundedXmlText(
+      new Set(["t"]),
+      7,
+      () => "cell text is too large",
+    );
+    expect(() => oversized.consume(valid)).toThrow("cell text is too large");
+  });
+
+  it("bounds XML buffers outside recognized cell text", () => {
+    const encoder = new TextEncoder();
+    const large = "x".repeat(65_537);
+    const createLimiter = () =>
+      new BoundedXmlText(new Set(["t"]), 1024, () => "cell text is too large");
+
+    expect(() =>
+      createLimiter().consume(encoder.encode(`<worksheet>${large}`)),
+    ).toThrow("XML text node");
+    expect(() =>
+      createLimiter().consume(encoder.encode(`<!--${large}-->`)),
+    ).toThrow("XML comment");
+    expect(() =>
+      createLimiter().consume(encoder.encode(`<?target ${large}?>`)),
+    ).toThrow("XML processing instruction");
+    expect(() =>
+      createLimiter().consume(encoder.encode(`<!DOCTYPE ${large}>`)),
+    ).toThrow("Document type declarations");
+  });
+
+  it("inspects the repository workbook fixture through actual ZIP ranges", async () => {
+    const bytes = new Uint8Array(
+      await readFile(
+        new URL("./fixtures/structured-table.xlsx", import.meta.url),
+      ),
+    );
+    const input = source(bytes, 128);
+    const inspection = await inspectWorkbookStream(input.source, {
+      scratch: new MemoryScratch(),
+      chunkBytes: 128,
+    });
+    expect(inspection.tables.length).toBeGreaterThan(0);
+    expect(inspection.sheets.length).toBeGreaterThan(0);
+    expect(input.largestRead()).toBeLessThanOrEqual(128);
+
+    const table = inspection.tables[0];
+    if (!table) throw new Error("The fixture has no table.");
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { table: table.name },
+      { scratch: new MemoryScratch(), chunkBytes: 128 },
+    );
+    const parsedRows = await rows(reader);
+    expect(reader.region.columns.length).toBeGreaterThan(0);
+    expect(parsedRows.length).toBeGreaterThan(0);
+  });
+
+  it("inspects namespaced metadata without inflating malformed worksheets", async () => {
+    const input = source(await workbookFixture({ malformedWorksheet: true }));
+    const inspection = await inspectWorkbookStream(input.source, {
+      scratch: new MemoryScratch(),
+    });
+    expect(inspection).toMatchObject({
+      sheets: [
+        { name: "Data & More", visibility: "visible" },
+        { name: "Hidden", visibility: "veryHidden" },
+      ],
+      tables: [
+        {
+          name: "InventoryTable",
+          sheet: "Data & More",
+          reference: "B2:E5",
+          headerRow: 2,
+          totalsRow: true,
+          columns: ["ID & Code", "Exact", "Date", "Formula"],
+        },
+      ],
+    });
+    expect(inspection.namedRanges).toContainEqual({
+      name: "DataRange",
+      reference: "'Data & More'!$B$2:$E$4",
+    });
+  });
+
+  it.each(regionSelections)(
+    "reads table, named, explicit, and shifted-header selection %j",
+    async (selection) => {
+      const input = source(await workbookFixture());
+      const reader = await openWorkbookRegionStream(input.source, selection, {
+        scratch: new MemoryScratch(),
+        chunkBytes: 97,
+      });
+      expect(reader.region.columns).toEqual([
+        { name: "ID & Code", column: 1 },
+        { name: "Exact", column: 2 },
+        { name: "Date", column: 3 },
+        { name: "Formula", column: 4 },
+      ]);
+      const data = await rows(reader);
+      expect(data[0]).toEqual({
+        sourceRow: 3,
+        cells: {
+          "ID & Code": { kind: "string", value: "A&B" },
+          Exact: { kind: "number", raw: "12345678901234567890.123456789" },
+          Date: { kind: "date", raw: "1", iso: "1904-01-02" },
+          Formula: {
+            kind: "formula",
+            formula: "1+1",
+            cached: { kind: "number", raw: "2" },
+          },
+        },
+      });
+      expect(data[1]?.cells).toMatchObject({
+        "ID & Code": { kind: "string", value: "Rich inline" },
+        Exact: {
+          kind: "formula",
+          formula: "NOW()",
+          cached: { kind: "missing" },
+        },
+        Date: { kind: "date", raw: "0", iso: "1904-01-01" },
+        Formula: {
+          kind: "formula",
+          formula: "1/0",
+          cached: { kind: "error", error: "#DIV/0!" },
+        },
+      });
+      if ("table" in selection || "range" in selection) {
+        expect(data.map((row) => row.sourceRow)).toEqual([3, 4]);
+      } else {
+        expect(data.map((row) => row.sourceRow)).toEqual([3, 4, 5]);
+      }
+      expect(input.largestRead()).toBeLessThanOrEqual(97);
+    },
+  );
+
+  it("shares scratch-backed strings across regions and closes them with the session", async () => {
+    const scratch = new MemoryScratch();
+    const input = source(await workbookFixture({ sharedStringCount: 2_000 }));
+    const session = await openWorkbookStream(input.source, { scratch });
+    expect(scratch.files).toHaveLength(2);
+    expect(scratch.files[1]?.size).toBe(2_000 * 12);
+    const first = await session.openRegion({ table: "InventoryTable" });
+    const second = await session.openRegion({ range: "DataRange" });
+    const firstRows = await rows(first);
+    expect(firstRows[0]?.cells["ID & Code"]).toEqual({
+      kind: "string",
+      value: "string-1993",
+    });
+    await rows(second);
+    expect(scratch.files.every((file) => !file.closed)).toBe(true);
+    await session.close();
+    expect(scratch.files.every((file) => file.closed)).toBe(true);
+  });
+
+  it("uses the ordinary 1900 date system when workbookPr disables date1904", async () => {
+    const input = source(await workbookFixture({ date1904: false }));
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { table: "InventoryTable" },
+      { scratch: new MemoryScratch() },
+    );
+    const data = await rows(reader);
+    expect(data[0]?.cells.Date).toEqual({
+      kind: "date",
+      raw: "1",
+      iso: "1900-01-01",
+    });
+  });
+
+  it("refuses an external relationship when it is the selected table target", async () => {
+    const input = source(await workbookFixture({ externalTable: true }));
+    await expect(
+      inspectWorkbookStream(input.source, { scratch: new MemoryScratch() }),
+    ).rejects.toMatchObject({ code: "XLSX_READ_FAILED" });
+  });
+
+  it("cancels and awaits worksheet production when a consumer stops early", async () => {
+    const input = source(await workbookFixture());
+    const session = await openWorkbookStream(input.source, {
+      scratch: new MemoryScratch(),
+    });
+    const first = await session.openRegion({
+      sheet: "Data & More",
+      headerRow: 2,
+    });
+    for await (const batch of first.batches({ batchSize: 1 })) {
+      expect(batch).toHaveLength(1);
+      break;
+    }
+    const second = await session.openRegion({ table: "InventoryTable" });
+    expect(await rows(second)).toHaveLength(2);
+    await first.close();
+    await session.close();
+  });
+
+  it("stops between row batches when the caller cancels", async () => {
+    const scratch = new MemoryScratch();
+    const input = source(await workbookFixture());
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { table: "InventoryTable" },
+      { scratch },
+    );
+    const controller = new AbortController();
+    const batches = reader.batches({
+      batchSize: 1,
+      signal: controller.signal,
+    });
+    const iterator = batches[Symbol.asyncIterator]();
+    expect((await iterator.next()).done).toBe(false);
+    controller.abort("stop after preview");
+    await expect(iterator.next()).rejects.toMatchObject({
+      code: "OPERATION_ABORTED",
+    });
+    expect(scratch.files.every((file) => file.closed)).toBe(true);
+  });
+
+  it("returns structured errors for cancellation, malformed XML, and limits", async () => {
+    const bytes = await workbookFixture();
+    const controller = new AbortController();
+    controller.abort("test cancellation");
+    await expect(
+      inspectWorkbookStream(source(bytes).source, {
+        scratch: new MemoryScratch(),
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ code: "OPERATION_ABORTED" });
+
+    const duringReadController = new AbortController();
+    await expect(
+      inspectWorkbookStream(
+        {
+          name: "cancel-during-read.xlsx",
+          size: bytes.byteLength,
+          async readAt(offset, length) {
+            duringReadController.abort("cancel during source read");
+            return bytes.slice(offset, offset + length);
+          },
+        },
+        {
+          scratch: new MemoryScratch(),
+          signal: duringReadController.signal,
+        },
+      ),
+    ).rejects.toMatchObject({ code: "OPERATION_ABORTED" });
+
+    const malformed = source(
+      await workbookFixture({ malformedWorksheet: true }),
+    );
+    const malformedReader = await openWorkbookRegionStream(
+      malformed.source,
+      { table: "InventoryTable" },
+      { scratch: new MemoryScratch() },
+    );
+    await expect(rows(malformedReader)).rejects.toBeInstanceOf(
+      ConsultChimpsError,
+    );
+
+    await expect(
+      inspectWorkbookStream(source(bytes).source, {
+        scratch: new MemoryScratch(),
+        maximumExpandedBytes: 100,
+      }),
+    ).rejects.toMatchObject({ code: "XLSX_READ_FAILED" });
+    await expect(
+      inspectWorkbookStream(source(bytes).source, {
+        scratch: new MemoryScratch(),
+        maximumMetadataBytes: 50,
+      }),
+    ).rejects.toMatchObject({ code: "XLSX_READ_FAILED" });
+
+    const smallCellScratch = new MemoryScratch();
+    await expect(
+      openWorkbookStream(source(bytes).source, {
+        scratch: smallCellScratch,
+        maximumCellBytes: 3,
+      }),
+    ).rejects.toMatchObject({ code: "XLSX_READ_FAILED" });
+    expect(smallCellScratch.files.every((file) => file.closed)).toBe(true);
+  });
+
+  it("rejects oversized shared and inline text while it is being parsed", async () => {
+    const oversized = "x".repeat(256 * 1024);
+    await expect(
+      openWorkbookStream(
+        source(await workbookFixture({ dataSharedString: oversized })).source,
+        {
+          scratch: new MemoryScratch(),
+          maximumCellBytes: 1024,
+        },
+      ),
+    ).rejects.toMatchObject({ code: "XLSX_READ_FAILED" });
+
+    const reader = await openWorkbookRegionStream(
+      source(await workbookFixture({ inlineValue: oversized })).source,
+      { table: "InventoryTable" },
+      { scratch: new MemoryScratch(), maximumCellBytes: 1024 },
+    );
+    await expect(rows(reader)).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+    });
+  });
+
+  it("rejects an oversized ZIP central directory before listing entries", async () => {
+    const input = source(await workbookFixture(), 128);
+    await expect(
+      inspectWorkbookStream(input.source, {
+        scratch: new MemoryScratch(),
+        chunkBytes: 128,
+        maximumCentralDirectoryBytes: 128,
+      }),
+    ).rejects.toMatchObject({ code: "XLSX_READ_FAILED" });
+    expect(input.largestRead()).toBeLessThanOrEqual(128);
+  });
+
+  it("detects CRC corruption while streaming worksheet rows", async () => {
+    const corrupted = await workbookFixture({ stored: true });
+    const marker = new TextEncoder().encode("12345678901234567890.123456789");
+    let offset = -1;
+    for (let index = 0; index <= corrupted.length - marker.length; index += 1) {
+      if (marker.every((byte, inner) => corrupted[index + inner] === byte)) {
+        offset = index;
+        break;
+      }
+    }
+    expect(offset).toBeGreaterThanOrEqual(0);
+    corrupted[offset] = "9".charCodeAt(0);
+
+    const input = source(corrupted);
+    const inspection = await inspectWorkbookStream(input.source, {
+      scratch: new MemoryScratch(),
+    });
+    expect(inspection.tables).toHaveLength(1);
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { table: "InventoryTable" },
+      { scratch: new MemoryScratch() },
+    );
+    await expect(rows(reader)).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+    });
+  });
+
+  it("checks the worksheet CRC when a row consumer stops early", async () => {
+    const corrupted = await workbookFixture({ stored: true });
+    const marker = new TextEncoder().encode("Total");
+    let offset = -1;
+    for (let index = 0; index <= corrupted.length - marker.length; index += 1) {
+      if (marker.every((byte, inner) => corrupted[index + inner] === byte)) {
+        offset = index;
+        break;
+      }
+    }
+    expect(offset).toBeGreaterThanOrEqual(0);
+
+    const session = await openWorkbookStream(source(corrupted).source, {
+      scratch: new MemoryScratch(),
+    });
+    const reader = await session.openRegion({ table: "InventoryTable" });
+    corrupted[offset] = "X".charCodeAt(0);
+    const consumeOne = async () => {
+      for await (const batch of reader.batches({ batchSize: 1 })) {
+        expect(batch).toHaveLength(1);
+        break;
+      }
+    };
+    await expect(consumeOne()).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+    });
+    await session.close();
+  });
+});

@@ -1,14 +1,20 @@
 # Excel-to-database delivery plan
 
 Status: Staged implementation proposal. The storage experiment has produced
-initial measurements. The primary working format remains a pending decision.
-Planned behavior is not shipped behavior. The existing SQLite workspace has not
-been migrated.
+initial measurements. The db package will support SQLite and DuckDB as working
+and output formats. Planned behavior is not shipped behavior. The existing
+database spike is being developed into this unified capability. Its whole-file
+in-memory lifecycle is retired in the target design. Analytics UI development is
+paused indefinitely pending an explicit product decision.
 
 The [runnable storage experiment](../experiments/database-import/README.md)
 checks browser persistence, Excel reading, artifact portability, and the
 DuckDB-versus-SQLite tradeoff before the first import API is published. See the
 [measured results and limitations](../experiments/database-import/RESULTS.md).
+
+The [implementation proposal](database-import-implementation.md) specifies
+package ownership, public operations, CLI commands, staging artifacts, and
+documentation changes. Those interfaces are proposed, not shipped.
 
 ## Outcome and scope
 
@@ -19,8 +25,10 @@ incrementally. The Excel files are not needed to reopen or continue work.
 The synthetic stress fixture exercises seventy million rows through repeated
 parsing of a generated seven-million-row workbook. It does not represent a
 particular deployment or a supported capacity. The first performance target is
-standalone DuckDB querying the artifact we produce. Browser query and editing
-tools follow the import and storage foundation.
+standalone DuckDB querying the artifact we produce. Browser analytics and
+general grid editing are paused indefinitely. DuckDB UI is a candidate for
+external analysis; its adoption is a separate decision. Database-management and
+import-review UI remain in scope.
 
 Later explicit imports can introduce new tables, new rows, and changed records.
 They must respect database edits made after earlier imports. This is not a
@@ -51,9 +59,9 @@ handled by separate operations.
    let an unscoped count of observations masquerade as a count of unique CDEs.
 7. Make edits to curated records, DQ results, and classification decisions
    separate database operations. They do not rewrite what a file reported.
-8. Prefer native DuckDB as the analytical working format, with SQLite as a
-   compatibility export, subject to the storage experiment. This format
-   recommendation remains pending maintainer approval.
+8. Support SQLite and DuckDB through the existing db package, common operations,
+   and one workspace. Choose the working format explicitly and provide validated
+   conversion. Use the measurements to explain performance tradeoffs.
 
 Keep the public flow as plan, review, then apply. Browser and CLI use the same
 saved recipes and import plans. A general reconciliation workflow is no longer
@@ -431,11 +439,15 @@ each new inventory. Benchmark the cost of repeated rows across distinct files.
 
 ## Storage and performance recommendation
 
-Prefer one persistent analytical working database. Native DuckDB is the initial
-candidate because the stated priority is DuckDB joins and calculations. Offer
-SQLite export for consumers that require it, with explicit type and constraint
-conversion. A compatibility export is a snapshot, not a second live authority.
-This recommendation needs maintainer approval and the technical evidence below.
+Open or create one persistent local working file in the selected SQLite or
+DuckDB format. Retire whole-database loading into application memory and full
+serialization on save. Normal writes commit incrementally; export is a copy or
+conversion operation, not the durability boundary. Engine caches and bounded
+processing buffers remain necessary. Both are managed by @consultchimps/db
+through common operations. DuckDB remains the analytical recommendation; SQLite
+is also a working format, not only an export target. Conversion creates an
+independent artifact with explicit type, constraint, and metadata validation,
+not a second synchronized authority.
 
 Compare this candidate against direct SQLite storage queried through DuckDB. Do
 not assume SQLite indexes, DuckDB indexes, or sorted imports universally
@@ -444,8 +456,10 @@ statistics, and measured query plans against representative queries.
 
 For browser operation, recommend a persistent local working database with an
 explicit portable export. OPFS is a candidate, not a promise of support at this
-scale. External DuckDB reads the exported artifact; the CLI operates on a local
-file. Browser edits after export do not update that exported copy. Importing an
+scale. A browser-owned working file is distinct from the user-selected source
+file; show that distinction explicitly. Copy and export must use bounded memory.
+External DuckDB reads the exported artifact; the CLI operates on a local file.
+Browser edits after export do not update that exported copy. Importing an
 externally edited copy requires version checks, not automatic replacement.
 
 The browser database must survive close and reopen without serializing its full
@@ -471,12 +485,12 @@ mappings, optional current projections, temporary sort space, and transaction
 logs all count toward disk cost. A later optimization may share identical
 row-value versions while retaining per-file membership. Do not erase membership
 merely because two values are equal. Evaluate compact generated key
-representations without changing ADR 0003's public ID contract silently.
+representations, document the chosen contract, and migrate callers together.
 
 Benchmark initial and post-update queries, refresh statistics where needed, and
 make expensive reordering or compaction explicit operations. Do not rebuild a
-seventy-million-row table after every edit. Export after a consistent checkpoint
-and verify the exported file in a fresh native DuckDB process.
+large table after every edit. Export after a consistent checkpoint and verify
+the exported file in a fresh native DuckDB process.
 
 ## Recovery and external writers
 
@@ -522,38 +536,41 @@ introduce new ones only for a distinct runtime or dependency boundary.
 The caller-facing shape should remain small:
 
 ```text
-capture(database, sources, controls) -> CaptureRef
-planImport(database, capture, recipe) -> PlanRef
-inspectPlan(database, plan, page) -> CountsAndExamples
-resolvePlan(database, plan, decisions) -> PlanRef
+prepareImport(database, sources, recipe, staging, controls) -> PreparedImportRef
+inspectImport(preparedImport, page) -> CountsAndExamples
+resolveImport(preparedImport, decisions) -> ReadyImportRef
 applyImport(database, readyPlan, controls) -> OperationResult
 exportDatabase(database, destination, options) -> ArtifactRef
 ```
 
-A plan or table reference names data held in the database; it is not an array of
-millions of JavaScript objects. A recipe stores intent and rules; a plan stores
-the exact changes against a particular baseline. Preview and execution use the
-same derived plan so their decisions cannot drift.
+A plan or table reference names managed staged or persisted data; it is not an
+array of millions of JavaScript objects. A recipe stores intent and rules; a
+plan stores the exact changes against a particular baseline. Preview and
+execution use the same derived plan so their decisions cannot drift.
 
-Proposed later standalone operations include database create, schema apply,
-seed/import, inspect, validate, optimize, and export. Browser sequences and CLI
-recipes compose these operations. Do not build a general workflow scheduler or
-visual pipeline editor before two real compositions require it.
+Database create, schema apply, seed/import, inspect, and export are foundation
+operations. Both SQLite and DuckDB are working formats, with validated
+conversion between supported schemas. Validation and optimization can expand
+later. Browser sequences and CLI recipes compose these operations. Do not build
+a general workflow scheduler or visual pipeline editor before two real
+compositions require it.
 
 ## Staged delivery
 
 Each product PR ships browser and CLI behavior together where applicable. Small
 fixtures belong in CI; the full-scale benchmark is reproducible outside routine
-CI. Existing merged workspace features remain available.
+CI. Refactor the existing workspace into the same product, retaining useful
+import and management behavior and updating their callers and tests together.
+Paused analytics UI migration is not a delivery requirement.
 
-| Stage                                       | Deliverable                                                                                                                                    | Exit evidence                                                                                                                                       |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Storage experiment                          | Compare native DuckDB and SQLite, browser persistence, export/reopen, and bounded Excel parsing                                                | Measured memory, disk, and query behavior up to the target workload; an engine and storage recommendation                                           |
-| PR 1: File-attributed database creation     | Create a database and typed observation tables, route sheets, map columns, generate IDs, hash sources, append observations, persist and export | Query CDE rows by file in standalone DuckDB; repeated 300k-row file adds nothing after reopen; two different files retain separate classifications  |
-| PR 2: Extend an existing database           | Select existing or new tables, append new submissions, review schema changes, retain incompatible inputs for resolution, save recipes          | Updated submission appends evidence without rewriting the earlier file; schema conflicts offer explicit choices; imports preserve database curation |
-| PR 3: DQ, current views, and drift          | Resolve subjects, configure relationships, select current revisions, compare inventories, model use-case and CDE decisions                     | Old and new classifications remain queryable; unresolved identity is visible; affected use-case mappings are flagged without inventing authority    |
-| PR 4: Standalone operations and composition | Schema templates, seeding, validation, explicit curated updates, optimization, export, and reusable sequences                                  | Browser and CLI compose the same operations without loading full tables between steps                                                               |
-| Later: Database workbench                   | Query and editing UI over the same persistent database                                                                                         | No repeat Excel parsing and no silent rewriting of source evidence                                                                                  |
+| Stage                                       | Deliverable                                                                                                                                                                   | Exit evidence                                                                                                                                       |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Storage experiment                          | Compare native DuckDB and SQLite, browser persistence, export/reopen, and bounded Excel parsing                                                                               | Measured memory, disk, and query behavior up to the target workload; an engine and storage recommendation                                           |
+| PR 1: File-attributed database creation     | Create SQLite or DuckDB databases, apply schemas, seed typed tables, route sheets, map columns, generate IDs, hash sources, append observations, persist and validate exports | Query CDE rows by file in standalone DuckDB; repeated 300k-row file adds nothing after reopen; two different files retain separate classifications  |
+| PR 2: Extend an existing database           | Select existing or new tables, append new submissions, review schema changes, retain incompatible inputs for resolution, save recipes                                         | Updated submission appends evidence without rewriting the earlier file; schema conflicts offer explicit choices; imports preserve database curation |
+| PR 3: DQ, current views, and drift          | Resolve subjects, configure relationships, select current revisions, compare inventories, model use-case and CDE decisions                                                    | Old and new classifications remain queryable; unresolved identity is visible; affected use-case mappings are flagged without inventing authority    |
+| PR 4: Standalone operations and composition | Richer schema templates, validation, explicit curated updates, optimization, and reusable sequences over foundation operations                                                | Browser and CLI compose the same operations without loading full tables between steps                                                               |
+| Paused indefinitely: Analytics UI           | Query editor, analytical browsing, charts, and general grid editing                                                                                                           | Resume only after an explicit product decision; evaluate external tools separately                                                                  |
 
 PR 1 establishes provenance and source-observation identity. It does not require
 matching all vendor records before data can be imported or queried by file. CDE
@@ -603,11 +620,12 @@ computed expressions. Include one-to-many and many-to-many cases and report join
 cardinality. Indexing or physical ordering should be evaluated against file and
 revision filters as well as business queries.
 
-Measure at 300k, 7m, and 70m observations with narrow and wide schemas. Include
-multiple submissions of overlapping data to expose storage growth. Record
-browser and engine versions, worker count, peak memory, temporary disk, final
-size, import time, query plans, cold and warm query times, curation cost, and
-export/reopen cost. Publish results before setting performance promises.
+Measure geometrically increasing synthetic row counts with narrow and wide
+schemas until a documented resource limit is reached. Include multiple
+submissions of overlapping data to expose storage growth. Record browser and
+engine versions, worker count, peak memory, temporary disk, final size, import
+time, query plans, cold and warm query times, curation cost, and export/reopen
+cost. Publish results before setting performance promises.
 
 ## Remaining decisions and proposed defaults
 
@@ -617,7 +635,7 @@ coverage.
 
 | Question                                      | Proposed default or owner                                                                                                                 |
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Native DuckDB versus SQLite working file      | Engineering benchmarks native DuckDB first; maintainers decide whether SQLite compatibility must be the primary artifact                  |
+| Working formats and engine capabilities       | Support both formats; select per database and publish measured tradeoffs rather than promising equal performance                          |
 | Identity matching without reliable vendor IDs | Configurable scoped DQ rules; uncertain matches stay pending                                                                              |
 | CDE authority and scope                       | Business decision; preserve recommendations without automatic approval until specified                                                    |
 | Meaning of subset                             | Support explicit selected-attribute membership first; filtered-row subsets require a declared predicate contract                          |
@@ -629,16 +647,18 @@ coverage.
 
 ## Existing constraints and decisions to revisit
 
-The current db package uses sql.js and an in-memory database serialized on save.
-The xlsx reader materializes worksheets, and insertion performs per-row work.
-Those paths are useful semantic references, not demonstrated large-data engines.
+The original db spike used sql.js and an in-memory database serialized on save.
+Its xlsx reader materialized worksheets, and insertion performed per-row work.
+The persistent implementation replaces these paths with file-backed engines,
+streaming capture, and bounded batch insertion, as recorded in
+[ADR 0004](adr/0004-persistent-database-imports.md).
 
-[ADR 0003](adr/0003-local-database-workspace.md) fixes the SQLite engine, OPFS
-mirror role, generated text IDs, and single-column foreign-key targets. Any
-engine, persistence, or physical-key changes require an explicit follow-up ADR
-and a plan for existing database files. Do not silently alter their meaning or
-break the merged workspace. Identity matching and import receipts extend the
-model; they do not make a vendor identifier authoritative.
+[ADR 0003](adr/0003-local-database-workspace.md) records the spike's SQLite
+engine, OPFS mirror role, generated text IDs, and foreign-key choices. These
+decisions can be revised for the unified db implementation. Update the
+architecture record, migrate callers, and remove replaced code without retaining
+a separate legacy product. Validate any saved-file conversion and preserve
+source data. Identity matching does not make a vendor identifier authoritative.
 
 Preserve the repository's deterministic, local-first behavior, input safety,
 structured errors, thin adapters, and source-region semantics. New outputs must
@@ -648,9 +668,13 @@ source names and mapping files are untrusted inputs.
 ## Decision log
 
 - Import Excel once; thereafter the local database is the working authority.
-- Optimize the produced artifact for standalone DuckDB before our query UI.
-- Exercise generated fixtures at several scales, including seventy million rows;
-  do not present a synthetic stress size as a production requirement.
+- Retire the whole-database in-memory lifecycle. Open persistent local files,
+  commit incrementally, and use bounded memory for processing and export.
+- Pause analytics UI work indefinitely, including general grid migration. Resume
+  only after an explicit product decision. Keep browser database management and
+  import review in scope; evaluate DuckDB UI separately for external analysis.
+- Exercise generated fixtures at increasing scales and publish measured limits;
+  do not publish private workload details as benchmark requirements.
 - Generate import and source-row identities independently of vendor IDs; DQ can
   resolve multiple source rows into one business record later.
 - Use content hashes to avoid repeating identical completed imports.
@@ -668,9 +692,11 @@ source names and mapping files are untrusted inputs.
 - Support a master dataset register with unique resolved datasets, attribute and
   CDE counts, and cleansing history. Preserve the delivery trail separately and
   derive current counts from accepted memberships and coverage.
-- The primary storage format, detailed identity rules, and CDE authority remain
-  open. Native DuckDB is the engineering recommendation, pending the format
-  choice and the experiment's remaining correctness and recovery checks.
+- Use the existing @consultchimps/db package and consultchimps db CLI group for
+  SQLite and DuckDB working files and outputs. Refactor the database spike and
+  workspace together; old APIs are not a compatibility requirement.
+- Detailed identity rules and CDE authority remain configurable. Both storage
+  adapters still require correctness, recovery, and conversion verification.
 
 ## Sources and principles
 

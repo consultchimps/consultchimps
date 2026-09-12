@@ -58,6 +58,10 @@ jobs:
         if: matrix.checks == 'full'
         run: pnpm check
 
+      - name: Build and verify the portable CLI archive
+        if: matrix.checks == 'full'
+        run: pnpm bundle:cli
+
       - name: Build and run the test suites on this Node line
         if: matrix.checks == 'runtime'
         run: |

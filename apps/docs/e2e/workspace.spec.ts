@@ -1,118 +1,213 @@
-import { expect, test, type Page } from "@playwright/test";
-import { readFile } from "node:fs/promises";
+import { expect, test } from "@playwright/test";
+import { execFile } from "node:child_process";
+import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { promisify } from "node:util";
 
-/**
- * The data workspace shell, exercised through the fallback (download and file
- * input) path so it runs in headless Chromium without the File System Access
- * API's native pickers. The whole shell is here: start an empty workspace, save
- * it to a `.sqlite` file, and reopen those very bytes.
- *
- * Removing the pickers before the page loads is deliberate. Their dialogs cannot
- * be driven from a test, and it is the fallback that every browser without the
- * API relies on, so it is the path most worth covering.
- */
-async function forceDownloadFallback(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    const globals = window as unknown as Record<string, unknown>;
-    delete globals["showOpenFilePicker"];
-    delete globals["showSaveFilePicker"];
-  });
+import { inspectDatabase } from "@consultchimps/db";
+import { openDatabase as openNativeDatabase } from "@consultchimps/db/node";
+
+const execFileAsync = promisify(execFile);
+const CLI_PATH = path.resolve(
+  import.meta.dirname,
+  "../../../packages/cli/dist/index.js",
+);
+
+const SCHEMA = {
+  version: 1,
+  tables: [
+    {
+      name: "datasets",
+      recordId: { prefix: "DATASET", padding: 6 },
+      columns: [
+        { name: "name", type: "text", nullable: false },
+        { name: "reported_cde", type: "boolean" },
+      ],
+    },
+  ],
+};
+
+async function createDatabase(
+  page: import("@playwright/test").Page,
+  format: "duckdb" | "sqlite",
+): Promise<void> {
+  await page.getByTestId("workspace-new-format").selectOption(format);
+  await page.getByTestId("workspace-new-name").fill(`acceptance.${format}`);
+  await page.getByTestId("workspace-new").click();
+  await expect(page.getByTestId("workspace-summary")).toBeVisible();
+  await expect(page.getByTestId("workspace-format")).toHaveText(format);
 }
 
-/** The header bytes every SQLite file starts with, so a valid save is checkable. */
-const SQLITE_HEADER = "SQLite format 3";
-
-async function downloadedWorkspace(
-  page: Page,
-  trigger: () => Promise<void>,
-): Promise<Buffer> {
-  const downloadPromise = page.waitForEvent("download");
-  await trigger();
-  const download = await downloadPromise;
-  expect(download.suggestedFilename()).toBe("workspace.sqlite");
-  const bytes = await readFile(await download.path());
-  expect(bytes.byteLength).toBeGreaterThan(0);
-  return bytes;
-}
-
-test.describe("/workspace", () => {
-  test("is reachable from the site header", async ({ page }) => {
+test.describe("persistent database workspace", () => {
+  test("is reachable from the header and explains its storage", async ({
+    page,
+  }) => {
     await page.goto("/");
     await page.getByRole("link", { name: "Workspace", exact: true }).click();
     await expect(page).toHaveURL(/\/workspace$/u);
     await expect(
       page.getByRole("heading", { level: 1, name: "Data workspace" }),
     ).toBeVisible();
-    await expect(page.getByTestId("workspace-empty")).toBeVisible();
+    await expect(page.getByTestId("workspace-start")).toContainText(
+      "origin-private browser storage",
+    );
   });
 
-  test("creates, saves, and reopens an empty workspace", async ({ page }) => {
-    await forceDownloadFallback(page);
-    await page.goto("/workspace");
+  for (const format of ["sqlite", "duckdb"] as const) {
+    test(`creates, changes, exports, and reopens ${format}`, async ({
+      page,
+    }, testInfo) => {
+      const nativeSchemaPath = testInfo.outputPath("native-schema.json");
+      const nativeDatabasePath = testInfo.outputPath(`native.${format}`);
+      await writeFile(nativeSchemaPath, JSON.stringify(SCHEMA));
+      await execFileAsync(process.execPath, [
+        CLI_PATH,
+        "db",
+        "create",
+        "--output",
+        nativeDatabasePath,
+        "--format",
+        format,
+        "--schema",
+        nativeSchemaPath,
+      ]);
 
-    // Start a new, empty workspace.
-    await page.getByTestId("workspace-new").click();
-    await expect(page.getByTestId("workspace-summary")).toBeVisible();
-    await expect(page.getByTestId("workspace-file-name")).toHaveText(
-      "New workspace",
-    );
-    await expect(page.getByTestId("workspace-table-count")).toHaveText("0");
+      await page.goto("/workspace");
+      await page
+        .getByTestId("workspace-open-input")
+        .setInputFiles(nativeDatabasePath);
+      await expect(page.getByTestId("workspace-format")).toHaveText(format);
+      await expect(page.getByTestId("workspace-table")).toHaveCount(1);
 
-    // Save it. Without the File System Access API this downloads a copy, which
-    // also covers the worker's serialize path and the byte saver.
-    const bytes = await downloadedWorkspace(page, () =>
-      page.getByTestId("workspace-save-as").click(),
-    );
-    expect(bytes.subarray(0, SQLITE_HEADER.length).toString("latin1")).toBe(
-      SQLITE_HEADER,
-    );
+      await createDatabase(page, format);
 
-    // Reopen exactly those saved bytes through the fallback file input.
-    await page.getByTestId("file-input").setInputFiles({
-      name: "reopened.sqlite",
-      mimeType: "application/vnd.sqlite3",
-      buffer: bytes,
+      await page
+        .getByTestId("workspace-schema-input")
+        .fill(JSON.stringify(SCHEMA));
+      await page.getByTestId("workspace-schema-plan").click();
+      await expect(page.getByTestId("workspace-schema-review")).toContainText(
+        "1 proposed changes",
+      );
+      await page.getByTestId("workspace-schema-apply").click();
+      await expect(page.getByTestId("workspace-table")).toHaveCount(1);
+
+      await page.reload();
+      await expect(page.getByTestId("workspace-summary")).toHaveCount(0);
+      await page.getByTestId("workspace-reopen").first().click();
+      await expect(page.getByTestId("workspace-table")).toHaveCount(1);
+
+      const downloadPromise = page.waitForEvent("download");
+      await page.getByTestId("workspace-export-same").click();
+      const download = await downloadPromise;
+      const nativeExportPath = testInfo.outputPath(`browser-export.${format}`);
+      await download.saveAs(nativeExportPath);
+      const bytes = await readFile(nativeExportPath);
+      expect(bytes.byteLength).toBeGreaterThan(100);
+      if (format === "sqlite") {
+        expect(bytes.subarray(0, 15).toString("latin1")).toBe(
+          "SQLite format 3",
+        );
+      }
+
+      await page.getByTestId("workspace-open-input").setInputFiles({
+        name: download.suggestedFilename(),
+        mimeType: "application/octet-stream",
+        buffer: bytes,
+      });
+      await expect(page.getByTestId("workspace-notice")).toContainText(
+        "selected file will not change",
+      );
+      await expect(page.getByTestId("workspace-format")).toHaveText(format);
+      await expect(page.getByTestId("workspace-table")).toHaveCount(1);
+
+      const nativeExport = await openNativeDatabase({
+        path: nativeExportPath,
+        readonly: true,
+      });
+      try {
+        const inspection = await inspectDatabase({ database: nativeExport });
+        expect(inspection.format).toBe(format);
+        expect(inspection.tables.map((table) => table.name)).toEqual([
+          "datasets",
+        ]);
+      } finally {
+        await nativeExport.close();
+      }
+
+      const convertedFormat = format === "sqlite" ? "duckdb" : "sqlite";
+      const conversionPromise = page.waitForEvent("download");
+      await page.getByTestId("workspace-export-convert").click();
+      const conversion = await conversionPromise;
+      const conversionPath = testInfo.outputPath(
+        `browser-converted.${convertedFormat}`,
+      );
+      await conversion.saveAs(conversionPath);
+      const convertedBytes = await readFile(conversionPath);
+      expect(convertedBytes.byteLength).toBeGreaterThan(100);
+      if (convertedFormat === "sqlite") {
+        expect(convertedBytes.subarray(0, 15).toString("latin1")).toBe(
+          "SQLite format 3",
+        );
+      }
+      await page.getByTestId("workspace-open-input").setInputFiles({
+        name: conversion.suggestedFilename(),
+        mimeType: "application/octet-stream",
+        buffer: convertedBytes,
+      });
+      await expect(page.getByTestId("workspace-format")).toHaveText(
+        convertedFormat,
+      );
+      await expect(page.getByTestId("workspace-table")).toHaveCount(1);
+
+      const nativeConversion = await openNativeDatabase({
+        path: conversionPath,
+        readonly: true,
+      });
+      try {
+        const inspection = await inspectDatabase({
+          database: nativeConversion,
+        });
+        expect(inspection.format).toBe(convertedFormat);
+        expect(inspection.tables.map((table) => table.name)).toEqual([
+          "datasets",
+        ]);
+      } finally {
+        await nativeConversion.close();
+      }
     });
+  }
 
-    await expect(page.getByTestId("workspace-notice")).toHaveText(
-      "Opened the workspace",
+  test("shows a schema conflict before writing", async ({ page }) => {
+    await page.goto("/workspace");
+    await createDatabase(page, "sqlite");
+    await page
+      .getByTestId("workspace-schema-input")
+      .fill(JSON.stringify(SCHEMA));
+    await page.getByTestId("workspace-schema-plan").click();
+    await page.getByTestId("workspace-schema-apply").click();
+
+    const conflicting = structuredClone(SCHEMA);
+    conflicting.tables[0]!.columns[0]!.type = "integer";
+    await page
+      .getByTestId("workspace-schema-input")
+      .fill(JSON.stringify(conflicting));
+    await page.getByTestId("workspace-schema-plan").click();
+    await expect(page.getByTestId("workspace-schema-review")).toContainText(
+      /type|conflict/iu,
     );
-    await expect(page.getByTestId("workspace-file-name")).toHaveText(
-      "reopened.sqlite",
-    );
-    await expect(page.getByTestId("workspace-table-count")).toHaveText("0");
+    await expect(page.getByTestId("workspace-schema-apply")).toBeDisabled();
+    await expect(page.getByTestId("workspace-table")).toHaveCount(1);
   });
 
-  test("reports a file that is not a readable database", async ({ page }) => {
-    await forceDownloadFallback(page);
+  test("refuses a file that is not a database", async ({ page }) => {
     await page.goto("/workspace");
-
-    // A file with the right extension but bytes that are not a database: the
-    // worker's open rejects with a stable error, which the page shows.
-    await page.getByTestId("file-input").setInputFiles({
+    await page.getByTestId("workspace-open-input").setInputFiles({
       name: "broken.sqlite",
       mimeType: "application/vnd.sqlite3",
-      buffer: Buffer.from("this is not a database\n", "utf8"),
+      buffer: Buffer.from("not a database\n", "utf8"),
     });
-
     await expect(page.getByTestId("workspace-error")).toContainText(
-      "not a readable database file",
-    );
-    await expect(page.getByTestId("workspace-summary")).toHaveCount(0);
-  });
-
-  test("refuses a file that is not a workspace type", async ({ page }) => {
-    await forceDownloadFallback(page);
-    await page.goto("/workspace");
-
-    await page.getByTestId("file-input").setInputFiles({
-      name: "notes.txt",
-      mimeType: "text/plain",
-      buffer: Buffer.from("just text\n", "utf8"),
-    });
-
-    await expect(page.getByTestId("workspace-error")).toContainText(
-      "not a .sqlite workspace file",
+      /database|SQLite/iu,
     );
     await expect(page.getByTestId("workspace-summary")).toHaveCount(0);
   });

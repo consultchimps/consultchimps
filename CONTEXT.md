@@ -44,14 +44,14 @@ issues use these terms with exactly these meanings.
   reported as a warning" (`strip-warn`), "Refused before anything is written"
   (`refuse`), and "Needs review" (no declared cell).
 
-## Database workspace (draft)
+## Database workspace
 
-First draft for later review, added with the ADR 0003 foundation. Nothing here
-is final; the maintainer will refine the terms and the record-editing verbs are
-still to agree.
+[ADR 0004](docs/adr/0004-persistent-database-imports.md) defines persistent
+storage and import identity. Analytics UI work is paused indefinitely.
 
-- **Workspace**: the stateful page for one project's database, opened from a
-  file, edited in place, and saved back to that file.
+- **Workspace**: the stateful page for creating or opening a persistent local
+  database, managing schemas, reviewing imports, and exporting copies. A browser
+  working file can be distinct from the original selected file.
 - **Database**: the local relational store for a project, held in a single file
   that carries its own tables, schema, and identifier state. After initial
   import, it is the authoritative working copy for subsequent queries and edits.

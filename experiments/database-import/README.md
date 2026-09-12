@@ -20,6 +20,7 @@ pnpm exec node run.mjs excel-small
 pnpm storage
 pnpm compare
 pnpm excel
+node --expose-gc pipeline.mjs
 ```
 
 The first installation and Excel extension loading require internet access.
@@ -58,6 +59,11 @@ client data.
   This is a parser and storage stress test. It intentionally bypasses
   deduplication and uses one workbook ten times, not ten independent vendor
   submissions. It does not establish import identity or reconciliation.
+- `pipeline.mjs` runs the current ConsultChimps inspect, prepare, resolve, and
+  apply operations against generated 100,000-row and one-million-row Excel
+  workbooks. It records bounded-reader activity, phase throughput, sampled
+  process memory, prepared and target storage, and count, group, and join
+  queries. Build the `db`, `files`, and `xlsx` packages before running it.
 
 Results contain engine and browser versions, operation times, row counts, and
 output size. They do not claim a statistically controlled benchmark. Runs can

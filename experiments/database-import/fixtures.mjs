@@ -6,6 +6,7 @@ import { pipeline } from "node:stream/promises";
 import process from "node:process";
 
 for (const name of [
+  "attributes-100000.xlsx",
   "attributes-300000.xlsx",
   "attributes-1000000.xlsx",
   "seven-million.xlsx",
@@ -23,7 +24,7 @@ const instance = await DuckDBInstance.create(":memory:");
 const connection = await instance.connect();
 try {
   await connection.run("INSTALL excel; LOAD excel");
-  for (const rows of [300000, 1000000]) {
+  for (const rows of [100000, 300000, 1000000]) {
     const path = `dist/attributes-${rows}.xlsx`;
     await connection.run(
       `COPY (SELECT i AS attribute_id, 'attribute_'||i AS attribute_name, i%10=0 AS is_cde, i%10000 AS dataset_id FROM range(${rows}) t(i)) TO '${path}' WITH (FORMAT xlsx, HEADER true)`,
