@@ -40,6 +40,60 @@ async function createDatabase(
   await expect(page.getByTestId("workspace-format")).toHaveText(format);
 }
 
+async function installDelayedSchemaWorker(
+  page: import("@playwright/test").Page,
+): Promise<void> {
+  await page.addInitScript(() => {
+    const NativeWorker = window.Worker;
+    class DelayedSchemaWorker extends EventTarget {
+      readonly worker: Worker;
+
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super();
+        this.worker = new NativeWorker(url, options);
+        this.worker.addEventListener("message", (event) => {
+          const message: unknown = event.data;
+          const delay =
+            typeof message === "object" &&
+            message !== null &&
+            "type" in message &&
+            message.type === "schemaPlanned"
+              ? 500
+              : 0;
+          window.setTimeout(() => {
+            this.dispatchEvent(new MessageEvent("message", { data: message }));
+          }, delay);
+        });
+        this.worker.addEventListener("error", () => {
+          this.dispatchEvent(new Event("error"));
+        });
+        this.worker.addEventListener("messageerror", () => {
+          this.dispatchEvent(new MessageEvent("messageerror"));
+        });
+      }
+
+      postMessage(
+        message: unknown,
+        options?: StructuredSerializeOptions | Transferable[],
+      ): void {
+        if (Array.isArray(options)) {
+          this.worker.postMessage(message, options);
+        } else {
+          this.worker.postMessage(message, options);
+        }
+      }
+
+      terminate(): void {
+        this.worker.terminate();
+      }
+    }
+    Object.defineProperty(window, "Worker", {
+      configurable: true,
+      value: DelayedSchemaWorker,
+    });
+  });
+}
+
 test.describe("persistent database workspace", () => {
   test("is reachable from the header and explains its storage", async ({
     page,
@@ -167,7 +221,7 @@ test.describe("persistent database workspace", () => {
         .fill(JSON.stringify(SCHEMA));
       await page.getByTestId("workspace-schema-plan").click();
       await expect(page.getByTestId("workspace-schema-review")).toContainText(
-        "1 proposed changes",
+        "1 planned change",
       );
       await page.getByTestId("workspace-schema-apply").click();
       await expect(page.getByTestId("workspace-table")).toHaveCount(1);
@@ -257,6 +311,120 @@ test.describe("persistent database workspace", () => {
       }
     });
   }
+
+  test("reviews mixed schema details and invalidates edits before apply", async ({
+    page,
+  }, testInfo) => {
+    await installDelayedSchemaWorker(page);
+    const baseSchema = {
+      version: 1,
+      tables: [
+        {
+          name: "parents",
+          recordId: { prefix: "PARENT", padding: 5 },
+          columns: [{ name: "name", type: "text", nullable: false }],
+        },
+      ],
+    };
+    const mixedSchema = (addedColumn: string) => ({
+      version: 1,
+      tables: [
+        {
+          ...baseSchema.tables[0],
+          columns: [
+            ...baseSchema.tables[0]!.columns,
+            { name: addedColumn, type: "integer", nullable: true },
+          ],
+        },
+        {
+          name: "children",
+          recordId: { prefix: "CHILD", separator: ":", padding: 4 },
+          columns: [
+            { name: "parent_id", type: "text", nullable: false },
+            {
+              name: "amount",
+              type: "decimal",
+              nullable: true,
+              precision: 12,
+              scale: 3,
+            },
+          ],
+          foreignKeys: [{ column: "parent_id", referencesTable: "parents" }],
+        },
+      ],
+    });
+
+    await page.goto("/workspace");
+    await createDatabase(page, "sqlite");
+    await page
+      .getByTestId("workspace-schema-input")
+      .fill(JSON.stringify(baseSchema));
+    await page.getByTestId("workspace-schema-plan").click();
+    await page.getByTestId("workspace-schema-apply").click();
+    await expect(page.getByTestId("workspace-table")).toHaveCount(1);
+
+    const firstReview = mixedSchema("score");
+    await page
+      .getByTestId("workspace-schema-input")
+      .fill(JSON.stringify(firstReview));
+    await page.getByTestId("workspace-schema-plan").click();
+    const review = page.getByTestId("workspace-schema-review");
+    await expect(review).toContainText("Ready to apply");
+    await expect(review).toContainText("2 planned changes");
+    await expect(review).toContainText("Add column to parents");
+    await expect(review).toContainText("score: integer, optional");
+    await expect(review).toContainText("Create table children");
+    await expect(review).not.toContainText("Create table parents");
+    await expect(review).toContainText(
+      'Record IDs use prefix "CHILD", separator ":", and padding 4',
+    );
+    await expect(review).toContainText("parent_id: text, required");
+    await expect(review).toContainText("amount: decimal(12, 3), optional");
+    await expect(review).toContainText(
+      "parent_id references parents.record_id",
+    );
+    const screenshot = await page.screenshot({ fullPage: true });
+    await testInfo.attach("mixed-schema-review", {
+      body: screenshot,
+      contentType: "image/png",
+    });
+
+    const revisedSchema = mixedSchema("rating");
+    await page
+      .getByTestId("workspace-schema-input")
+      .fill(JSON.stringify(revisedSchema));
+    await expect(review).toHaveCount(0);
+    await expect(page.getByTestId("workspace-schema-apply")).toBeDisabled();
+    await expect(page.getByTestId("workspace-notice")).toContainText(
+      "Review it again before applying",
+    );
+    await expect(page.getByTestId("workspace-table")).toHaveCount(1);
+
+    await page.getByTestId("workspace-schema-plan").click();
+    const finalSchema = mixedSchema("final_score");
+    await page.evaluate((schema) => {
+      const input = document.querySelector<HTMLTextAreaElement>(
+        '[data-testid="workspace-schema-input"]',
+      );
+      const setValue = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      if (input === null || setValue === undefined) {
+        throw new Error("Schema input is unavailable");
+      }
+      setValue.call(input, schema);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }, JSON.stringify(finalSchema));
+    await expect(page.getByTestId("workspace-schema-plan")).toBeEnabled();
+    await expect(review).toHaveCount(0);
+
+    await page.getByTestId("workspace-schema-plan").click();
+    await expect(review).toContainText("final_score: integer, optional");
+    await expect(review).not.toContainText("rating: integer, optional");
+    await page.getByTestId("workspace-schema-apply").click();
+    await expect(page.getByTestId("workspace-table")).toHaveCount(2);
+  });
 
   test("shows a schema conflict before writing", async ({ page }) => {
     await page.goto("/workspace");

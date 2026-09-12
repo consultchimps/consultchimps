@@ -32,6 +32,7 @@ import {
 } from "@consultchimps/db/browser";
 import {
   isConsultChimpsError,
+  throwIfAborted,
   type OperationProgress,
 } from "@consultchimps/core";
 
@@ -226,24 +227,39 @@ function safeWorkingName(fileName: string): string {
 }
 
 function schemaPlanDto(id: string, plan: SchemaPlan): WorkspaceSchemaPlan {
+  const columnDto = (
+    value: SchemaPlan["creates"][number]["columns"][number],
+  ) => ({
+    name: value.name,
+    type: value.type,
+    nullable: value.nullable !== false,
+    ...(value.precision === undefined ? {} : { precision: value.precision }),
+    ...(value.scale === undefined ? {} : { scale: value.scale }),
+  });
   return {
     id,
     changes: [
       ...plan.creates.map((table) => ({
         kind: "create-table" as const,
-        table: table.name,
+        table: {
+          name: table.name,
+          recordId: {
+            prefix: table.recordId.prefix,
+            separator: table.recordId.separator ?? "-",
+            padding: table.recordId.padding,
+          },
+          columns: table.columns.map(columnDto),
+          foreignKeys: (table.foreignKeys ?? []).map((foreignKey) => ({
+            column: foreignKey.column,
+            referencesTable: foreignKey.referencesTable,
+          })),
+        },
       })),
       ...plan.adds.flatMap((addition) =>
         addition.columns.map((column) => ({
           kind: "add-column" as const,
           table: addition.table,
-          column: {
-            name: column.name,
-            type: column.type,
-            ...(column.nullable === undefined
-              ? {}
-              : { nullable: column.nullable }),
-          },
+          column: columnDto(column),
         })),
       ),
     ],
@@ -639,6 +655,7 @@ async function handleSchema(
       database: current().database,
       schema: parseDatabaseSchema(command.schema),
     });
+    throwIfAborted(signal, "db.schema.plan");
     const planId = globalThis.crypto.randomUUID();
     schemaPlans.clear();
     schemaPlans.set(planId, plan);

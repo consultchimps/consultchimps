@@ -200,6 +200,34 @@ function decisionsFor(plan: WorkspacePreparedImport): WorkspaceRouteDecision[] {
   });
 }
 
+function sameDecisions(
+  left: readonly WorkspaceRouteDecision[],
+  right: readonly WorkspaceRouteDecision[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((decision, index) => {
+      const other = right[index];
+      return (
+        other !== undefined &&
+        decision.regionId === other.regionId &&
+        decision.route.kind === other.route.kind &&
+        decision.route.table === other.route.table &&
+        decision.columns.length === other.columns.length &&
+        decision.columns.every((column, columnIndex) => {
+          const otherColumn = other.columns[columnIndex];
+          return (
+            otherColumn !== undefined &&
+            column.source === otherColumn.source &&
+            column.destination === otherColumn.destination &&
+            column.type === otherColumn.type
+          );
+        })
+      );
+    })
+  );
+}
+
 function fileKey(file: File, index: number): string {
   return `${file.name}:${String(file.size)}:${String(file.lastModified)}:${String(index)}`;
 }
@@ -214,6 +242,7 @@ export function WorkspaceImport({
   runLong,
 }: WorkspaceImportProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const decisionGenerationRef = useRef(0);
   const lastCompletedRequest = useRef<{
     readonly planId: string;
     readonly requestId: string;
@@ -227,6 +256,10 @@ export function WorkspaceImport({
   const [decisions, setDecisions] = useState<readonly WorkspaceRouteDecision[]>(
     [],
   );
+  const [approvedDecisions, setApprovedDecisions] = useState<
+    readonly WorkspaceRouteDecision[] | null
+  >(null);
+  const [resolving, setResolving] = useState(false);
   const [preview, setPreview] = useState<WorkspacePreviewPage | null>(null);
   const [delivery, setDelivery] =
     useState<WorkspaceDeliveryContext>(emptyDelivery);
@@ -265,25 +298,30 @@ export function WorkspaceImport({
     [summary.tables],
   );
 
-  const chooseFiles = useCallback((files: FileList | null) => {
-    if (files === null) return;
-    const accepted = Array.from(files).filter(WORKBOOK_FILES.accepts);
-    setSources(
-      accepted.map((file, index) => ({
-        id: fileKey(file, index),
-        file,
-        role: "",
-        revision: "",
-      })),
-    );
-    setPlan(null);
-    setPreview(null);
-    setResult(null);
-    setDelivery({
-      ...emptyDelivery(),
-      requestId: `delivery-${globalThis.crypto.randomUUID()}`,
-    });
-  }, []);
+  const chooseFiles = useCallback(
+    (files: FileList | null) => {
+      if (files === null || resolving) return;
+      const accepted = Array.from(files).filter(WORKBOOK_FILES.accepts);
+      setSources(
+        accepted.map((file, index) => ({
+          id: fileKey(file, index),
+          file,
+          role: "",
+          revision: "",
+        })),
+      );
+      decisionGenerationRef.current += 1;
+      setPlan(null);
+      setApprovedDecisions(null);
+      setPreview(null);
+      setResult(null);
+      setDelivery({
+        ...emptyDelivery(),
+        requestId: `delivery-${globalThis.crypto.randomUUID()}`,
+      });
+    },
+    [resolving],
+  );
 
   const updateSource = useCallback(
     (id: string, field: "revision" | "role", value: string) => {
@@ -297,6 +335,7 @@ export function WorkspaceImport({
   );
 
   const prepare = useCallback(async () => {
+    if (resolving) return;
     const selected: WorkspaceImportFile[] = sources.map((source) => ({
       id: source.id,
       file: source.file,
@@ -312,10 +351,13 @@ export function WorkspaceImport({
       prepared,
       ...current.filter((candidate) => candidate.id !== prepared.id),
     ]);
-    setDecisions(decisionsFor(prepared));
+    const preparedDecisions = decisionsFor(prepared);
+    decisionGenerationRef.current += 1;
+    setDecisions(preparedDecisions);
+    setApprovedDecisions(prepared.state === "ready" ? preparedDecisions : null);
     setPreview(null);
     setResult(null);
-  }, [client, runLong, sources]);
+  }, [client, resolving, runLong, sources]);
 
   const updateRoute = useCallback(
     (regionId: string, kind: "append" | "create", table: string) => {
@@ -326,6 +368,7 @@ export function WorkspaceImport({
             : decision,
         ),
       );
+      decisionGenerationRef.current += 1;
     },
     [],
   );
@@ -357,25 +400,52 @@ export function WorkspaceImport({
             : decision,
         ),
       );
+      decisionGenerationRef.current += 1;
     },
     [],
   );
 
   const resolve = useCallback(async () => {
-    if (plan === null) return;
+    if (plan === null || resolving || plan.application === "applied") return;
+    const submittedDecisions = decisions;
+    const submittedGeneration = decisionGenerationRef.current;
+    setResolving(true);
     try {
-      const resolved = await client().resolveImport(plan.id, decisions);
+      const resolved = await client().resolveImport(
+        plan.id,
+        submittedDecisions,
+      );
+      const resolvedDecisions = decisionsFor(resolved);
       setPlan(resolved);
       setSavedPlans((current) =>
         current.map((candidate) =>
           candidate.id === resolved.id ? resolved : candidate,
         ),
       );
-      setDecisions(decisionsFor(resolved));
+      setApprovedDecisions(resolvedDecisions);
+      if (decisionGenerationRef.current === submittedGeneration) {
+        setDecisions(resolvedDecisions);
+      }
     } catch (error) {
       reportError(error);
+    } finally {
+      setResolving(false);
     }
-  }, [client, decisions, plan, reportError]);
+  }, [client, decisions, plan, reportError, resolving]);
+
+  const reviewIsCurrent =
+    !resolving &&
+    plan?.state === "ready" &&
+    approvedDecisions !== null &&
+    sameDecisions(decisions, approvedDecisions);
+  const reviewNeedsUpdate =
+    plan?.state === "ready" &&
+    approvedDecisions !== null &&
+    !sameDecisions(decisions, approvedDecisions);
+  const pendingRequest =
+    plan === null ? null : pendingImport(summary.databaseId, plan.id);
+  const mappingLocked =
+    resolving || plan?.application === "applied" || pendingRequest !== null;
 
   const loadPreview = useCallback(
     async (regionId: string, cursor: string | null) => {
@@ -390,7 +460,7 @@ export function WorkspaceImport({
   );
 
   const apply = useCallback(async () => {
-    if (plan === null || plan.state !== "ready") return;
+    if (plan === null || plan.state !== "ready" || !reviewIsCurrent) return;
     const pending = pendingImport(summary.databaseId, plan.id);
     const request = pending?.delivery ?? delivery;
     const operation = pending?.operation ?? "apply";
@@ -430,10 +500,18 @@ export function WorkspaceImport({
       duplicateOf: applied.outcome === "duplicate" ? applied.importId : null,
       captureIds: applied.captureIds,
     });
-  }, [client, delivery, onSummary, plan, runLong, summary.databaseId]);
+  }, [
+    client,
+    delivery,
+    onSummary,
+    plan,
+    reviewIsCurrent,
+    runLong,
+    summary.databaseId,
+  ]);
 
   const recordAgain = useCallback(async () => {
-    if (plan === null || plan.state !== "ready") return;
+    if (plan === null || plan.state !== "ready" || resolving) return;
     const pending = pendingImport(summary.databaseId, plan.id);
     const operation =
       pending === null
@@ -441,6 +519,7 @@ export function WorkspaceImport({
           ? "delivery"
           : "apply"
         : (pending.operation ?? "apply");
+    if (operation === "apply" && !reviewIsCurrent) return;
     const completed = lastCompletedRequest.current;
     const request =
       pending?.delivery ??
@@ -486,7 +565,16 @@ export function WorkspaceImport({
       application: "applied",
       captureIds: recorded.captureIds,
     });
-  }, [client, delivery, onSummary, plan, runLong, summary.databaseId]);
+  }, [
+    client,
+    delivery,
+    onSummary,
+    plan,
+    reviewIsCurrent,
+    resolving,
+    runLong,
+    summary.databaseId,
+  ]);
 
   const setDeliveryField = useCallback(
     (field: keyof WorkspaceDeliveryContext, value: string) => {
@@ -514,7 +602,7 @@ export function WorkspaceImport({
         <button
           className={secondaryButtonClass}
           data-testid="workspace-import-choose"
-          disabled={busy}
+          disabled={busy || resolving}
           onClick={() => inputRef.current?.click()}
           type="button"
         >
@@ -536,7 +624,7 @@ export function WorkspaceImport({
         <button
           className={primaryButtonClass}
           data-testid="workspace-import-prepare"
-          disabled={busy || sources.length === 0}
+          disabled={busy || resolving || sources.length === 0}
           onClick={() => void prepare()}
           type="button"
         >
@@ -561,11 +649,17 @@ export function WorkspaceImport({
               <button
                 className={secondaryButtonClass}
                 data-testid="workspace-import-resume"
+                disabled={resolving}
                 key={saved.id}
                 onClick={() => {
                   const pending = pendingImport(summary.databaseId, saved.id);
+                  const savedDecisions = decisionsFor(saved);
                   setPlan(saved);
-                  setDecisions(decisionsFor(saved));
+                  decisionGenerationRef.current += 1;
+                  setDecisions(savedDecisions);
+                  setApprovedDecisions(
+                    saved.state === "ready" ? savedDecisions : null,
+                  );
                   setPreview(null);
                   setResult(null);
                   setDelivery(
@@ -692,6 +786,7 @@ export function WorkspaceImport({
                       <select
                         className={`${inputClass} mt-1`}
                         data-testid="workspace-import-route"
+                        disabled={busy || mappingLocked}
                         onChange={(event) =>
                           updateRoute(
                             region.id,
@@ -712,6 +807,7 @@ export function WorkspaceImport({
                       <input
                         className={`${inputClass} mt-1`}
                         data-testid="workspace-import-table"
+                        disabled={busy || mappingLocked}
                         list={`workspace-tables-${regionIndex}`}
                         onChange={(event) =>
                           updateRoute(
@@ -762,6 +858,7 @@ export function WorkspaceImport({
                                 <input
                                   aria-label={`${column.source} destination`}
                                   className={inputClass}
+                                  disabled={busy || mappingLocked}
                                   onChange={(event) =>
                                     updateColumn(
                                       region.id,
@@ -777,6 +874,7 @@ export function WorkspaceImport({
                                 <select
                                   aria-label={`${column.source} type`}
                                   className={inputClass}
+                                  disabled={busy || mappingLocked}
                                   onChange={(event) =>
                                     updateColumn(
                                       region.id,
@@ -812,12 +910,22 @@ export function WorkspaceImport({
           <button
             className={secondaryButtonClass}
             data-testid="workspace-import-resolve"
-            disabled={busy}
+            disabled={busy || mappingLocked}
             onClick={() => void resolve()}
             type="button"
           >
             Update review
           </button>
+          {reviewNeedsUpdate ? (
+            <p
+              className="mt-3 rounded-lg border border-fd-primary/40 p-3 text-sm text-fd-primary"
+              data-testid="workspace-import-review-stale"
+              role="status"
+            >
+              The route or column mapping changed. Update the review before
+              applying this import
+            </p>
+          ) : null}
 
           {preview === null ? null : (
             <div
@@ -971,6 +1079,7 @@ export function WorkspaceImport({
                 busy ||
                 result !== null ||
                 plan.state !== "ready" ||
+                !reviewIsCurrent ||
                 delivery.requestId.trim() === ""
               }
               onClick={() => void apply()}
@@ -985,7 +1094,9 @@ export function WorkspaceImport({
                 data-testid="workspace-delivery-record-reuse"
                 disabled={
                   busy ||
+                  resolving ||
                   plan.state !== "ready" ||
+                  (plan.application === "pending" && !reviewIsCurrent) ||
                   delivery.requestId.trim() === ""
                 }
                 onClick={() => void recordAgain()}

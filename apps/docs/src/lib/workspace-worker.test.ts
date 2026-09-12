@@ -147,6 +147,37 @@ describe("WorkspaceClient", () => {
     await expect(create).rejects.toMatchObject({ code: "OPERATION_CANCELLED" });
   });
 
+  it.each(["plan", "apply"] as const)(
+    "forwards cancellation while schema %s is active",
+    async (operation) => {
+      const controller = new AbortController();
+      const client = new WorkspaceClient();
+      const pending =
+        operation === "plan"
+          ? client.planSchema(
+              { version: 1, tables: [] },
+              { signal: controller.signal },
+            )
+          : client.applySchema("schema-plan", { signal: controller.signal });
+      await settle();
+      controller.abort();
+
+      const worker = ScriptedWorker.latest;
+      expect(worker?.posted.map((command) => command.type)).toEqual([
+        operation === "plan" ? "planSchema" : "applySchema",
+        "cancel",
+      ]);
+      worker?.reply(0, {
+        type: "error",
+        code: "OPERATION_ABORTED",
+        message: "The operation was cancelled",
+      });
+      await expect(pending).rejects.toMatchObject({
+        code: "OPERATION_ABORTED",
+      });
+    },
+  );
+
   it("rejects pending work when terminated", async () => {
     const client = new WorkspaceClient();
     const create = client.create("sqlite", "one.sqlite");

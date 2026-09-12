@@ -28,21 +28,37 @@ export interface WorkspaceSummary {
 export interface WorkspaceSchemaColumn {
   readonly name: string;
   readonly type: string;
-  readonly nullable?: boolean;
+  readonly nullable: boolean;
+  readonly precision?: number;
+  readonly scale?: number;
 }
 
-export interface WorkspaceSchemaTable {
+export interface WorkspaceSchemaTableDefinition {
   readonly name: string;
+  readonly recordId: {
+    readonly prefix: string;
+    readonly separator: string;
+    readonly padding: number;
+  };
   readonly columns: readonly WorkspaceSchemaColumn[];
+  readonly foreignKeys: readonly {
+    readonly column: string;
+    readonly referencesTable: string;
+  }[];
 }
 
 export type WorkspaceSchemaDocument = unknown;
 
-export interface WorkspaceSchemaChange {
-  readonly kind: "create-table" | "add-column";
-  readonly table: string;
-  readonly column?: WorkspaceSchemaColumn;
-}
+export type WorkspaceSchemaChange =
+  | {
+      readonly kind: "create-table";
+      readonly table: WorkspaceSchemaTableDefinition;
+    }
+  | {
+      readonly kind: "add-column";
+      readonly table: string;
+      readonly column: WorkspaceSchemaColumn;
+    };
 
 export interface WorkspaceSchemaConflict {
   readonly table: string;

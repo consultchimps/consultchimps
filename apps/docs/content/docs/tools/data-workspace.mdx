@@ -20,6 +20,10 @@ under **Saved import reviews**. The workspace discovers its saved plans in
 browser storage and reconstructs the review from captured rows, so it does not
 need to read the Excel files again.
 
+The browser disables application while destination, column mapping, or type
+decisions differ from the accepted review. Review the edited decisions again
+before applying them.
+
 ## Choose a database format
 
 Use DuckDB for analytical SQL involving scans, joins, grouping, and calculated
@@ -183,6 +187,10 @@ observations represent one real dataset is a later reconciliation operation.
 
 Save a schema as JSON, then create a database with `--schema schema.json` or use
 `db schema apply`. The dry run reports proposed additions without writing them.
+
+The browser lists the tables and columns proposed for creation before approval,
+including their types and constraints. Editing the schema document requires a
+new review.
 
 ```json
 {

@@ -210,14 +210,18 @@ export class WorkspaceClient {
 
   async planSchema(
     schema: WorkspaceSchemaDocument,
+    options?: WorkspaceRunOptions,
   ): Promise<WorkspaceSchemaPlan> {
-    const event = await this.#request({ type: "planSchema", schema });
+    const event = await this.#request({ type: "planSchema", schema }, options);
     if (event.type !== "schemaPlanned") throw unexpected("schema");
     return event.plan;
   }
 
-  async applySchema(planId: string): Promise<WorkspaceSummary> {
-    const event = await this.#request({ type: "applySchema", planId });
+  async applySchema(
+    planId: string,
+    options?: WorkspaceRunOptions,
+  ): Promise<WorkspaceSummary> {
+    const event = await this.#request({ type: "applySchema", planId }, options);
     if (event.type !== "schemaApplied") throw unexpected("schema");
     return event.summary;
   }

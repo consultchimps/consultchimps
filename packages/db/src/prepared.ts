@@ -1,6 +1,12 @@
+import { isConsultChimpsError } from "@consultchimps/core";
+
 import type { DatabaseId } from "./database.js";
 import { assertOpen, databaseError } from "./errors.js";
-import type { DatabaseEngine } from "./internal/engine.js";
+import type {
+  DatabaseEngine,
+  EngineRow,
+  EngineValue,
+} from "./internal/engine.js";
 import { canonicalJson } from "./internal/json.js";
 import {
   parseImportConflicts,
@@ -22,6 +28,49 @@ export const PREPARED_CAPTURE_TABLE = "_consultchimps_prepared_captures";
 export const PREPARED_BINDING_TABLE = "_consultchimps_prepared_bindings";
 export const PREPARED_ROW_TABLE = "_consultchimps_prepared_rows";
 export const PREPARED_FORMAT_VERSION = 1;
+
+const REQUIRED_PREPARED_SCHEMA = [
+  {
+    table: PREPARED_METADATA_TABLE,
+    columns: [
+      "format_version",
+      "plan_id",
+      "database_id",
+      "baseline_revision",
+      "schema_fingerprint",
+      "plan_revision",
+      "state",
+      "recipe_json",
+      "conflicts_json",
+      "decisions_json",
+    ],
+  },
+  {
+    table: PREPARED_CAPTURE_TABLE,
+    columns: [
+      "capture_id",
+      "source_file_id",
+      "source_key",
+      "display_name",
+      "selection_key",
+      "selection_label",
+      "reader_version",
+      "content_hash",
+      "byte_count",
+      "reused",
+      "row_count",
+      "columns_json",
+    ],
+  },
+  {
+    table: PREPARED_BINDING_TABLE,
+    columns: ["source_key", "selection_key", "capture_id", "display_name"],
+  },
+  {
+    table: PREPARED_ROW_TABLE,
+    columns: ["capture_id", "source_row", "values_json"],
+  },
+] as const;
 
 const engines = new WeakMap<PreparedImport, DatabaseEngine>();
 
@@ -90,6 +139,68 @@ function preparedId(): PreparedImportId {
   return `PLAN-${globalThis.crypto.randomUUID()}` as PreparedImportId;
 }
 
+function invalidPreparedImport(
+  details?: Record<string, unknown>,
+  cause?: unknown,
+) {
+  return databaseError(
+    "DB_INVALID_PREPARED_IMPORT",
+    "This import plan is incomplete or damaged. Prepare the workbook again or restore a verified plan copy.",
+    details,
+    cause,
+  );
+}
+
+async function preparedQuery(
+  engine: DatabaseEngine,
+  sql: string,
+  values?: readonly EngineValue[],
+): Promise<readonly EngineRow[]> {
+  try {
+    return await engine.query(sql, values);
+  } catch (cause) {
+    if (isConsultChimpsError(cause)) throw cause;
+    if (cause instanceof Error && cause.name === "AbortError") throw cause;
+    throw invalidPreparedImport(undefined, cause);
+  }
+}
+
+async function validatePreparedSchema(engine: DatabaseEngine): Promise<void> {
+  const tables = await preparedQuery(
+    engine,
+    "SELECT name FROM sqlite_master WHERE type = 'table'",
+  );
+  const tableNames = new Set(
+    tables.flatMap((row) =>
+      typeof row["name"] === "string" ? [row["name"]] : [],
+    ),
+  );
+  const missingTables = REQUIRED_PREPARED_SCHEMA.flatMap(({ table }) =>
+    tableNames.has(table) ? [] : [table],
+  );
+  if (missingTables.length > 0) {
+    throw invalidPreparedImport({ missingTables });
+  }
+  for (const required of REQUIRED_PREPARED_SCHEMA) {
+    const columns = await preparedQuery(
+      engine,
+      "SELECT name FROM pragma_table_info(?)",
+      [required.table],
+    );
+    const columnNames = new Set(
+      columns.flatMap((row) =>
+        typeof row["name"] === "string" ? [row["name"]] : [],
+      ),
+    );
+    const missingColumns = required.columns.filter(
+      (column) => !columnNames.has(column),
+    );
+    if (missingColumns.length > 0) {
+      throw invalidPreparedImport({ table: required.table, missingColumns });
+    }
+  }
+}
+
 export async function createPreparedImportHandle(options: {
   readonly engine: DatabaseEngine;
   readonly databaseId: DatabaseId;
@@ -136,19 +247,10 @@ export async function createPreparedImportHandle(options: {
 export async function openPreparedImportHandle(
   engine: DatabaseEngine,
 ): Promise<PreparedImport> {
-  let rows;
-  try {
-    rows = await engine.query(
-      `SELECT format_version, plan_id, database_id FROM ${PREPARED_METADATA_TABLE}`,
-    );
-  } catch (cause) {
-    throw databaseError(
-      "DB_INVALID_PREPARED_IMPORT",
-      "This file is not a readable ConsultChimps import plan.",
-      undefined,
-      cause,
-    );
-  }
+  const rows = await preparedQuery(
+    engine,
+    `SELECT format_version, plan_id, database_id FROM ${PREPARED_METADATA_TABLE}`,
+  );
   const row = rows[0];
   if (
     row === undefined ||
@@ -181,6 +283,7 @@ export async function openPreparedImportHandle(
       },
     );
   }
+  await validatePreparedSchema(engine);
   const prepared = new ManagedPreparedImport(
     row["plan_id"] as PreparedImportId,
     row["database_id"] as DatabaseId,

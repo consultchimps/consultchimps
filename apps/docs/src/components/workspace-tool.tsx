@@ -9,6 +9,7 @@ import {
   ToolShell,
 } from "@/components/tool-kit";
 import { WorkspaceImport } from "@/components/workspace-import";
+import { WorkspaceSchemaReview } from "@/components/workspace-schema-review";
 import { isConsultChimpsError } from "@consultchimps/core";
 import type {
   WorkspaceDatabaseFormat,
@@ -238,6 +239,7 @@ export function WorkspaceTool() {
   const controllerRef = useRef<AbortController | null>(null);
   const deliveriesRequestRef = useRef(0);
   const exportLeaseReleasesRef = useRef<Set<() => void>>(new Set());
+  const schemaReviewRevisionRef = useRef(0);
   const [summary, setSummary] = useState<WorkspaceSummary | null>(null);
   const [workspaceGeneration, setWorkspaceGeneration] = useState(0);
   const [format, setFormat] = useState<WorkspaceDatabaseFormat>("sqlite");
@@ -321,6 +323,11 @@ export function WorkspaceTool() {
     setDeliveriesLoading(false);
   }, []);
 
+  const invalidateSchemaReview = useCallback(() => {
+    schemaReviewRevisionRef.current += 1;
+    setSchemaPlan(null);
+  }, []);
+
   const runLong = useCallback(
     async <T,>(
       label: string,
@@ -380,13 +387,21 @@ export function WorkspaceTool() {
     setSummary(created);
     setWorkspaceGeneration((current) => current + 1);
     remember(created);
-    setSchemaPlan(null);
+    invalidateSchemaReview();
     clearDeliveries();
     setStatus({
       kind: "notice",
       message: "Created a persistent browser working database",
     });
-  }, [clearDeliveries, client, format, name, remember, runLong]);
+  }, [
+    clearDeliveries,
+    client,
+    format,
+    invalidateSchemaReview,
+    name,
+    remember,
+    runLong,
+  ]);
 
   const open = useCallback(
     async (file: File) => {
@@ -407,14 +422,22 @@ export function WorkspaceTool() {
       setSummary(opened);
       setWorkspaceGeneration((current) => current + 1);
       remember(opened);
-      setSchemaPlan(null);
+      invalidateSchemaReview();
       clearDeliveries();
       setStatus({
         kind: "notice",
         message: `Opened "${file.name}" as browser working copy "${opened.workingCopyName}". The selected file will not change`,
       });
     },
-    [clearDeliveries, client, openName, openOverwrite, remember, runLong],
+    [
+      clearDeliveries,
+      client,
+      invalidateSchemaReview,
+      openName,
+      openOverwrite,
+      remember,
+      runLong,
+    ],
   );
 
   const reopen = useCallback(
@@ -426,19 +449,25 @@ export function WorkspaceTool() {
       setSummary(opened);
       setWorkspaceGeneration((current) => current + 1);
       remember(opened);
-      setSchemaPlan(null);
+      invalidateSchemaReview();
       clearDeliveries();
       setStatus({
         kind: "notice",
         message: `Reopened "${workingCopyName}" from browser storage`,
       });
     },
-    [clearDeliveries, client, remember, runLong],
+    [clearDeliveries, client, invalidateSchemaReview, remember, runLong],
   );
 
   const planSchema = useCallback(async () => {
     try {
-      const plan = await client().planSchema(parseSchema(schemaText));
+      const revision = schemaReviewRevisionRef.current;
+      const schema = parseSchema(schemaText);
+      setSchemaPlan(null);
+      const plan = await runLong("Reviewing schema", (options) =>
+        client().planSchema(schema, options),
+      );
+      if (plan === null || revision !== schemaReviewRevisionRef.current) return;
       setSchemaPlan(plan);
       setStatus({
         kind: "notice",
@@ -449,22 +478,22 @@ export function WorkspaceTool() {
     } catch (error) {
       reportError(error);
     }
-  }, [client, reportError, schemaText]);
+  }, [client, reportError, runLong, schemaText]);
 
   const applySchema = useCallback(async () => {
     if (schemaPlan === null || !schemaPlan.ready) return;
-    try {
-      const next = await client().applySchema(schemaPlan.id);
-      setSummary(next);
-      setSchemaPlan(null);
-      setStatus({
-        kind: "notice",
-        message: "Applied the reviewed schema changes",
-      });
-    } catch (error) {
-      reportError(error);
-    }
-  }, [client, reportError, schemaPlan]);
+    const revision = schemaReviewRevisionRef.current;
+    const next = await runLong("Applying schema", (options) =>
+      client().applySchema(schemaPlan.id, options),
+    );
+    if (next === null || revision !== schemaReviewRevisionRef.current) return;
+    setSummary(next);
+    invalidateSchemaReview();
+    setStatus({
+      kind: "notice",
+      message: "Applied the reviewed schema changes",
+    });
+  }, [client, invalidateSchemaReview, runLong, schemaPlan]);
 
   const loadDeliveries = useCallback(
     async (cursor: string | null) => {
@@ -692,7 +721,18 @@ export function WorkspaceTool() {
               className={`${inputClass} mt-4 min-h-56 font-mono text-xs`}
               data-testid="workspace-schema-input"
               disabled={disabled}
-              onChange={(event) => setSchemaText(event.target.value)}
+              onChange={(event) => {
+                const hadReview = schemaPlan !== null;
+                setSchemaText(event.target.value);
+                invalidateSchemaReview();
+                if (hadReview) {
+                  setStatus({
+                    kind: "notice",
+                    message:
+                      "Schema document changed. Review it again before applying",
+                  });
+                }
+              }}
               spellCheck={false}
               value={schemaText}
             />
@@ -717,20 +757,7 @@ export function WorkspaceTool() {
               </button>
             </div>
             {schemaPlan === null ? null : (
-              <div
-                className="mt-4 rounded-lg border p-4"
-                data-testid="workspace-schema-review"
-              >
-                <p>{schemaPlan.changes.length} proposed changes</p>
-                {schemaPlan.conflicts.map((conflict) => (
-                  <p
-                    className="mt-2 text-sm text-fd-primary"
-                    key={`${conflict.table}:${conflict.column ?? "table"}`}
-                  >
-                    {conflict.message}
-                  </p>
-                ))}
-              </div>
+              <WorkspaceSchemaReview plan={schemaPlan} />
             )}
           </section>
 
@@ -739,7 +766,10 @@ export function WorkspaceTool() {
             client={client}
             key={workspaceGeneration}
             summary={summary}
-            onSummary={setSummary}
+            onSummary={(next) => {
+              setSummary(next);
+              invalidateSchemaReview();
+            }}
             onReviewState={setReviewActive}
             reportError={reportError}
             runLong={runLong}
