@@ -414,6 +414,29 @@ collision checks, and report both files as artifacts. The browser exposes both
 downloads and includes both in its combined download. Refusals return structured
 errors instead of a manifest-only successful artifact pair.
 
+Build item 8 publishes `PowerBiExportMetric` as the literal union of the six
+keys below and returns `ByteOperationOutcome<PowerBiExportMetric>`. Every
+successful `result.metrics` contains all six keys, in this order, with exact
+nonnegative safe-integer counts. These describe the completed export, never
+estimated source counts or partially decoded work. The file adapter preserves
+the same values, and the browser uses the corresponding plain-language labels.
+
+| Metric key         | Meaning                                                                                                     |
+| ------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `inputFiles`       | Always 1, the supplied Power BI container                                                                   |
+| `outputFiles`      | Always 2, the workbook and JSON manifest; excludes the convenience download archive                         |
+| `exportedTables`   | Tables with at least one worksheet, including header-only tables                                            |
+| `exportedColumns`  | Sum of retained columns across exported tables; each table column counts once regardless of worksheet parts |
+| `exportedRows`     | Sum of data rows across exported tables, counted once per source table row, excluding repeated headers      |
+| `outputWorksheets` | Actual worksheet count, including split parts and header-only worksheets                                    |
+
+Excluded tables and columns contribute zero to these exported counts; their
+details remain in the manifest. A row counts once even when all its retained
+values are null. Metric fixtures cover partial columns, hidden tables with both
+option settings, worksheet splits, and zero-row tables. Each fixture checks the
+typed result against the emitted workbook and manifest. Refusals return errors
+without a successful metric record.
+
 The manifest uses this reason-code vocabulary:
 
 | Code                                     | Scope  | Meaning                                                       |
