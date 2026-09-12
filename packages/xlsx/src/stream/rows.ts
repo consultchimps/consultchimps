@@ -166,9 +166,12 @@ export async function* parseWorksheetBatches(
 ): AsyncIterable<readonly StreamRow[]> {
   const ready: PendingRow[] = [];
   let activeRow = 0;
+  let rowOpen = false;
+  let previousRow = 0;
   let nextImplicitRow = 1;
   let nextImplicitColumn = 0;
   let cells = cellRecord<PendingCell>();
+  let seenColumns = new Set<number>();
   let current: CurrentCell | undefined;
   let passedLastRow = false;
   const parser = new SaxesParser();
@@ -184,20 +187,36 @@ export async function* parseWorksheetBatches(
   parser.on("opentag", (tag) => {
     const name = localName(tag.name);
     if (name === "row") {
+      if (rowOpen) {
+        throw new Error("A worksheet row cannot contain another row.");
+      }
       const rawRow = attribute(tag, "r");
+      if (rawRow !== undefined && (rawRow.length === 0 || /\D/u.test(rawRow))) {
+        throw new Error("A worksheet row has an invalid row number.");
+      }
       activeRow = rawRow === undefined ? nextImplicitRow : Number(rawRow);
       if (
         !Number.isSafeInteger(activeRow) ||
         activeRow < 1 ||
-        activeRow > 1_048_576
+        activeRow > 1_048_576 ||
+        activeRow <= previousRow
       ) {
         throw new Error("A worksheet row has an invalid row number.");
       }
+      rowOpen = true;
+      previousRow = activeRow;
       nextImplicitRow = activeRow + 1;
       nextImplicitColumn = 0;
       cells = cellRecord<PendingCell>();
+      seenColumns = new Set<number>();
       if (activeRow > options.lastRow) passedLastRow = true;
     } else if (name === "c") {
+      if (!rowOpen) {
+        throw new Error("A worksheet cell must be inside a row.");
+      }
+      if (current !== undefined) {
+        throw new Error("A worksheet cell cannot contain another cell.");
+      }
       const explicitReference = attribute(tag, "r");
       const parsedReference =
         explicitReference === undefined
@@ -218,6 +237,12 @@ export async function* parseWorksheetBatches(
         throw new Error("A worksheet cell has an invalid reference.");
       }
       const parsedColumn = parsedReference.column;
+      if (seenColumns.has(parsedColumn)) {
+        throw new Error(
+          `Worksheet row ${activeRow} contains column ${parsedColumn + 1} more than once.`,
+        );
+      }
+      seenColumns.add(parsedColumn);
       nextImplicitColumn = parsedColumn + 1;
       const rawStyle = attribute(tag, "s") ?? "0";
       const style = Number(rawStyle);
@@ -319,9 +344,16 @@ export async function* parseWorksheetBatches(
       }
       current = undefined;
     } else if (name === "row") {
+      if (!rowOpen || current !== undefined) {
+        throw new Error("A worksheet row has invalid cell structure.");
+      }
       if (activeRow >= options.firstRow && activeRow <= options.lastRow) {
         ready.push({ sourceRow: activeRow, cells });
       }
+      rowOpen = false;
+      activeRow = 0;
+      cells = cellRecord<PendingCell>();
+      seenColumns = new Set<number>();
     }
   });
 

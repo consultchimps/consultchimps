@@ -142,7 +142,7 @@ async function workbookFixture(
     `<?xml version='1.0'?><x:styleSheet xmlns:x='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><x:numFmts count='1'><x:numFmt formatCode='yyyy-mm-dd' numFmtId='164'></x:numFmt></x:numFmts><x:cellXfs count='3'><x:xf numFmtId='0'></x:xf><x:xf applyNumberFormat='1' numFmtId='164'></x:xf><x:xf numFmtId='14'></x:xf></x:cellXfs></x:styleSheet>`,
   );
   const worksheet = options.malformedWorksheet
-    ? "<worksheet><sheetData><row r='2'><c r='B2'><v>0</v></c></row>"
+    ? "<worksheet><sheetData><row r='2'><c r='B2'><v>0</v></c></row><tableParts count='1'><tablePart r:id='tableRel'/></tableParts>"
     : `<?xml version='1.0'?><x:worksheet xmlns:x='http://schemas.openxmlformats.org/spreadsheetml/2006/main' xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships'><x:sheetData><x:row r='2'><x:c t='s' r='B2'><x:v>0</x:v></x:c><x:c r='C2' t='s'><x:v>1</x:v></x:c><x:c r='D2' t='s'><x:v>2</x:v></x:c><x:c r='E2' t='s'><x:v>3</x:v></x:c></x:row><x:row r='3'><x:c r='B3' t='s'><x:v>${count > 6 ? count - 1 : 4}</x:v></x:c><x:c r='C3'><x:v>12345678901234567890.123456789</x:v></x:c><x:c s='1' r='D3'><x:v>1</x:v></x:c><x:c r='E3'><x:f>1+1</x:f><x:v>2</x:v></x:c></x:row><x:row r='4'><x:c t='inlineStr' r='B4'><x:is><x:r><x:t>${options.inlineValue ?? "Rich "}</x:t></x:r><x:r><x:t>inline</x:t></x:r></x:is></x:c><x:c r='C4'><x:f>NOW()</x:f></x:c><x:c s='2' r='D4'><x:v>0</x:v></x:c><x:c t='e' r='E4'><x:f>1/0</x:f><x:v>#DIV/0!</x:v></x:c></x:row><x:row r='5'><x:c t='inlineStr' r='B5'><x:is><x:t>Total</x:t></x:is></x:c></x:row></x:sheetData><x:tableParts count='1'><x:tablePart r:id='tableRel'></x:tablePart></x:tableParts></x:worksheet>`;
   zip.file("xl/worksheets/sheet1.xml", worksheet);
   zip.file(
@@ -483,8 +483,8 @@ describe("bounded workbook streaming", () => {
     async (selection) => {
       const worksheet =
         "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
-        "<row r='1'><c t='inlineStr'><is><t>First</t></is></c><c r='C1' t='inlineStr'><is><t>Third</t></is></c><c t='inlineStr'><is><t>Fourth</t></is></c></row>" +
-        "<row r='2'><c t='inlineStr'><is><t>North</t></is></c><c r='C2'><v>3</v></c><c t='b'><v>1</v></c></row>" +
+        "<row r='1'><c t='inlineStr'><is><t>First</t></is></c><c t='inlineStr'><is><t>Second</t></is></c><c r='C1' t='inlineStr'><is><t>Third</t></is></c><c t='inlineStr'><is><t>Fourth</t></is></c></row>" +
+        "<row r='2'><c t='inlineStr'><is><t>North</t></is></c><c><v>2</v></c><c r='C2'><v>3</v></c><c t='b'><v>1</v></c></row>" +
         "</sheetData></worksheet>";
       const input = source(
         await workbookFixtureWithParts({
@@ -498,6 +498,7 @@ describe("bounded workbook streaming", () => {
 
       expect(reader.region.columns).toEqual([
         { name: "First", column: 0 },
+        { name: "Second", column: 1 },
         { name: "Third", column: 2 },
         { name: "Fourth", column: 3 },
       ]);
@@ -506,6 +507,7 @@ describe("bounded workbook streaming", () => {
           sourceRow: 2,
           cells: {
             First: { kind: "string", value: "North" },
+            Second: { kind: "number", raw: "2" },
             Third: { kind: "number", raw: "3" },
             Fourth: { kind: "boolean", value: true },
           },
@@ -513,6 +515,199 @@ describe("bounded workbook streaming", () => {
       ]);
     },
   );
+
+  it.each([
+    [
+      "an interior explicit-range header",
+      "<c r='A1' t='inlineStr'><is><t>First</t></is></c><c r='C1' t='inlineStr'><is><t>Third</t></is></c>",
+      { range: "'Data & More'!A1:C2" },
+    ],
+    [
+      "an interior sheet header",
+      "<c r='A1' t='inlineStr'><is><t>First</t></is></c><c r='C1' t='inlineStr'><is><t>Third</t></is></c>",
+      { sheet: "Data & More", headerRow: 1 },
+    ],
+    [
+      "a leading explicit-range header",
+      "<c r='B1' t='inlineStr'><is><t>Second</t></is></c><c r='C1' t='inlineStr'><is><t>Third</t></is></c>",
+      { range: "'Data & More'!A1:C2" },
+    ],
+    [
+      "a trailing explicit-range header",
+      "<c r='A1' t='inlineStr'><is><t>First</t></is></c><c r='B1' t='inlineStr'><is><t>Second</t></is></c>",
+      { range: "'Data & More'!A1:C2" },
+    ],
+  ] satisfies readonly [string, string, WorkbookSelection][])(
+    "rejects a missing cell in %s",
+    async (_case, headerCells, selection) => {
+      const worksheet =
+        "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+        `<row r='1'>${headerCells}</row>` +
+        "<row r='2'><c r='A2'><v>1</v></c><c r='B2'><v>2</v></c><c r='C2'><v>3</v></c></row>" +
+        "</sheetData></worksheet>";
+      const input = source(
+        await workbookFixtureWithParts({
+          "xl/worksheets/sheet1.xml": worksheet,
+        }),
+      );
+
+      await expect(
+        openWorkbookRegionStream(input.source, selection, {
+          scratch: new MemoryScratch(),
+        }),
+      ).rejects.toMatchObject({ code: "XLSX_EMPTY_HEADER" });
+    },
+  );
+
+  it("retains ordinary sparse data rows under complete headers", async () => {
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>First</t></is></c><c r='B1' t='inlineStr'><is><t>Second</t></is></c><c r='C1' t='inlineStr'><is><t>Third</t></is></c></row>" +
+      "<row r='2'><c r='A2'><v>1</v></c><c r='C2'><v>3</v></c></row>" +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { range: "'Data & More'!A1:C2" },
+      { scratch: new MemoryScratch() },
+    );
+
+    expect(await rows(reader)).toEqual([
+      {
+        sourceRow: 2,
+        cells: {
+          First: { kind: "number", raw: "1" },
+          Third: { kind: "number", raw: "3" },
+        },
+      },
+    ]);
+  });
+
+  it.each([
+    ["selected values", "<c r='A2'><v>1</v></c><c r='A2'><v>2</v></c>"],
+    ["unselected blanks", "<c r='B2'/><c r='B2'/><c r='A2'><v>1</v></c>"],
+    [
+      "unselected formulas",
+      "<c r='B2'><f>1+1</f></c><c r='B2'><f>2+2</f></c><c r='A2'><v>1</v></c>",
+    ],
+  ])(
+    "rejects duplicate worksheet cells containing %s",
+    async (_case, dataCells) => {
+      const worksheet =
+        "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+        "<row r='1'><c r='A1' t='inlineStr'><is><t>Value</t></is></c></row>" +
+        `<row r='2'>${dataCells}</row>` +
+        "</sheetData></worksheet>";
+      const input = source(
+        await workbookFixtureWithParts({
+          "xl/worksheets/sheet1.xml": worksheet,
+        }),
+      );
+      await expect(
+        (async () => {
+          const reader = await openWorkbookRegionStream(
+            input.source,
+            { range: "'Data & More'!A1:A2" },
+            { scratch: new MemoryScratch() },
+          );
+          return rows(reader);
+        })(),
+      ).rejects.toMatchObject({ code: "XLSX_READ_FAILED" });
+    },
+  );
+
+  it.each([
+    [
+      "a nested row",
+      "<row r='1'><row r='2'><c r='A2' t='inlineStr'><is><t>Value</t></is></c></row></row>",
+    ],
+    [
+      "a nested cell",
+      "<row r='1'><c r='A1' t='inlineStr'><c r='B1' t='inlineStr'><is><t>Value</t></is></c></c></row>",
+    ],
+    [
+      "a cell after its row",
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Value</t></is></c></row><c r='A1'><v>2</v></c>",
+    ],
+    [
+      "a repeated row number",
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Value</t></is></c></row><row r='2'><c r='A2'><v>1</v></c></row><row r='2'><c r='A2'><v>2</v></c></row>",
+    ],
+    [
+      "an out-of-order row number",
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Value</t></is></c></row><row r='3'><c r='A3'><v>3</v></c></row><row r='2'><c r='A2'><v>2</v></c></row>",
+    ],
+    [
+      "a non-integer row spelling",
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Value</t></is></c></row><row r='2e0'><c r='A2'><v>2</v></c></row>",
+    ],
+    [
+      "a row number ending in a newline",
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Value</t></is></c></row><row r='2&#10;'><c r='A2'><v>2</v></c></row>",
+    ],
+  ])("rejects worksheet structure containing %s", async (_case, sheetData) => {
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/worksheets/sheet1.xml":
+          "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+          sheetData +
+          "</sheetData></worksheet>",
+      }),
+    );
+
+    await expect(
+      (async () => {
+        const reader = await openWorkbookRegionStream(
+          input.source,
+          { range: "'Data & More'!A1:A3" },
+          { scratch: new MemoryScratch() },
+        );
+        return rows(reader);
+      })(),
+    ).rejects.toMatchObject({ code: "XLSX_READ_FAILED" });
+  });
+
+  it("accepts implicit rows, physical row gaps, and sparse values", async () => {
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row><c t='inlineStr'><is><t>First</t></is></c><c t='inlineStr'><is><t>Second</t></is></c></row>" +
+      "<row><c/><c><v>2</v></c></row>" +
+      "<row r='4'><c r='A4'><v>4</v></c></row>" +
+      "<row><c><v>5</v></c></row>" +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { range: "'Data & More'!A1:B5" },
+      { scratch: new MemoryScratch() },
+    );
+
+    expect(await rows(reader)).toEqual([
+      {
+        sourceRow: 2,
+        cells: {
+          First: { kind: "blank" },
+          Second: { kind: "number", raw: "2" },
+        },
+      },
+      {
+        sourceRow: 4,
+        cells: { First: { kind: "number", raw: "4" } },
+      },
+      {
+        sourceRow: 5,
+        cells: { First: { kind: "number", raw: "5" } },
+      },
+    ]);
+  });
 
   it("retains prototype-shaped column names in sole and mixed selections", async () => {
     const worksheet =
@@ -908,7 +1103,15 @@ describe("bounded workbook streaming", () => {
   });
 
   it("detects CRC corruption while streaming worksheet rows", async () => {
-    const corrupted = await workbookFixture({ stored: true });
+    const zip = await JSZip.loadAsync(await workbookFixture({ stored: true }));
+    zip.file(
+      "xl/worksheets/_rels/sheet1.xml.rels",
+      "<Relationships xmlns='http://schemas.openxmlformats.org/package/2006/relationships'></Relationships>",
+    );
+    const corrupted = await zip.generateAsync({
+      type: "uint8array",
+      compression: "STORE",
+    });
     const marker = new TextEncoder().encode("12345678901234567890.123456789");
     let offset = -1;
     for (let index = 0; index <= corrupted.length - marker.length; index += 1) {
@@ -918,18 +1121,18 @@ describe("bounded workbook streaming", () => {
       }
     }
     expect(offset).toBeGreaterThanOrEqual(0);
-    corrupted[offset] = "9".charCodeAt(0);
 
     const input = source(corrupted);
     const inspection = await inspectWorkbookStream(input.source, {
       scratch: new MemoryScratch(),
     });
-    expect(inspection.tables).toHaveLength(1);
+    expect(inspection.tables).toHaveLength(0);
     const reader = await openWorkbookRegionStream(
       input.source,
-      { table: "InventoryTable" },
+      { range: "'Data & More'!B2:E4" },
       { scratch: new MemoryScratch() },
     );
+    corrupted[offset] = "9".charCodeAt(0);
     await expect(rows(reader)).rejects.toMatchObject({
       code: "XLSX_READ_FAILED",
     });

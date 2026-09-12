@@ -87,6 +87,12 @@ and error cells need an explicit correction before they can become typed data.
 Styles needed to interpret Excel dates are read; workbook formatting and macros
 are not database content.
 
+Each column in an explicit or named range needs a header. Worksheet selections
+use the span from the first populated header to the last, and reject blank
+headers inside that span. Name missing headers or choose a narrower range before
+retrying. Duplicate cell coordinates and ambiguous worksheet or Table names are
+rejected instead of selecting one value or region.
+
 ## Route different submissions to tables
 
 A recipe is a versioned JSON document. Each route identifies an input alias, its

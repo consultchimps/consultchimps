@@ -115,14 +115,34 @@ interface SelectedRectangle {
   readonly origin: StreamRegion["origin"];
 }
 
+function matchesName<T>(
+  candidates: readonly T[],
+  requested: string,
+  nameOf: (candidate: T) => string,
+): readonly T[] {
+  return candidates.filter((candidate) =>
+    sameName(nameOf(candidate), requested),
+  );
+}
+
 function selectionRectangle(
   metadata: WorkbookMetadata,
   selection: WorkbookSelection,
 ): SelectedRectangle | undefined {
   if ("table" in selection) {
-    const table = metadata.inspection.tables.find((candidate) =>
-      sameName(candidate.name, selection.table),
+    const matchingTables = matchesName(
+      metadata.inspection.tables,
+      selection.table,
+      (candidate) => candidate.name,
     );
+    if (matchingTables.length > 1) {
+      throw new ConsultChimpsError(
+        XLSX_ERRORS.XLSX_INVALID_EXCEL_TABLE,
+        `Excel Table "${selection.table}" matches more than one Excel Table in the workbook. Rename the duplicate Tables so their names differ and try again.`,
+        { details: { table: selection.table } },
+      );
+    }
+    const table = matchingTables[0];
     if (!table) return undefined;
     const rectangle = parseLocalRectangle(table.reference);
     if (!rectangle) return undefined;
@@ -177,9 +197,19 @@ function worksheetEntry(
   metadata: WorkbookMetadata,
   sheetName: string,
 ): { readonly name: string; readonly entry: FileEntry } | undefined {
-  const sheet = metadata.sheets.find((candidate) =>
-    sameName(candidate.name, sheetName),
+  const matchingSheets = matchesName(
+    metadata.sheets,
+    sheetName,
+    (candidate) => candidate.name,
   );
+  if (matchingSheets.length > 1) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_WORKSHEET_NOT_FOUND,
+      `Worksheet "${sheetName}" matches more than one worksheet in the workbook. Rename the duplicate worksheets so their names differ and try again.`,
+      { details: { sheet: sheetName } },
+    );
+  }
+  const sheet = matchingSheets[0];
   const entry = sheet ? metadata.archive.entries.get(sheet.part) : undefined;
   return sheet && entry ? { name: sheet.name, entry } : undefined;
 }
@@ -218,7 +248,7 @@ async function regionColumns(
       { details: { headerRow: selected.headerRow, sheet: selected.sheet } },
     );
   }
-  const columns: StreamColumn[] = [];
+  const headerByColumn = new Map<number, string>();
   for (const [reference, cell] of Object.entries(header.cells)) {
     const index = columnIndex(reference);
     if (
@@ -226,10 +256,27 @@ async function regionColumns(
       index >= selected.startColumn &&
       index <= selected.endColumn
     ) {
-      columns.push({ name: headerValue(cell), column: index });
+      headerByColumn.set(index, headerValue(cell));
     }
   }
-  columns.sort((left, right) => left.column - right.column);
+  const populatedColumns = [...headerByColumn]
+    .filter(([, value]) => value.trim().length > 0)
+    .map(([column]) => column)
+    .sort((left, right) => left - right);
+  const firstColumn =
+    selected.origin.kind === "declared-header"
+      ? populatedColumns[0]
+      : selected.startColumn;
+  const lastColumn =
+    selected.origin.kind === "declared-header"
+      ? populatedColumns.at(-1)
+      : selected.endColumn;
+  const columns: StreamColumn[] = [];
+  if (firstColumn !== undefined && lastColumn !== undefined) {
+    for (let column = firstColumn; column <= lastColumn; column += 1) {
+      columns.push({ name: headerByColumn.get(column) ?? "", column });
+    }
+  }
   validateColumns(columns);
   return columns;
 }

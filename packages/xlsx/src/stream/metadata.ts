@@ -10,6 +10,7 @@ import {
   relationshipId,
   resolvePart,
 } from "./xml.js";
+import { activeTableRelationshipIds } from "./table-parts.js";
 import type {
   StreamNamedRange,
   StreamSheet,
@@ -294,8 +295,48 @@ export async function loadWorkbookMetadata(
           options.signal,
         ),
       );
+      if (
+        !sheetRelationships.some((relationship) =>
+          relationship.type.endsWith("/table"),
+        )
+      ) {
+        continue;
+      }
+      const sheetEntry = archive.entries.get(sheet.part);
+      if (!sheetEntry) {
+        throw new Error(
+          `Worksheet "${sheet.name}" is missing its worksheet part.`,
+        );
+      }
+      const relationshipsById = new Map<string, Relationship[]>();
       for (const relationship of sheetRelationships) {
-        if (!relationship.type.endsWith("/table")) continue;
+        const matching = relationshipsById.get(relationship.id) ?? [];
+        matching.push(relationship);
+        relationshipsById.set(relationship.id, matching);
+      }
+      const activeIds = await activeTableRelationshipIds(
+        sheetEntry,
+        new Set(relationshipsById.keys()),
+        options,
+      );
+      for (const id of activeIds) {
+        const matching = relationshipsById.get(id) ?? [];
+        const relationship = matching[0];
+        if (relationship === undefined) {
+          throw new Error(
+            `Worksheet "${sheet.name}" references missing table relationship "${id}".`,
+          );
+        }
+        if (matching.length > 1) {
+          throw new Error(
+            `Worksheet "${sheet.name}" has table relationship "${id}" more than once.`,
+          );
+        }
+        if (!relationship.type.endsWith("/table")) {
+          throw new Error(
+            `Worksheet "${sheet.name}" relationship "${id}" does not point to an Excel Table.`,
+          );
+        }
         const tablePart = internalTarget(sheet.part, relationship);
         const tableEntry = archive.entries.get(tablePart);
         if (!tableEntry) {
