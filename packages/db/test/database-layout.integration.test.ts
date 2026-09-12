@@ -90,17 +90,6 @@ async function createTemplate(
   return filePath;
 }
 
-async function expectSentinel(filePath: string, format: DatabaseFormat) {
-  const engine = await openEngine(filePath, format);
-  try {
-    await expect(engine.query("SELECT value FROM sentinel")).resolves.toEqual([
-      { value: "preserved" },
-    ]);
-  } finally {
-    await engine.close();
-  }
-}
-
 const missingTableCases = (["sqlite", "duckdb"] as const).flatMap((format) =>
   ([false, true] as const).flatMap((readonly) =>
     requiredTables.map((table) => ({ format, readonly, table })),
@@ -115,8 +104,14 @@ test.each(missingTableCases)(
     const damaged = path.join(directory, `missing.${format}`);
     await copyFile(templates[format], damaged);
     const engine = await openEngine(damaged, format);
-    await engine.execute(`DROP TABLE ${table}`);
-    await engine.close();
+    try {
+      await engine.execute(`DROP TABLE ${table}`);
+      await expect(engine.query("SELECT value FROM sentinel")).resolves.toEqual(
+        [{ value: "preserved" }],
+      );
+    } finally {
+      await engine.close();
+    }
     const before = await readFile(damaged);
 
     await expect(
@@ -131,7 +126,6 @@ test.each(missingTableCases)(
     const moved = `${damaged}.moved`;
     await rename(damaged, moved);
     await rename(moved, damaged);
-    await expectSentinel(damaged, format);
   },
 );
 
@@ -142,17 +136,25 @@ for (const format of ["sqlite", "duckdb"] as const) {
     const damaged = path.join(directory, `missing-column.${format}`);
     await copyFile(templates[format], damaged);
     const engine = await openEngine(damaged, format);
-    await engine.execute(
-      `ALTER TABLE ${CAPTURE_TABLE} DROP COLUMN columns_json`,
-    );
-    await engine.close();
+    try {
+      await engine.execute(
+        `ALTER TABLE ${CAPTURE_TABLE} DROP COLUMN columns_json`,
+      );
+      await expect(engine.query("SELECT value FROM sentinel")).resolves.toEqual(
+        [{ value: "preserved" }],
+      );
+    } finally {
+      await engine.close();
+    }
     const before = await readFile(damaged);
 
     await expect(
       openDatabase({ path: damaged, readonly: true }),
     ).rejects.toMatchObject({ code: "DB_CORRUPT_DATABASE" });
     expect(await readFile(damaged)).toEqual(before);
-    await expectSentinel(damaged, format);
+    const moved = `${damaged}.moved`;
+    await rename(damaged, moved);
+    await rename(moved, damaged);
   });
 
   test(`${format}: leaves valid databases unaffected by inspection`, async () => {
@@ -177,11 +179,17 @@ for (const format of ["sqlite", "duckdb"] as const) {
     const filePath = path.join(directory, `future.${format}`);
     await copyFile(templates[format], filePath);
     const engine = await openEngine(filePath, format);
-    await engine.execute(
-      `UPDATE ${DATABASE_METADATA_TABLE} SET format_version = 2`,
-    );
-    await engine.execute(`DROP TABLE ${TABLE_REGISTRY_TABLE}`);
-    await engine.close();
+    try {
+      await engine.execute(
+        `UPDATE ${DATABASE_METADATA_TABLE} SET format_version = 2`,
+      );
+      await engine.execute(`DROP TABLE ${TABLE_REGISTRY_TABLE}`);
+      await expect(engine.query("SELECT value FROM sentinel")).resolves.toEqual(
+        [{ value: "preserved" }],
+      );
+    } finally {
+      await engine.close();
+    }
     const before = await readFile(filePath);
 
     await expect(
@@ -191,7 +199,9 @@ for (const format of ["sqlite", "duckdb"] as const) {
       details: { fileVersion: "2", supportedVersion: 1 },
     });
     expect(await readFile(filePath)).toEqual(before);
-    await expectSentinel(filePath, format);
+    const moved = `${filePath}.moved`;
+    await rename(filePath, moved);
+    await rename(moved, filePath);
   });
 
   test(`${format}: rejects a view substituted for an internal table`, async () => {
@@ -201,13 +211,19 @@ for (const format of ["sqlite", "duckdb"] as const) {
     await copyFile(templates[format], filePath);
     const engine = await openEngine(filePath, format);
     const movedCaptureTable = `${CAPTURE_TABLE}_damaged`;
-    await engine.execute(
-      `ALTER TABLE ${CAPTURE_TABLE} RENAME TO ${movedCaptureTable}`,
-    );
-    await engine.execute(
-      `CREATE VIEW ${CAPTURE_TABLE} AS SELECT * FROM ${movedCaptureTable}`,
-    );
-    await engine.close();
+    try {
+      await engine.execute(
+        `ALTER TABLE ${CAPTURE_TABLE} RENAME TO ${movedCaptureTable}`,
+      );
+      await engine.execute(
+        `CREATE VIEW ${CAPTURE_TABLE} AS SELECT * FROM ${movedCaptureTable}`,
+      );
+      await expect(engine.query("SELECT value FROM sentinel")).resolves.toEqual(
+        [{ value: "preserved" }],
+      );
+    } finally {
+      await engine.close();
+    }
     const before = await readFile(filePath);
 
     await expect(
@@ -217,6 +233,8 @@ for (const format of ["sqlite", "duckdb"] as const) {
       details: { missingTables: [CAPTURE_TABLE] },
     });
     expect(await readFile(filePath)).toEqual(before);
-    await expectSentinel(filePath, format);
+    const moved = `${filePath}.moved`;
+    await rename(filePath, moved);
+    await rename(moved, filePath);
   });
 }

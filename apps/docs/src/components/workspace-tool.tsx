@@ -822,7 +822,7 @@ export function WorkspaceTool() {
                     </p>
                     {delivery.reusedCapture ? (
                       <p className="mt-1 text-xs text-fd-muted-foreground">
-                        Reused captured data without adding observation rows
+                        Includes previously captured data
                       </p>
                     ) : null}
                   </li>

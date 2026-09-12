@@ -299,7 +299,7 @@ test.describe("reviewed workbook imports", () => {
     await page.getByTestId("workspace-deliveries-refresh").click();
     await expect(page.getByTestId("workspace-delivery")).toHaveCount(2);
     await expect(page.getByTestId("workspace-delivery").last()).toContainText(
-      "Reused captured data",
+      "Includes previously captured data",
     );
 
     await expect(page.getByLabel("Request ID")).toHaveValue(pendingRequestId);
@@ -649,9 +649,9 @@ test.describe("reviewed workbook imports", () => {
     );
     await expect(
       page.getByTestId("workspace-delivery").first(),
-    ).not.toContainText("Reused captured data");
+    ).not.toContainText("Includes previously captured data");
     await expect(page.getByTestId("workspace-delivery").last()).toContainText(
-      "Reused captured data",
+      "Includes previously captured data",
     );
     await page.getByTestId("workspace-deliveries-next").click();
     await expect(page.getByTestId("workspace-delivery")).toHaveCount(2);
@@ -659,14 +659,14 @@ test.describe("reviewed workbook imports", () => {
       "Delivery 26",
     );
     await expect(page.getByTestId("workspace-delivery").first()).toContainText(
-      "Reused captured data",
+      "Includes previously captured data",
     );
     await expect(page.getByTestId("workspace-delivery").last()).toContainText(
       "Fresh capture",
     );
     await expect(
       page.getByTestId("workspace-delivery").last(),
-    ).not.toContainText("Reused captured data");
+    ).not.toContainText("Includes previously captured data");
 
     await page.getByTestId("workspace-deliveries-refresh").click();
     await expect(page.getByTestId("workspace-delivery")).toHaveCount(25);

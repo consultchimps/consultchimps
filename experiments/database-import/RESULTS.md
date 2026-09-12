@@ -104,7 +104,8 @@ inspect, prepare, resolve, and apply operations. Unlike the direct storage
 measurements above, these runs hash and parse a generated Excel workbook,
 capture review rows in the prepared SQLite file, resolve the inferred schema,
 copy provenance rows into DuckDB, convert captured JSON into typed rows, and
-checkpoint the result.
+checkpoint the result. These measurements use the implementation at commit
+`4069a89`.
 
 | Check                    | 100,000 rows | 1,000,000 rows |
 | ------------------------ | -----------: | -------------: |

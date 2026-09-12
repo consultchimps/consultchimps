@@ -307,6 +307,11 @@ export async function* parseWorksheetBatches(
         );
       }
       if (name === "v") {
+        if (current.type === "inlineStr") {
+          throw new Error(
+            `An inline string cannot use a value element in cell ${current.reference}.`,
+          );
+        }
         if (!directChild) {
           throw new Error(
             `Cell ${current.reference} value must be a direct child of the cell.`,

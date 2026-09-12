@@ -19,22 +19,22 @@ const LOCALE_INDEPENDENT_BUILT_IN_TIME_FORMATS = new Set([
   18, 19, 20, 21, 22, 45, 46, 47,
 ]);
 
-function customDateFormat(format: string): boolean {
-  const cleaned = format
+function cleanedFormat(format: string): string {
+  return format
     .replace(/"[^"]*"/gu, "")
     .replace(/\\./gu, "")
-    .replace(/\[(?!h+\]|m+\]|s+\])[^\]]*\]/giu, "")
+    .replace(/\[(?!(?:h{1,2}|m{1,2}|s{1,2})\])[^\]]*\]/giu, "")
     .replace(/_.|\*./gu, "")
     .toLowerCase();
-  return /(?:^|[^a-z])[ymdhs]+(?:[^a-z]|$)/u.test(cleaned);
+}
+
+function customDateFormat(format: string): boolean {
+  return /(?:^|[^a-z])[ymdhs]+(?:[^a-z]|$)/u.test(cleanedFormat(format));
 }
 
 function hasTime(format: string | undefined): boolean {
   if (!format) return false;
-  const cleaned = format
-    .replace(/"[^"]*"/gu, "")
-    .replace(/\\./gu, "")
-    .toLowerCase();
+  const cleaned = cleanedFormat(format);
   return /[hs]/u.test(cleaned) || /\[[hms]+\]/u.test(cleaned);
 }
 
@@ -52,7 +52,7 @@ function isElapsedFormat(format: {
   readonly code?: string | undefined;
 }): boolean {
   if (format.code === undefined) return format.id === 46;
-  const cleaned = format.code.replace(/"[^"]*"/gu, "").replace(/\\./gu, "");
+  const cleaned = cleanedFormat(format.code);
   return /\[(?:h{1,2}|m{1,2}|s{1,2})\]/iu.test(cleaned);
 }
 

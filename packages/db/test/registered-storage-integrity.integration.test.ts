@@ -90,14 +90,17 @@ async function workspace(format: DatabaseFormat): Promise<{
   return { directory, filePath };
 }
 
-async function damagedCopy(
-  source: { readonly directory: string; readonly filePath: string },
+async function damagedWorkspace(
   format: DatabaseFormat,
   suffix: string,
   mutate: (engine: DatabaseEngine) => Promise<void>,
 ): Promise<string> {
-  const copy = path.join(source.directory, `${suffix}.${format}`);
-  await copyFile(source.filePath, copy);
+  const directory = await mkdtemp(
+    path.join(tmpdir(), "cc-registered-damaged-"),
+  );
+  directories.push(directory);
+  const copy = path.join(directory, `${suffix}.${format}`);
+  await copyFile(templates[format], copy);
   const engine = await openEngine(copy, format);
   try {
     await mutate(engine);
@@ -155,9 +158,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
   test.each(storageCorruptions)(
     `${format}: rejects $suffix without changing the database`,
     async (corruption) => {
-      const created = await workspace(format);
-      const filePath = await damagedCopy(
-        created,
+      const filePath = await damagedWorkspace(
         format,
         corruption.suffix,
         corruption.mutate,
@@ -171,9 +172,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
   );
 
   test(`${format}: inspection allows an extra column but planning a write refuses it`, async () => {
-    const created = await workspace(format);
-    const extraColumn = await damagedCopy(
-      created,
+    const extraColumn = await damagedWorkspace(
       format,
       "extra-column",
       (engine) =>
@@ -195,9 +194,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
   test.each(scalarCorruptions)(
     `${format}: rejects $suffix without changing the database`,
     async (corruption) => {
-      const created = await workspace(format);
-      const filePath = await damagedCopy(
-        created,
+      const filePath = await damagedWorkspace(
         format,
         corruption.suffix,
         corruption.mutate,

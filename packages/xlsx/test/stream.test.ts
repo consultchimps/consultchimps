@@ -512,6 +512,39 @@ describe("bounded workbook streaming", () => {
     ]);
   });
 
+  it("ignores color and condition brackets when classifying date and time formats", async () => {
+    const styles =
+      "<styleSheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'>" +
+      "<numFmts count='2'><numFmt numFmtId='164' formatCode='[White][&gt;=1]yyyy-mm-dd'/><numFmt numFmtId='165' formatCode='[Red]hh:mm:ss'/></numFmts>" +
+      "<cellXfs count='3'><xf numFmtId='0'/><xf numFmtId='164'/><xf numFmtId='165'/></cellXfs>" +
+      "</styleSheet>";
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>ColoredDate</t></is></c><c r='B1' t='inlineStr'><is><t>ColoredTime</t></is></c></row>" +
+      "<row r='2'><c r='A2' s='1'><v>0</v></c><c r='B2' s='2'><v>0</v></c></row>" +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/styles.xml": styles,
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { range: "'Data & More'!A1:B2" },
+      { scratch: new MemoryScratch() },
+    );
+
+    expect((await rows(reader))[0]?.cells).toEqual({
+      ColoredDate: { kind: "date", raw: "0", iso: "1904-01-01" },
+      ColoredTime: {
+        kind: "date",
+        raw: "0",
+        iso: "1904-01-01T00:00:00.000",
+      },
+    });
+  });
+
   it("applies declared-date blank and ISO rules to values and formula caches", async () => {
     const worksheet =
       "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
@@ -787,6 +820,45 @@ describe("bounded workbook streaming", () => {
         message: expect.stringMatching(
           /cell.*(?:direct|more than once|nested)/iu,
         ),
+      }),
+    });
+  });
+
+  it.each([
+    [
+      "selected inline string with a value",
+      "<c r='A2' t='inlineStr'><v>North</v></c>",
+    ],
+    [
+      "unselected inline string with a value",
+      "<c r='A2'><v>1</v></c><c r='B2' t='inlineStr'><v>North</v></c>",
+    ],
+    ["scalar cell with an inline container", "<c r='A2'><is><t>1</t></is></c>"],
+  ])("rejects a %s", async (_case, dataCells) => {
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Value</t></is></c></row>" +
+      `<row r='2'>${dataCells}</row>` +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+
+    await expect(
+      (async () => {
+        const reader = await openWorkbookRegionStream(
+          input.source,
+          { range: "'Data & More'!A1:A2" },
+          { scratch: new MemoryScratch() },
+        );
+        return rows(reader);
+      })(),
+    ).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+      cause: expect.objectContaining({
+        message: expect.stringMatching(/inline string.*cell/iu),
       }),
     });
   });
