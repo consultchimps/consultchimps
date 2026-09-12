@@ -87,6 +87,23 @@ A browser caller must configure both runtimes. Omitting configuration in Node
 resolves sql.js beside its installed package and XPress9 beside the installed
 `@consultchimps/pbi` package, independent of the process directory.
 
+Validate all supplied options structurally before invoking a locator, loading a
+runtime, reading input, or allocating export buffers. Collect every applicable
+invalid-option detail into one `PBI_INVALID_OPTIONS` error. The complete detail
+order is `inputBytes`, `decodedBytes`, `outputBytes`, `peakBytes`,
+`includeHiddenTables`, `runtime`, `runtime.sql`, then `runtime.xpress9`. Emit at
+most one detail per listed path, containing that path and its required shape,
+never the supplied value. A malformed `runtime` parent produces only the parent
+detail; do not inspect or report its children. Missing browser runtime
+configuration also produces the parent detail requiring both runtime sources.
+For a valid runtime object, validate SQL first, then XPress9, reporting missing
+browser sources and malformed or conflicting child configurations at their
+respective paths. Omitted Node sources select the defaults. Locator execution or
+runtime loading failures happen only after structural validation succeeds and
+use `PBI_RUNTIME_UNAVAILABLE`, not invalid-option aggregation. Fixtures combine
+invalid capacity, hidden-table, and runtime settings and assert the complete
+serialized error and the absence of input reads or locator calls.
+
 The documentation browser worker uses a serializable asset mapping,
 `{ sqlWasmUrl: string, xpress9WasmUrl: string }`, with absolute same-origin URLs
 that include the site's deployment base path. The worker constructs both
