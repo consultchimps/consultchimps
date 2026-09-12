@@ -455,6 +455,81 @@ describe("bounded workbook streaming", () => {
     },
   );
 
+  it("excludes inline phonetic guides from the cell value", async () => {
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Name</t></is></c></row>" +
+      "<row r='2'><c r='A2' t='inlineStr'><is><r><t>東京</t></r><rPh sb='0' eb='2'><t>とうきょう</t></rPh></is></c></row>" +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { range: "'Data & More'!A1:A2" },
+      { scratch: new MemoryScratch(), chunkBytes: 29 },
+    );
+
+    expect(await rows(reader)).toEqual([
+      {
+        sourceRow: 2,
+        cells: { Name: { kind: "string", value: "東京" } },
+      },
+    ]);
+  });
+
+  it("skips blank selected rows while retaining typed cells and source row gaps", async () => {
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Value</t></is></c></row>" +
+      "<row r='2' s='1' customFormat='1'/>" +
+      "<row r='3'><c r='A3' s='1'/></row>" +
+      "<row r='4'><c r='A4' t='inlineStr'><is><t></t></is></c></row>" +
+      "<row r='5'><c r='B5' t='inlineStr'><is><t>Outside selection</t></is></c></row>" +
+      "<row r='6'><c r='A6'><v>0</v></c></row>" +
+      "<row r='7'><c r='A7' t='b'><v>0</v></c></row>" +
+      "<row r='8'><c r='A8' t='e'><v>#N/A</v></c></row>" +
+      "<row r='9'><c r='A9'><f>1/0</f></c></row>" +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { range: "'Data & More'!A1:A9" },
+      { scratch: new MemoryScratch(), chunkBytes: 31 },
+    );
+
+    expect(await rows(reader)).toEqual([
+      {
+        sourceRow: 6,
+        cells: { Value: { kind: "number", raw: "0" } },
+      },
+      {
+        sourceRow: 7,
+        cells: { Value: { kind: "boolean", value: false } },
+      },
+      {
+        sourceRow: 8,
+        cells: { Value: { kind: "error", error: "#N/A" } },
+      },
+      {
+        sourceRow: 9,
+        cells: {
+          Value: {
+            kind: "formula",
+            formula: "1/0",
+            cached: { kind: "missing" },
+          },
+        },
+      },
+    ]);
+  });
+
   it("shares scratch-backed strings across regions and closes them with the session", async () => {
     const scratch = new MemoryScratch();
     const input = source(await workbookFixture({ sharedStringCount: 2_000 }));

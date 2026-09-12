@@ -35,11 +35,14 @@ afterEach(async () => {
   );
 });
 
-async function run(args: string[]): Promise<Record<string, unknown>> {
+async function run(
+  args: string[],
+  cwd?: string,
+): Promise<Record<string, unknown>> {
   const result = await execute(
     process.execPath,
     [cli, "--json", "db", ...args],
-    { encoding: "utf8" },
+    { encoding: "utf8", cwd },
   );
   expect(result.stderr).toBe("");
   expect(result.stdout.trim().split("\n")).toHaveLength(1);
@@ -55,6 +58,21 @@ async function run(args: string[]): Promise<Record<string, unknown>> {
     throw new Error("Missing command result.");
   return envelope.result as Record<string, unknown>;
 }
+
+test("an existing workbook path containing an equals sign remains a plain path", async () => {
+  const root = await directory();
+  const database = path.join(root, "inventory.sqlite");
+  const source = "current=final.xlsx";
+  await writeFile(path.join(root, source), workbook([["Name"], ["North"]]));
+  await run(["create", "-o", database]);
+
+  const imported = await run(["import", database, "--input", source], root);
+
+  expect(imported["metrics"]).toMatchObject({ rowsImported: 1 });
+  expect((await run(["inspect", database]))["tables"]).toEqual([
+    expect.objectContaining({ name: "current_final", rowCount: "1" }),
+  ]);
+});
 
 function workbook(
   rows: readonly (readonly (string | number | boolean)[])[],
@@ -109,6 +127,35 @@ test("inspects an ordinary SQLite database without adopting or changing it", asy
 });
 
 for (const format of ["sqlite", "duckdb"]) {
+  test(`${format}: previews reused captures from the target database without Excel`, async () => {
+    const root = await directory();
+    const database = path.join(root, `inventory.${format}`);
+    const source = path.join(root, "inventory.xlsx");
+    const plan = path.join(root, "duplicate.ccplan");
+    await writeFile(source, workbook([["Name"], ["North"], ["South"]]));
+    await run(["create", "-o", database]);
+    await run(["import", database, "--input", source]);
+    await run(["plan", database, "--input", source, "-o", plan]);
+    await rm(source);
+
+    const offline = await run(["inspect", plan]);
+    expect(offline["previewWarnings"]).toEqual([
+      expect.objectContaining({ code: "DB_PREVIEW_DATABASE_REQUIRED" }),
+    ]);
+    const preview = await run(["inspect", plan, "--database", database]);
+    expect(preview["examples"]).toEqual([
+      expect.objectContaining({
+        sourceRow: 2,
+        values: { Name: { kind: "string", value: "North" } },
+      }),
+      expect.objectContaining({
+        sourceRow: 3,
+        values: { Name: { kind: "string", value: "South" } },
+      }),
+    ]);
+    expect(preview["previewWarnings"]).toEqual([]);
+  });
+
   test(`${format}: re-reviews a stale saved plan without returning to Excel`, async () => {
     const root = await directory();
     const database = path.join(root, `inventory.${format}`);
@@ -349,6 +396,8 @@ test("db help describes source-safe persistence and format choices", async () =>
     });
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("consultchimps");
+    if (args[1] === "plan")
+      expect(result.stdout).toMatch(/existing paths are used as\s+written/u);
   }
 });
 

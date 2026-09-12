@@ -189,6 +189,7 @@ export interface BrowserDatabaseRuntime {
   openPreparedImport(options: {
     readonly name: string;
   }): Promise<PreparedImport>;
+  discardPreparedImport(options: { readonly name: string }): Promise<void>;
   listPreparedImports(options: {
     readonly database: Database;
   }): Promise<BrowserPreparedImportListing>;
@@ -1008,6 +1009,25 @@ export async function configureBrowserDatabaseRuntime(
     });
   };
 
+  const discardPreparedImport = (discard: {
+    readonly name: string;
+  }): Promise<void> => {
+    const name = storageName(discard.name);
+    return withNameLock(name, async () => {
+      const state = await storageState(name);
+      if (!state.sqlite && !state.duckdb) {
+        throw databaseError(
+          "DB_BROWSER_STORAGE_MISSING",
+          "The browser import plan could not be found.",
+          { name },
+        );
+      }
+      assertPreparedStorageKind(name, state);
+      assertNotBusy(name);
+      pool.unlink(sqliteName(name));
+    });
+  };
+
   const exportStored = async (
     database: Database,
     source: StoredDatabase,
@@ -1124,6 +1144,7 @@ export async function configureBrowserDatabaseRuntime(
     },
     createPreparedImport,
     openPreparedImport,
+    discardPreparedImport,
     async listPreparedImports(listOptions) {
       const names = pool
         .getFileNames()

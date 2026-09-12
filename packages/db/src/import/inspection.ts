@@ -1,7 +1,7 @@
-import { valueAsBigInt, valueAsString } from "../database.js";
+import { engineOf, valueAsBigInt, valueAsString } from "../database.js";
 import { databaseError } from "../errors.js";
+import { CAPTURE_ROW_TABLE } from "../metadata.js";
 import {
-  PREPARED_BINDING_TABLE,
   PREPARED_CAPTURE_TABLE,
   PREPARED_ROW_TABLE,
   preparedEngineOf,
@@ -12,6 +12,7 @@ import { parseImportCellsJson } from "./inference.js";
 import { preparedCaptures, routeColumns, routeKey } from "./planning.js";
 import type {
   ImportInspection,
+  ImportExample,
   PreparedImportPage,
   PrepareImportOptions,
 } from "./types.js";
@@ -62,37 +63,8 @@ function sourceRowNumber(value: unknown): number {
   return number;
 }
 
-function previewQuery(
-  page: PreparedImportPage,
-  cursor: ImportCursor | undefined,
-) {
-  const filtered = page.source !== undefined;
-  const filterSql = filtered
-    ? ` WHERE b.source_key = ? AND b.selection_key = ?${cursor === undefined ? "" : " AND r.source_row > ?"}`
-    : cursor === undefined
-      ? ""
-      : " WHERE b.source_key > ? OR (b.source_key = ? AND (b.selection_key > ? OR (b.selection_key = ? AND r.source_row > ?)))";
-  const values = filtered
-    ? [
-        page.source ?? "",
-        page.selection ?? "",
-        ...(cursor === undefined ? [] : [cursor.sourceRow]),
-        BigInt(page.limit + 1),
-      ]
-    : cursor === undefined
-      ? [BigInt(page.limit + 1)]
-      : [
-          cursor.source,
-          cursor.source,
-          cursor.selection,
-          cursor.selection,
-          cursor.sourceRow,
-          BigInt(page.limit + 1),
-        ];
-  return { filterSql, values };
-}
-
 export async function inspectImport(options: {
+  readonly database?: PrepareImportOptions["database"] | undefined;
   readonly prepared: PrepareImportOptions["prepared"];
   readonly page: PreparedImportPage;
 }): Promise<ImportInspection> {
@@ -128,13 +100,82 @@ export async function inspectImport(options: {
     );
   }
   const engine = preparedEngineOf(options.prepared);
-  const query = previewQuery(options.page, cursor);
-  const rows = await engine.query(
-    `SELECT b.source_key, b.selection_key, r.source_row, r.values_json FROM ${PREPARED_ROW_TABLE} r JOIN ${PREPARED_BINDING_TABLE} b ON b.capture_id = r.capture_id${query.filterSql} ORDER BY b.source_key, b.selection_key, r.source_row LIMIT ?`,
-    query.values,
-  );
+  if (
+    options.database !== undefined &&
+    options.database.id !== options.prepared.databaseId
+  ) {
+    throw databaseError(
+      "DB_IMPORT_DATABASE_MISMATCH",
+      "This import plan belongs to a different database.",
+    );
+  }
   const { recipe, conflicts } = await readPreparedRecipe(options.prepared);
   const preparedCaptureList = await preparedCaptures(options.prepared);
+  const selected = preparedCaptureList.filter(
+    (capture) =>
+      options.page.source === undefined ||
+      (capture.sourceKey === options.page.source &&
+        capture.selectionKey === options.page.selection),
+  );
+  const cursorIndex =
+    cursor === undefined
+      ? 0
+      : selected.findIndex(
+          (capture) =>
+            capture.sourceKey === cursor.source &&
+            capture.selectionKey === cursor.selection,
+        );
+  if (cursorIndex < 0) {
+    throw databaseError(
+      "DB_INVALID_CURSOR",
+      "The import preview cursor does not identify a captured selection.",
+    );
+  }
+  const previewWarnings: ImportInspection["previewWarnings"][number][] = [];
+  const pageExamples: ImportExample[] = [];
+  for (const capture of selected.slice(cursorIndex)) {
+    const rowEngine = capture.reused
+      ? options.database === undefined
+        ? undefined
+        : engineOf(options.database)
+      : engine;
+    if (rowEngine === undefined) {
+      previewWarnings.push({
+        code: "DB_PREVIEW_DATABASE_REQUIRED",
+        source: capture.sourceKey,
+        selection: capture.selectionKey,
+        message:
+          "These captured rows are stored in the target database. Supply that database to preview them.",
+      });
+      continue;
+    }
+    if (pageExamples.length > options.page.limit) continue;
+    const rowTable = capture.reused ? CAPTURE_ROW_TABLE : PREPARED_ROW_TABLE;
+    const afterRow =
+      cursor !== undefined &&
+      capture.sourceKey === cursor.source &&
+      capture.selectionKey === cursor.selection
+        ? cursor.sourceRow
+        : 0n;
+    const rows = await rowEngine.query(
+      `SELECT source_row, values_json FROM ${rowTable} WHERE capture_id = ? AND source_row > ? ORDER BY source_row LIMIT ?`,
+      [
+        capture.captureId,
+        afterRow,
+        BigInt(options.page.limit + 1 - pageExamples.length),
+      ],
+    );
+    pageExamples.push(
+      ...rows.map((row) => ({
+        source: capture.sourceKey,
+        selection: capture.selectionKey,
+        sourceRow: sourceRowNumber(row["source_row"]),
+        values: parseImportCellsJson(
+          valueAsString(row["values_json"], "captured values"),
+        ),
+      })),
+    );
+  }
   const recipes = new Map(
     recipe.routes.map((route) => [
       routeKey(route.source, route.selection),
@@ -144,14 +185,7 @@ export async function inspectImport(options: {
   const captures = await engine.query(
     `SELECT sum(row_count) AS count FROM ${PREPARED_CAPTURE_TABLE} WHERE reused = 0`,
   );
-  const examples = rows.slice(0, options.page.limit).map((row) => ({
-    source: valueAsString(row["source_key"], "source key"),
-    selection: valueAsString(row["selection_key"], "selection key"),
-    sourceRow: sourceRowNumber(row["source_row"]),
-    values: parseImportCellsJson(
-      valueAsString(row["values_json"], "captured values"),
-    ),
-  }));
+  const examples = pageExamples.slice(0, options.page.limit);
   const last = examples.at(-1);
   return {
     prepared: await preparedRef(options.prepared),
@@ -174,7 +208,8 @@ export async function inspectImport(options: {
       };
     }),
     examples,
-    ...(rows.length > options.page.limit && last !== undefined
+    previewWarnings,
+    ...(pageExamples.length > options.page.limit && last !== undefined
       ? {
           nextCursor: JSON.stringify([
             last.source,

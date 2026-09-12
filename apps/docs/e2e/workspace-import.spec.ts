@@ -31,12 +31,83 @@ function mappingWorkbook(): Promise<UploadFile> {
   ]);
 }
 
+function cancellableWorkbook(): Promise<UploadFile> {
+  return createWorkbookUpload("large.xlsx", [
+    {
+      name: "CapturedFirst",
+      rows: [
+        ["Dataset", "Attribute", "CDE"],
+        ["Customers", "Customer ID", "true"],
+      ],
+    },
+    {
+      name: "CancelSecond",
+      rows: [["Dataset", "Attribute", "CDE"], ...generatedRows(15_000)],
+    },
+  ]);
+}
+
 function generatedRows(count: number): ReadonlyArray<readonly string[]> {
   return Array.from({ length: count }, (_, index) => [
     `Dataset ${String(index)}`,
     `Attribute ${String(index)}`,
     index % 2 === 0 ? "true" : "false",
   ]);
+}
+
+async function installLostImportReplyWorker(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const NativeWorker = window.Worker;
+    class RecoverableWorker extends EventTarget {
+      readonly worker: Worker;
+
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super();
+        this.worker = new NativeWorker(url, options);
+        this.worker.addEventListener("message", (event) => {
+          const message: unknown = event.data;
+          if (
+            typeof message === "object" &&
+            message !== null &&
+            "type" in message &&
+            message.type === "importApplied" &&
+            window.localStorage.getItem("drop-import-applied") === "yes"
+          ) {
+            window.localStorage.setItem("drop-import-applied", "done");
+            this.worker.terminate();
+            this.dispatchEvent(new Event("error"));
+            return;
+          }
+          this.dispatchEvent(new MessageEvent("message", { data: message }));
+        });
+        this.worker.addEventListener("error", () => {
+          this.dispatchEvent(new Event("error"));
+        });
+        this.worker.addEventListener("messageerror", () => {
+          this.dispatchEvent(new MessageEvent("messageerror"));
+        });
+      }
+
+      postMessage(
+        message: unknown,
+        options?: StructuredSerializeOptions | Transferable[],
+      ): void {
+        if (Array.isArray(options)) {
+          this.worker.postMessage(message, options);
+        } else {
+          this.worker.postMessage(message, options);
+        }
+      }
+
+      terminate(): void {
+        this.worker.terminate();
+      }
+    }
+    Object.defineProperty(window, "Worker", {
+      configurable: true,
+      value: RecoverableWorker,
+    });
+  });
 }
 
 async function create(page: Page, format: "duckdb" | "sqlite"): Promise<void> {
@@ -135,58 +206,7 @@ test.describe("reviewed workbook imports", () => {
   test("recovers a committed import when its worker reply is lost", async ({
     page,
   }) => {
-    await page.addInitScript(() => {
-      const NativeWorker = window.Worker;
-      class RecoverableWorker extends EventTarget {
-        readonly worker: Worker;
-
-        constructor(url: string | URL, options?: WorkerOptions) {
-          super();
-          this.worker = new NativeWorker(url, options);
-          this.worker.addEventListener("message", (event) => {
-            const message: unknown = event.data;
-            if (
-              typeof message === "object" &&
-              message !== null &&
-              "type" in message &&
-              message.type === "importApplied" &&
-              window.localStorage.getItem("drop-import-applied") === "yes"
-            ) {
-              window.localStorage.setItem("drop-import-applied", "done");
-              this.worker.terminate();
-              this.dispatchEvent(new Event("error"));
-              return;
-            }
-            this.dispatchEvent(new MessageEvent("message", { data: message }));
-          });
-          this.worker.addEventListener("error", () => {
-            this.dispatchEvent(new Event("error"));
-          });
-          this.worker.addEventListener("messageerror", () => {
-            this.dispatchEvent(new MessageEvent("messageerror"));
-          });
-        }
-
-        postMessage(
-          message: unknown,
-          options?: StructuredSerializeOptions | Transferable[],
-        ): void {
-          if (Array.isArray(options)) {
-            this.worker.postMessage(message, options);
-          } else {
-            this.worker.postMessage(message, options);
-          }
-        }
-
-        terminate(): void {
-          this.worker.terminate();
-        }
-      }
-      Object.defineProperty(window, "Worker", {
-        configurable: true,
-        value: RecoverableWorker,
-      });
-    });
+    await installLostImportReplyWorker(page);
 
     await create(page, "sqlite");
     await prepare(page, [await inventoryWorkbook()]);
@@ -224,6 +244,7 @@ test.describe("reviewed workbook imports", () => {
   test("skips a repeat capture and can record another delivery", async ({
     page,
   }) => {
+    await installLostImportReplyWorker(page);
     await create(page, "sqlite");
     const workbook = await inventoryWorkbook();
     await prepare(page, [workbook]);
@@ -233,6 +254,23 @@ test.describe("reviewed workbook imports", () => {
     await expect(page.getByTestId("workspace-import-duplicate")).toBeVisible();
     await page.getByTestId("workspace-delivery-vendor").fill("Vendor A");
     await page.getByTestId("workspace-delivery-phase").fill("Iteration 2");
+    await page.evaluate(() => {
+      window.localStorage.setItem("drop-import-applied", "yes");
+    });
+    await page.getByTestId("workspace-delivery-record-reuse").click();
+    await expect(page.getByTestId("workspace-error")).toContainText(
+      "worker is no longer available",
+    );
+
+    await page.reload();
+    await page.getByTestId("workspace-reopen").first().click();
+    await expect(page.getByTestId("workspace-import-resume")).toContainText(
+      "Finish recovery",
+    );
+    await page.getByTestId("workspace-import-resume").click();
+    await expect(page.getByTestId("workspace-delivery-phase")).toHaveValue(
+      "Iteration 2",
+    );
     await page.getByTestId("workspace-delivery-record-reuse").click();
     await expect(page.getByTestId("workspace-import-result")).toContainText(
       "reused the captured rows",
@@ -267,6 +305,34 @@ test.describe("reviewed workbook imports", () => {
     );
   });
 
+  test("clears the active review when switching databases", async ({
+    page,
+  }) => {
+    await create(page, "sqlite");
+    await prepare(page, [await inventoryWorkbook("switch-review.xlsx")]);
+    await page.getByTestId("workspace-import-preview").click();
+    await expect(
+      page.getByTestId("workspace-import-preview-page"),
+    ).toBeVisible();
+
+    await page.getByTestId("workspace-new-name").fill("second.sqlite");
+    await page.getByTestId("workspace-new").click();
+    await expect(page.getByTestId("workspace-summary")).toContainText(
+      "second.sqlite",
+    );
+    await expect(page.getByTestId("workspace-import-review")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-import-source")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-import-result")).toHaveCount(0);
+
+    await page
+      .getByTestId("workspace-reopen")
+      .filter({ hasText: "imports.sqlite" })
+      .click();
+    await expect(page.getByTestId("workspace-import-resume")).toContainText(
+      "switch-review.xlsx",
+    );
+  });
+
   test("appends a changed submission to an existing table", async ({
     page,
   }) => {
@@ -291,15 +357,20 @@ test.describe("reviewed workbook imports", () => {
     await create(page, "sqlite");
     await page
       .getByTestId("workspace-import-input")
-      .setInputFiles(
-        await inventoryWorkbook("large.xlsx", generatedRows(5_000)),
-      );
+      .setInputFiles(await cancellableWorkbook());
     await page.getByTestId("workspace-import-prepare").click();
+    await expect(page.getByTestId("workspace-progress")).toContainText(
+      "sheet2.xml",
+    );
     await page.getByTestId("workspace-cancel").click();
     await expect(page.getByTestId("workspace-notice")).toContainText(
       "Cancelled",
     );
     await expect(page.getByTestId("workspace-table")).toHaveCount(0);
+
+    await page.reload();
+    await page.getByTestId("workspace-reopen").first().click();
+    await expect(page.getByTestId("workspace-import-resume")).toHaveCount(0);
   });
 
   test("cancels a SQLite apply and rolls back its table", async ({ page }) => {

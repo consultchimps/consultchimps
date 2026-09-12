@@ -4,8 +4,6 @@ import path from "node:path";
 import {
   ensureParentDirectory,
   openRandomAccessSource,
-  planFilePublication,
-  publishStagedFile,
 } from "@consultchimps/files";
 import type {
   OperationControlOptions,
@@ -41,6 +39,7 @@ import { DATABASE_METADATA_TABLE } from "./metadata.js";
 import type { DatabaseFormat, DatabaseSchema } from "./schema.js";
 import { readSchemaFingerprint } from "./records.js";
 import { prepareImport } from "./import/prepare.js";
+import { NativeFileRegistry } from "./native-files.js";
 import type {
   ImportRecipe,
   ImportSource,
@@ -49,6 +48,7 @@ import type {
 
 const SQLITE_HEADER = new TextEncoder().encode("SQLite format 3\0");
 const databasePaths = new WeakMap<Database, string>();
+const nativeFiles = new NativeFileRegistry();
 
 export type NodeDatabaseFileKind =
   | {
@@ -162,7 +162,7 @@ async function openEngine(
   }
 }
 
-export async function inspectFileKind(options: {
+async function inspectFileKindUnlocked(options: {
   readonly path: string;
 }): Promise<NodeDatabaseFileKind> {
   const input = path.resolve(options.path);
@@ -241,6 +241,12 @@ export async function inspectFileKind(options: {
   }
 }
 
+export async function inspectFileKind(options: {
+  readonly path: string;
+}): Promise<NodeDatabaseFileKind> {
+  return nativeFiles.inspect(() => inspectFileKindUnlocked(options));
+}
+
 export interface CreateNodeDatabaseOptions {
   readonly path: string;
   readonly format: DatabaseFormat;
@@ -252,7 +258,7 @@ export async function createDatabase(
   options: CreateNodeDatabaseOptions,
 ): Promise<CreateDatabaseResult> {
   const output = await ensureParentDirectory(options.path);
-  const publication = await planFilePublication({
+  const publication = await nativeFiles.planPublication({
     output,
     inputs: [],
     overwrite: options.overwrite,
@@ -272,11 +278,11 @@ export async function createDatabase(
     await database.checkpoint();
     await database.close();
     database = undefined;
-    await publishStagedFile({
+    const opened = await nativeFiles.publishAndOpen({
       temporary,
       plan: publication,
+      open: () => openDatabaseUnlocked({ path: output }),
     });
-    const opened = await openDatabase({ path: output });
     return {
       database: opened,
       result: {
@@ -302,7 +308,7 @@ export async function createDatabase(
   }
 }
 
-export async function openDatabase(options: {
+async function openDatabaseUnlocked(options: {
   readonly path: string;
   readonly readonly?: boolean | undefined;
 }): Promise<Database> {
@@ -319,6 +325,16 @@ export async function openDatabase(options: {
   }
 }
 
+export async function openDatabase(options: {
+  readonly path: string;
+  readonly readonly?: boolean | undefined;
+}): Promise<Database> {
+  const input = path.resolve(options.path);
+  return nativeFiles.open(input, () =>
+    openDatabaseUnlocked({ ...options, path: input }),
+  );
+}
+
 export async function createPreparedImport(options: {
   readonly path: string;
   readonly database: Database;
@@ -329,7 +345,7 @@ export async function createPreparedImport(options: {
 }): Promise<PreparedImport> {
   const output = await ensureParentDirectory(options.path);
   const databasePath = databasePaths.get(options.database);
-  const publication = await planFilePublication({
+  const publication = await nativeFiles.planPublication({
     output,
     inputs: [
       ...(databasePath === undefined ? [] : [databasePath]),
@@ -356,8 +372,11 @@ export async function createPreparedImport(options: {
     });
     await prepared.close();
     prepared = undefined;
-    await publishStagedFile({ temporary, plan: publication });
-    return await openPreparedImport({ path: output });
+    return await nativeFiles.publishAndOpen({
+      temporary,
+      plan: publication,
+      open: () => openPreparedImportUnlocked({ path: output }),
+    });
   } catch (error) {
     await prepared?.close().catch(() => undefined);
     await engine.close().catch(() => undefined);
@@ -382,7 +401,7 @@ export async function prepareImportFile(
   throwIfAborted(options.signal, "db.prepare");
   const output = await ensureParentDirectory(options.path);
   const databasePath = databasePaths.get(options.database);
-  const publication = await planFilePublication({
+  const publication = await nativeFiles.planPublication({
     output,
     inputs: [
       ...(databasePath === undefined ? [] : [databasePath]),
@@ -414,7 +433,7 @@ export async function prepareImportFile(
     await prepared.close();
     prepared = undefined;
     throwIfAborted(options.signal, "db.prepare");
-    await publishStagedFile({ temporary, plan: publication });
+    await nativeFiles.publish({ temporary, plan: publication });
     return {
       prepared: outcome.prepared,
       result: {
@@ -435,10 +454,11 @@ export async function prepareImportFile(
   }
 }
 
-export async function openPreparedImport(options: {
+async function openPreparedImportUnlocked(options: {
   readonly path: string;
 }): Promise<PreparedImport> {
-  const engine = NodeSqliteEngine.open(path.resolve(options.path));
+  const input = path.resolve(options.path);
+  const engine = NodeSqliteEngine.open(input);
   try {
     const prepared = await openPreparedImportHandle(engine);
     return prepared;
@@ -446,6 +466,15 @@ export async function openPreparedImport(options: {
     await engine.close().catch(() => undefined);
     throw error;
   }
+}
+
+export async function openPreparedImport(options: {
+  readonly path: string;
+}): Promise<PreparedImport> {
+  const input = path.resolve(options.path);
+  return nativeFiles.open(input, () =>
+    openPreparedImportUnlocked({ path: input }),
+  );
 }
 
 export interface ExportNodeDatabaseOptions extends OperationControlOptions {
@@ -483,7 +512,7 @@ export async function exportDatabase(
     );
   }
   const output = await ensureParentDirectory(options.output);
-  const publication = await planFilePublication({
+  const publication = await nativeFiles.planPublication({
     output,
     inputs: [sourcePath, ...(options.protectedInputPaths ?? [])],
     overwrite: options.overwrite,
@@ -535,7 +564,7 @@ export async function exportDatabase(
       throw error;
     }
     const bytesWritten = Number((await stat(temporary)).size);
-    await publishStagedFile({ temporary, plan: publication });
+    await nativeFiles.publish({ temporary, plan: publication });
     return {
       operation: "db.export",
       artifacts: [

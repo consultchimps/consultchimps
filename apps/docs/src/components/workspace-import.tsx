@@ -387,16 +387,25 @@ export function WorkspaceImport({
 
   const recordAgain = useCallback(async () => {
     if (plan === null || plan.state !== "ready") return;
+    writePendingImport({
+      databaseId: summary.databaseId,
+      planId: plan.id,
+      delivery,
+    });
     const recorded = await runLong("Recording delivery", (options) =>
       client().applyImport(plan.id, delivery, options),
     );
     if (recorded === null) return;
+    clearPendingImport(summary.databaseId, plan.id);
+    setSavedPlans((current) =>
+      current.filter((candidate) => candidate.id !== plan.id),
+    );
     onSummary(recorded.summary);
     setResult(
       "Recorded a separate delivery event and reused the captured rows",
     );
     setPlan({ ...plan, captureIds: recorded.captureIds });
-  }, [client, delivery, onSummary, plan, runLong]);
+  }, [client, delivery, onSummary, plan, runLong, summary.databaseId]);
 
   const setDeliveryField = useCallback(
     (field: keyof WorkspaceDeliveryContext, value: string) => {

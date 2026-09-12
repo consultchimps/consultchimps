@@ -47,6 +47,7 @@ interface CurrentCell {
   valueOpen: boolean;
   formulaOpen: boolean;
   inlineTextOpen: boolean;
+  inlinePhoneticDepth: number;
   hasValue: boolean;
   hasFormula: boolean;
   valueBytes: number;
@@ -124,7 +125,14 @@ async function hydrateRows(
     for (const [name, cell] of Object.entries(row.cells)) {
       cells[name] = await hydrateCell(cell, sharedStrings);
     }
-    result.push({ sourceRow: row.sourceRow, cells });
+    const hasSelectedValue = Object.values(cells).some(
+      (cell) =>
+        cell.kind === "formula" ||
+        (cell.kind === "string"
+          ? cell.value.length > 0
+          : cell.kind !== "blank"),
+    );
+    if (hasSelectedValue) result.push({ sourceRow: row.sourceRow, cells });
   }
   return result;
 }
@@ -206,6 +214,7 @@ export async function* parseWorksheetBatches(
         valueOpen: false,
         formulaOpen: false,
         inlineTextOpen: false,
+        inlinePhoneticDepth: 0,
         hasValue: false,
         hasFormula: false,
         valueBytes: 0,
@@ -218,7 +227,14 @@ export async function* parseWorksheetBatches(
     } else if (current && name === "f") {
       current.formulaOpen = true;
       current.hasFormula = true;
-    } else if (current && name === "t" && current.type === "inlineStr") {
+    } else if (current && name === "rPh" && current.type === "inlineStr") {
+      current.inlinePhoneticDepth += 1;
+    } else if (
+      current &&
+      name === "t" &&
+      current.type === "inlineStr" &&
+      current.inlinePhoneticDepth === 0
+    ) {
       current.inlineTextOpen = true;
     }
   });
@@ -257,6 +273,7 @@ export async function* parseWorksheetBatches(
     if (current && name === "v") current.valueOpen = false;
     else if (current && name === "f") current.formulaOpen = false;
     else if (current && name === "t") current.inlineTextOpen = false;
+    else if (current && name === "rPh") current.inlinePhoneticDepth -= 1;
     else if (current && name === "c") {
       const selectedName = options.columns?.get(current.column);
       if (
@@ -293,10 +310,11 @@ export async function* parseWorksheetBatches(
     }
     while (ready.length >= options.batchSize) {
       throwIfAborted(options.signal, "xlsx.stream", "memory");
-      yield await hydrateRows(
+      const rows = await hydrateRows(
         ready.splice(0, options.batchSize),
         options.sharedStrings,
       );
+      if (rows.length > 0) yield rows;
     }
   }
   if (!passedLastRow) {
@@ -305,7 +323,8 @@ export async function* parseWorksheetBatches(
   }
   if (ready.length > 0) {
     throwIfAborted(options.signal, "xlsx.stream", "memory");
-    yield await hydrateRows(ready, options.sharedStrings);
+    const rows = await hydrateRows(ready, options.sharedStrings);
+    if (rows.length > 0) yield rows;
   }
 }
 

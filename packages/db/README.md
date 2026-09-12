@@ -37,6 +37,13 @@ Import composition:
 5. Pass its ready revision to `applyImport` with a retry request ID.
 6. Close handles and release scratch files.
 
+Use `inspectImport({ database, prepared, page: { limit: 20 } })` to preview both
+newly captured rows and rows reused from the working database. Omitting
+`database` still returns plan metadata and staged rows, with
+`DB_PREVIEW_DATABASE_REQUIRED` entries in `previewWarnings` for reused
+selections. Preview pages contain at most 100 rows; pass `nextCursor` as the
+next page's `cursor`. The target database must match the plan's database ID.
+
 For a saved Node.js plan, `prepareImportFile` from `@consultchimps/db/node`
 combines creation, capture, and publication. Pass `path`, `database`, `sources`,
 `recipe`, and `baselineRevision`, with optional `overwrite`,
@@ -46,6 +53,11 @@ and an operation result containing the final file artifact. Reopen the file with
 if capture, source verification, or cancellation fails before publication. List
 filesystem-backed source, recipe, and context files in `protectedInputPaths` so
 overwrite validation can reject those destinations.
+
+The Node runtime refuses to replace a database or plan held open through the
+same runtime, including filesystem aliases, with `DB_NATIVE_FILE_BUSY`. Close
+those handles before replacement. Callers must also prevent other processes from
+opening or writing the destination during replacement.
 
 `consultchimps db resolve --recipe` replaces the saved plan's table routes. A
 selection omitted from the replacement recipe is excluded from table loading.
@@ -77,6 +89,11 @@ or resume it. This recovery covers failures reported to the running operation.
 An abrupt tab, worker, or browser termination can interrupt publication. DuckDB
 stores its main file and write-ahead log as separate OPFS entries, so browser
 replacement is not crash-atomic across those entries.
+
+Call `BrowserDatabaseRuntime.discardPreparedImport({ name })` only for a private
+plan that the caller created and no longer needs. The runtime refuses to remove
+an open plan, a database, or an unrecognized artifact with that name. This
+operation does not provide general browser database deletion.
 
 Use `openDatabase({ name, readonly: true })` for browser inspection or export
 without permitting database writes. Browser exports require an empty

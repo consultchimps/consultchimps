@@ -222,6 +222,7 @@ async function plannedRecordRanges(options: {
   const schemaByName = new Map(
     options.schemas.map((schema) => [identifierKey(schema.name), schema]),
   );
+  const reservedCapturesByTable = new Map<string, Set<string>>();
   for (const route of orderRoutesByReferences(
     options.recipe.routes,
     options.schemas,
@@ -236,12 +237,16 @@ async function plannedRecordRanges(options: {
     const requestedTable = destinationName(route);
     const table =
       schemaByName.get(identifierKey(requestedTable))?.name ?? requestedTable;
+    const key = identifierKey(table);
+    const reservedCaptures = reservedCapturesByTable.get(key) ?? new Set();
+    if (reservedCaptures.has(capture.captureId)) continue;
+    reservedCaptures.add(capture.captureId);
+    reservedCapturesByTable.set(key, reservedCaptures);
     const applied = await engine.query(
       `SELECT import_id FROM ${APPLICATION_TABLE} WHERE capture_id = ? AND table_name = ? LIMIT 1`,
       [capture.captureId, table],
     );
     if (applied.length > 0) continue;
-    const key = identifierKey(table);
     const start = nextByTable.get(key) ?? 1n;
     const end = start + capture.rowCount;
     if (end > start) {

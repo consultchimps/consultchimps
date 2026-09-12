@@ -59,6 +59,12 @@ conflicts, and a bounded preview. `db apply` approves a resolved plan and
 commits its rows. Keep `.ccplan` files as carefully as the workbooks because
 they contain source values.
 
+For a repeated import, preview the reused rows with
+`consultchimps db inspect review.ccplan --database inventory.duckdb`. These rows
+remain in the working database instead of being copied into the plan again.
+Without `--database`, inspection reports preview warnings for reused selections.
+The original Excel files are not needed for either preview.
+
 For an import whose routing is already explicit, `db import` combines
 preparation and application. Use a saved plan when a submission needs review or
 corrections.
@@ -262,6 +268,14 @@ Keep exported files as backups. The interface checks capabilities and reports
 unsupported storage instead of falling back to loading the whole database into
 memory.
 
+A browser download keeps a temporary export in OPFS while the browser consumes
+the file. Its name carries a 24-hour expiry. The workspace checks for expired
+export files when it starts and once an hour, and removes only files in its
+private export namespace. A Web Lock protects an export while another tab is
+writing or downloading it. When Web Locks are unavailable, cleanup leaves the
+file in place instead of risking an active download. These temporary files need
+browser storage in addition to the working database until cleanup completes.
+
 Saved import reviews use the same browser storage. If a tab closes or an apply
 is cancelled, reopen the working database and resume the saved review. A
 cancelled apply rolls back its transaction, so retrying the plan does not keep a
@@ -278,6 +292,11 @@ source files or private plans until an import is verified. When replacing an
 exported file with `--force`, keep other applications from writing that
 destination until export finishes. Use a new filename if exclusive access is
 uncertain.
+
+The Node library refuses replacement with `DB_NATIVE_FILE_BUSY` while a database
+or plan remains open through the same runtime, including a filesystem alias.
+Close those handles first. Other processes must also release the destination
+before replacement.
 
 ## Planning a large import
 

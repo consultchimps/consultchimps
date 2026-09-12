@@ -19,7 +19,11 @@ import type {
   WorkspaceSummary,
 } from "@/lib/workspace-protocol";
 import { WorkspaceClient } from "@/lib/workspace-worker";
-import { removeOpfsFile } from "@/lib/workspace-files";
+import {
+  browserExportCleanupIntervalMilliseconds,
+  cleanupExpiredBrowserExports,
+  retainBrowserExportLease,
+} from "@/lib/workspace-files";
 import {
   Database,
   Download,
@@ -87,18 +91,29 @@ function parseSchema(text: string): WorkspaceSchemaDocument {
   return value;
 }
 
-function downloadFile(file: File, name: string): void {
-  const url = URL.createObjectURL(file);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = name;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => {
-    URL.revokeObjectURL(url);
-    void removeOpfsFile(file.name).catch(() => undefined);
-  }, 60_000);
+async function downloadFile(file: File, name: string): Promise<() => void> {
+  const releaseLease = await retainBrowserExportLease(file.name);
+  let url: string | undefined;
+  let anchor: HTMLAnchorElement | undefined;
+  try {
+    const downloadUrl = URL.createObjectURL(file);
+    url = downloadUrl;
+    anchor = document.createElement("a");
+    anchor.href = downloadUrl;
+    anchor.download = name;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    return () => {
+      URL.revokeObjectURL(downloadUrl);
+      releaseLease();
+    };
+  } catch (error) {
+    anchor?.remove();
+    if (url !== undefined) URL.revokeObjectURL(url);
+    releaseLease();
+    throw error;
+  }
 }
 
 function ProgressNotice({
@@ -205,6 +220,7 @@ export function WorkspaceTool() {
   const clientRef = useRef<WorkspaceClient | null>(null);
   const openInputRef = useRef<HTMLInputElement | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
+  const exportLeaseReleasesRef = useRef<Set<() => void>>(new Set());
   const [summary, setSummary] = useState<WorkspaceSummary | null>(null);
   const [format, setFormat] = useState<WorkspaceDatabaseFormat>("sqlite");
   const [name, setName] = useState("consultchimps.sqlite");
@@ -228,6 +244,23 @@ export function WorkspaceTool() {
       setRecentDatabases(readRecentDatabases());
     }, 0);
     return () => window.clearTimeout(timeout);
+  }, []);
+
+  useEffect(() => {
+    const exportLeaseReleases = exportLeaseReleasesRef.current;
+    const cleanup = (): void => {
+      void cleanupExpiredBrowserExports().catch(() => undefined);
+    };
+    cleanup();
+    const interval = window.setInterval(
+      cleanup,
+      browserExportCleanupIntervalMilliseconds,
+    );
+    return () => {
+      window.clearInterval(interval);
+      for (const release of exportLeaseReleases) release();
+      exportLeaseReleases.clear();
+    };
   }, []);
 
   const remember = useCallback((next: WorkspaceSummary) => {
@@ -409,13 +442,19 @@ export function WorkspaceTool() {
         (options) => client().export(targetFormat, options),
       );
       if (exported === null) return;
-      downloadFile(exported.file, exported.name);
-      setStatus({
-        kind: "notice",
-        message: `Exported an independent ${exported.format} copy. Later browser changes will not update it`,
-      });
+      try {
+        exportLeaseReleasesRef.current.add(
+          await downloadFile(exported.file, exported.name),
+        );
+        setStatus({
+          kind: "notice",
+          message: `Exported an independent ${exported.format} copy. Later browser changes will not update it`,
+        });
+      } catch (error) {
+        reportError(error);
+      }
     },
-    [client, runLong],
+    [client, reportError, runLong],
   );
 
   const disabled = busy !== null;
@@ -612,6 +651,7 @@ export function WorkspaceTool() {
           <WorkspaceImport
             busy={disabled}
             client={client}
+            key={summary.databaseId}
             summary={summary}
             onSummary={setSummary}
             onReviewState={setReviewActive}

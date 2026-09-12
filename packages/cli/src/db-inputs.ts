@@ -33,6 +33,34 @@ export interface OpenDbInputs {
   close(): Promise<void>;
 }
 
+function isMissingPath(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+async function parseInput(input: string): Promise<{
+  readonly filePath: string;
+  readonly key: string;
+}> {
+  const separator = input.indexOf("=");
+  const possibleAlias = separator > 0 ? input.slice(0, separator) : undefined;
+  if (
+    possibleAlias !== undefined &&
+    !possibleAlias.includes("/") &&
+    !possibleAlias.includes("\\")
+  ) {
+    try {
+      await stat(input);
+    } catch (error) {
+      if (!isMissingPath(error)) throw error;
+      return {
+        filePath: input.slice(separator + 1),
+        key: possibleAlias,
+      };
+    }
+  }
+  return { filePath: input, key: path.parse(input).name };
+}
+
 export async function readDbDocument(filePath: string): Promise<unknown> {
   const info = await stat(filePath);
   if (!info.isFile() || info.size > 8 * 1024 * 1024) {
@@ -87,10 +115,7 @@ export async function openDbInputs(
   }
   try {
     for (const input of options.input) {
-      const separator = input.indexOf("=");
-      const filePath = separator > 0 ? input.slice(separator + 1) : input;
-      const key =
-        separator > 0 ? input.slice(0, separator) : path.parse(filePath).name;
+      const { filePath, key } = await parseInput(input);
       if (keys.has(key))
         throw new ConsultChimpsError(
           "DB_DUPLICATE_SOURCE_KEY",

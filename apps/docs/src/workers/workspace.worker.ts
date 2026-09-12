@@ -39,6 +39,9 @@ import {
   BrowserBlobSource,
   BrowserOpfsFile,
   browserScratchFactory,
+  createBrowserExportName,
+  removeOpfsFile,
+  withBrowserExportLease,
 } from "@/lib/workspace-files";
 import type {
   WorkspaceCommand,
@@ -337,6 +340,7 @@ function columnsFor(
 
 async function importDto(held: HeldImport): Promise<WorkspacePreparedImport> {
   const inspection = await inspectImport({
+    database: current().database,
     prepared: held.prepared,
     page: { limit: 1 },
   });
@@ -743,7 +747,11 @@ async function listSavedImports(id: number): Promise<void> {
       prepared = await (
         await runtime()
       ).openPreparedImport({ name: entry.name });
-      const inspection = await inspectImport({ prepared, page: { limit: 1 } });
+      const inspection = await inspectImport({
+        database: current().database,
+        prepared,
+        page: { limit: 1 },
+      });
       const held = heldFromInspection(prepared, inspection, entry.application);
       imports.set(held.ref.id, held);
       prepared = undefined;
@@ -768,6 +776,8 @@ async function prepareSources(
   signal: AbortSignal,
 ): Promise<void> {
   const workbookSources = [];
+  let privatePlan:
+    { readonly name: string; readonly prepared: PreparedImport } | undefined;
   try {
     for (const source of command.sources) {
       const sourceLabel = [
@@ -812,15 +822,17 @@ async function prepareSources(
     const databaseInspection = await inspectDatabase({
       database: current().database,
     });
+    const privatePlanName = `.consultchimps-import-${globalThis.crypto.randomUUID()}.sqlite`;
     const prepared = await (
       await runtime()
     ).createPreparedImport({
-      name: `.consultchimps-import-${globalThis.crypto.randomUUID()}.sqlite`,
+      name: privatePlanName,
       database: current().database,
       recipe,
       baselineRevision: databaseInspection.revision,
       signal,
     });
+    privatePlan = { name: privatePlanName, prepared };
     const outcome = await prepareImport({
       database: current().database,
       prepared,
@@ -830,6 +842,7 @@ async function prepareSources(
       onProgress: onProgress(id),
     });
     const firstInspection = await inspectImport({
+      database: current().database,
       prepared,
       page: { limit: 1 },
     });
@@ -943,11 +956,34 @@ async function prepareSources(
       };
     }
     imports.set(held.ref.id, held);
+    privatePlan = undefined;
     scope.postMessage({
       type: "importPrepared",
       id,
       plan: await importDto(held),
     });
+  } catch (error) {
+    if (privatePlan !== undefined) {
+      const plan = privatePlan;
+      const cleanupFailures: unknown[] = [];
+      try {
+        await plan.prepared.close();
+      } catch (cleanupError) {
+        cleanupFailures.push(cleanupError);
+      }
+      try {
+        await (await runtime()).discardPreparedImport({ name: plan.name });
+      } catch (cleanupError) {
+        cleanupFailures.push(cleanupError);
+      }
+      if (cleanupFailures.length > 0) {
+        throw new AggregateError(
+          [error, ...cleanupFailures],
+          "Preparing the import failed, and its private plan could not be removed",
+        );
+      }
+    }
+    throw error;
   } finally {
     await Promise.all(workbookSources.map((source) => source.close()));
   }
@@ -968,6 +1004,7 @@ async function previewImport(
     throw new Error("The selected import region is no longer available");
   }
   const inspection = await inspectImport({
+    database: current().database,
     prepared: held.prepared,
     page: {
       limit: command.limit,
@@ -1083,34 +1120,87 @@ async function exportWorkspace(
 ): Promise<void> {
   const extension = command.format === "duckdb" ? "duckdb" : "sqlite";
   const name = `${current().workingCopyName.replace(/\.[^.]+$/u, "")}.${extension}`;
-  const destination = await BrowserOpfsFile.open(
-    `.consultchimps-export-${globalThis.crypto.randomUUID()}.${extension}`,
-    true,
-    false,
-  );
-  try {
-    await current().database.checkpoint();
-    await (
-      await runtime()
-    ).exportDatabase({
-      database: current().database,
-      name,
-      destination,
-      format: command.format,
-      overwrite: true,
-      signal,
-      onProgress: onProgress(id),
-    });
-    scope.postMessage({
-      type: "exported",
-      id,
-      file: await destination.file(),
-      name,
-      format: command.format,
-    });
-  } finally {
-    await destination.close();
-  }
+  const destinationName = createBrowserExportName(extension);
+  await withBrowserExportLease(destinationName, async () => {
+    let destination: BrowserOpfsFile;
+    try {
+      destination = await BrowserOpfsFile.open(destinationName, true, false);
+    } catch (error) {
+      try {
+        await removeOpfsFile(destinationName);
+      } catch (cleanupError) {
+        if (!(
+          cleanupError instanceof DOMException &&
+          cleanupError.name === "NotFoundError"
+        )) {
+          throw new AggregateError(
+            [error, cleanupError],
+            "The browser export could not finish cleaning its private storage",
+          );
+        }
+      }
+      throw error;
+    }
+    let completed = false;
+    let destinationClosed = false;
+    let operationError: unknown;
+    try {
+      await current().database.checkpoint();
+      await (
+        await runtime()
+      ).exportDatabase({
+        database: current().database,
+        name,
+        destination,
+        format: command.format,
+        overwrite: true,
+        signal,
+        onProgress: onProgress(id),
+      });
+      const file = await destination.file();
+      await destination.close();
+      destinationClosed = true;
+      scope.postMessage({
+        type: "exported",
+        id,
+        file,
+        name,
+        format: command.format,
+      });
+      completed = true;
+    } catch (error) {
+      operationError = error;
+      throw error;
+    } finally {
+      const cleanupFailures: unknown[] = [];
+      if (!destinationClosed) {
+        try {
+          await destination.close();
+        } catch (error) {
+          cleanupFailures.push(error);
+        }
+      }
+      if (!completed) {
+        try {
+          await removeOpfsFile(destinationName);
+        } catch (error) {
+          if (!(
+            error instanceof DOMException && error.name === "NotFoundError"
+          )) {
+            cleanupFailures.push(error);
+          }
+        }
+      }
+      if (cleanupFailures.length > 0) {
+        throw new AggregateError(
+          operationError === undefined
+            ? cleanupFailures
+            : [operationError, ...cleanupFailures],
+          "The browser export could not finish cleaning its private storage",
+        );
+      }
+    }
+  });
 }
 
 async function handle(id: number, command: WorkspaceCommand): Promise<void> {

@@ -281,6 +281,14 @@ bridges the streaming Excel reader into this pipeline. Other adapters can supply
 an `ImportSource` with random-access bytes and bounded region readers without
 importing CLI or browser code.
 
+Call `inspectImport({ database, prepared, page: { limit: 20 } })` to preview
+staged rows and reused captures. The database must have the plan's target ID.
+Without `database`, the result includes staged examples and
+`DB_PREVIEW_DATABASE_REQUIRED` entries in `previewWarnings` for reused
+selections. Pages contain at most 100 examples. Pass a returned `nextCursor` as
+`page.cursor` to continue; set both `page.source` and `page.selection` to filter
+one captured region.
+
 For a saved Node.js plan, call `prepareImportFile` from `@consultchimps/db/node`
 with `path`, `database`, `sources`, `recipe`, and `baselineRevision`. Optional
 fields are `overwrite`, `protectedInputPaths`, `signal`, and `onProgress`. It
@@ -302,7 +310,10 @@ In the browser runtime, `openDatabase({ name, readonly: true })` opens a
 read-only working copy for inspection or export. `exportDatabase` refuses a
 nonempty `RandomAccessFile` destination unless `overwrite: true` is supplied.
 The caller owns that destination and must provide storage separate from the
-working database; matching filenames alone do not establish file identity.
+working database; matching filenames alone do not establish file identity. Call
+`discardPreparedImport({ name })` to remove a closed private plan that the
+caller created and no longer needs. It rejects an open plan, database, or
+unrecognized artifact, and it does not remove database working copies.
 
 The former `Database.create()`, byte-based `Database.open()`, `serialize()`, and
 editable grid helpers have been removed from the spike. Open persistent handles

@@ -352,7 +352,10 @@ delivery-context JSON examples.
   this default; a conflicting extension is refused.
 - `--schema <file>` applies a versioned schema during creation.
 - `db inspect --limit <number>` limits the saved plan's row preview to 20 by
-  default. Database inspection reports table and capture summaries.
+  default, with a maximum of 100. Add `--database <file>` to preview rows reused
+  from that working database. Without it, the plan reports
+  `DB_PREVIEW_DATABASE_REQUIRED` preview warnings for reused selections.
+  Database inspection reports table and capture summaries.
 - `db schema apply --file <schema>` loads a versioned schema. `--dry-run`
   reports additions and conflicts without applying them.
 
@@ -361,8 +364,9 @@ delivery-context JSON examples.
 Both `db plan` and `db import` accept:
 
 - `--input <source>`: repeat for several workbooks. Use `alias=path` to keep
-  recipe references independent of filenames. A plain path uses its filename
-  stem.
+  recipe references independent of filenames. If the whole argument names an
+  existing path, the command treats it as a path, including when the filename
+  contains `=`. A plain path uses its filename stem.
 - `--recipe <file>`: versioned routes and column mappings. A recipe can select
   different worksheets, tables, or ranges in each source.
 - `--sheet <name>`, `--table <name>`, or `--range <reference>`: one selected

@@ -640,6 +640,114 @@ for (const format of ["sqlite", "duckdb"] as const) {
     }
   });
 
+  test.each([
+    { parentId: "PAR-000001", expectedState: "ready" },
+    { parentId: "PAR-000002", expectedState: "needs-review" },
+  ] as const)(
+    `${format}: duplicate aliases reserve parent records once for $parentId`,
+    async ({ parentId, expectedState }) => {
+      const parentSchema = {
+        name: "Parents",
+        columns: [{ name: "Name", type: "text", nullable: false }],
+        recordId: { prefix: "PAR", padding: 6 },
+        foreignKeys: [],
+      } as const;
+      const childSchema = {
+        name: "Children",
+        columns: [{ name: "ParentId", type: "text", nullable: false }],
+        recordId: { prefix: "CHI", padding: 6 },
+        foreignKeys: [{ column: "ParentId", referencesTable: "Parents" }],
+      } as const;
+      const recipe: ImportRecipe = {
+        version: 1,
+        routes: [
+          {
+            source: "first-parent-alias",
+            selection: "Parents",
+            destination: { kind: "new-table", schema: parentSchema },
+            columns: [{ source: "Name", target: "Name", type: "text" }],
+          },
+          {
+            source: "second-parent-alias",
+            selection: "Parents",
+            destination: { kind: "existing-table", table: "Parents" },
+            columns: [{ source: "Name", target: "Name", type: "text" }],
+          },
+          {
+            source: "child",
+            selection: "Children",
+            destination: { kind: "new-table", schema: childSchema },
+            columns: [{ source: "ParentId", target: "ParentId", type: "text" }],
+          },
+        ],
+      };
+      const { database, prepared } = await fixture(format, recipe);
+      try {
+        const parent = source({
+          Parents: [
+            {
+              sourceRow: 2,
+              cells: { Name: { kind: "string", value: "Parent A" } },
+            },
+          ],
+        });
+        const child = source({
+          Children: [
+            {
+              sourceRow: 2,
+              cells: { ParentId: { kind: "string", value: parentId } },
+            },
+          ],
+        });
+        const outcome = await prepareImport({
+          database,
+          prepared,
+          recipe,
+          sources: [
+            { ...parent, key: "first-parent-alias" },
+            { ...parent, key: "second-parent-alias" },
+            { ...child, key: "child" },
+          ],
+        });
+
+        expect(outcome.prepared.state).toBe(expectedState);
+        if (expectedState === "needs-review") {
+          expect(
+            (await inspectImport({ prepared, page: { limit: 10 } })).conflicts,
+          ).toContainEqual(
+            expect.objectContaining({
+              kind: "foreign-key-value-not-found",
+              source: "child",
+              sourceRow: 2,
+              referencesTable: "Parents",
+            }),
+          );
+          return;
+        }
+        if (outcome.prepared.state !== "ready")
+          throw new Error("Plan not ready");
+        const applied = await applyImport({
+          database,
+          prepared,
+          approved: outcome.prepared,
+          requestId: `${format}-duplicate-parent-aliases`,
+        });
+        expect(applied.metrics).toMatchObject({ rowsImported: 2 });
+        expect(
+          (await inspectDatabase({ database })).tables.map(
+            ({ name, rowCount }) => [name, rowCount],
+          ),
+        ).toEqual([
+          ["Children", 1n],
+          ["Parents", 1n],
+        ]);
+      } finally {
+        await prepared.close();
+        await database.close();
+      }
+    },
+  );
+
   test(`${format}: multiple sources can append to one table declared later`, async () => {
     const sharedSchema = {
       name: "Shared",

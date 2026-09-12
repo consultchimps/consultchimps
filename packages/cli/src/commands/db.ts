@@ -134,7 +134,7 @@ function sources(command: Command): Command {
   return command
     .requiredOption(
       "--input <source>",
-      "workbook path or alias=path; repeat for additional workbooks",
+      "workbook path or alias=path; existing paths are used as written",
       collect,
     )
     .option(
@@ -318,50 +318,71 @@ export function registerDbCommands(
     )
     .argument("<file>", "database or .ccplan file")
     .option("--limit <number>", "maximum preview rows", Number, 20)
-    .action(async (file: string, options: { limit: number }) => {
-      const kind = await inspectFileKind({ path: file });
-      if (kind.kind === "unmanaged-database") {
-        if (output.json()) output.data(kind);
-        else {
-          process.stdout.write(
-            `${kind.format === "duckdb" ? "DuckDB" : "SQLite"} database, read-only inspection\nThis file has no ConsultChimps import history. No tables or metadata were added.\n`,
-          );
-          for (const table of kind.tables)
-            process.stdout.write(
-              `${withoutTerminalControlsInProse(table.name)}: ${table.columns.length} columns\n`,
-            );
-          process.stdout.write(
-            "Create a separate ConsultChimps database for managed imports.\n",
-          );
-        }
-      } else if (kind.kind === "prepared-import") {
-        const prepared = await openPreparedImport({ path: file });
-        try {
-          output.data(
-            await inspectImport({ prepared, page: { limit: options.limit } }),
-          );
-        } finally {
-          await prepared.close();
-        }
-      } else {
-        const database = await openDatabase({ path: file, readonly: true });
-        try {
-          const inspection = await inspectDatabase({ database });
-          if (output.json()) output.data(inspection);
+    .option(
+      "--database <file>",
+      "target database containing reused rows for a saved-plan preview",
+    )
+    .action(
+      async (file: string, options: { limit: number; database?: string }) => {
+        const kind = await inspectFileKind({ path: file });
+        if (kind.kind === "unmanaged-database") {
+          if (output.json()) output.data(kind);
           else {
             process.stdout.write(
-              `${inspection.format === "duckdb" ? "DuckDB" : "SQLite"} database\n${inspection.tables.length} tables, ${inspection.captures} source captures, ${inspection.deliveries} recorded deliveries\n`,
+              `${kind.format === "duckdb" ? "DuckDB" : "SQLite"} database, read-only inspection\nThis file has no ConsultChimps import history. No tables or metadata were added.\n`,
             );
-            for (const table of inspection.tables)
+            for (const table of kind.tables)
               process.stdout.write(
-                `${withoutTerminalControlsInProse(table.name)}: ${table.rowCount} rows, ${table.schema.columns.length} columns\n`,
+                `${withoutTerminalControlsInProse(table.name)}: ${table.columns.length} columns\n`,
               );
+            process.stdout.write(
+              "Create a separate ConsultChimps database for managed imports.\n",
+            );
           }
-        } finally {
-          await database.close();
+        } else if (kind.kind === "prepared-import") {
+          const prepared = await openPreparedImport({ path: file });
+          try {
+            const database =
+              options.database === undefined
+                ? undefined
+                : await openDatabase({
+                    path: options.database,
+                    readonly: true,
+                  });
+            try {
+              output.data(
+                await inspectImport({
+                  database,
+                  prepared,
+                  page: { limit: options.limit },
+                }),
+              );
+            } finally {
+              await database?.close();
+            }
+          } finally {
+            await prepared.close();
+          }
+        } else {
+          const database = await openDatabase({ path: file, readonly: true });
+          try {
+            const inspection = await inspectDatabase({ database });
+            if (output.json()) output.data(inspection);
+            else {
+              process.stdout.write(
+                `${inspection.format === "duckdb" ? "DuckDB" : "SQLite"} database\n${inspection.tables.length} tables, ${inspection.captures} source captures, ${inspection.deliveries} recorded deliveries\n`,
+              );
+              for (const table of inspection.tables)
+                process.stdout.write(
+                  `${withoutTerminalControlsInProse(table.name)}: ${table.rowCount} rows, ${table.schema.columns.length} columns\n`,
+                );
+            }
+          } finally {
+            await database.close();
+          }
         }
-      }
-    });
+      },
+    );
 
   db.command("schema")
     .description("Manage database table definitions")
@@ -439,6 +460,7 @@ export function registerDbCommands(
             const prepared = await openPreparedImport({ path: options.plan });
             try {
               const review = await inspectImport({
+                database,
                 prepared,
                 page: { limit: 1 },
               });

@@ -857,4 +857,37 @@ describe("browser database runtime", () => {
     await reopened.close();
     await created.database.close();
   });
+
+  test("discards only a closed prepared import with the exact name", async () => {
+    const runtime = await createRuntime();
+    const created = await runtime.createDatabase({
+      name: "workspace.sqlite",
+      format: "sqlite",
+    });
+    const inspection = await inspectDatabase({ database: created.database });
+    const planName = ".consultchimps-import-private.sqlite";
+    const prepared = await runtime.createPreparedImport({
+      name: planName,
+      database: created.database,
+      recipe: { version: 1, routes: [] },
+      baselineRevision: inspection.revision,
+    });
+
+    await expect(
+      runtime.discardPreparedImport({ name: planName }),
+    ).rejects.toMatchObject({ code: "DB_BROWSER_DATABASE_BUSY" });
+    await prepared.close();
+    await expect(
+      runtime.discardPreparedImport({ name: planName }),
+    ).resolves.toBeUndefined();
+    await expect(
+      runtime.openPreparedImport({ name: planName }),
+    ).rejects.toMatchObject({ code: "DB_BROWSER_STORAGE_MISSING" });
+    await expect(
+      runtime.discardPreparedImport({ name: "workspace.sqlite" }),
+    ).rejects.toMatchObject({ code: "DB_BROWSER_STORAGE_KIND_MISMATCH" });
+
+    expect([...harness.databases.keys()]).toEqual(["/workspace.sqlite"]);
+    await created.database.close();
+  });
 });

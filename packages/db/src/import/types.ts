@@ -221,6 +221,12 @@ export interface ImportInspection {
   readonly capturedRows: bigint;
   readonly routes: readonly ImportRouteInspection[];
   readonly examples: readonly ImportExample[];
+  readonly previewWarnings: readonly {
+    readonly code: "DB_PREVIEW_DATABASE_REQUIRED";
+    readonly source: string;
+    readonly selection: string;
+    readonly message: string;
+  }[];
   readonly nextCursor?: string | undefined;
 }
 

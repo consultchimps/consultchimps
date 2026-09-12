@@ -55,6 +55,85 @@ test.describe("persistent database workspace", () => {
     );
   });
 
+  test("cleans only expired unlocked export scratch after reload", async ({
+    context,
+    page,
+  }) => {
+    const owner = await context.newPage();
+    await owner.goto("/");
+    const names = await owner.evaluate(async () => {
+      const expiry = Date.now() - 1_000;
+      const futureExpiry = Date.now() + 4 * 24 * 60 * 60 * 1_000;
+      const expired = `.consultchimps-export-${String(expiry)}-${crypto.randomUUID()}.sqlite`;
+      const active = `.consultchimps-export-${String(expiry)}-${crypto.randomUUID()}.duckdb`;
+      const fresh = `.consultchimps-export-${String(futureExpiry)}-${crypto.randomUUID()}.sqlite`;
+      const legacyExpired = `.consultchimps-export-${crypto.randomUUID()}.sqlite`;
+      const unrelated = ".consultchimps-export-user-copy.sqlite";
+      const root = await navigator.storage.getDirectory();
+      for (const name of [expired, active, fresh, legacyExpired, unrelated]) {
+        const handle = await root.getFileHandle(name, { create: true });
+        const writable = await handle.createWritable();
+        await writable.write(new Uint8Array([1, 2, 3]));
+        await writable.close();
+      }
+
+      let release = (): void => undefined;
+      let acquired = (): void => undefined;
+      const acquiredPromise = new Promise<void>((resolve) => {
+        acquired = resolve;
+      });
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      (
+        window as typeof window & { releaseTestExportLease?: () => void }
+      ).releaseTestExportLease = release;
+      void navigator.locks.request(
+        `consultchimps:browser-export:${active}`,
+        { mode: "shared" },
+        async () => {
+          acquired();
+          await held;
+        },
+      );
+      await acquiredPromise;
+      return { expired, active, fresh, legacyExpired, unrelated };
+    });
+
+    await page.addInitScript(
+      (now) => {
+        Date.now = () => now;
+      },
+      Date.now() + 2 * 24 * 60 * 60 * 1_000,
+    );
+
+    const storedNames = async (): Promise<readonly string[]> =>
+      page.evaluate(async () => {
+        const root = await navigator.storage.getDirectory();
+        const result: string[] = [];
+        for await (const entry of root.values()) result.push(entry.name);
+        return result;
+      });
+
+    await page.goto("/workspace");
+    await expect.poll(storedNames).not.toContain(names.expired);
+    await expect.poll(storedNames).not.toContain(names.legacyExpired);
+    await expect.poll(storedNames).toContain(names.active);
+    await expect.poll(storedNames).toContain(names.fresh);
+    await expect.poll(storedNames).toContain(names.unrelated);
+
+    await owner.evaluate(() => {
+      (
+        window as typeof window & { releaseTestExportLease?: () => void }
+      ).releaseTestExportLease?.();
+    });
+    await owner.close();
+    await page.reload();
+    await expect.poll(storedNames).not.toContain(names.active);
+    await expect.poll(storedNames).toContain(names.fresh);
+    await expect.poll(storedNames).toContain(names.unrelated);
+  });
+
   for (const format of ["sqlite", "duckdb"] as const) {
     test(`creates, changes, exports, and reopens ${format}`, async ({
       page,
