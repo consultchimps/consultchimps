@@ -48,14 +48,33 @@ test.each(["application/vnd.sqlite3", "application/vnd.duckdb"])(
       operation: "db.export",
       artifacts: [{ kind: "file", path: "copy.db", mediaType }],
       warnings: [],
-      metrics: { tablesExported: 2 },
+      metrics: {
+        tablesConverted: 2,
+        rowsConverted: 1250,
+        bytesWritten: 4096,
+      },
     });
     expect(text).toContain(
       mediaType.endsWith("sqlite3") ? "SQLite database" : "DuckDB database",
     );
     expect(text).toContain("independent copy");
+    expect(text).toContain("Database tables converted: 2");
+    expect(text).toContain("Database rows converted: 1,250");
+    expect(text).toContain("Bytes written to the exported database: 4,096");
+    expect(text).not.toMatch(/tablesConverted|rowsConverted|bytesWritten/u);
   },
 );
+
+test("recorded deliveries use a plain-language capture metric", () => {
+  const text = formatHumanResult({
+    operation: "db.delivery.record",
+    artifacts: [],
+    warnings: [],
+    metrics: { deliveriesRecorded: 1, deliveriesReused: 0, capturesLinked: 3 },
+  });
+  expect(text).toContain("Source captures linked to the delivery: 3");
+  expect(text).not.toContain("capturesLinked");
+});
 
 test.each([
   "DB_STALE_IMPORT_PLAN",

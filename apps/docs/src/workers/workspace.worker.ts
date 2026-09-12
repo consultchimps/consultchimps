@@ -2,6 +2,7 @@ import {
   applyImport,
   applySchema,
   createWorkbookImportSource,
+  identifierKey,
   inspectDatabase,
   inspectImport,
   listDeliveries,
@@ -140,7 +141,7 @@ async function summaryOf(open: OpenWorkspace): Promise<WorkspaceSummary> {
     formatVersion: inspection.formatVersion,
     workingCopyName: open.workingCopyName,
     tables: inspection.tables.map((table) => ({
-      id: table.name.normalize("NFKC").toLocaleLowerCase(),
+      id: identifierKey(table.name),
       name: table.name,
       rowCount: boundedNumber(table.rowCount, `row count for ${table.name}`),
       columns: table.schema.columns.map((column) => ({
@@ -206,7 +207,7 @@ async function replaceWorkspace(next: OpenWorkspace): Promise<void> {
 }
 
 function safeWorkingName(fileName: string): string {
-  const extension = fileName.toLocaleLowerCase().endsWith(".duckdb")
+  const extension = fileName.toLowerCase().endsWith(".duckdb")
     ? ".duckdb"
     : ".sqlite";
   const stem = fileName
@@ -308,16 +309,15 @@ function columnsFor(
         : undefined;
   const destinationTable = tables.find(
     (table) =>
-      table.name.normalize("NFKC").toLocaleLowerCase() ===
-      tableName?.normalize("NFKC").toLocaleLowerCase(),
+      tableName !== undefined &&
+      identifierKey(table.name) === identifierKey(tableName),
   );
   return region.schema.columns.map((column) => {
     const mapped = route?.columns.find((entry) => entry.source === column.name);
     const destination = mapped?.target ?? column.name;
     const target = destinationTable?.columns.find(
       (candidate) =>
-        candidate.name.normalize("NFKC").toLocaleLowerCase() ===
-        destination.normalize("NFKC").toLocaleLowerCase(),
+        identifierKey(candidate.name) === identifierKey(destination),
     );
     const conflict = conflicts.find(
       (candidate) =>
@@ -706,7 +706,7 @@ function heldFromInspection(
               route.destination?.kind === "new-table-infer"
                 ? route.destination.recordId
                 : {
-                    prefix: inferredName.slice(0, 8).toLocaleUpperCase(),
+                    prefix: inferredName.slice(0, 8).toUpperCase(),
                     padding: 6,
                   },
             columns: route.inferredColumns,
@@ -810,7 +810,7 @@ async function prepareSources(
               kind: "new-table-infer" as const,
               name,
               recordId: {
-                prefix: name.slice(0, 8).toLocaleUpperCase(),
+                prefix: name.slice(0, 8).toUpperCase(),
                 padding: 6,
               },
             },
@@ -892,15 +892,13 @@ async function prepareSources(
         if (conflict.kind !== "inferred-schema") return [];
         const existing = databaseInspection.tables.find(
           (table) =>
-            table.name.normalize("NFKC").toLocaleLowerCase() ===
-            conflict.schema.name.normalize("NFKC").toLocaleLowerCase(),
+            identifierKey(table.name) === identifierKey(conflict.schema.name),
         );
         if (existing === undefined) return [];
         const matches = conflict.schema.columns.every((column) =>
           existing.schema.columns.some(
             (target) =>
-              target.name.normalize("NFKC").toLocaleLowerCase() ===
-                column.name.normalize("NFKC").toLocaleLowerCase() &&
+              identifierKey(target.name) === identifierKey(column.name) &&
               target.type === column.type,
           ),
         );

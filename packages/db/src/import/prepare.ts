@@ -24,11 +24,43 @@ import {
   findReusableCapture,
   preparedCaptures,
 } from "./planning.js";
-import type { PrepareImportOptions, PrepareImportOutcome } from "./types.js";
+import type {
+  ImportRegionReader,
+  PrepareImportOptions,
+  PrepareImportOutcome,
+} from "./types.js";
 import { validateImportRecipe } from "../validators.js";
 
 const HASH_CHUNK_BYTES = 1024 * 1024;
 const CAPTURE_BATCH_ROWS = 2_000;
+
+async function readAndClose<T>(
+  reader: ImportRegionReader,
+  read: () => Promise<T>,
+): Promise<T> {
+  let result:
+    | { readonly ok: true; readonly value: T }
+    | { readonly ok: false; readonly error: unknown };
+  try {
+    result = { ok: true, value: await read() };
+  } catch (error) {
+    result = { ok: false, error };
+  }
+  try {
+    await reader.close();
+  } catch (error) {
+    if (!result.ok) {
+      throw new AggregateError(
+        [result.error, error],
+        "The import reader failed and could not be closed.",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+  if (!result.ok) throw result.error;
+  return result.value;
+}
 
 async function hashSource(
   source: PrepareImportOptions["sources"][number]["bytes"],
@@ -147,71 +179,64 @@ export async function prepareImport(
         signal: options.signal,
         onProgress: options.onProgress,
       });
-      const profiles = new Map<string, ColumnProfile>(
-        reader.columns.map((column) => [column, emptyProfile()]),
-      );
       let rowCount = 0;
       let lastSourceRow = 0;
       try {
-        for await (const batch of reader.batches({
-          batchSize: CAPTURE_BATCH_ROWS,
-          signal: options.signal,
-          onProgress: options.onProgress,
-        })) {
-          throwIfAborted(options.signal, "db.prepare");
-          const rows: Array<readonly EngineValue[]> = [];
-          for (const row of batch) {
-            if (
-              !Number.isSafeInteger(row.sourceRow) ||
-              row.sourceRow < 1 ||
-              row.sourceRow <= lastSourceRow
-            ) {
-              throw databaseError(
-                "DB_INVALID_SOURCE_ROW",
-                "Imported source rows must have unique positive row numbers in ascending order.",
-                {
-                  source: source.key,
-                  selection: selection.key,
-                  sourceRow: row.sourceRow,
-                  previousSourceRow: lastSourceRow,
-                },
-              );
+        const columns = await readAndClose(reader, async () => {
+          const columnNames = [...reader.columns];
+          const profiles = new Map<string, ColumnProfile>(
+            columnNames.map((column) => [column, emptyProfile()]),
+          );
+          for await (const batch of reader.batches({
+            batchSize: CAPTURE_BATCH_ROWS,
+            signal: options.signal,
+            onProgress: options.onProgress,
+          })) {
+            throwIfAborted(options.signal, "db.prepare");
+            const rows: Array<readonly EngineValue[]> = [];
+            for (const row of batch) {
+              if (
+                !Number.isSafeInteger(row.sourceRow) ||
+                row.sourceRow < 1 ||
+                row.sourceRow <= lastSourceRow
+              ) {
+                throw databaseError(
+                  "DB_INVALID_SOURCE_ROW",
+                  "Imported source rows must have unique positive row numbers in ascending order.",
+                  {
+                    source: source.key,
+                    selection: selection.key,
+                    sourceRow: row.sourceRow,
+                    previousSourceRow: lastSourceRow,
+                  },
+                );
+              }
+              lastSourceRow = row.sourceRow;
+              for (const column of columnNames) {
+                const cell = row.cells[column] ?? { kind: "blank" };
+                const profile = profiles.get(column);
+                if (profile !== undefined) addToProfile(profile, cell);
+              }
+              rows.push([
+                captureId,
+                BigInt(row.sourceRow),
+                JSON.stringify(row.cells),
+              ]);
             }
-            lastSourceRow = row.sourceRow;
-            for (const column of reader.columns) {
-              const cell = row.cells[column] ?? { kind: "blank" };
-              const profile = profiles.get(column);
-              if (profile !== undefined) addToProfile(profile, cell);
-            }
-            rows.push([
-              captureId,
-              BigInt(row.sourceRow),
-              JSON.stringify(row.cells),
-            ]);
-          }
-          await preparedEngine.transaction(async (transaction) => {
-            await transaction.bulkInsert({
-              table: PREPARED_ROW_TABLE,
-              columns: ["capture_id", "source_row", "values_json"],
-              rows,
-              signal: options.signal,
+            await preparedEngine.transaction(async (transaction) => {
+              await transaction.bulkInsert({
+                table: PREPARED_ROW_TABLE,
+                columns: ["capture_id", "source_row", "values_json"],
+                rows,
+                signal: options.signal,
+              });
             });
-          });
-          rowCount += batch.length;
-          rowsCaptured += batch.length;
-        }
-      } catch (error) {
-        await preparedEngine.execute(
-          `DELETE FROM ${PREPARED_ROW_TABLE} WHERE capture_id = ?`,
-          [captureId],
-        );
-        throw error;
-      } finally {
-        await reader.close();
-      }
-      try {
+            rowCount += batch.length;
+            rowsCaptured += batch.length;
+          }
+          return inferColumns(columnNames, profiles);
+        });
         await source.verifyUnchanged?.();
-        const columns = inferColumns(reader.columns, profiles);
         await preparedEngine.transaction(async (transaction) => {
           await transaction.execute(
             `INSERT INTO ${PREPARED_CAPTURE_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -236,10 +261,18 @@ export async function prepareImport(
           );
         });
       } catch (error) {
-        await preparedEngine.execute(
-          `DELETE FROM ${PREPARED_ROW_TABLE} WHERE capture_id = ?`,
-          [captureId],
-        );
+        try {
+          await preparedEngine.execute(
+            `DELETE FROM ${PREPARED_ROW_TABLE} WHERE capture_id = ?`,
+            [captureId],
+          );
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            "Import preparation failed and its staged rows could not be removed.",
+            { cause: cleanupError },
+          );
+        }
         throw error;
       }
       sourcesRead += 1;

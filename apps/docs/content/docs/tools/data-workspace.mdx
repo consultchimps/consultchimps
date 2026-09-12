@@ -240,6 +240,11 @@ delivery; they are not relabeled as counts calculated from imported rows. Scope
 can be `full`, `partial` with a description, `changes` with a baseline, or
 `unknown`. A partial submission does not remove observations absent from it.
 
+In the browser's delivery history, choose **Refresh** to load the first page and
+**Next deliveries** to view the next page. Each page contains up to 25 events.
+Refreshing returns to the first page; opening another database clears the
+previous database's history.
+
 ## Export a copy or convert the format
 
 ```bash
@@ -317,11 +322,12 @@ Excel inputs substantially. Recording another delivery of an existing capture
 reuses that evidence.
 
 The native pipeline has been measured with a generated one-million-row workbook.
-That run took about 22 seconds to capture, 2 seconds to review captured values,
-and 11 seconds to apply to DuckDB. Its review plan occupied about 336 MB and its
-initial database about 111 MB. Sampled process memory during apply reached about
-894 MB. These measurements depend on row width, strings, constraints, storage,
-and concurrent work. They do not establish a browser capacity limit.
+That run took about 13 seconds to capture, 2 seconds to review captured values,
+and 13 seconds to apply to DuckDB. Its initial database occupied about 112 MB.
+Sampled process memory during apply reached about 799 MB in a process warmed by
+the smaller benchmark. These measurements depend on row width, strings,
+constraints, storage, and concurrent work. They do not establish a browser
+capacity limit.
 
 Start with a representative workbook, review its inferred types and row counts,
 then increase the batch size. Use the CLI when browser storage or memory

@@ -71,6 +71,7 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
   readonly #database: AsyncDuckDB;
   readonly #connection: AsyncDuckDBConnection;
   readonly #fileHandle: BrowserFileHandle;
+  readonly #readonly: boolean;
   #tail: Promise<void> = Promise.resolve();
   #closed = false;
 
@@ -78,10 +79,12 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
     database: AsyncDuckDB,
     connection: AsyncDuckDBConnection,
     fileHandle: BrowserFileHandle,
+    readonly: boolean,
   ) {
     this.#database = database;
     this.#connection = connection;
     this.#fileHandle = fileHandle;
+    this.#readonly = readonly;
   }
 
   static async open(
@@ -127,6 +130,7 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
         database,
         await database.connect(),
         options.fileHandle,
+        options.readonly === true,
       );
     } catch (error) {
       await database.terminate().catch(() => undefined);
@@ -259,7 +263,9 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
   }
 
   async checkpoint(): Promise<void> {
-    await this.#exclusive(() => this.#execute("CHECKPOINT"));
+    await this.#exclusive(async () => {
+      if (!this.#readonly) await this.#execute("CHECKPOINT");
+    });
   }
 
   interrupt(): void {
@@ -271,7 +277,7 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
     signal?: AbortSignal,
   ): Promise<number> {
     return this.#exclusive(async () => {
-      await this.#execute("CHECKPOINT");
+      if (!this.#readonly) await this.#execute("CHECKPOINT");
       await this.#database.flushFiles();
       const file = await this.#fileHandle.getFile();
       const chunkSize = 1024 * 1024;
@@ -290,11 +296,28 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
 
   async close(): Promise<void> {
     await this.#exclusive(async () => {
-      await this.#execute("CHECKPOINT");
-      await this.#connection.close();
-      await this.#database.flushFiles();
-      await this.#database.terminate();
+      const failures: unknown[] = [];
+      const attempt = async (work: () => Promise<unknown>): Promise<void> => {
+        try {
+          await work();
+        } catch (error) {
+          failures.push(error);
+        }
+      };
+      if (!this.#readonly) {
+        await attempt(() => this.#execute("CHECKPOINT"));
+      }
+      await attempt(() => this.#connection.close());
+      await attempt(() => this.#database.flushFiles());
+      await attempt(() => this.#database.terminate());
       this.#closed = true;
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) {
+        throw new AggregateError(
+          failures,
+          "DuckDB failed while closing the browser database.",
+        );
+      }
     });
   }
 }

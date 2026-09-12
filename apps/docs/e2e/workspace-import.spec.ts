@@ -31,6 +31,20 @@ function mappingWorkbook(): Promise<UploadFile> {
   ]);
 }
 
+function singleColumnWorkbook(
+  fileName: string,
+  sheetName: string,
+  header: string,
+  values: readonly string[],
+): Promise<UploadFile> {
+  return createWorkbookUpload(fileName, [
+    {
+      name: sheetName,
+      rows: [[header], ...values.map((value) => [value])],
+    },
+  ]);
+}
+
 function cancellableWorkbook(): Promise<UploadFile> {
   return createWorkbookUpload("large.xlsx", [
     {
@@ -352,6 +366,131 @@ test.describe("reviewed workbook imports", () => {
       "5 rows",
     );
   });
+
+  test("pages delivery history and resets it when the database changes", async ({
+    page,
+  }) => {
+    await create(page, "sqlite");
+    const workbook = await inventoryWorkbook();
+    await prepare(page, [workbook]);
+    await resolveAndApply(page);
+
+    for (let delivery = 2; delivery <= 27; delivery += 1) {
+      await prepare(page, [workbook]);
+      await expect(
+        page.getByTestId("workspace-import-duplicate"),
+      ).toBeVisible();
+      await page.getByTestId("workspace-delivery-vendor").fill("Vendor A");
+      await page.getByLabel("Request ID").fill(`delivery-${String(delivery)}`);
+      await page
+        .getByTestId("workspace-delivery-phase")
+        .fill(`Delivery ${String(delivery)}`);
+      await page.getByTestId("workspace-delivery-record-reuse").click();
+      await expect(page.getByTestId("workspace-delivery-count")).toHaveText(
+        String(delivery),
+      );
+    }
+
+    await page.getByTestId("workspace-deliveries-refresh").click();
+    await expect(page.getByTestId("workspace-delivery")).toHaveCount(25);
+    await expect(page.getByTestId("workspace-delivery").first()).toContainText(
+      "Iteration 1",
+    );
+    await page.getByTestId("workspace-deliveries-next").click();
+    await expect(page.getByTestId("workspace-delivery")).toHaveCount(2);
+    await expect(page.getByTestId("workspace-delivery").first()).toContainText(
+      "Delivery 26",
+    );
+    await expect(page.getByTestId("workspace-delivery").last()).toContainText(
+      "Delivery 27",
+    );
+
+    await page.getByTestId("workspace-deliveries-refresh").click();
+    await expect(page.getByTestId("workspace-delivery")).toHaveCount(25);
+    await expect(page.getByTestId("workspace-delivery").first()).toContainText(
+      "Iteration 1",
+    );
+
+    await page.getByTestId("workspace-new-name").fill("second.sqlite");
+    await page.getByTestId("workspace-new").click();
+    await expect(page.getByTestId("workspace-summary")).toContainText(
+      "second.sqlite",
+    );
+    await expect(page.getByTestId("workspace-delivery")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-deliveries-next")).toHaveCount(0);
+  });
+
+  for (const locale of ["en-US", "tr-TR"] as const) {
+    test.describe(`identifier behavior in ${locale}`, () => {
+      test.use({ locale });
+
+      test("routes case variants and generates stable record prefixes", async ({
+        page,
+      }) => {
+        await create(page, "sqlite");
+        await prepare(page, [
+          await singleColumnWorkbook(
+            "inventory-first.xlsx",
+            "inventory",
+            "Name",
+            ["Parent A"],
+          ),
+        ]);
+        await resolveAndApply(page);
+
+        await prepare(page, [
+          await singleColumnWorkbook(
+            "inventory-second.xlsx",
+            "Inventory",
+            "Name",
+            ["Parent B"],
+          ),
+        ]);
+        await expect(page.getByTestId("workspace-import-route")).toHaveValue(
+          "append",
+        );
+        await expect(page.getByTestId("workspace-import-table")).toHaveValue(
+          "inventory",
+        );
+        await resolveAndApply(page);
+        await expect(page.getByTestId("workspace-table").first()).toContainText(
+          "2 rows",
+        );
+
+        await page.getByTestId("workspace-schema-input").fill(
+          JSON.stringify({
+            version: 1,
+            tables: [
+              {
+                name: "Children",
+                recordId: { prefix: "CHILD", padding: 6 },
+                columns: [{ name: "ParentId", type: "text", nullable: false }],
+                foreignKeys: [
+                  { column: "ParentId", referencesTable: "inventory" },
+                ],
+              },
+            ],
+          }),
+        );
+        await page.getByTestId("workspace-schema-plan").click();
+        await page.getByTestId("workspace-schema-apply").click();
+        await expect(page.getByTestId("workspace-table")).toHaveCount(2);
+
+        await prepare(page, [
+          await singleColumnWorkbook("children.xlsx", "Children", "ParentId", [
+            "INVENTOR-000001",
+          ]),
+        ]);
+        await expect(page.getByTestId("workspace-import-route")).toHaveValue(
+          "append",
+        );
+        await resolveAndApply(page);
+        await expect(
+          page.getByTestId("workspace-table").filter({ hasText: "Children" }),
+        ).toContainText("1 row");
+      });
+    });
+  }
 
   test("cancels preparation without publishing rows", async ({ page }) => {
     await create(page, "sqlite");

@@ -177,7 +177,9 @@ function Summary({ summary }: { readonly summary: WorkspaceSummary }) {
         </div>
         <div>
           <dt className="text-fd-muted-foreground">Deliveries</dt>
-          <dd>{summary.deliveryCount}</dd>
+          <dd data-testid="workspace-delivery-count">
+            {summary.deliveryCount}
+          </dd>
         </div>
         <div>
           <dt className="text-fd-muted-foreground">Format version</dt>
@@ -220,6 +222,7 @@ export function WorkspaceTool() {
   const clientRef = useRef<WorkspaceClient | null>(null);
   const openInputRef = useRef<HTMLInputElement | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
+  const deliveriesRequestRef = useRef(0);
   const exportLeaseReleasesRef = useRef<Set<() => void>>(new Set());
   const [summary, setSummary] = useState<WorkspaceSummary | null>(null);
   const [format, setFormat] = useState<WorkspaceDatabaseFormat>("sqlite");
@@ -235,6 +238,7 @@ export function WorkspaceTool() {
   const [deliveries, setDeliveries] = useState<WorkspaceDeliveryPage | null>(
     null,
   );
+  const [deliveriesLoading, setDeliveriesLoading] = useState(false);
   const [recentDatabases, setRecentDatabases] = useState<
     readonly RecentDatabase[]
   >([]);
@@ -292,6 +296,12 @@ export function WorkspaceTool() {
 
   const reportError = useCallback((error: unknown) => {
     setStatus({ kind: "error", message: describeFailure(error) });
+  }, []);
+
+  const clearDeliveries = useCallback(() => {
+    deliveriesRequestRef.current += 1;
+    setDeliveries(null);
+    setDeliveriesLoading(false);
   }, []);
 
   const runLong = useCallback(
@@ -353,12 +363,12 @@ export function WorkspaceTool() {
     setSummary(created);
     remember(created);
     setSchemaPlan(null);
-    setDeliveries(null);
+    clearDeliveries();
     setStatus({
       kind: "notice",
       message: "Created a persistent browser working database",
     });
-  }, [client, format, name, remember, runLong]);
+  }, [clearDeliveries, client, format, name, remember, runLong]);
 
   const open = useCallback(
     async (file: File) => {
@@ -370,13 +380,13 @@ export function WorkspaceTool() {
       setSummary(opened);
       remember(opened);
       setSchemaPlan(null);
-      setDeliveries(null);
+      clearDeliveries();
       setStatus({
         kind: "notice",
         message: `Opened "${file.name}" as a persistent browser working copy. The selected file will not change`,
       });
     },
-    [client, remember, runLong],
+    [clearDeliveries, client, remember, runLong],
   );
 
   const reopen = useCallback(
@@ -388,13 +398,13 @@ export function WorkspaceTool() {
       setSummary(opened);
       remember(opened);
       setSchemaPlan(null);
-      setDeliveries(null);
+      clearDeliveries();
       setStatus({
         kind: "notice",
         message: `Reopened "${workingCopyName}" from browser storage`,
       });
     },
-    [client, remember, runLong],
+    [clearDeliveries, client, remember, runLong],
   );
 
   const planSchema = useCallback(async () => {
@@ -427,13 +437,24 @@ export function WorkspaceTool() {
     }
   }, [client, reportError, schemaPlan]);
 
-  const loadDeliveries = useCallback(async () => {
-    try {
-      setDeliveries(await client().listDeliveries(null));
-    } catch (error) {
-      reportError(error);
-    }
-  }, [client, reportError]);
+  const loadDeliveries = useCallback(
+    async (cursor: string | null) => {
+      const request = deliveriesRequestRef.current + 1;
+      deliveriesRequestRef.current = request;
+      setDeliveriesLoading(true);
+      try {
+        const page = await client().listDeliveries(cursor);
+        if (deliveriesRequestRef.current === request) setDeliveries(page);
+      } catch (error) {
+        if (deliveriesRequestRef.current === request) reportError(error);
+      } finally {
+        if (deliveriesRequestRef.current === request) {
+          setDeliveriesLoading(false);
+        }
+      }
+    },
+    [client, reportError],
+  );
 
   const exportDatabase = useCallback(
     async (targetFormat: WorkspaceDatabaseFormat) => {
@@ -672,8 +693,8 @@ export function WorkspaceTool() {
               <button
                 className={secondaryButtonClass}
                 data-testid="workspace-deliveries-refresh"
-                disabled={disabled}
-                onClick={() => void loadDeliveries()}
+                disabled={disabled || deliveriesLoading}
+                onClick={() => void loadDeliveries(null)}
                 type="button"
               >
                 <RefreshCw aria-hidden="true" className="size-4" />
@@ -713,6 +734,17 @@ export function WorkspaceTool() {
                   </li>
                 ))}
               </ol>
+            )}
+            {deliveries?.nextCursor === null || deliveries === null ? null : (
+              <button
+                className={`${secondaryButtonClass} mt-4`}
+                data-testid="workspace-deliveries-next"
+                disabled={disabled || deliveriesLoading}
+                onClick={() => void loadDeliveries(deliveries.nextCursor)}
+                type="button"
+              >
+                Next deliveries
+              </button>
             )}
           </section>
 

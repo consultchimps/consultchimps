@@ -241,6 +241,18 @@ export async function createDatabaseHandle(
 export async function openDatabaseHandle(
   engine: DatabaseEngine,
 ): Promise<Database> {
+  const metadataTables = await engine.query(
+    engine.format === "sqlite"
+      ? "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1"
+      : "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' AND table_name = ? LIMIT 1",
+    [DATABASE_METADATA_TABLE],
+  );
+  if (metadataTables.length === 0) {
+    throw databaseError(
+      "DB_NOT_A_DATABASE",
+      "This file is not a supported ConsultChimps database.",
+    );
+  }
   const rows = await engine.query(
     `SELECT database_id, format, format_version FROM ${DATABASE_METADATA_TABLE}`,
   );
