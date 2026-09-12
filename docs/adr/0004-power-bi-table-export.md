@@ -91,18 +91,19 @@ Validate all supplied options structurally before invoking a locator, loading a
 runtime, reading input, or allocating export buffers. Collect every applicable
 invalid-option detail into one `PBI_INVALID_OPTIONS` error. The complete detail
 order is `inputBytes`, `decodedBytes`, `outputBytes`, `peakBytes`,
-`includeHiddenTables`, `runtime`, `runtime.sql`, then `runtime.xpress9`. Emit at
-most one detail per listed path, containing that path and its required shape,
-never the supplied value. A malformed `runtime` parent produces only the parent
-detail; do not inspect or report its children. Missing browser runtime
-configuration also produces the parent detail requiring both runtime sources.
-For a valid runtime object, validate SQL first, then XPress9, reporting missing
-browser sources and malformed or conflicting child configurations at their
-respective paths. Omitted Node sources select the defaults. Locator execution or
-runtime loading failures happen only after structural validation succeeds and
-use `PBI_RUNTIME_UNAVAILABLE`, not invalid-option aggregation. Fixtures combine
-invalid capacity, hidden-table, and runtime settings and assert the complete
-serialized error and the absence of input reads or locator calls.
+`includeHiddenTables`, `outputName`, `runtime`, `runtime.sql`, then
+`runtime.xpress9`. Emit at most one detail per listed path, containing that path
+and its required shape, never the supplied value. A malformed `runtime` parent
+produces only the parent detail; do not inspect or report its children. Missing
+browser runtime configuration also produces the parent detail requiring both
+runtime sources. For a valid runtime object, validate SQL first, then XPress9,
+reporting missing browser sources and malformed or conflicting child
+configurations at their respective paths. Omitted Node sources select the
+defaults. Locator execution or runtime loading failures happen only after
+structural validation succeeds and use `PBI_RUNTIME_UNAVAILABLE`, not
+invalid-option aggregation. Fixtures combine invalid capacity, hidden-table,
+output-name, and runtime settings and assert the complete serialized error and
+the absence of input reads or locator calls.
 
 The documentation browser worker uses a serializable asset mapping,
 `{ sqlWasmUrl: string, xpress9WasmUrl: string }`, with absolute same-origin URLs
@@ -525,11 +526,26 @@ values.
 
 Use the existing `ByteOperationOutcome`: `outputs` contains the workbook first
 and the manifest second, and `result.artifacts` lists the matching file names
-and media types in that same order. The portable workbook name comes from the
-output plan; replacing its final `.xlsx` extension with `.manifest.json` gives
-the companion name. No manifest field is added to shared `OperationResult`, and
-the manifest is not a workbook worksheet. The file adapter and later CLI plan
-and validate both destinations before writing, including overwrite and input
+and media types in that same order. The byte options include
+`outputName?: string`, with a fixed default of `power-bi-tables.xlsx`,
+independent of the input name, locale, or time. A supplied non-string produces
+`PBI_INVALID_OPTIONS` at the `outputName` path. For a string, apply
+`toWellFormed()`, NFKC normalization, and ECMAScript trimming, then remove one
+final `.xlsx` suffix case-insensitively. Pass that stem to the existing
+`@consultchimps/core` `safeNameFragment` with fallback `power-bi-tables`,
+retaining its portable character rules, reserved-name handling, and 80-byte
+UTF-8 truncation before any reserved-name prefix. Append lowercase `.xlsx` for
+the workbook and `.manifest.json` for the companion. Empty or fully
+sanitized-away stems use the fallback. Other extensions remain part of the stem.
+
+This name plan is pure and belongs to the byte engine; it needs no filesystem
+adapter. File adapters select the destination directory separately and use these
+same two names. Build item 8 tests omitted and empty names, mixed-case
+extensions, path separators, reserved filenames, normalization, isolated
+surrogates, and multi-byte truncation, and compares byte-engine and browser
+output names. No manifest field is added to shared `OperationResult`, and the
+manifest is not a workbook worksheet. The file adapter and later CLI plan and
+validate both destinations before writing, including overwrite and input
 collision checks, and report both files as artifacts. The browser exposes both
 downloads and includes both in its combined download. Refusals return structured
 errors instead of a manifest-only successful artifact pair.
