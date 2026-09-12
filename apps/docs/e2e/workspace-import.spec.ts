@@ -244,6 +244,29 @@ test.describe("reviewed workbook imports", () => {
     );
   });
 
+  test("keeps an earlier pending review after preparing another", async ({
+    page,
+  }) => {
+    await create(page, "sqlite");
+    await prepare(page, [await inventoryWorkbook("first-review.xlsx")]);
+    await prepare(page, [await mappingWorkbook()]);
+    await expect(page.getByTestId("workspace-import-resume")).toHaveCount(2);
+
+    await page
+      .getByTestId("workspace-import-resume")
+      .filter({ hasText: "first-review.xlsx" })
+      .click();
+    await expect(page.getByTestId("workspace-import-review")).toContainText(
+      "first-review.xlsx",
+    );
+    await resolveAndApply(page);
+    await expect(page.getByTestId("workspace-table")).toContainText("2 rows");
+    await expect(page.getByTestId("workspace-import-resume")).toHaveCount(1);
+    await expect(page.getByTestId("workspace-import-resume")).toContainText(
+      "mappings.xlsx",
+    );
+  });
+
   test("appends a changed submission to an existing table", async ({
     page,
   }) => {

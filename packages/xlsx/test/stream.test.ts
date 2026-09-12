@@ -156,6 +156,16 @@ async function workbookFixture(
   });
 }
 
+async function workbookFixtureWithParts(
+  parts: Readonly<Record<string, string>>,
+): Promise<Uint8Array> {
+  const zip = await JSZip.loadAsync(await workbookFixture());
+  for (const [name, contents] of Object.entries(parts)) {
+    zip.file(name, contents);
+  }
+  return zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+}
+
 async function rows(
   reader: WorkbookRegionReader,
 ): Promise<readonly StreamRow[]> {
@@ -318,6 +328,130 @@ describe("bounded workbook streaming", () => {
         expect(data.map((row) => row.sourceRow)).toEqual([3, 4, 5]);
       }
       expect(input.largestRead()).toBeLessThanOrEqual(97);
+    },
+  );
+
+  it("keeps built-in time semantics for midnight and fractional serials", async () => {
+    const styles =
+      "<styleSheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'>" +
+      "<numFmts count='2'><numFmt numFmtId='164' formatCode='yyyy-mm-dd hh:mm:ss'/><numFmt numFmtId='165' formatCode='yyyy-mm-dd'/></numFmts>" +
+      "<cellXfs count='6'><xf numFmtId='0'/><xf numFmtId='14'/><xf numFmtId='18'/><xf numFmtId='22'/><xf numFmtId='164'/><xf numFmtId='165'/></cellXfs>" +
+      "</styleSheet>";
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Date</t></is></c><c r='B1' t='inlineStr'><is><t>Time</t></is></c><c r='C1' t='inlineStr'><is><t>DateTime</t></is></c><c r='D1' t='inlineStr'><is><t>Noon</t></is></c><c r='E1' t='inlineStr'><is><t>CustomDateTime</t></is></c><c r='F1' t='inlineStr'><is><t>CustomDate</t></is></c></row>" +
+      "<row r='2'><c r='A2' s='1'><v>0</v></c><c r='B2' s='2'><v>0</v></c><c r='C2' s='3'><v>0</v></c><c r='D2' s='3'><v>0.5</v></c><c r='E2' s='4'><v>0</v></c><c r='F2' s='5'><v>0</v></c></row>" +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/styles.xml": styles,
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { range: "'Data & More'!A1:F2" },
+      { scratch: new MemoryScratch(), chunkBytes: 41 },
+    );
+
+    expect((await rows(reader))[0]).toEqual({
+      sourceRow: 2,
+      cells: {
+        Date: { kind: "date", raw: "0", iso: "1904-01-01" },
+        Time: {
+          kind: "date",
+          raw: "0",
+          iso: "1904-01-01T00:00:00.000",
+        },
+        DateTime: {
+          kind: "date",
+          raw: "0",
+          iso: "1904-01-01T00:00:00.000",
+        },
+        Noon: {
+          kind: "date",
+          raw: "0.5",
+          iso: "1904-01-01T12:00:00.000",
+        },
+        CustomDateTime: {
+          kind: "date",
+          raw: "0",
+          iso: "1904-01-01T00:00:00.000",
+        },
+        CustomDate: { kind: "date", raw: "0", iso: "1904-01-01" },
+      },
+    });
+  });
+
+  it("uses an authored number format in place of its built-in time format", async () => {
+    const styles =
+      "<styleSheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'>" +
+      "<numFmts count='1'><numFmt numFmtId='22' formatCode='yyyy-mm-dd'/></numFmts>" +
+      "<cellXfs count='2'><xf numFmtId='0'/><xf numFmtId='22'/></cellXfs>" +
+      "</styleSheet>";
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>AuthoredDate</t></is></c></row>" +
+      "<row r='2'><c r='A2' s='1'><v>0</v></c></row>" +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/styles.xml": styles,
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { range: "'Data & More'!A1:A2" },
+      { scratch: new MemoryScratch(), chunkBytes: 31 },
+    );
+
+    expect(await rows(reader)).toEqual([
+      {
+        sourceRow: 2,
+        cells: {
+          AuthoredDate: { kind: "date", raw: "0", iso: "1904-01-01" },
+        },
+      },
+    ]);
+  });
+
+  it.each([
+    { range: "'Data & More'!A1:D2" },
+    { sheet: "Data & More", headerRow: 1 },
+  ] satisfies readonly WorkbookSelection[])(
+    "reads implicit and mixed cell references for %j headers",
+    async (selection) => {
+      const worksheet =
+        "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+        "<row r='1'><c t='inlineStr'><is><t>First</t></is></c><c r='C1' t='inlineStr'><is><t>Third</t></is></c><c t='inlineStr'><is><t>Fourth</t></is></c></row>" +
+        "<row r='2'><c t='inlineStr'><is><t>North</t></is></c><c r='C2'><v>3</v></c><c t='b'><v>1</v></c></row>" +
+        "</sheetData></worksheet>";
+      const input = source(
+        await workbookFixtureWithParts({
+          "xl/worksheets/sheet1.xml": worksheet,
+        }),
+      );
+      const reader = await openWorkbookRegionStream(input.source, selection, {
+        scratch: new MemoryScratch(),
+        chunkBytes: 37,
+      });
+
+      expect(reader.region.columns).toEqual([
+        { name: "First", column: 0 },
+        { name: "Third", column: 2 },
+        { name: "Fourth", column: 3 },
+      ]);
+      expect(await rows(reader)).toEqual([
+        {
+          sourceRow: 2,
+          cells: {
+            First: { kind: "string", value: "North" },
+            Third: { kind: "number", raw: "3" },
+            Fourth: { kind: "boolean", value: true },
+          },
+        },
+      ]);
     },
   );
 

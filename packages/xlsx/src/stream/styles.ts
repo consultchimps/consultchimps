@@ -13,6 +13,10 @@ const BUILT_IN_DATE_FORMATS = new Set([
   45, 46, 47, 50, 51, 52, 53, 54, 55, 56, 57, 58,
 ]);
 
+const LOCALE_INDEPENDENT_BUILT_IN_TIME_FORMATS = new Set([
+  18, 19, 20, 21, 22, 45, 46, 47,
+]);
+
 function customDateFormat(format: string): boolean {
   const cleaned = format
     .replace(/"[^"]*"/gu, "")
@@ -30,6 +34,15 @@ function hasTime(format: string | undefined): boolean {
     .replace(/\\./gu, "")
     .toLowerCase();
   return /[hs]/u.test(cleaned) || /\[[hms]+\]/u.test(cleaned);
+}
+
+function formatHasTime(format: {
+  readonly id: number;
+  readonly code?: string | undefined;
+}): boolean {
+  return format.code === undefined
+    ? LOCALE_INDEPENDENT_BUILT_IN_TIME_FORMATS.has(format.id)
+    : hasTime(format.code);
 }
 
 function pad(value: number, length = 2): string {
@@ -129,7 +142,11 @@ export async function loadWorkbookStyles(
     dateValue(raw, styleIndex) {
       const format = cellFormats[styleIndex];
       if (!dateStyles.has(styleIndex)) return undefined;
-      return serialDate(raw, date1904, hasTime(format?.code));
+      return serialDate(
+        raw,
+        date1904,
+        format !== undefined && formatHasTime(format),
+      );
     },
   };
 }

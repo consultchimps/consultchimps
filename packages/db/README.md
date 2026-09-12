@@ -78,6 +78,12 @@ An abrupt tab, worker, or browser termination can interrupt publication. DuckDB
 stores its main file and write-ahead log as separate OPFS entries, so browser
 replacement is not crash-atomic across those entries.
 
+Use `openDatabase({ name, readonly: true })` for browser inspection or export
+without permitting database writes. Browser exports require an empty
+`RandomAccessFile` destination unless `overwrite: true` is explicit. The caller
+owns the destination and must keep its backing storage separate from the working
+database.
+
 See the
 [database guide](https://consultchimps.github.io/consultchimps/docs/tools/data-workspace/)
 and

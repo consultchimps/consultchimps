@@ -397,8 +397,45 @@ test.describe("persistent database workspace", () => {
           name: "collision.sqlite",
         });
         await request({ id: 21, type: "close" });
-        const firstCreate = request({
+        await request({
           id: 22,
+          type: "reopen",
+          name: "collision.sqlite",
+          readonly: true,
+        });
+        const readonlyPlan = await request({
+          id: 23,
+          type: "planSchema",
+          schema: {
+            version: 1,
+            tables: [
+              {
+                name: "replacement",
+                recordId: { prefix: "NEW", padding: 4 },
+                columns: [{ name: "value", type: "text" }],
+              },
+              {
+                name: "readonly_write",
+                recordId: { prefix: "READONLY", padding: 4 },
+                columns: [{ name: "value", type: "text" }],
+              },
+            ],
+          },
+        });
+        const readonlyApply = await request({
+          id: 24,
+          type: "applySchema",
+          planId: (readonlyPlan["plan"] as Record<string, unknown>)["id"],
+        });
+        await request({ id: 25, type: "close" });
+        const reopenedAfterReadonly = await request({
+          id: 26,
+          type: "reopen",
+          name: "collision.sqlite",
+        });
+        await request({ id: 27, type: "close" });
+        const firstCreate = request({
+          id: 28,
           type: "create",
           name: "race.sqlite",
           format: "sqlite",
@@ -414,7 +451,7 @@ test.describe("persistent database workspace", () => {
           },
         });
         const secondCreate = request({
-          id: 23,
+          id: 29,
           type: "create",
           name: "race.sqlite",
           format: "sqlite",
@@ -430,9 +467,9 @@ test.describe("persistent database workspace", () => {
           },
         });
         const raced = await Promise.all([firstCreate, secondCreate]);
-        await request({ id: 24, type: "close" });
+        await request({ id: 30, type: "close" });
         const reopenedRace = await request({
-          id: 25,
+          id: 31,
           type: "reopen",
           name: "race.sqlite",
         });
@@ -448,6 +485,8 @@ test.describe("persistent database workspace", () => {
           reopenedImport,
           replaced,
           reopenedReplacement,
+          readonlyApply,
+          reopenedAfterReadonly,
           raced,
           reopenedRace,
         };
@@ -506,6 +545,14 @@ test.describe("persistent database workspace", () => {
     });
     expect(result.replaced["type"]).toBe("ready");
     expect(result.reopenedReplacement["summary"]).toMatchObject({
+      format: "sqlite",
+      tables: [{ name: "replacement", rowCount: 0 }],
+    });
+    expect(result.readonlyApply).toMatchObject({
+      type: "error",
+      message: expect.stringMatching(/read.?only/iu),
+    });
+    expect(result.reopenedAfterReadonly["summary"]).toMatchObject({
       format: "sqlite",
       tables: [{ name: "replacement", rowCount: 0 }],
     });

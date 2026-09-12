@@ -573,7 +573,7 @@ export async function configureBrowserDatabaseRuntime(
 
     let engine: BrowserSqliteEngine | undefined;
     try {
-      engine = sqliteEngine(name);
+      engine = sqliteEngine(name, true);
       const rows = await engine.query(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (?, ?)",
         [DATABASE_METADATA_TABLE, PREPARED_METADATA_TABLE],
@@ -664,8 +664,18 @@ export async function configureBrowserDatabaseRuntime(
     await importSqliteBlob(destination, payload);
   };
 
-  const sqliteEngine = (name: string): BrowserSqliteEngine =>
-    new BrowserSqliteEngine(sqlite, new pool.OpfsSAHPoolDb(sqliteName(name)));
+  const sqliteEngine = (name: string, readonly = false): BrowserSqliteEngine =>
+    new BrowserSqliteEngine(
+      sqlite,
+      readonly
+        ? new sqlite.oo1.DB({
+            filename: sqliteName(name),
+            flags: "r",
+            vfs: pool.vfsName,
+          })
+        : new pool.OpfsSAHPoolDb(sqliteName(name)),
+      readonly,
+    );
 
   const discardCandidate = async (
     format: DatabaseFormat,
@@ -817,7 +827,7 @@ export async function configureBrowserDatabaseRuntime(
     const format: DatabaseFormat = state.sqlite ? "sqlite" : "duckdb";
     const engine =
       format === "sqlite"
-        ? sqliteEngine(name)
+        ? sqliteEngine(name, open.readonly === true)
         : await duckEngine(name, open.readonly);
     try {
       const database = await openDatabaseHandle(engine);
@@ -1159,6 +1169,19 @@ export async function configureBrowserDatabaseRuntime(
       return { imports, ignored };
     },
     async exportDatabase(exportOptions) {
+      if (
+        exportOptions.destination.size > 0 &&
+        exportOptions.overwrite !== true
+      ) {
+        throw databaseError(
+          "DB_OUTPUT_EXISTS",
+          "The export destination already contains data. Choose another destination or allow replacement.",
+          {
+            name: exportOptions.name,
+            size: exportOptions.destination.size,
+          },
+        );
+      }
       throwIfAborted(exportOptions.signal, "db.browser.export");
       const source = stored.get(exportOptions.database);
       if (source === undefined) {

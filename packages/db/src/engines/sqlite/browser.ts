@@ -32,13 +32,20 @@ export class BrowserSqliteEngine implements DatabaseEngine {
   readonly interruptible = false;
   readonly #sqlite: Sqlite3Static;
   readonly #database: SqliteDatabase;
+  readonly #readonly: boolean;
   #tail: Promise<void> = Promise.resolve();
   #closed = false;
 
-  constructor(sqlite: Sqlite3Static, database: SqliteDatabase) {
+  constructor(
+    sqlite: Sqlite3Static,
+    database: SqliteDatabase,
+    readonly = false,
+  ) {
     this.#sqlite = sqlite;
     this.#database = database;
+    this.#readonly = readonly;
     database.exec("PRAGMA foreign_keys = ON");
+    if (readonly) database.exec("PRAGMA query_only = ON");
   }
 
   async #exclusive<T>(work: () => Promise<T>): Promise<T> {
@@ -172,7 +179,7 @@ export class BrowserSqliteEngine implements DatabaseEngine {
 
   async checkpoint(): Promise<void> {
     await this.#exclusive(async () => {
-      this.#database.exec("PRAGMA optimize");
+      if (!this.#readonly) this.#database.exec("PRAGMA optimize");
     });
   }
 

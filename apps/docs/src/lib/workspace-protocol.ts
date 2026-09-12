@@ -195,6 +195,7 @@ export type WorkspaceCommand =
   | (WorkspaceCommandBase & {
       readonly type: "reopen";
       readonly name: string;
+      readonly readonly?: boolean;
     })
   | (WorkspaceCommandBase & {
       readonly type: "planSchema";

@@ -10,6 +10,7 @@ import type {
   StreamScalarCell,
   WorkbookStreamOptions,
 } from "./types.js";
+import { encodeCell } from "../model/references.js";
 import {
   attribute,
   BoundedXmlText,
@@ -195,7 +196,7 @@ export async function* parseWorksheetBatches(
         );
       }
       current = {
-        reference: explicitReference ?? `${parsedColumn}:${activeRow}`,
+        reference: explicitReference ?? encodeCell(parsedColumn, activeRow),
         column: parsedColumn,
         type: attribute(tag, "t"),
         style,

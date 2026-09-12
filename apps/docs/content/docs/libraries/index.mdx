@@ -298,6 +298,12 @@ operations return structured values; file-producing operations identify their
 artifacts. Counts which may exceed JavaScript's exact integer range use
 `bigint`.
 
+In the browser runtime, `openDatabase({ name, readonly: true })` opens a
+read-only working copy for inspection or export. `exportDatabase` refuses a
+nonempty `RandomAccessFile` destination unless `overwrite: true` is supplied.
+The caller owns that destination and must provide storage separate from the
+working database; matching filenames alone do not establish file identity.
+
 The former `Database.create()`, byte-based `Database.open()`, `serialize()`, and
 editable grid helpers have been removed from the spike. Open persistent handles
 and close them explicitly. The
@@ -317,6 +323,11 @@ Numeric cells retain their source token; formula cells distinguish cached values
 from missing caches. Scratch storage prevents a workbook's shared-string count
 from becoming an equally large JavaScript array. Expanded ZIP limits, cell-size
 limits, cancellation, and CRC verification protect the streaming boundary.
+
+For numeric date cells, the streaming reader preserves a timestamp at midnight
+when an explicit format code or a locale-independent built-in time format
+declares a time component. Locale-dependent built-in format IDs without an
+explicit code do not provide enough information to infer that component.
 
 On Node.js, `openRandomAccessSource` and `createScratchDirectory` from
 `@consultchimps/files` supply these contracts. `verifyUnchanged` detects edits

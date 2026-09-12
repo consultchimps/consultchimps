@@ -482,11 +482,6 @@ export async function executeConversion(
     tables: tableOrder.ordered.map((table) => table.schema),
   };
   const schemaPlan = await planSchema({ database: options.target, schema });
-  await applySchema({
-    database: options.target,
-    plan: schemaPlan,
-    signal: options.signal,
-  });
   let rowsConverted = 0n;
   const target = engineOf(options.target);
   await engineOf(options.source).readTransaction(async (source) => {
@@ -526,6 +521,11 @@ export async function executeConversion(
         );
       }
     }
+    await applySchema({
+      database: options.target,
+      plan: schemaPlan,
+      signal: options.signal,
+    });
     await target.transaction(async (transaction) => {
       for (const table of COPY_TABLES) {
         await transaction.execute(`DELETE FROM ${quoteIdentifier(table.name)}`);

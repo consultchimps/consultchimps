@@ -603,6 +603,7 @@ async function handleReopen(
     await runtime()
   ).openDatabase({
     name: command.name,
+    ...(command.readonly === undefined ? {} : { readonly: command.readonly }),
   });
   const next = { database, workingCopyName: command.name };
   await replaceWorkspace(next);
@@ -766,7 +767,6 @@ async function prepareSources(
   command: Extract<WorkspaceCommand, { readonly type: "prepareImport" }>,
   signal: AbortSignal,
 ): Promise<void> {
-  await closeImports();
   const workbookSources = [];
   try {
     for (const source of command.sources) {

@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 
 import { executeConversion, planConversion } from "../src/conversion.js";
-import { engineOf } from "../src/database.js";
+import { engineOf, inspectDatabase } from "../src/database.js";
 import { createDatabase } from "../src/node.js";
 import { applySchema, planSchema } from "../src/records.js";
 
@@ -101,28 +101,68 @@ test("reports DuckDB macros and custom types before cross-format conversion", as
   }
 });
 
-test("rejects a conversion when an unsupported object appears after planning", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "cc-convert-stale-"));
-  directories.push(directory);
-  const { database: source } = await createDatabase({
-    path: path.join(directory, "source.duckdb"),
-    format: "duckdb",
+for (const sourceFormat of ["sqlite", "duckdb"] as const) {
+  test(`${sourceFormat}: leaves the target reusable when an unsupported object appears after planning`, async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "cc-convert-stale-"));
+    directories.push(directory);
+    const targetFormat = sourceFormat === "sqlite" ? "duckdb" : "sqlite";
+    const { database: source } = await createDatabase({
+      path: path.join(directory, `source.${sourceFormat}`),
+      format: sourceFormat,
+      schema: {
+        version: 1,
+        tables: [
+          {
+            name: "items",
+            columns: [{ name: "value", type: "text" }],
+            recordId: { prefix: "ITEM", padding: 4 },
+          },
+        ],
+      },
+    });
+    const { database: target } = await createDatabase({
+      path: path.join(directory, `target.${targetFormat}`),
+      format: targetFormat,
+    });
+    try {
+      const plan = await planConversion({
+        database: source,
+        format: targetFormat,
+      });
+      expect(plan.state).toBe("ready");
+      await engineOf(source).execute(
+        sourceFormat === "sqlite"
+          ? "CREATE VIEW added_after_plan AS SELECT record_id FROM items"
+          : "CREATE MACRO added_after_plan(value) AS value + 1",
+      );
+
+      await expect(
+        executeConversion({ source, target, plan }),
+      ).rejects.toMatchObject({ code: "DB_STALE_CONVERSION_PLAN" });
+      await expect(
+        inspectDatabase({ database: target }),
+      ).resolves.toMatchObject({
+        revision: 0n,
+        tables: [],
+        captures: 0n,
+        completedImports: 0n,
+        deliveries: 0n,
+      });
+
+      await engineOf(source).execute(
+        sourceFormat === "sqlite"
+          ? "DROP VIEW added_after_plan"
+          : "DROP MACRO added_after_plan",
+      );
+      await expect(
+        executeConversion({ source, target, plan }),
+      ).resolves.toMatchObject({ metrics: { tablesConverted: 1 } });
+      await expect(
+        inspectDatabase({ database: target }),
+      ).resolves.toMatchObject({ tables: [{ name: "items", rowCount: 0n }] });
+    } finally {
+      await target.close();
+      await source.close();
+    }
   });
-  const { database: target } = await createDatabase({
-    path: path.join(directory, "target.sqlite"),
-    format: "sqlite",
-  });
-  try {
-    const plan = await planConversion({ database: source, format: "sqlite" });
-    expect(plan.state).toBe("ready");
-    await engineOf(source).execute(
-      "CREATE MACRO added_after_plan(value) AS value + 1",
-    );
-    await expect(
-      executeConversion({ source, target, plan }),
-    ).rejects.toMatchObject({ code: "DB_STALE_CONVERSION_PLAN" });
-  } finally {
-    await target.close();
-    await source.close();
-  }
-});
+}

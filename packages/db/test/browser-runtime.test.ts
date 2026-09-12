@@ -8,12 +8,16 @@ import {
   test,
   vi,
 } from "vitest";
-import type { Sqlite3Static } from "@sqlite.org/sqlite-wasm";
+import type {
+  Database as SqliteDatabase,
+  Sqlite3Static,
+} from "@sqlite.org/sqlite-wasm";
 import type * as SqliteWasmModule from "@sqlite.org/sqlite-wasm";
 
 import type { RandomAccessFile, RandomAccessSource } from "@consultchimps/core";
 
 import { inspectDatabase } from "../src/database.js";
+import { applySchema, planSchema } from "../src/records.js";
 import type {
   BrowserDatabaseRuntime,
   BrowserDatabaseRuntimeOptions,
@@ -22,6 +26,17 @@ import type {
 const SQLITE_HEADER = new TextEncoder().encode("SQLite format 3\0");
 const SAH_HEADER_BYTES = 4096;
 const SAH_PATH_BYTES = 512;
+
+type SqliteDatabaseConstructor = new (
+  options?:
+    | string
+    | {
+        readonly filename?: string;
+        readonly flags?: string;
+        readonly vfs?: string;
+      },
+  flags?: string,
+) => SqliteDatabase;
 
 class MemoryFile implements RandomAccessFile {
   readonly name: string;
@@ -163,7 +178,9 @@ function notFound(): DOMException {
 class SqlitePoolHarness {
   readonly root = new MemoryDirectoryHandle("root");
   readonly databases = new Map<string, Uint8Array>();
+  readonly openFlags = new Map<string, string[]>();
   #sqlite: Sqlite3Static | undefined;
+  #nativeDatabase: SqliteDatabaseConstructor | undefined;
   #opaque: MemoryDirectoryHandle | undefined;
   #nextSlot = 1;
   readonly #slots = new Map<string, string>();
@@ -171,8 +188,13 @@ class SqlitePoolHarness {
   failNextUnlinkName: string | undefined;
   failNextSqlContaining: string | undefined;
 
-  async install(sqlite: Sqlite3Static, directoryPath: string) {
+  async install(
+    sqlite: Sqlite3Static,
+    directoryPath: string,
+    nativeDatabase: SqliteDatabaseConstructor,
+  ) {
     this.#sqlite = sqlite;
+    this.#nativeDatabase = nativeDatabase;
     let directory = this.root;
     for (const segment of directoryPath.split("/").filter(Boolean)) {
       directory = await directory.getDirectoryHandle(segment, { create: true });
@@ -181,11 +203,12 @@ class SqlitePoolHarness {
       create: true,
     });
     const openDatabase = this.openDatabase.bind(this);
-    function OpfsSAHPoolDb(filename: string) {
-      return openDatabase(filename);
+    function OpfsSAHPoolDb(filename: string, flags?: string) {
+      return openDatabase(filename, flags);
     }
     return {
       OpfsSAHPoolDb,
+      vfsName: "test-sahpool",
       getFileNames: () => [...this.databases.keys()],
       getFileCount: () => this.databases.size,
       reserveMinimumCapacity: async (minimum: number) => minimum,
@@ -221,10 +244,18 @@ class SqlitePoolHarness {
     };
   }
 
-  openDatabase(name: string) {
+  openDatabase(name: string, flags = "c") {
     const sqlite = this.#sqlite;
-    if (sqlite === undefined) throw new Error("SQLite test pool is not ready");
-    const database = new sqlite.oo1.DB(":memory:");
+    const NativeDatabase = this.#nativeDatabase;
+    if (sqlite === undefined || NativeDatabase === undefined) {
+      throw new Error("SQLite test pool is not ready");
+    }
+    this.openFlags.set(name, [...(this.openFlags.get(name) ?? []), flags]);
+    const readonly = !flags.includes("c") && !flags.includes("w");
+    if (readonly && !this.databases.has(name)) {
+      throw new Error("SQLite read-only database does not exist");
+    }
+    const database = new NativeDatabase(":memory:");
     const existing = this.databases.get(name);
     if (existing !== undefined) {
       const databasePointer = database.pointer;
@@ -272,7 +303,7 @@ class SqlitePoolHarness {
     };
     const close = database.close.bind(database);
     database.close = () => {
-      if (database.pointer !== undefined) {
+      if (!readonly && database.pointer !== undefined) {
         this.persist(name, sqlite.capi.sqlite3_js_db_export(database.pointer));
       }
       close();
@@ -341,17 +372,48 @@ beforeAll(async () => {
     const actual = await vi.importActual<typeof SqliteWasmModule>(
       "@sqlite.org/sqlite-wasm",
     );
+    let NativeDatabase: SqliteDatabaseConstructor | undefined;
+    let sqliteInstance: Sqlite3Static | undefined;
     return {
       ...actual,
       default: async () => {
-        const sqlite = await actual.default();
-        sqlite.installOpfsSAHPoolVfs = async (options) =>
-          (await harness.install(
+        const sqlite = (sqliteInstance ??= await actual.default());
+        NativeDatabase ??= sqlite.oo1
+          .DB as unknown as SqliteDatabaseConstructor;
+        sqlite.installOpfsSAHPoolVfs = async (options) => {
+          const installed = await harness.install(
             sqlite,
             options.directory ?? "consultchimps/sqlite",
-          )) as unknown as Awaited<
+            NativeDatabase!,
+          );
+          const TestDatabase = function (
+            open?:
+              | string
+              | {
+                  readonly filename?: string;
+                  readonly flags?: string;
+                  readonly vfs?: string;
+                },
+            flags?: string,
+          ): SqliteDatabase {
+            if (typeof open === "object" && open.vfs === installed.vfsName) {
+              return harness.openDatabase(
+                open.filename ?? ":memory:",
+                open.flags,
+              );
+            }
+            return Reflect.construct(
+              NativeDatabase!,
+              flags === undefined ? [open] : [open, flags],
+            ) as SqliteDatabase;
+          } as unknown as SqliteDatabaseConstructor;
+          TestDatabase.prototype = NativeDatabase!.prototype;
+          (sqlite.oo1 as unknown as { DB: SqliteDatabaseConstructor }).DB =
+            TestDatabase;
+          return installed as unknown as Awaited<
             ReturnType<Sqlite3Static["installOpfsSAHPoolVfs"]>
           >;
+        };
         return sqlite;
       },
     };
@@ -472,6 +534,97 @@ describe("browser database runtime", () => {
       ),
     ).toEqual([]);
     await imported.close();
+  });
+
+  test("refuses to replace a nonempty export destination without overwrite", async () => {
+    const runtime = await createRuntime();
+    const created = await runtime.createDatabase({
+      name: "source.sqlite",
+      format: "sqlite",
+    });
+    const originalBytes = new Uint8Array([10, 20, 30, 40]);
+    const destination = new MemoryFile("existing.sqlite", originalBytes);
+
+    await expect(
+      runtime.exportDatabase({
+        database: created.database,
+        name: destination.name,
+        destination,
+        format: "sqlite",
+      }),
+    ).rejects.toMatchObject({
+      code: "DB_OUTPUT_EXISTS",
+      details: { name: "existing.sqlite", size: originalBytes.length },
+    });
+    expect(destination.bytes()).toEqual(originalBytes);
+
+    await expect(
+      runtime.exportDatabase({
+        database: created.database,
+        name: destination.name,
+        destination,
+        format: "sqlite",
+        overwrite: true,
+      }),
+    ).resolves.toMatchObject({ operation: "db.export" });
+    expect(destination.bytes().subarray(0, SQLITE_HEADER.length)).toEqual(
+      SQLITE_HEADER,
+    );
+    await created.database.close();
+  });
+
+  test("keeps a SQLite database unchanged through a read-only handle", async () => {
+    const runtime = await createRuntime();
+    const created = await runtime.createDatabase({
+      name: "readonly.sqlite",
+      format: "sqlite",
+      schema: {
+        version: 1,
+        tables: [
+          {
+            name: "Original",
+            columns: [{ name: "value", type: "text" }],
+            recordId: { prefix: "ORIGINAL", padding: 3 },
+          },
+        ],
+      },
+    });
+    await created.database.close();
+
+    const readonly = await runtime.openDatabase({
+      name: "readonly.sqlite",
+      readonly: true,
+    });
+    expect(harness.openFlags.get("/readonly.sqlite")?.at(-1)).toBe("r");
+    const plan = await planSchema({
+      database: readonly,
+      schema: {
+        version: 1,
+        tables: [
+          {
+            name: "Original",
+            columns: [{ name: "value", type: "text" }],
+            recordId: { prefix: "ORIGINAL", padding: 3 },
+          },
+          {
+            name: "Unexpected",
+            columns: [{ name: "value", type: "text" }],
+            recordId: { prefix: "UNEXPECTED", padding: 3 },
+          },
+        ],
+      },
+    });
+    await expect(applySchema({ database: readonly, plan })).rejects.toThrow();
+    await readonly.checkpoint();
+    await readonly.close();
+
+    const reopened = await runtime.openDatabase({ name: "readonly.sqlite" });
+    expect(
+      (await inspectDatabase({ database: reopened })).tables.map(
+        (table) => table.name,
+      ),
+    ).toEqual(["Original"]);
+    await reopened.close();
   });
 
   test("keeps the prior database on collision and cleans an aborted import", async () => {
