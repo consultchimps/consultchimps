@@ -10,6 +10,11 @@ import type {
   StreamScalarCell,
   WorkbookStreamOptions,
 } from "./types.js";
+import {
+  calendarIsoText,
+  utcCalendarParts,
+  worksheetDateValue,
+} from "../model/calendar.js";
 import { encodeCell } from "../model/references.js";
 import {
   attribute,
@@ -77,7 +82,17 @@ function scalarCell(
     return { kind: "boolean", value: raw === "1" };
   }
   if (current.type === "e") return { kind: "error", error: raw };
-  if (current.type === "d") return { kind: "date", raw, iso: raw };
+  if (current.type === "d") {
+    if (!current.hasValue || raw.trim() === "") return { kind: "blank" };
+    const date = worksheetDateValue(raw);
+    return date === undefined
+      ? { kind: "string", value: raw }
+      : {
+          kind: "date",
+          raw,
+          iso: calendarIsoText(utcCalendarParts(date)),
+        };
+  }
   if (current.type === "str" || current.type === "inlineStr") {
     return { kind: "string", value: raw };
   }
@@ -281,15 +296,18 @@ export async function* parseWorksheetBatches(
         activeRow <= options.lastRow &&
         (options.columns === undefined || selectedName !== undefined)
       ) {
-        const scalar = scalarCell(current, options.styles);
         const key = selectedName ?? current.reference;
-        cells[key] = current.hasFormula
-          ? {
-              kind: "formula",
-              ...(current.formula === "" ? {} : { formula: current.formula }),
-              cached: current.hasValue ? scalar : { kind: "missing" },
-            }
-          : scalar;
+        if (current.hasFormula) {
+          cells[key] = {
+            kind: "formula",
+            ...(current.formula === "" ? {} : { formula: current.formula }),
+            cached: current.hasValue
+              ? scalarCell(current, options.styles)
+              : { kind: "missing" },
+          };
+        } else {
+          cells[key] = scalarCell(current, options.styles);
+        }
       }
       current = undefined;
     } else if (name === "row") {

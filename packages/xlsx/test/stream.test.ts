@@ -416,6 +416,64 @@ describe("bounded workbook streaming", () => {
     ]);
   });
 
+  it("applies declared-date blank and ISO rules to values and formula caches", async () => {
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Empty</t></is></c><c r='B1' t='inlineStr'><is><t>Whitespace</t></is></c><c r='C1' t='inlineStr'><is><t>Valid</t></is></c><c r='D1' t='inlineStr'><is><t>Malformed</t></is></c><c r='E1' t='inlineStr'><is><t>CachedValid</t></is></c><c r='F1' t='inlineStr'><is><t>CachedBlank</t></is></c><c r='G1' t='inlineStr'><is><t>MissingCache</t></is></c><c r='H1' t='inlineStr'><is><t>MissingBooleanCache</t></is></c></row>" +
+      "<row r='2'><c r='A2' t='d'><v/></c><c r='B2' t='d'><v>   </v></c><c r='C2' t='d'><v>2024-01-02T03:04:05+05:30</v></c><c r='D2' t='d'><v>2024-13-01</v></c><c r='E2' t='d'><f>TODAY()</f><v>2024-01-02</v></c><c r='F2' t='d'><f>TODAY()</f><v> </v></c><c r='G2' t='d'><f>TODAY()</f></c><c r='H2' t='b'><f>1=1</f></c></row>" +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { range: "'Data & More'!A1:H2" },
+      { scratch: new MemoryScratch(), chunkBytes: 29 },
+    );
+
+    expect(await rows(reader)).toEqual([
+      {
+        sourceRow: 2,
+        cells: {
+          Empty: { kind: "blank" },
+          Whitespace: { kind: "blank" },
+          Valid: {
+            kind: "date",
+            raw: "2024-01-02T03:04:05+05:30",
+            iso: "2024-01-01T21:34:05.000Z",
+          },
+          Malformed: { kind: "string", value: "2024-13-01" },
+          CachedValid: {
+            kind: "formula",
+            formula: "TODAY()",
+            cached: {
+              kind: "date",
+              raw: "2024-01-02",
+              iso: "2024-01-02T00:00:00.000Z",
+            },
+          },
+          CachedBlank: {
+            kind: "formula",
+            formula: "TODAY()",
+            cached: { kind: "blank" },
+          },
+          MissingCache: {
+            kind: "formula",
+            formula: "TODAY()",
+            cached: { kind: "missing" },
+          },
+          MissingBooleanCache: {
+            kind: "formula",
+            formula: "1=1",
+            cached: { kind: "missing" },
+          },
+        },
+      },
+    ]);
+  });
+
   it.each([
     { range: "'Data & More'!A1:D2" },
     { sheet: "Data & More", headerRow: 1 },

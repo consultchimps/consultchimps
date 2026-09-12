@@ -44,6 +44,12 @@ newly captured rows and rows reused from the working database. Omitting
 selections. Preview pages contain at most 100 rows; pass `nextCursor` as the
 next page's `cursor`. The target database must match the plan's database ID.
 
+Preparation metrics count input sources, not worksheet selections. `sourcesRead`
+counts sources with a newly captured selection; `sourcesReused` counts sources
+with a reused capture. A source with both kinds contributes once to each count.
+Selections already bound in the same saved plan contribute to neither count on
+retry. `rowsCaptured` counts rows captured during this preparation call.
+
 For a saved Node.js plan, `prepareImportFile` from `@consultchimps/db/node`
 combines creation, capture, and publication. Pass `path`, `database`, `sources`,
 `recipe`, and `baselineRevision`, with optional `overwrite`,

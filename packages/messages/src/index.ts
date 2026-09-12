@@ -465,8 +465,8 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
 };
 
 const metricLabels: Readonly<Record<string, string>> = {
-  sourcesRead: "Source files read",
-  sourcesReused: "Source files already captured",
+  sourcesRead: "Source files with new captures",
+  sourcesReused: "Source files with reused captures",
   rowsCaptured: "Source rows captured for review",
   conflicts: "Import conflicts requiring review",
   rowsImported: "Observations added to the database",

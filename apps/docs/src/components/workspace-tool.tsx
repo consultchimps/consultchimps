@@ -225,6 +225,7 @@ export function WorkspaceTool() {
   const deliveriesRequestRef = useRef(0);
   const exportLeaseReleasesRef = useRef<Set<() => void>>(new Set());
   const [summary, setSummary] = useState<WorkspaceSummary | null>(null);
+  const [workspaceGeneration, setWorkspaceGeneration] = useState(0);
   const [format, setFormat] = useState<WorkspaceDatabaseFormat>("sqlite");
   const [name, setName] = useState("consultchimps.sqlite");
   const [busy, setBusy] = useState<string | null>(null);
@@ -361,6 +362,7 @@ export function WorkspaceTool() {
     );
     if (created === null) return;
     setSummary(created);
+    setWorkspaceGeneration((current) => current + 1);
     remember(created);
     setSchemaPlan(null);
     clearDeliveries();
@@ -378,6 +380,7 @@ export function WorkspaceTool() {
       );
       if (opened === null) return;
       setSummary(opened);
+      setWorkspaceGeneration((current) => current + 1);
       remember(opened);
       setSchemaPlan(null);
       clearDeliveries();
@@ -396,6 +399,7 @@ export function WorkspaceTool() {
       );
       if (opened === null) return;
       setSummary(opened);
+      setWorkspaceGeneration((current) => current + 1);
       remember(opened);
       setSchemaPlan(null);
       clearDeliveries();
@@ -672,7 +676,7 @@ export function WorkspaceTool() {
           <WorkspaceImport
             busy={disabled}
             client={client}
-            key={summary.databaseId}
+            key={workspaceGeneration}
             summary={summary}
             onSummary={setSummary}
             onReviewState={setReviewActive}

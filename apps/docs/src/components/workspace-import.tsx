@@ -226,7 +226,7 @@ export function WorkspaceImport({
     return () => {
       active = false;
     };
-  }, [client, reportError, summary.databaseId]);
+  }, [client, reportError, summary.databaseId, summary.workingCopyName]);
 
   const existingTables = useMemo(
     () => summary.tables.map((table) => table.name),

@@ -347,6 +347,56 @@ test.describe("reviewed workbook imports", () => {
     );
   });
 
+  test("reloads a saved review when working copies share a database ID", async ({
+    page,
+  }, testInfo) => {
+    await create(page, "sqlite");
+    await prepare(page, [await inventoryWorkbook("same-id-review.xlsx")]);
+
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByTestId("workspace-export-same").click();
+    const download = await downloadPromise;
+    const exportedPath = testInfo.outputPath("same-id.sqlite");
+    await download.saveAs(exportedPath);
+
+    await page.getByTestId("workspace-open-input").setInputFiles(exportedPath);
+    await expect(page.getByTestId("workspace-summary")).toContainText(
+      "same-id-",
+    );
+    await expect(page.getByTestId("workspace-import-review")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-import-resume")).toHaveCount(1);
+    await page.getByTestId("workspace-import-resume").click();
+    await page.getByTestId("workspace-import-preview").click();
+    await expect(
+      page.getByTestId("workspace-import-preview-page"),
+    ).toContainText("Customers");
+
+    await page.getByTestId("workspace-reopen").first().click();
+    await expect(page.getByTestId("workspace-summary")).toContainText(
+      "same-id-",
+    );
+    await expect(page.getByTestId("workspace-import-review")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-import-resume")).toHaveCount(1);
+    await page.getByTestId("workspace-import-resume").click();
+    await page.getByTestId("workspace-import-preview").click();
+    await expect(
+      page.getByTestId("workspace-import-preview-page"),
+    ).toContainText("Customers");
+
+    await page
+      .getByTestId("workspace-reopen")
+      .filter({ hasText: "imports.sqlite" })
+      .click();
+    await expect(page.getByTestId("workspace-summary")).toContainText(
+      "imports.sqlite",
+    );
+    await expect(page.getByTestId("workspace-import-review")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-import-resume")).toHaveCount(1);
+    await page.getByTestId("workspace-import-resume").click();
+    await resolveAndApply(page);
+    await expect(page.getByTestId("workspace-table")).toContainText("2 rows");
+  });
+
   test("appends a changed submission to an existing table", async ({
     page,
   }) => {

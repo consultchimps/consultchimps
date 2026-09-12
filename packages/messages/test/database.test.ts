@@ -12,13 +12,20 @@ test("a prepared import is described as private staging, not an applied import",
         mediaType: "application/vnd.consultchimps.import-plan",
       },
     ],
-    metrics: { rowsCaptured: 1250, conflicts: 1, sourcesReused: 0 },
+    metrics: {
+      rowsCaptured: 1250,
+      conflicts: 1,
+      sourcesRead: 1,
+      sourcesReused: 1,
+    },
     warnings: [],
   });
   expect(text).toContain("captured 1,250 source rows");
   expect(text).toContain("has not added these rows");
   expect(text).toContain("Private captured import plan");
   expect(text).toContain("Import conflicts requiring review: 1");
+  expect(text).toContain("Source files with new captures: 1");
+  expect(text).toContain("Source files with reused captures: 1");
   expect(text).not.toContain("rowsCaptured");
 });
 

@@ -99,6 +99,8 @@ export async function prepareImport(
   let sourcesReused = 0;
   let rowsCaptured = 0;
   for (const source of options.sources) {
+    let capturedSource = false;
+    let reusedSource = false;
     const contentHash = await hashSource(source.bytes, options.signal);
     await source.verifyUnchanged?.();
     for (const selection of source.selections) {
@@ -138,7 +140,7 @@ export async function prepareImport(
             source.bytes.name,
           ],
         );
-        sourcesReused += 1;
+        reusedSource = true;
         continue;
       }
       const reusable = await findReusableCapture({
@@ -171,7 +173,7 @@ export async function prepareImport(
             [source.key, selection.key, reusable.captureId, source.bytes.name],
           );
         });
-        sourcesReused += 1;
+        reusedSource = true;
         continue;
       }
       const captureId = `CAPTURE-${globalThis.crypto.randomUUID()}`;
@@ -275,8 +277,10 @@ export async function prepareImport(
         }
         throw error;
       }
-      sourcesRead += 1;
+      capturedSource = true;
     }
+    if (capturedSource) sourcesRead += 1;
+    if (reusedSource) sourcesReused += 1;
   }
   const captures = await preparedCaptures(options.prepared);
   const conflicts = await evaluateConflicts(
