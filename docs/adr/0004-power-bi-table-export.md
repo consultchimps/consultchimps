@@ -150,17 +150,23 @@ are outside the default browser envelope.
 Check the input size before reading a browser `File` into an array. Use
 validated container sizes, model row counts, and dictionary/value widths to
 conservatively bound decompression, table cells, workbook structures,
-serialization buffers, the manifest, the combined-download archive, and
-worker-to-host copies before allocating them. Reserve the worst case, including
-uncompressed output; compressed file size alone is never the estimate. If a
-supported format path cannot supply a safe upper bound, refuse with the same
-capacity code instead of attempting an unbounded export. Enforce cumulative byte
-and allocation budgets during decompression and writing as well, since file
-metadata is untrusted. Check each growth before allocating; do not depend on
-catching an out-of-memory exception. The error identifies the stage, configured
-limit, and either the required bound or why it cannot be estimated. It suggests
-a smaller model. Capacity refusal returns no byte artifacts and occurs before a
-file adapter writes destinations.
+serialization buffers, the manifest, and the combined-download archive before
+allocating them. The bound covers the complete browser path: page-held upload
+bytes, the page-to-worker structured clone, worker-to-host copies, page-held
+results, and the extra byte arrays and Blobs used for individual or combined
+downloads. Include overlapping lifetimes and any retained prior results. A copy
+can be removed from the estimate only when the implemented transport or
+ownership change demonstrably removes it. Bound concurrent exports and download
+actions so repeated clicks cannot create unaccounted copies. Reserve the worst
+case, including uncompressed output; compressed file size alone is never the
+estimate. If a supported format path cannot supply a safe upper bound, refuse
+with the same capacity code instead of attempting an unbounded export. Enforce
+cumulative byte and allocation budgets during decompression and writing as well,
+since file metadata is untrusted. Check each growth before allocating; do not
+depend on catching an out-of-memory exception. The error identifies the stage,
+configured limit, and either the required bound or why it cannot be estimated.
+It suggests a smaller model. Capacity refusal returns no byte artifacts and
+occurs before a file adapter writes destinations.
 
 ## Decision 5: tables larger than a worksheet
 
@@ -490,14 +496,17 @@ workbook bytes, which accumulate across every exported worksheet, and the writer
 materializes the workbook while producing them, so a model of many moderate
 tables can exhaust a tab well below what the decoder figure implies. The build
 must measure and bound decoder working set, workbook, zip, and manifest memory
-together, including final serialization. The corpus must include many moderate
-tables and a column with millions of values requiring exact text, to verify that
-manifest entries grow with columns and reasons rather than row count. This is
-required before the browser surface is declared to work, together with tests
-that over-limit inputs receive `PBI_EXPORT_LIMIT_EXCEEDED` before the prohibited
-allocation or destination write. These tested limits define the supported
-envelope; they cannot guarantee spare memory in an already exhausted browser
-process.
+together, including upload retention, both worker transport directions, final
+serialization, and individual and combined downloads through the actual browser
+shell. Build item 9 verifies those lifetimes and concurrency limits near the
+configured boundary before claiming browser support. The corpus must include
+many moderate tables and a column with millions of values requiring exact text,
+to verify that manifest entries grow with columns and reasons rather than row
+count. This is required before the browser surface is declared to work, together
+with tests that over-limit inputs receive `PBI_EXPORT_LIMIT_EXCEEDED` before the
+prohibited allocation or destination write. These tested limits define the
+supported envelope; they cannot guarantee spare memory in an already exhausted
+browser process.
 
 ## Build list
 
