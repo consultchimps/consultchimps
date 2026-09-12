@@ -109,7 +109,9 @@ The streaming reader supports OOXML workbooks (`.xlsx` and `.xlsm`). Macros do
 not run. It reads formula caches, without calculating formulas. Missing caches
 and error cells need an explicit correction before they can become typed data.
 Styles needed to interpret Excel dates are read; workbook formatting and macros
-are not database content.
+are not database content. Elapsed formats such as `[h]:mm` retain their numeric
+day fractions instead of becoming calendar dates. Missing declared style parts
+and invalid style references fail before those values can be interpreted.
 
 Each column in an explicit or named range needs a header. Worksheet selections
 use the span from the first populated header to the last, and reject blank

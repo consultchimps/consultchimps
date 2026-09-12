@@ -809,14 +809,13 @@ export function WorkspaceTool() {
                     key={delivery.id}
                   >
                     <div className="flex justify-between gap-3">
-                      <span className="font-semibold">
-                        {delivery.vendor || "Unspecified vendor"}
-                      </span>
+                      <span className="font-semibold">{delivery.label}</span>
                       <span className="font-mono text-xs text-fd-muted-foreground">
                         {delivery.id}
                       </span>
                     </div>
                     <p className="mt-1 text-sm">
+                      {delivery.vendor || "Unspecified vendor"} ·{" "}
                       {delivery.entity || "Unspecified entity"} ·{" "}
                       {delivery.phase || "Unspecified phase"} ·{" "}
                       {deliveryScopeText(delivery.scope)}

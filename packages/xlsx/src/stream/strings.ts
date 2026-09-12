@@ -130,6 +130,8 @@ export async function loadSharedStrings(
   const pending: string[] = [];
   let inItem = false;
   let inText = false;
+  let depth = 0;
+  let rootName: string | undefined;
   let phoneticDepth = 0;
   let value = "";
   let valueBytes = 0;
@@ -142,8 +144,16 @@ export async function loadSharedStrings(
   );
   parser.on("opentag", (tag) => {
     const name = localName(tag.name);
+    if (depth === 0) rootName = name;
     if (name === "si") {
+      if (inItem || depth !== 1 || rootName !== "sst") {
+        throw new Error(
+          "A shared-string item must be a direct child of the shared-string table and cannot contain another item.",
+        );
+      }
       inItem = true;
+      inText = false;
+      phoneticDepth = 0;
       value = "";
       valueBytes = 0;
     } else if (inItem && name === "rPh") {
@@ -151,6 +161,7 @@ export async function loadSharedStrings(
     } else if (inItem && name === "t" && phoneticDepth === 0) {
       inText = true;
     }
+    depth += 1;
   });
   const appendText = (text: string) => {
     if (!inText) return;
@@ -172,6 +183,7 @@ export async function loadSharedStrings(
       inItem = false;
       pending.push(value);
     }
+    depth -= 1;
   });
   try {
     await forEachEntryChunk(entry, {

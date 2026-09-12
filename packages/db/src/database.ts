@@ -3,8 +3,10 @@ import type { OperationResult } from "@consultchimps/core";
 import { assertOpen, databaseError } from "./errors.js";
 import type { DatabaseEngine, EngineTransaction } from "./internal/engine.js";
 import {
+  parseStoredTableSchema,
   queryDatabaseMetadata,
   validateDatabaseLayout,
+  validateRegisteredTables,
 } from "./internal/database-layout.js";
 import {
   APPLICATION_TABLE,
@@ -28,7 +30,7 @@ import {
   type DatabaseSchema,
   type TableSchema,
 } from "./schema.js";
-import { parseDatabaseSchema } from "./validators.js";
+export { parseStoredTableSchema } from "./internal/database-layout.js";
 
 declare const databaseIdBrand: unique symbol;
 export type DatabaseId = string & { readonly [databaseIdBrand]: true };
@@ -145,26 +147,27 @@ export function valueAsBigInt(value: unknown, field: string): bigint {
   );
 }
 
-export function parseStoredTableSchema(
-  schemaText: string,
-  expectedName: string,
-): TableSchema {
-  try {
-    const value: unknown = JSON.parse(schemaText);
-    const parsed = parseDatabaseSchema({ version: 1, tables: [value] });
-    const stored = parsed.tables[0];
-    if (stored === undefined || stored.name !== expectedName) {
-      throw new Error("stored schema table name mismatch");
-    }
-    return stored;
-  } catch (error) {
-    throw databaseError(
-      "DB_CORRUPT_DATABASE",
-      `The stored schema for "${expectedName}" is invalid.`,
-      { table: expectedName },
-      error,
-    );
-  }
+export function valueAsNonNegativeBigInt(
+  value: unknown,
+  field: string,
+): bigint {
+  const parsed = valueAsBigInt(value, field);
+  if (parsed >= 0n) return parsed;
+  throw databaseError(
+    "DB_CORRUPT_DATABASE",
+    `The database has an invalid ${field} value.`,
+    { field },
+  );
+}
+
+export function valueAsPositiveBigInt(value: unknown, field: string): bigint {
+  const parsed = valueAsBigInt(value, field);
+  if (parsed > 0n) return parsed;
+  throw databaseError(
+    "DB_CORRUPT_DATABASE",
+    `The database has an invalid ${field} value.`,
+    { field },
+  );
 }
 
 async function initializeMetadata(
@@ -283,7 +286,7 @@ export async function openDatabaseHandle(
   await validateDatabaseLayout(engine);
   const rows = await queryDatabaseMetadata(
     engine,
-    `SELECT database_id, format FROM ${DATABASE_METADATA_TABLE}`,
+    `SELECT database_id, format, revision FROM ${DATABASE_METADATA_TABLE}`,
   );
   const row = rows[0];
   if (row === undefined || rows.length !== 1) {
@@ -300,10 +303,19 @@ export async function openDatabaseHandle(
       { expected: engine.format, actual: format },
     );
   }
-  return new ManagedDatabase(
-    valueAsString(row["database_id"], "database ID") as DatabaseId,
-    engine,
-  );
+  const databaseId = valueAsString(row["database_id"], "database ID");
+  if (databaseId.trim().length === 0) {
+    throw databaseError(
+      "DB_CORRUPT_DATABASE",
+      "The database has an invalid database ID value.",
+      { field: "database ID" },
+    );
+  }
+  valueAsNonNegativeBigInt(row["revision"], "revision");
+  await validateRegisteredTables(engine, engine.format, {
+    allowExtraColumns: true,
+  });
+  return new ManagedDatabase(databaseId as DatabaseId, engine);
 }
 
 export async function inspectDatabase(options: {
@@ -311,6 +323,9 @@ export async function inspectDatabase(options: {
 }): Promise<DatabaseInspection> {
   const engine = engineOf(options.database);
   return engine.readTransaction(async (transaction) => {
+    await validateRegisteredTables(transaction, options.database.format, {
+      allowExtraColumns: true,
+    });
     const metadataRows = await transaction.query(
       `SELECT format_version, revision FROM ${DATABASE_METADATA_TABLE}`,
     );
@@ -364,7 +379,7 @@ export async function inspectDatabase(options: {
       id: options.database.id,
       format: options.database.format,
       formatVersion: Number(formatVersion),
-      revision: valueAsBigInt(metadata["revision"], "revision"),
+      revision: valueAsNonNegativeBigInt(metadata["revision"], "revision"),
       tables,
       captures: valueAsBigInt(captureRows[0]?.["count"], "capture count"),
       completedImports: valueAsBigInt(

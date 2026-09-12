@@ -1,12 +1,14 @@
 import {
   engineOf,
   valueAsBigInt,
+  valueAsPositiveBigInt,
   valueAsString,
   type Database,
 } from "../database.js";
 import { databaseError } from "../errors.js";
 import type { EngineTransaction } from "../internal/engine.js";
 import { canonicalJson } from "../internal/json.js";
+import { parseStoredDeliveryContext } from "../internal/stored-delivery.js";
 import {
   CAPTURE_TABLE,
   COUNTERS_TABLE,
@@ -51,7 +53,10 @@ async function allocateDelivery(
     `SELECT next_value FROM ${COUNTERS_TABLE} WHERE counter_name = ?`,
     ["delivery"],
   );
-  const next = valueAsBigInt(rows[0]?.["next_value"], "delivery counter");
+  const next = valueAsPositiveBigInt(
+    rows[0]?.["next_value"],
+    "delivery counter",
+  );
   await transaction.execute(
     `UPDATE ${COUNTERS_TABLE} SET next_value = ? WHERE counter_name = ?`,
     [next + 1n, "delivery"],
@@ -90,11 +95,7 @@ export async function recordDelivery(options: {
       const delivery: DeliveryRecord = {
         id,
         requestId: options.requestId,
-        context: parseDeliveryContext(
-          JSON.parse(
-            valueAsString(existing[0]["context_json"], "delivery context"),
-          ),
-        ),
+        context: parseStoredDeliveryContext(existing[0]["context_json"]),
         captureIds: memberships.captureIds,
         reusedCaptureIds: memberships.reusedCaptureIds,
       };
@@ -208,9 +209,7 @@ export async function listDeliveries(options: {
     deliveries.push({
       id,
       requestId: valueAsString(row["request_id"], "delivery request ID"),
-      context: parseDeliveryContext(
-        JSON.parse(valueAsString(row["context_json"], "delivery context")),
-      ),
+      context: parseStoredDeliveryContext(row["context_json"]),
       captureIds: memberships.captureIds,
       reusedCaptureIds: memberships.reusedCaptureIds,
     });

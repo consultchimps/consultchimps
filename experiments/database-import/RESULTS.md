@@ -109,33 +109,34 @@ checkpoint the result.
 | Check                    | 100,000 rows | 1,000,000 rows |
 | ------------------------ | -----------: | -------------: |
 | Source workbook          |       2.1 MB |        21.5 MB |
-| Inspect workbook         |        27 ms |           3 ms |
-| Parse and capture        |     1,298 ms |      12,794 ms |
-| Time awaiting row parser |       985 ms |       9,898 ms |
-| Review captured values   |       191 ms |       1,930 ms |
-| Apply to DuckDB          |     1,161 ms |      12,673 ms |
+| Inspect workbook         |        28 ms |           3 ms |
+| Parse and capture        |     1,371 ms |      13,426 ms |
+| Time awaiting row parser |     1,040 ms |      10,329 ms |
+| Review captured values   |       176 ms |       1,769 ms |
+| Apply to DuckDB          |     1,104 ms |      11,273 ms |
 | Prepared SQLite file     |      32.1 MB |       335.6 MB |
-| Initial DuckDB file      |      17.3 MB |       111.9 MB |
-| Peak sampled apply RSS   |       495 MB |         799 MB |
+| Initial DuckDB file      |      17.3 MB |       109.9 MB |
+| Peak sampled apply RSS   |       544 MB |         862 MB |
 
 The one-million-row source, review file, and initial destination occupy about
-448 MB while the review artifact remains available, or 21 times the compressed
+467 MB while the review artifact remains available, or 22 times the compressed
 source size. The destination intentionally contains both one million captured
 JSON rows for provenance and reuse and one million typed destination rows. That
 disk duplication is part of the current model, not appender buffering.
 
-Wrapping each bounded 2,000-row capture batch in one prepared-database
-transaction reduced prepare time by 41 percent at both sizes. At one million
-rows, capture overhead outside the parser fell from 11,777 ms to 2,896 ms, a 75
-percent reduction. Parser time changed from 9,793 ms to 9,898 ms. The 100,000
-row run showed the same split: capture overhead fell from 1,215 ms to 313 ms,
-while parser time changed from 981 ms to 985 ms. These comparisons use the
-immediately preceding run of the same generated fixtures and pipeline before the
-capture transaction change. The complete prepare path sustained about 77,000
-rows per second at 100,000 rows and 78,000 rows per second at one million rows.
+An earlier A/B run wrapped each bounded 2,000-row capture batch in one
+prepared-database transaction and reduced prepare time by 41 percent at both
+sizes. At one million rows, capture overhead outside the parser fell from 11,777
+ms to 2,896 ms, a 75 percent reduction. Parser time changed from 9,793 ms to
+9,898 ms. The 100,000 row run showed the same split: capture overhead fell from
+1,215 ms to 313 ms, while parser time changed from 981 ms to 985 ms. These
+comparisons use the runs of the same generated fixtures immediately before and
+after the capture transaction change, rather than the latest measurements in the
+table. The current prepare path sustained about 73,000 rows per second at
+100,000 rows and 74,000 rows per second at one million rows.
 
-The native appender sustained about 86,000 rows per second at 100,000 rows and
-79,000 rows per second at one million rows through the complete apply path.
+The native appender sustained about 91,000 rows per second at 100,000 rows and
+89,000 rows per second at one million rows through the complete apply path.
 Apply timing varies independently of the prepared-database transaction change,
 so this run does not attribute an apply-speed change to capture batching.
 
@@ -167,8 +168,8 @@ experiment establishes the storage reduction but does not claim a throughput or
 memory reduction.
 
 The final database replayed its stored capture into a second one-million-row
-table in 10.3 seconds. The file then occupied 167.3 MB. Converting both user
-tables to SQLite copied and verified two million typed rows in 16.7 seconds; the
+table in 10.0 seconds. The file then occupied 165.2 MB. Converting both user
+tables to SQLite copied and verified two million typed rows in 15.3 seconds; the
 resulting SQLite file occupied 484.9 MB. The replay shows that ordered keyset
 reads remain practical for this one-capture fixture without the DuckDB composite
 key. It does not cover shuffled physical rows or many interleaved captures,
@@ -176,9 +177,9 @@ where repeated scans could behave differently despite zone maps.
 
 The final benchmark runs both sizes in one process, so the larger run starts
 with memory retained from the smaller run. The one-million-row apply phase
-increased sampled RSS from about 561 MB during preparation to 799 MB, while
-JavaScript heap during apply stayed below 93 MB. Conversion reached about 818 MB
-RSS. These are sampled process totals, not incremental memory costs. This
+increased sampled RSS from about 634 MB during preparation to 862 MB, while
+JavaScript heap during apply stayed below 117 MB. Conversion reached about 895
+MB RSS. These are sampled process totals, not incremental memory costs. This
 measurement does not isolate record ID index memory from DuckDB's buffers and
 allocator, but it shows that bounded 2,000-row application batches do not bound
 native process memory. Keep the reduced constraint layout for this phase, and

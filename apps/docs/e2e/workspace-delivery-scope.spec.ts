@@ -120,6 +120,15 @@ test("shows changes baselines and partial descriptions from an opened database",
         },
       },
     });
+    await recordDelivery({
+      database,
+      captureIds: applied.captureIds,
+      requestId: "label-only-delivery",
+      context: {
+        label: "September client handoff",
+        scope: { kind: "full" },
+      },
+    });
   } finally {
     await prepared.close();
     await database.close();
@@ -129,11 +138,27 @@ test("shows changes baselines and partial descriptions from an opened database",
   await page.getByTestId("workspace-open-input").setInputFiles(databasePath);
   await expect(page.getByTestId("workspace-summary")).toBeVisible();
   await page.getByTestId("workspace-deliveries-refresh").click();
-  await expect(page.getByTestId("workspace-delivery")).toHaveCount(2);
-  await expect(page.getByTestId("workspace-delivery").first()).toContainText(
+  const deliveries = page.getByTestId("workspace-delivery");
+  await expect(deliveries).toHaveCount(3);
+  await expect(deliveries.nth(0)).toContainText("Changes delivery");
+  await expect(deliveries.nth(0)).toContainText("Vendor A");
+  await expect(deliveries.nth(0)).toContainText(
     "Changes since DEL-BASELINE-42",
   );
-  await expect(page.getByTestId("workspace-delivery").last()).toContainText(
+  await expect(deliveries.nth(1)).toContainText("Partial delivery");
+  await expect(deliveries.nth(1)).toContainText("Vendor B");
+  await expect(deliveries.nth(1)).toContainText(
     "Partial coverage: Selected business units",
   );
+  await expect(deliveries.nth(2)).toContainText("September client handoff");
+  await expect(deliveries.nth(2)).toContainText("Unspecified vendor");
+  await expect(deliveries.nth(2)).toContainText("Full coverage");
+  const screenshotPath = testInfo.outputPath("delivery-history-labels.png");
+  await page
+    .getByTestId("workspace-deliveries")
+    .screenshot({ path: screenshotPath });
+  await testInfo.attach("delivery-history-labels", {
+    path: screenshotPath,
+    contentType: "image/png",
+  });
 });

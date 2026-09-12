@@ -48,9 +48,11 @@ interface CurrentCell {
   valueOpen: boolean;
   formulaOpen: boolean;
   inlineTextOpen: boolean;
+  inlineContainerOpen: boolean;
   inlinePhoneticDepth: number;
   hasValue: boolean;
   hasFormula: boolean;
+  hasInlineContainer: boolean;
   valueBytes: number;
   formulaBytes: number;
   inlineBytes: number;
@@ -191,6 +193,7 @@ export async function* parseWorksheetBatches(
   let cells = cellRecord<PendingCell>();
   let seenColumns = new Set<number>();
   let current: CurrentCell | undefined;
+  let cellDepth = 0;
   let passedLastRow = false;
   const parser = new SaxesParser();
   const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -263,11 +266,16 @@ export async function* parseWorksheetBatches(
       }
       seenColumns.add(parsedColumn);
       nextImplicitColumn = parsedColumn + 1;
-      const rawStyle = attribute(tag, "s") ?? "0";
-      const style = Number(rawStyle);
+      const explicitStyle = attribute(tag, "s");
+      const style = Number(explicitStyle ?? "0");
       if (!Number.isSafeInteger(style) || style < 0) {
         throw new Error(
           `Cell ${explicitReference ?? "(implicit)"} has an invalid style.`,
+        );
+      }
+      if (explicitStyle !== undefined && !options.styles.hasStyle(style)) {
+        throw new Error(
+          `Cell ${explicitReference ?? "(implicit)"} has a style outside the workbook cell formats.`,
         );
       }
       current = {
@@ -281,28 +289,77 @@ export async function* parseWorksheetBatches(
         valueOpen: false,
         formulaOpen: false,
         inlineTextOpen: false,
+        inlineContainerOpen: false,
         inlinePhoneticDepth: 0,
         hasValue: false,
         hasFormula: false,
+        hasInlineContainer: false,
         valueBytes: 0,
         formulaBytes: 0,
         inlineBytes: 0,
       };
-    } else if (current && name === "v") {
-      current.valueOpen = true;
-      current.hasValue = true;
-    } else if (current && name === "f") {
-      current.formulaOpen = true;
-      current.hasFormula = true;
-    } else if (current && name === "rPh" && current.type === "inlineStr") {
-      current.inlinePhoneticDepth += 1;
-    } else if (
-      current &&
-      name === "t" &&
-      current.type === "inlineStr" &&
-      current.inlinePhoneticDepth === 0
-    ) {
-      current.inlineTextOpen = true;
+      cellDepth = 0;
+    } else if (current) {
+      const directChild = cellDepth === 0;
+      if (current.valueOpen || current.formulaOpen) {
+        throw new Error(
+          `Cell ${current.reference} has nested markup inside its value or formula.`,
+        );
+      }
+      if (name === "v") {
+        if (!directChild) {
+          throw new Error(
+            `Cell ${current.reference} value must be a direct child of the cell.`,
+          );
+        }
+        if (current.hasValue) {
+          throw new Error(
+            `Cell ${current.reference} has a value more than once.`,
+          );
+        }
+        current.valueOpen = true;
+        current.hasValue = true;
+      } else if (name === "f") {
+        if (!directChild) {
+          throw new Error(
+            `Cell ${current.reference} formula must be a direct child of the cell.`,
+          );
+        }
+        if (current.hasFormula) {
+          throw new Error(
+            `Cell ${current.reference} has a formula more than once.`,
+          );
+        }
+        current.formulaOpen = true;
+        current.hasFormula = true;
+      } else if (name === "is") {
+        if (!directChild || current.type !== "inlineStr") {
+          throw new Error(
+            `Cell ${current.reference} inline string must be a direct child of an inline-string cell.`,
+          );
+        }
+        if (current.hasInlineContainer) {
+          throw new Error(
+            `Cell ${current.reference} has an inline string more than once.`,
+          );
+        }
+        current.inlineContainerOpen = true;
+        current.hasInlineContainer = true;
+      } else if (
+        name === "rPh" &&
+        current.type === "inlineStr" &&
+        current.inlineContainerOpen
+      ) {
+        current.inlinePhoneticDepth += 1;
+      } else if (
+        name === "t" &&
+        current.type === "inlineStr" &&
+        current.inlineContainerOpen &&
+        current.inlinePhoneticDepth === 0
+      ) {
+        current.inlineTextOpen = true;
+      }
+      cellDepth += 1;
     }
   });
   const appendText = (text: string) => {
@@ -337,11 +394,21 @@ export async function* parseWorksheetBatches(
   parser.on("cdata", appendText);
   parser.on("closetag", (tag) => {
     const name = localName(tag.name);
-    if (current && name === "v") current.valueOpen = false;
-    else if (current && name === "f") current.formulaOpen = false;
-    else if (current && name === "t") current.inlineTextOpen = false;
-    else if (current && name === "rPh") current.inlinePhoneticDepth -= 1;
-    else if (current && name === "c") {
+    if (current && name !== "c") {
+      cellDepth -= 1;
+      if (cellDepth < 0) {
+        throw new Error(`Cell ${current.reference} has invalid structure.`);
+      }
+      if (name === "v") current.valueOpen = false;
+      else if (name === "f") current.formulaOpen = false;
+      else if (name === "t") current.inlineTextOpen = false;
+      else if (name === "rPh" && current.inlineContainerOpen) {
+        current.inlinePhoneticDepth -= 1;
+      } else if (name === "is") current.inlineContainerOpen = false;
+    } else if (current && name === "c") {
+      if (cellDepth !== 0) {
+        throw new Error(`Cell ${current.reference} has invalid structure.`);
+      }
       const selectedName = options.columns?.get(current.column);
       if (
         activeRow >= options.firstRow &&

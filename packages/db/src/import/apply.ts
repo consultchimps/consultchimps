@@ -7,6 +7,7 @@ import {
   engineOf,
   parseStoredTableSchema,
   valueAsBigInt,
+  valueAsPositiveBigInt,
   valueAsString,
 } from "../database.js";
 import { databaseError } from "../errors.js";
@@ -40,6 +41,7 @@ import {
 } from "../records.js";
 import { formatRecordId, identifierKey, type TableSchema } from "../schema.js";
 import { parseDeliveryContext } from "../validators.js";
+import { parseStoredDeliveryContext } from "../internal/stored-delivery.js";
 import { parseImportCellsJson, valueForColumn } from "./inference.js";
 import {
   orderRoutesByReferences,
@@ -80,7 +82,10 @@ async function allocate(
     `SELECT next_value FROM ${COUNTERS_TABLE} WHERE counter_name = ?`,
     [counter],
   );
-  const value = valueAsBigInt(rows[0]?.["next_value"], `${counter} counter`);
+  const value = valueAsPositiveBigInt(
+    rows[0]?.["next_value"],
+    `${counter} counter`,
+  );
   await transaction.execute(
     `UPDATE ${COUNTERS_TABLE} SET next_value = ? WHERE counter_name = ?`,
     [value + 1n, counter],
@@ -178,10 +183,12 @@ export async function applyImport(
       );
       if (deliveries[0] !== undefined) {
         deliveryId = valueAsString(deliveries[0]["delivery_id"], "delivery ID");
+        const storedDelivery = parseStoredDeliveryContext(
+          deliveries[0]["context_json"],
+        );
         if (
           delivery === undefined ||
-          valueAsString(deliveries[0]["context_json"], "delivery context") !==
-            canonicalJson(delivery)
+          canonicalJson(storedDelivery) !== canonicalJson(delivery)
         ) {
           throw databaseError(
             "DB_REQUEST_ID_CONFLICT",
@@ -555,7 +562,7 @@ export async function applyImport(
         `SELECT next_record_id FROM ${TABLE_REGISTRY_TABLE} WHERE table_name = ?`,
         [tableName],
       );
-      let nextRecord = valueAsBigInt(
+      let nextRecord = valueAsPositiveBigInt(
         recordRows[0]?.["next_record_id"],
         "Record ID counter",
       );
@@ -567,7 +574,7 @@ export async function applyImport(
         `SELECT next_value FROM ${COUNTERS_TABLE} WHERE counter_name = ?`,
         ["imported_row"],
       );
-      let nextImportedRow = valueAsBigInt(
+      let nextImportedRow = valueAsPositiveBigInt(
         importedRowRows[0]?.["next_value"],
         "imported row counter",
       );

@@ -44,6 +44,33 @@ async function runFailure(args: readonly string[]): Promise<{
   throw new Error("The command unexpectedly succeeded");
 }
 
+async function alterFixture(
+  databasePath: string,
+  format: "sqlite" | "duckdb",
+  sql: string,
+): Promise<void> {
+  if (format === "sqlite") {
+    const sqlite = new Sqlite(databasePath);
+    try {
+      sqlite.exec(sql);
+    } finally {
+      sqlite.close();
+    }
+  } else {
+    const instance = await DuckDBInstance.create(databasePath);
+    try {
+      const connection = await instance.connect();
+      try {
+        await connection.run(sql);
+      } finally {
+        connection.closeSync();
+      }
+    } finally {
+      instance.closeSync();
+    }
+  }
+}
+
 test.each(["sqlite", "duckdb"] as const)(
   "db inspect reports damaged %s managed metadata",
   async (format) => {
@@ -53,17 +80,11 @@ test.each(["sqlite", "duckdb"] as const)(
     const { database } = await createDatabase({ path: databasePath, format });
     await database.close();
 
-    if (format === "sqlite") {
-      const sqlite = new Sqlite(databasePath);
-      sqlite.exec("DROP TABLE _consultchimps_captures");
-      sqlite.close();
-    } else {
-      const instance = await DuckDBInstance.create(databasePath);
-      const connection = await instance.connect();
-      await connection.run("DROP TABLE _consultchimps_captures");
-      connection.closeSync();
-      instance.closeSync();
-    }
+    await alterFixture(
+      databasePath,
+      format,
+      "DROP TABLE _consultchimps_captures",
+    );
 
     const failure = await runFailure(["--json", "db", "inspect", databasePath]);
     const expected = {
@@ -80,5 +101,42 @@ test.each(["sqlite", "duckdb"] as const)(
     expect(failure.stderr).not.toContain(databasePath);
     expect(failure.stdout).not.toContain("_consultchimps_captures");
     expect(failure.stderr).not.toContain("_consultchimps_captures");
+  },
+);
+
+test.each(["sqlite", "duckdb"] as const)(
+  "db deliveries reports damaged %s history with a stable error",
+  async (format) => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "cc-cli-delivery-damage-"),
+    );
+    directories.push(directory);
+    const databasePath = path.join(directory, `history.${format}`);
+    const { database } = await createDatabase({ path: databasePath, format });
+    await database.close();
+    await alterFixture(
+      databasePath,
+      format,
+      "INSERT INTO _consultchimps_delivery_events VALUES ('DEL-000001', 'synthetic-request', '{')",
+    );
+
+    const failure = await runFailure([
+      "--json",
+      "db",
+      "deliveries",
+      databasePath,
+    ]);
+    const expected = {
+      ok: false,
+      error: {
+        code: "DB_CORRUPT_DATABASE",
+        message:
+          "The recorded delivery details are damaged. Restore a verified database copy before retrying.",
+      },
+    };
+    expect(JSON.parse(failure.stdout)).toEqual(expected);
+    expect(JSON.parse(failure.stderr)).toEqual(expected);
+    expect(failure.stdout).not.toContain(databasePath);
+    expect(failure.stderr).not.toContain("SyntaxError");
   },
 );

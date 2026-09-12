@@ -470,6 +470,7 @@ function deliveryDto(delivery: DeliveryRecord): WorkspaceDeliverySummary {
   return {
     id: delivery.id,
     requestId: delivery.requestId,
+    label: delivery.context.label,
     vendor:
       typeof attributes["vendor"] === "string" ? attributes["vendor"] : "",
     entity:

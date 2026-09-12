@@ -9,11 +9,19 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import {
   engineOf,
   inspectDatabase,
+  valueAsNonNegativeBigInt,
   type Database,
   type DatabaseId,
 } from "./database.js";
 import { databaseError } from "./errors.js";
 import type { EngineTransaction } from "./internal/engine.js";
+import {
+  assertRegisteredStorage,
+  parseStoredTableSchema,
+  readRegisteredTables,
+  storageType,
+  validateRegisteredTables,
+} from "./internal/database-layout.js";
 import { DATABASE_METADATA_TABLE, TABLE_REGISTRY_TABLE } from "./metadata.js";
 import {
   identifierKey,
@@ -140,9 +148,15 @@ export async function readSchemaFingerprint(
       ? "SELECT type, name, COALESCE(sql, '') AS definition FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
       : "SELECT 'table' AS type, schema_name || '.' || table_name AS name, sql AS definition FROM duckdb_tables() WHERE NOT internal AND NOT temporary AND database_name = current_database() UNION ALL SELECT 'index' AS type, schema_name || '.' || index_name AS name, sql AS definition FROM duckdb_indexes() WHERE NOT is_primary AND database_name = current_database() ORDER BY type, name",
   );
-  const serialized = JSON.stringify(
-    rows.map((row) => [row["type"], row["name"], row["definition"]]),
-  );
+  const registered = await readRegisteredTables(transaction);
+  const serialized = JSON.stringify({
+    physical: rows.map((row) => [row["type"], row["name"], row["definition"]]),
+    registered: registered.map(({ schema, schemaVersion }) => [
+      schema.name,
+      schemaVersion.toString(),
+      schema,
+    ]),
+  });
   return bytesToHex(sha256(new TextEncoder().encode(serialized)));
 }
 
@@ -248,88 +262,13 @@ export async function planSchema(options: {
   };
 }
 
-function storageType(
-  format: Database["format"],
-  column: ColumnDefinition,
-): string {
-  switch (column.type) {
-    case "text":
-      return "VARCHAR";
-    case "timestamp":
-      return format === "duckdb" ? "TIMESTAMP" : "VARCHAR";
-    case "integer":
-      return "BIGINT";
-    case "real":
-      return "DOUBLE";
-    case "boolean":
-      return format === "duckdb" ? "BOOLEAN" : "BIGINT";
-    case "date":
-      return format === "duckdb" ? "DATE" : "VARCHAR";
-    case "decimal":
-      return format === "duckdb"
-        ? `DECIMAL(${column.precision}, ${column.scale})`
-        : "VARCHAR";
-    default: {
-      const exhaustive: never = column.type;
-      throw new Error(`Unsupported column type: ${exhaustive}`);
-    }
-  }
-}
-
 export async function assertRegisteredColumns(
   transaction: EngineTransaction,
   format: Database["format"],
   tables: readonly TableSchema[],
 ): Promise<void> {
+  await assertRegisteredStorage(transaction, format, tables);
   for (const table of tables) {
-    const actual = await transaction.query(
-      `PRAGMA ${format === "sqlite" ? "table_xinfo" : "table_info"}(${quoteIdentifier(table.name)})`,
-    );
-    const expected = new Map([
-      ["record_id", "VARCHAR"],
-      ["_imported_row_id", "BIGINT"],
-      ["_import_id", "VARCHAR"],
-      ["_source_file_id", "VARCHAR"],
-      ["_source_selection", "VARCHAR"],
-      ["_source_row", "BIGINT"],
-      ...table.columns.map(
-        (column) =>
-          [identifierKey(column.name), storageType(format, column)] as const,
-      ),
-    ]);
-    const matches =
-      actual.length === expected.size &&
-      actual.every((column) => {
-        const name = column["name"];
-        const type = column["type"];
-        if (
-          typeof name !== "string" ||
-          typeof type !== "string" ||
-          expected.get(identifierKey(name))?.replaceAll(" ", "") !==
-            type.toUpperCase().replaceAll(" ", "")
-        )
-          return false;
-        const definition = table.columns.find(
-          (candidate) => identifierKey(candidate.name) === identifierKey(name),
-        );
-        return (
-          (column["dflt_value"] === null ||
-            column["dflt_value"] === undefined) &&
-          (column["hidden"] === undefined ||
-            String(column["hidden"]) === "0") &&
-          (identifierKey(name) === "record_id" ||
-            definition?.nullable === false) ===
-            (column["notnull"] === true ||
-              column["notnull"] === 1n ||
-              column["notnull"] === 1)
-        );
-      });
-    if (!matches)
-      throw databaseError(
-        "DB_SCHEMA_DRIFT",
-        "A managed table was changed outside the database schema operations. Restore its declared layout or copy the changed data into a new managed table before importing.",
-        { table: table.name },
-      );
     await assertRegisteredConstraints(transaction, format, table.name);
     const relationships = await transaction.query(
       format === "sqlite"
@@ -493,9 +432,10 @@ export async function applySchema(
     const revisionRows = await transaction.query(
       `SELECT revision FROM ${DATABASE_METADATA_TABLE}`,
     );
-    const revision = revisionRows[0]?.["revision"];
-    const current =
-      typeof revision === "bigint" ? revision : BigInt(String(revision));
+    const current = valueAsNonNegativeBigInt(
+      revisionRows[0]?.["revision"],
+      "revision",
+    );
     if (
       current !== options.plan.baselineRevision ||
       (await readSchemaFingerprint(transaction, options.database.format)) !==
@@ -506,6 +446,7 @@ export async function applySchema(
         "The database schema changed after this plan was prepared. Prepare it again before applying.",
       );
     }
+    await validateRegisteredTables(transaction, options.database.format);
     for (const schema of options.plan.creates) {
       throwIfAborted(options.signal, "db.schema.apply");
       await createManagedTable(transaction, options.database.format, schema);
@@ -522,7 +463,7 @@ export async function applySchema(
           `The table "${addition.table}" no longer exists.`,
         );
       }
-      const schema = JSON.parse(stored) as TableSchema;
+      const schema = parseStoredTableSchema(stored, addition.table);
       for (const column of addition.columns) {
         throwIfAborted(options.signal, "db.schema.apply");
         await transaction.execute(

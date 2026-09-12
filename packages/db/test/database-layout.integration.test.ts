@@ -136,12 +136,11 @@ test.each(missingTableCases)(
 );
 
 for (const format of ["sqlite", "duckdb"] as const) {
-  test(`${format}: rejects missing internal columns and leaves valid databases unaffected`, async () => {
+  test(`${format}: rejects missing internal columns without changing data`, async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "cc-db-columns-"));
     directories.push(directory);
-    const template = await createTemplate(directory, format);
     const damaged = path.join(directory, `missing-column.${format}`);
-    await copyFile(template, damaged);
+    await copyFile(templates[format], damaged);
     const engine = await openEngine(damaged, format);
     await engine.execute(
       `ALTER TABLE ${CAPTURE_TABLE} DROP COLUMN columns_json`,
@@ -154,7 +153,10 @@ for (const format of ["sqlite", "duckdb"] as const) {
     ).rejects.toMatchObject({ code: "DB_CORRUPT_DATABASE" });
     expect(await readFile(damaged)).toEqual(before);
     await expectSentinel(damaged, format);
+  });
 
+  test(`${format}: leaves valid databases unaffected by inspection`, async () => {
+    const template = templates[format];
     const validBefore = await readFile(template);
     const valid = await openDatabase({ path: template, readonly: true });
     expect(await inspectDatabase({ database: valid })).toMatchObject({
@@ -172,7 +174,8 @@ for (const format of ["sqlite", "duckdb"] as const) {
   test(`${format}: reports a future version before validating its changed layout`, async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "cc-db-future-"));
     directories.push(directory);
-    const filePath = await createTemplate(directory, format);
+    const filePath = path.join(directory, `future.${format}`);
+    await copyFile(templates[format], filePath);
     const engine = await openEngine(filePath, format);
     await engine.execute(
       `UPDATE ${DATABASE_METADATA_TABLE} SET format_version = 2`,
@@ -194,7 +197,8 @@ for (const format of ["sqlite", "duckdb"] as const) {
   test(`${format}: rejects a view substituted for an internal table`, async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "cc-db-view-"));
     directories.push(directory);
-    const filePath = await createTemplate(directory, format);
+    const filePath = path.join(directory, `view.${format}`);
+    await copyFile(templates[format], filePath);
     const engine = await openEngine(filePath, format);
     const movedCaptureTable = `${CAPTURE_TABLE}_damaged`;
     await engine.execute(

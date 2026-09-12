@@ -312,7 +312,7 @@ describe("bounded workbook streaming", () => {
     const worksheet =
       "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
       "<row r='1'><c r='A1' t='inlineStr'><is><t>Omitted</t></is></c><c r='B1' t='inlineStr'><is><t>ExplicitN</t></is></c></row>" +
-      "<row r='2'><c r='A2'><v>1</v></c><c r='B2' t='n'><v>2.5</v></c></row>" +
+      "<row r='2'><c r='A2'><v>1</v></c><c r='B2' t='n' s='0'><v>2.5</v></c></row>" +
       "</sheetData></worksheet>";
     const input = source(
       await workbookFixtureWithParts({
@@ -436,6 +436,45 @@ describe("bounded workbook streaming", () => {
           iso: "1904-01-01T00:00:00.000",
         },
         CustomDate: { kind: "date", raw: "0", iso: "1904-01-01" },
+      },
+    });
+  });
+
+  it("retains built-in and bracketed elapsed times as numeric durations", async () => {
+    const styles =
+      "<styleSheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'>" +
+      "<numFmts count='6'><numFmt numFmtId='164' formatCode='[h]:mm:ss'/><numFmt numFmtId='165' formatCode='[hh]:mm:ss'/><numFmt numFmtId='166' formatCode='[m]:ss'/><numFmt numFmtId='167' formatCode='[mm]:ss'/><numFmt numFmtId='168' formatCode='[s]'/><numFmt numFmtId='169' formatCode='[ss]'/></numFmts>" +
+      "<cellXfs count='9'><xf numFmtId='0'/><xf numFmtId='46'/><xf numFmtId='164'/><xf numFmtId='165'/><xf numFmtId='166'/><xf numFmtId='167'/><xf numFmtId='168'/><xf numFmtId='169'/><xf numFmtId='45'/></cellXfs>" +
+      "</styleSheet>";
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Built46</t></is></c><c r='B1' t='inlineStr'><is><t>Hours</t></is></c><c r='C1' t='inlineStr'><is><t>DoubleHours</t></is></c><c r='D1' t='inlineStr'><is><t>Minutes</t></is></c><c r='E1' t='inlineStr'><is><t>DoubleMinutes</t></is></c><c r='F1' t='inlineStr'><is><t>Seconds</t></is></c><c r='G1' t='inlineStr'><is><t>DoubleSeconds</t></is></c><c r='H1' t='inlineStr'><is><t>Clock</t></is></c></row>" +
+      "<row r='2'><c r='A2' s='1'><v>1.5</v></c><c r='B2' s='2'><v>1.5</v></c><c r='C2' s='3'><v>1.5</v></c><c r='D2' s='4'><v>1.5</v></c><c r='E2' s='5'><v>1.5</v></c><c r='F2' s='6'><v>1.5</v></c><c r='G2' s='7'><v>1.5</v></c><c r='H2' s='8'><v>0.5</v></c></row>" +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/styles.xml": styles,
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { range: "'Data & More'!A1:H2" },
+      { scratch: new MemoryScratch() },
+    );
+
+    expect((await rows(reader))[0]?.cells).toEqual({
+      Built46: { kind: "number", raw: "1.5" },
+      Hours: { kind: "number", raw: "1.5" },
+      DoubleHours: { kind: "number", raw: "1.5" },
+      Minutes: { kind: "number", raw: "1.5" },
+      DoubleMinutes: { kind: "number", raw: "1.5" },
+      Seconds: { kind: "number", raw: "1.5" },
+      DoubleSeconds: { kind: "number", raw: "1.5" },
+      Clock: {
+        kind: "date",
+        raw: "0.5",
+        iso: "1904-01-01T12:00:00.000",
       },
     });
   });
@@ -706,6 +745,108 @@ describe("bounded workbook streaming", () => {
       code: "XLSX_READ_FAILED",
       cause: expect.objectContaining({
         message: expect.stringMatching(/unsupported.*cell type/iu),
+      }),
+    });
+  });
+
+  it.each([
+    ["repeated values", "<v>1</v><v>2</v>"],
+    ["a repeated value after an empty value", "<v/><v>2</v>"],
+    ["repeated formulas with a cached value", "<f>1+1</f><f>2+2</f><v>2</v>"],
+    [
+      "repeated inline-string containers",
+      "<is><t>One</t></is><is><t>Two</t></is>",
+    ],
+    ["a nested value element", "<v>1<v>2</v></v>"],
+    ["nested markup inside a value", "<v>1<r>2</r></v>"],
+  ])("rejects a cell containing %s", async (_case, contents) => {
+    const type = _case.includes("inline") ? " t='inlineStr'" : "";
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Value</t></is></c></row>" +
+      `<row r='2'><c r='A2'${type}>${contents}</c><c r='B2'><v>3</v></c></row>` +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+
+    await expect(
+      (async () => {
+        const reader = await openWorkbookRegionStream(
+          input.source,
+          { range: "'Data & More'!A1:A2" },
+          { scratch: new MemoryScratch() },
+        );
+        return rows(reader);
+      })(),
+    ).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+      cause: expect.objectContaining({
+        message: expect.stringMatching(
+          /cell.*(?:direct|more than once|nested)/iu,
+        ),
+      }),
+    });
+  });
+
+  it.each([
+    ["numeric value", "<v>1</v>"],
+    ["blank value", ""],
+    ["uncached formula", "<f>1+1</f>"],
+  ])("rejects an unavailable style on a %s", async (_case, contents) => {
+    const styles =
+      "<styleSheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><cellXfs count='1'><xf numFmtId='0'/></cellXfs></styleSheet>";
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Value</t></is></c></row>" +
+      `<row r='2'><c r='A2' s='1'>${contents}</c></row>` +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/styles.xml": styles,
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+
+    await expect(
+      (async () => {
+        const reader = await openWorkbookRegionStream(
+          input.source,
+          { range: "'Data & More'!A1:A2" },
+          { scratch: new MemoryScratch() },
+        );
+        return rows(reader);
+      })(),
+    ).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+      cause: expect.objectContaining({
+        message: expect.stringMatching(/style.*outside/iu),
+      }),
+    });
+  });
+
+  it.each([
+    ["nested", "<sst><si><t>Outer</t><si><t>Inner</t></si></si></sst>"],
+    ["misplaced", "<sst><ext><si><t>Inner</t></si></ext></sst>"],
+  ])("rejects a %s shared-string item", async (_case, sharedStrings) => {
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/sharedStrings.xml": sharedStrings,
+      }),
+    );
+
+    await expect(
+      openWorkbookRegionStream(
+        input.source,
+        { range: "'Data & More'!B2:E4" },
+        { scratch: new MemoryScratch() },
+      ),
+    ).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+      cause: expect.objectContaining({
+        message: expect.stringMatching(/shared-string item/iu),
       }),
     });
   });

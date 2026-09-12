@@ -169,6 +169,7 @@ export interface WorkspaceImportResult {
 export interface WorkspaceDeliverySummary {
   readonly id: string;
   readonly requestId: string;
+  readonly label: string;
   readonly vendor: string;
   readonly entity: string;
   readonly phase: string;

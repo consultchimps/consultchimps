@@ -5,6 +5,7 @@ import { calendarIsoText, serialCalendarParts } from "../model/calendar.js";
 
 export interface WorkbookStyles {
   readonly date1904: boolean;
+  hasStyle(styleIndex: number): boolean;
   isDateStyle(styleIndex: number): boolean;
   dateValue(raw: string, styleIndex: number): string | undefined;
 }
@@ -44,6 +45,15 @@ function formatHasTime(format: {
   return format.code === undefined
     ? LOCALE_INDEPENDENT_BUILT_IN_TIME_FORMATS.has(format.id)
     : hasTime(format.code);
+}
+
+function isElapsedFormat(format: {
+  readonly id: number;
+  readonly code?: string | undefined;
+}): boolean {
+  if (format.code === undefined) return format.id === 46;
+  const cleaned = format.code.replace(/"[^"]*"/gu, "").replace(/\\./gu, "");
+  return /\[(?:h{1,2}|m{1,2}|s{1,2})\]/iu.test(cleaned);
 }
 
 function serialDate(
@@ -107,14 +117,20 @@ export async function loadWorkbookStyles(
   const dateStyles = new Set<number>();
   for (const [index, format] of cellFormats.entries()) {
     if (
-      BUILT_IN_DATE_FORMATS.has(format.id) ||
-      (format.code !== undefined && customDateFormat(format.code))
+      !isElapsedFormat(format) &&
+      ((format.code === undefined && BUILT_IN_DATE_FORMATS.has(format.id)) ||
+        (format.code !== undefined && customDateFormat(format.code)))
     ) {
       dateStyles.add(index);
     }
   }
   return {
     date1904,
+    hasStyle(styleIndex) {
+      return entry === undefined
+        ? styleIndex === 0
+        : cellFormats[styleIndex] !== undefined;
+    },
     isDateStyle(styleIndex) {
       return dateStyles.has(styleIndex);
     },
