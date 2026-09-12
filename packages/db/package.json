@@ -1,6 +1,6 @@
 {
   "name": "@consultchimps/db",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local in-memory SQLite database model, stable record identifiers, and table bridge for ConsultChimps.",
   "license": "Apache-2.0",
   "repository": {
