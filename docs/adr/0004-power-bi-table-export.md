@@ -526,17 +526,22 @@ values.
 
 Use the existing `ByteOperationOutcome`: `outputs` contains the workbook first
 and the manifest second, and `result.artifacts` lists the matching file names
-and media types in that same order. The byte options include
-`outputName?: string`, with a fixed default of `power-bi-tables.xlsx`,
-independent of the input name, locale, or time. A supplied non-string produces
-`PBI_INVALID_OPTIONS` at the `outputName` path. For a string, apply
-`toWellFormed()`, NFKC normalization, and ECMAScript trimming, then remove one
-final `.xlsx` suffix case-insensitively. Pass that stem to the existing
-`@consultchimps/core` `safeNameFragment` with fallback `power-bi-tables`,
-retaining its portable character rules, reserved-name handling, and 80-byte
-UTF-8 truncation before any reserved-name prefix. Append lowercase `.xlsx` for
-the workbook and `.manifest.json` for the companion. Empty or fully
-sanitized-away stems use the fallback. Other extensions remain part of the stem.
+and media types in that same order. Both records must set the workbook media
+type to `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, the
+existing `WORKBOOK_MEDIA_TYPE`, and the manifest media type to
+`application/json`. Neither media type is omitted or replaced by a generic
+binary fallback. Artifact fixtures assert both lists' names, types, and order.
+The byte options include `outputName?: string`, with a fixed default of
+`power-bi-tables.xlsx`, independent of the input name, locale, or time. A
+supplied non-string produces `PBI_INVALID_OPTIONS` at the `outputName` path. For
+a string, apply `toWellFormed()`, NFKC normalization, and ECMAScript trimming,
+then remove one final `.xlsx` suffix case-insensitively. Pass that stem to the
+existing `@consultchimps/core` `safeNameFragment` with fallback
+`power-bi-tables`, retaining its portable character rules, reserved-name
+handling, and 80-byte UTF-8 truncation before any reserved-name prefix. Append
+lowercase `.xlsx` for the workbook and `.manifest.json` for the companion. Empty
+or fully sanitized-away stems use the fallback. Other extensions remain part of
+the stem.
 
 This name plan is pure and belongs to the byte engine; it needs no filesystem
 adapter. File adapters select the destination directory separately and use these
