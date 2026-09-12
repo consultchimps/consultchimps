@@ -158,6 +158,25 @@ items 1 and 8 must establish the limits and their estimator fixtures before item
 9 can claim browser support. Larger limits require an explicit caller option and
 are outside the default browser envelope.
 
+The capacity option keys and accounting units are fixed as follows. Each limit
+is inclusive; a bound equal to its limit passes that check.
+
+| Option         | Bytes counted                                                                                                                                                        |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `inputBytes`   | Byte length of the single supplied container                                                                                                                         |
+| `decodedBytes` | Cumulative bytes emitted by decompression across all container and model layers, including nested stages; count a buffer when produced, even if it is later released |
+| `outputBytes`  | Sum of the final workbook and UTF-8 manifest byte lengths, not a separate allowance per artifact                                                                     |
+| `peakBytes`    | Conservative maximum simultaneously live memory across the complete pipeline described below                                                                         |
+
+Parsing structures, decoded cells, and buffer copies consume `peakBytes` but do
+not count again as decompression output. Re-decompressing data counts each newly
+produced buffer toward `decodedBytes`. The optional combined-download archive is
+excluded from `outputBytes`; its bytes, scratch space, and download copies still
+consume `peakBytes`. Output estimates reserve both mandatory artifacts together
+before either is emitted. Capacity fixtures cover each exact limit, one byte
+beyond it, and a workbook that fits `outputBytes` alone but exceeds it when its
+manifest is included.
+
 Check the input size before reading a browser `File` into an array. Use
 validated container sizes, model row counts, and dictionary/value widths to
 conservatively bound decompression, table cells, workbook structures,
@@ -450,22 +469,22 @@ without a successful metric record.
 
 The manifest uses this reason-code vocabulary:
 
-| Code                                     | Scope  | Meaning                                                       |
-| ---------------------------------------- | ------ | ------------------------------------------------------------- |
-| `PBI_TABLE_HIDDEN`                       | Table  | Hidden table excluded by the default policy                   |
-| `PBI_TABLE_TOO_WIDE`                     | Table  | Source table exceeds 16,384 columns                           |
-| `PBI_TABLE_NO_EXPORTABLE_COLUMNS`        | Table  | No column remains decodable and representable                 |
-| `PBI_TABLE_SPLIT`                        | Table  | Rows span several worksheets; entry lists parts and ranges    |
-| `PBI_COLUMN_UNSUPPORTED_ENCODING`        | Column | Reader does not support the column's encoding                 |
-| `PBI_COLUMN_UNREADABLE`                  | Column | Corrupt or truncated column data prevents complete decoding   |
-| `PBI_COLUMN_ROW_ALIGNMENT_UNRECOVERABLE` | Column | Decoded values cannot be assigned reliably to source rows     |
-| `PBI_BINARY_CELL_TOO_LONG`               | Column | Column excluded because a base64 value exceeds the text limit |
-| `PBI_NUMERIC_AS_TEXT`                    | Values | Numeric values written as exact text under Decision 6         |
-| `PBI_NONFINITE_AS_TEXT`                  | Values | Non-finite doubles written with the defined text spelling     |
-| `PBI_DATE_ROUNDED`                       | Values | Dates changed by rounding to the nearest millisecond          |
-| `PBI_DATE_AS_TEXT`                       | Values | Original date serials preserved as text                       |
-| `PBI_BINARY_AS_BASE64`                   | Values | Non-null binary values written as base64 text                 |
-| `PBI_TEXT_TRUNCATED`                     | Values | Ordinary text values shortened to the worksheet cell limit    |
+| Code                                     | Scope  | Meaning                                                            |
+| ---------------------------------------- | ------ | ------------------------------------------------------------------ |
+| `PBI_TABLE_HIDDEN`                       | Table  | Hidden table excluded by the default policy                        |
+| `PBI_TABLE_TOO_WIDE`                     | Table  | Source table exceeds 16,384 columns                                |
+| `PBI_TABLE_NO_EXPORTABLE_COLUMNS`        | Table  | No column remains decodable and representable                      |
+| `PBI_TABLE_SPLIT`                        | Table  | Rows span several worksheets; entry lists parts and ranges         |
+| `PBI_COLUMN_UNSUPPORTED_ENCODING`        | Column | Reader does not support the column's encoding                      |
+| `PBI_COLUMN_UNREADABLE`                  | Column | Corrupt, truncated, or invalid typed data prevents a usable column |
+| `PBI_COLUMN_ROW_ALIGNMENT_UNRECOVERABLE` | Column | Decoded values cannot be assigned reliably to source rows          |
+| `PBI_BINARY_CELL_TOO_LONG`               | Column | Column excluded because a base64 value exceeds the text limit      |
+| `PBI_NUMERIC_AS_TEXT`                    | Values | Numeric values written as exact text under Decision 6              |
+| `PBI_NONFINITE_AS_TEXT`                  | Values | Non-finite doubles written with the defined text spelling          |
+| `PBI_DATE_ROUNDED`                       | Values | Dates changed by rounding to the nearest millisecond               |
+| `PBI_DATE_AS_TEXT`                       | Values | Original date serials preserved as text                            |
+| `PBI_BINARY_AS_BASE64`                   | Values | Non-null binary values written as base64 text                      |
+| `PBI_TEXT_TRUNCATED`                     | Values | Ordinary text values shortened to the worksheet cell limit         |
 
 For each table in catalog order, emit its Table-scope reasons in ascending ASCII
 code order. Then visit its columns in catalog order, emitting each column's
@@ -474,6 +493,13 @@ by code in ascending ASCII order. Values scope means a count attached to that
 column, not a separate per-cell entry or unordered list. Omit aggregates with a
 zero count. Worksheet parts remain in source row order. DAX expressions and
 worksheet provenance are metadata, not additional reason codes.
+
+`PBI_COLUMN_UNREADABLE` includes successfully decoded bytes whose values are
+invalid for their declared type, such as a non-finite date serial. Its warning
+says the column could not be read as its declared type and asks the user to
+check the source data and save the model again; it must not assert corruption
+when only semantic validation failed. Fixtures cover non-finite date serials and
+verify this exclusion code and recovery wording.
 
 Apply table exclusions in order: hidden policy, source column limit, then no
 exportable columns. A skipped column has one exclusion code: unsupported
