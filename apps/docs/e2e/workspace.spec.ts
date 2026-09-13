@@ -95,14 +95,21 @@ async function installDelayedSchemaWorker(
 }
 
 test.describe("persistent database workspace", () => {
-  test("is reachable from the header and explains its storage", async ({
+  test("is reached through Online tools and explains its storage", async ({
     page,
   }) => {
     await page.goto("/");
-    await page.getByRole("link", { name: "Workspace", exact: true }).click();
-    await expect(page).toHaveURL(/\/workspace$/u);
     await expect(
-      page.getByRole("heading", { level: 1, name: "Data workspace" }),
+      page.getByRole("link", { name: "Workspace", exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole("link", { name: "Online tools", exact: true }).click();
+    await page
+      .getByRole("navigation", { name: "Online tools" })
+      .getByRole("link", { name: "Database", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/tools\/db$/u);
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Database", exact: true }),
     ).toBeVisible();
     await expect(page.getByTestId("workspace-start")).toContainText(
       "origin-private browser storage",
@@ -169,7 +176,7 @@ test.describe("persistent database workspace", () => {
         return result;
       });
 
-    await page.goto("/workspace");
+    await page.goto("/tools/db");
     await expect.poll(storedNames).not.toContain(names.expired);
     await expect.poll(storedNames).not.toContain(names.legacyExpired);
     await expect.poll(storedNames).toContain(names.active);
@@ -207,7 +214,7 @@ test.describe("persistent database workspace", () => {
         nativeSchemaPath,
       ]);
 
-      await page.goto("/workspace");
+      await page.goto("/tools/db");
       await page
         .getByTestId("workspace-open-input")
         .setInputFiles(nativeDatabasePath);
@@ -354,7 +361,7 @@ test.describe("persistent database workspace", () => {
       ],
     });
 
-    await page.goto("/workspace");
+    await page.goto("/tools/db");
     await createDatabase(page, "sqlite");
     await page
       .getByTestId("workspace-schema-input")
@@ -427,7 +434,7 @@ test.describe("persistent database workspace", () => {
   });
 
   test("shows a schema conflict before writing", async ({ page }) => {
-    await page.goto("/workspace");
+    await page.goto("/tools/db");
     await createDatabase(page, "sqlite");
     await page
       .getByTestId("workspace-schema-input")
@@ -452,7 +459,7 @@ test.describe("persistent database workspace", () => {
     page,
     context,
   }) => {
-    await page.goto("/workspace");
+    await page.goto("/tools/db");
     await page.getByTestId("workspace-new-format").selectOption("sqlite");
     await page.getByTestId("workspace-new-name").fill("collision.sqlite");
     await page.getByTestId("workspace-new").click();
@@ -507,7 +514,7 @@ test.describe("persistent database workspace", () => {
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     const direct = await context.newPage();
-    await direct.goto("/workspace");
+    await direct.goto("/tools/db");
     const result = await direct.evaluate(
       async ({ url, schema }) => {
         const worker = new Worker(url);
@@ -816,7 +823,7 @@ test.describe("persistent database workspace", () => {
   });
 
   test("refuses a file that is not a database", async ({ page }) => {
-    await page.goto("/workspace");
+    await page.goto("/tools/db");
     await page.getByTestId("workspace-open-input").setInputFiles({
       name: "broken.sqlite",
       mimeType: "application/vnd.sqlite3",

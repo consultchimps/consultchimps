@@ -56,6 +56,12 @@ const BROWSER_TOOLS = [
     heading: "Unprotect an Excel workbook",
     card: "Unprotect Excel workbooks",
   },
+  {
+    tab: "Database",
+    route: "/tools/db",
+    heading: "Database",
+    card: "Import workbooks into a database",
+  },
 ] as const;
 
 test.describe("/tools", () => {
@@ -85,6 +91,12 @@ test.describe("/tools", () => {
     await expect(
       page.getByTestId("powerpoint-tool-group").getByRole("link"),
     ).toHaveCount(2);
+    await expect(
+      page.getByRole("heading", { name: "Database tools" }),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("database-tool-group").getByRole("link"),
+    ).toHaveCount(1);
   });
 
   test("never shows an empty 'Not in the browser yet' section", async ({
@@ -124,6 +136,9 @@ test.describe("/tools", () => {
     await expect(tabs.getByRole("group", { name: "PDF tools" })).toBeVisible();
     await expect(
       tabs.getByRole("group", { name: "PowerPoint tools" }),
+    ).toBeVisible();
+    await expect(
+      tabs.getByRole("group", { name: "Database tools" }),
     ).toBeVisible();
 
     for (const tool of BROWSER_TOOLS) {
@@ -183,6 +198,11 @@ test.describe("tool guides", () => {
       url: "/docs/tools/excel-unprotect",
       tool: "/tools/excel-unprotect",
       label: "Unprotect Excel",
+    },
+    {
+      url: "/docs/tools/data-workspace",
+      tool: "/tools/db",
+      label: "Database",
     },
   ] as const;
 

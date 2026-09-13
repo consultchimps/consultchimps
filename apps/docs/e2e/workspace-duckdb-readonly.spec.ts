@@ -4,7 +4,7 @@ test("exports, closes, and reopens a read-only DuckDB workspace", async ({
   context,
   page,
 }) => {
-  await page.goto("/workspace");
+  await page.goto("/tools/db");
   await page.getByTestId("workspace-new-format").selectOption("sqlite");
   await page
     .getByTestId("workspace-new-name")
@@ -17,7 +17,7 @@ test("exports, closes, and reopens a read-only DuckDB workspace", async ({
   await new Promise((resolve) => setTimeout(resolve, 500));
 
   const direct = await context.newPage();
-  await direct.goto("/workspace");
+  await direct.goto("/tools/db");
   const result = await direct.evaluate(async (url) => {
     const worker = new Worker(url);
     let nextId = 1;

@@ -11,7 +11,7 @@ async function createWorkspace(
   page: import("@playwright/test").Page,
   format: "duckdb" | "sqlite",
 ): Promise<void> {
-  await page.goto("/workspace");
+  await page.goto("/tools/db");
   await page.getByTestId("workspace-new-format").selectOption(format);
   await page.getByTestId("workspace-new-name").fill(`unicode.${format}`);
   await page.getByTestId("workspace-new").click();
@@ -60,7 +60,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
     const created = await createDatabase({ path: databasePath, format });
     await created.database.close();
 
-    await page.goto("/workspace");
+    await page.goto("/tools/db");
     await page.getByTestId("workspace-open-input").setInputFiles(databasePath);
     await expect(page.getByTestId("workspace-summary")).toBeVisible();
 

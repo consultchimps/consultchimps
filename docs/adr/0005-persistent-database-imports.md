@@ -22,7 +22,9 @@ interface. SQLite and DuckDB are both persistent working formats and output
 formats. Internal engine adapters implement storage, SQL, and transaction
 mechanics. Shared operations implement schemas, identifiers, imports, receipts,
 and delivery history. There is one `consultchimps db` command group and one
-browser `/workspace` for database management and import review.
+browser tool at `/tools/db` for database management and import review. The
+browser tool belongs under Online Tools and uses its shared navigation. It does
+not introduce a separate top-level Workspace tab.
 
 Native operations open a local database path. Browser operations use persistent
 browser storage and identify its working location explicitly. An origin-private

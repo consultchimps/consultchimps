@@ -225,7 +225,7 @@ test("shows changes baselines and partial descriptions from an opened database",
     await database.close();
   }
 
-  await page.goto("/workspace");
+  await page.goto("/tools/db");
   await page.getByTestId("workspace-open-input").setInputFiles(databasePath);
   await expect(page.getByTestId("workspace-summary")).toBeVisible();
   await page.getByTestId("workspace-deliveries-refresh").click();

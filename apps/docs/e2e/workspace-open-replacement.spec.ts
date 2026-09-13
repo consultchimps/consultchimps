@@ -69,7 +69,7 @@ test("opens files under an explicit working-copy name and replaces only when sel
     "replacement_data",
   );
 
-  await page.goto("/workspace");
+  await page.goto("/tools/db");
   await expect(page.getByTestId("workspace-open-overwrite")).not.toBeChecked();
   await page.getByTestId("workspace-open-name").fill("report.sqlite");
   await page.getByTestId("workspace-open-input").setInputFiles(baseline);

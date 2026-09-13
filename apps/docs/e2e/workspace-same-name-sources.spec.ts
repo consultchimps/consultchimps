@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { createWorkbookUpload, type UploadFile } from "./fixtures";
 
 async function createWorkspace(page: Page, name: string): Promise<void> {
-  await page.goto("/workspace");
+  await page.goto("/tools/db");
   await page.getByTestId("workspace-new-name").fill(name);
   await page.getByTestId("workspace-new").click();
   await expect(page.getByTestId("workspace-summary")).toBeVisible();

@@ -210,7 +210,7 @@ export const TOOLS: readonly ConsultTool[] = [
     surfaces: {
       cli: "works",
       library: "works",
-      browser: { status: "works", href: "/workspace" },
+      browser: { status: "works", href: "/tools/db" },
     },
     icon: Database,
   },

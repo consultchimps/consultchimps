@@ -163,7 +163,7 @@ test("exports committed DuckDB WAL contents from a read-only workspace", async (
     "**/__tests__/workspace-duckdb-wal-export.worker.js",
     (route) => route.fulfill({ body: bundle, contentType: "text/javascript" }),
   );
-  await page.goto("/workspace");
+  await page.goto("/tools/db");
   const result = await page.evaluate(
     async ({ sourceMainBase64, sourceWalBase64 }) => {
       const worker = new Worker(

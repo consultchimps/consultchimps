@@ -169,10 +169,10 @@ existing files before modifying them. Where an older spike format needs
 conversion, offer an explicit validated copy or a clear unsupported-format
 error. Do not invent provenance for older rows or overwrite source files.
 
-Use the existing `/workspace` for the unified database-management and import
-product. Adapt the controls needed for that scope to the persistent contract.
-Analytics and general grid editing remain paused; their migration does not
-define the new database API or block delivery.
+Use `/tools/db` under Online Tools for database management and imports. Adapt
+the controls needed for that scope to the persistent contract. Analytics and
+general grid editing remain paused; their migration does not define the new
+database API or block delivery.
 
 ## Public operation contracts
 
@@ -450,12 +450,12 @@ current experiment uses a prerelease; dependency review must settle the
 production version and offline asset requirements. The Excel extension is a
 benchmark candidate, not a replacement for the workbook conformance contract.
 
-Use the existing `/workspace` for database creation/opening, schema operations,
-import review, delivery history, and export. New and Open identify the database
-format and working location. Keep bounded previews and navigation protections
-needed by those operations. Analytics UI development, including migration of the
-general grid, is paused indefinitely. Do not preserve the old in-memory save
-lifecycle to keep paused UI code active.
+Use `/tools/db` under Online Tools for database creation/opening, schema
+operations, import review, delivery history, and export. New and Open identify
+the database format and working location. Keep bounded previews and navigation
+protections needed by those operations. Analytics UI development, including
+migration of the general grid, is paused indefinitely. Do not preserve the old
+in-memory save lifecycle to keep paused UI code active.
 
 The current browser completion checklist describes stateless bytes-only tools.
 Add an explicit persistent-workspace checklist and amend ADR 0003 before marking

@@ -15,7 +15,7 @@ test("hidden-only workbooks do not create an empty import plan", async ({
       ],
     },
   ]);
-  await page.goto("/workspace");
+  await page.goto("/tools/db");
   await page.getByTestId("workspace-new-format").selectOption("sqlite");
   await page.getByTestId("workspace-new-name").fill("empty-import.sqlite");
   await page.getByTestId("workspace-new").click();

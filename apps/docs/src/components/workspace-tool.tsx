@@ -543,7 +543,7 @@ export function WorkspaceTool() {
       guideHref="/docs/getting-started"
       guideLabel="Read the getting started guide"
       kicker="Local database"
-      title="Data workspace"
+      title="Database"
     >
       <section className={sectionClass} data-testid="workspace-start">
         <div className="grid gap-6 lg:grid-cols-2">

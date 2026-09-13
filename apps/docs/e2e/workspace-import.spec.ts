@@ -128,7 +128,7 @@ async function installLostImportReplyWorker(page: Page): Promise<void> {
 }
 
 async function create(page: Page, format: "duckdb" | "sqlite"): Promise<void> {
-  await page.goto("/workspace");
+  await page.goto("/tools/db");
   await page.getByTestId("workspace-new-format").selectOption(format);
   await page.getByTestId("workspace-new-name").fill(`imports.${format}`);
   await page.getByTestId("workspace-new").click();

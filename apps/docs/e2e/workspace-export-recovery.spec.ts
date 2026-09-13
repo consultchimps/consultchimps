@@ -50,7 +50,7 @@ test("restores caller export files across real browser database engines", async 
         contentType: "text/javascript",
       }),
   );
-  await page.goto("/workspace");
+  await page.goto("/tools/db");
   const result = await page.evaluate(async () => {
     const worker = new Worker(
       "/__tests__/workspace-export-recovery.worker.js",

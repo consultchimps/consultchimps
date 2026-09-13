@@ -22,7 +22,7 @@ export default function Page() {
         <p className="mt-5 max-w-2xl text-lg leading-8 text-fd-muted-foreground">
           These tools process your files locally using operation code shared
           with the ConsultChimps command line and libraries. Document tools
-          produce downloads. The database workspace keeps a persistent browser
+          produce downloads. The database tool keeps a persistent browser
           working copy and exports a separate file. Each guide explains its
           storage, naming, and interface defaults
         </p>

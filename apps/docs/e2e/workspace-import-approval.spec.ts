@@ -55,7 +55,7 @@ async function installDelayedResolveWorker(page: Page): Promise<void> {
 }
 
 async function prepareReadyImport(page: Page): Promise<void> {
-  await page.goto("/workspace");
+  await page.goto("/tools/db");
   await page.getByTestId("workspace-new-name").fill("approval.sqlite");
   await page.getByTestId("workspace-new").click();
   await page

@@ -206,10 +206,9 @@ for (const tool of browserTools) {
     tool.slug,
   ]);
 
-  // The persistent workspace has its own layout outside the stateless tools.
-  if (routeHref !== "/workspace" && !/^\/tools\/[a-z0-9-]+$/.test(routeHref)) {
+  if (!/^\/tools\/[a-z0-9-]+$/.test(routeHref)) {
     problems.push(
-      `entry "${tool.slug}" declares a working browser surface at "${routeHref}", which is not a /tools/<slug> route or /workspace`,
+      `entry "${tool.slug}" declares a working browser surface at "${routeHref}", which is not a /tools/<slug> route`,
     );
     continue;
   }
