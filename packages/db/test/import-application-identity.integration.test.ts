@@ -428,4 +428,107 @@ for (const format of ["sqlite", "duckdb"] as const) {
       await database.close();
     }
   });
+
+  test(`${format}: application reuse rejects corrupt stored row counts`, async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "cc-application-count-"),
+    );
+    directories.push(directory);
+    const { database } = await createDatabase({
+      path: path.join(directory, `workspace.${format}`),
+      format,
+    });
+    try {
+      const initialRecipe = recipe({ table: "Records", kind: "new-table" });
+      const initial = await preparePlan({
+        database,
+        path: path.join(directory, "initial-count.ccplan"),
+        recipe: initialRecipe,
+      });
+      let captureId: string;
+      try {
+        const applied = await applyImport({
+          database,
+          prepared: initial.prepared,
+          approved: initial.approved,
+          requestId: `${format}-count-initial`,
+        });
+        captureId = applied.captureIds[0]!;
+      } finally {
+        await initial.prepared.close();
+      }
+
+      const repeated = await preparePlan({
+        database,
+        path: path.join(directory, "repeated-count.ccplan"),
+        recipe: recipe({ table: "Records", kind: "existing-table" }),
+      });
+      const legacyKey = bytesToHex(
+        sha256(
+          new TextEncoder().encode(
+            canonicalJson([
+              captureId,
+              "Records",
+              initialRecipe.routes[0]!.destination,
+              initialRecipe.routes[0]!.columns,
+            ]),
+          ),
+        ),
+      );
+      const currentKeyRows = await engineOf(database).query(
+        `SELECT application_key FROM ${APPLICATION_TABLE} WHERE capture_id = ? AND table_name = ?`,
+        [captureId, "Records"],
+      );
+      const currentKey = currentKeyRows[0]?.["application_key"];
+      if (typeof currentKey !== "string") {
+        throw new Error("Application key was not stored as text");
+      }
+      const cases = [
+        { name: "modern negative", applicationKey: currentKey, rowCount: -1n },
+        { name: "modern mismatch", applicationKey: currentKey, rowCount: 2n },
+        { name: "legacy negative", applicationKey: legacyKey, rowCount: -1n },
+        { name: "legacy mismatch", applicationKey: legacyKey, rowCount: 2n },
+      ] as const;
+      try {
+        for (const corrupt of cases) {
+          await engineOf(database).execute(
+            `UPDATE ${APPLICATION_TABLE} SET application_key = ?, row_count = ? WHERE capture_id = ? AND table_name = ?`,
+            [corrupt.applicationKey, corrupt.rowCount, captureId, "Records"],
+          );
+          const beforeDatabase = await inspectDatabase({ database });
+          const beforeHistory = await historyCounts(database);
+
+          await expect(
+            inspectImport({
+              database,
+              prepared: repeated.prepared,
+              page: { limit: 1 },
+            }),
+            corrupt.name,
+          ).rejects.toMatchObject({ code: "DB_CORRUPT_DATABASE" });
+          await expect(
+            applyImport({
+              database,
+              prepared: repeated.prepared,
+              approved: repeated.approved,
+              requestId: `${format}-${corrupt.name.replace(" ", "-")}`,
+            }),
+            corrupt.name,
+          ).rejects.toMatchObject({ code: "DB_CORRUPT_DATABASE" });
+
+          expect(await inspectDatabase({ database })).toEqual(beforeDatabase);
+          expect(await historyCounts(database)).toEqual(beforeHistory);
+          await expect(
+            engineOf(database).query(
+              "SELECT First, Second FROM Records ORDER BY record_id",
+            ),
+          ).resolves.toEqual([{ First: "North", Second: "South" }]);
+        }
+      } finally {
+        await repeated.prepared.close();
+      }
+    } finally {
+      await database.close();
+    }
+  });
 }

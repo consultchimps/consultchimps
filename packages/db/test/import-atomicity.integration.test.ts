@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 
 import { inspectDatabase } from "../src/database.js";
 import { inspectImport } from "../src/import/inspection.js";
@@ -129,6 +129,136 @@ function multiBatchSource(options: {
 }
 
 for (const format of ["sqlite", "duckdb"] as const) {
+  test(`${format}: duplicate source and selection keys fail before capture`, async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "cc-import-identity-"));
+    directories.push(directory);
+    const { database } = await createDatabase({
+      path: path.join(directory, `workspace.${format}`),
+      format,
+    });
+    const recipe = recipeFor("Inventory", "Other");
+    const prepared = await createPreparedImport({
+      path: path.join(directory, "review.data"),
+      database,
+      recipe,
+      baselineRevision: 0n,
+    });
+    const bytes = new TextEncoder().encode("synthetic duplicate identities");
+    const readAt = vi.fn(async (offset: number, length: number) =>
+      bytes.slice(offset, offset + length),
+    );
+    const firstOpen = vi.fn(async () => ({
+      columns: ["Value"],
+      async *batches() {
+        yield [
+          {
+            sourceRow: 2,
+            cells: { Value: { kind: "string" as const, value: "First" } },
+          },
+        ];
+      },
+      async close() {},
+    }));
+    const secondOpen = vi.fn(async () => ({
+      columns: ["Value"],
+      async *batches() {
+        yield [
+          {
+            sourceRow: 3,
+            cells: { Value: { kind: "string" as const, value: "Second" } },
+          },
+        ];
+      },
+      async close() {},
+    }));
+    const duplicateSelections: ImportSource = {
+      key: "submission",
+      readerVersion: "synthetic-identity-1",
+      bytes: {
+        name: "duplicate-selections.xlsx",
+        size: bytes.length,
+        readAt,
+      },
+      selections: [
+        { key: "Inventory", label: "First", open: firstOpen },
+        { key: "Inventory", label: "Second", open: secondOpen },
+      ],
+    };
+    try {
+      await expect(
+        prepareImport({
+          database,
+          prepared,
+          recipe,
+          sources: [duplicateSelections],
+        }),
+      ).rejects.toMatchObject({
+        code: "DB_DUPLICATE_IMPORT_SELECTION",
+        details: { source: "submission", selection: "Inventory" },
+      });
+      expect(readAt).not.toHaveBeenCalled();
+      expect(firstOpen).not.toHaveBeenCalled();
+      expect(secondOpen).not.toHaveBeenCalled();
+
+      const duplicateSources = [
+        {
+          ...duplicateSelections,
+          selections: [duplicateSelections.selections[0]!],
+        },
+        {
+          ...duplicateSelections,
+          bytes: { ...duplicateSelections.bytes, name: "other.xlsx" },
+          selections: [{ ...duplicateSelections.selections[1]!, key: "Other" }],
+        },
+      ];
+      await expect(
+        prepareImport({
+          database,
+          prepared,
+          recipe,
+          sources: duplicateSources,
+        }),
+      ).rejects.toMatchObject({
+        code: "DB_DUPLICATE_IMPORT_SOURCE",
+        details: { source: "submission" },
+      });
+      expect(readAt).not.toHaveBeenCalled();
+      expect(firstOpen).not.toHaveBeenCalled();
+      expect(secondOpen).not.toHaveBeenCalled();
+
+      const preparedEngine = preparedEngineOf(prepared);
+      for (const table of [
+        PREPARED_ROW_TABLE,
+        PREPARED_CAPTURE_TABLE,
+        PREPARED_BINDING_TABLE,
+      ]) {
+        await expect(
+          preparedEngine.query(`SELECT count(*) AS count FROM ${table}`),
+        ).resolves.toEqual([{ count: 0n }]);
+      }
+
+      const valid = await prepareImport({
+        database,
+        prepared,
+        recipe,
+        sources: [
+          sourceWithSelections([
+            ["Inventory", { kind: "string", value: "First" }],
+            ["Other", { kind: "string", value: "Second" }],
+          ]),
+        ],
+      });
+      expect(valid.prepared.state).toBe("ready");
+      expect(valid.result.metrics).toMatchObject({
+        sourcesRead: 1,
+        rowsCaptured: 2,
+      });
+    } finally {
+      await prepared.close();
+      await database.close();
+    }
+  });
+
   test(`${format}: a row failure rolls back the complete import`, async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "cc-import-rollback-"));
     directories.push(directory);

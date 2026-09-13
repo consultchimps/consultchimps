@@ -54,3 +54,7 @@ databases and saved plans. Delay CLI database results until resource cleanup
 finishes, preserving valid JSON and recovery details after a committed
 operation. Check cancellation during browser replacement copies and preserve
 failed browser open cleanup so live owners continue to block replacement.
+
+Reject repeated workbook-property declarations and duplicate import source or
+selection keys before capture. Reject stored application counts that disagree
+with their capture before reporting reuse or recording new retry receipts.

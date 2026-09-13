@@ -43,6 +43,33 @@ import { assertCaptureRowCount, readSourceRowPage } from "./source-rows.js";
 const HASH_CHUNK_BYTES = 1024 * 1024;
 const CAPTURE_BATCH_ROWS = 2_000;
 
+function validateSourceSelections(
+  sources: PrepareImportOptions["sources"],
+): void {
+  const sourceKeys = new Set<string>();
+  for (const source of sources) {
+    if (sourceKeys.has(source.key)) {
+      throw databaseError(
+        "DB_DUPLICATE_IMPORT_SOURCE",
+        `Source key "${source.key}" appears more than once. Give each import source a unique key.`,
+        { source: source.key },
+      );
+    }
+    sourceKeys.add(source.key);
+    const selectionKeys = new Set<string>();
+    for (const selection of source.selections) {
+      if (selectionKeys.has(selection.key)) {
+        throw databaseError(
+          "DB_DUPLICATE_IMPORT_SELECTION",
+          `Source "${source.key}" declares selection key "${selection.key}" more than once. Give each selection in a source a unique key.`,
+          { source: source.key, selection: selection.key },
+        );
+      }
+      selectionKeys.add(selection.key);
+    }
+  }
+}
+
 async function checksumDatabaseCapture(options: {
   readonly database: PrepareImportOptions["database"];
   readonly captureId: string;
@@ -190,6 +217,7 @@ export async function prepareImport(
 ): Promise<PrepareImportOutcome> {
   throwIfAborted(options.signal, "db.prepare");
   validateImportRecipe(options.recipe);
+  validateSourceSelections(options.sources);
   if (options.prepared.databaseId !== options.database.id) {
     throw databaseError(
       "DB_PREPARED_WRONG_DATABASE",

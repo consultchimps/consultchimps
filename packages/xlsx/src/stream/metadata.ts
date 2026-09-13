@@ -119,6 +119,7 @@ function parseWorkbook(xml: string): WorkbookDocument {
   }[] = [];
   const namedRanges: StreamNamedRange[] = [];
   let date1904 = false;
+  let workbookPropertiesSeen = false;
   let activeDefinedName:
     | { readonly name: string; readonly localSheetId?: number | undefined }
     | undefined;
@@ -128,6 +129,10 @@ function parseWorkbook(xml: string): WorkbookDocument {
     parser.on("opentag", (tag) => {
       const name = localName(tag.name);
       if (name === "workbookPr") {
+        if (workbookPropertiesSeen) {
+          throw new Error("Workbook workbookPr is declared more than once.");
+        }
+        workbookPropertiesSeen = true;
         const raw = attribute(tag, "date1904");
         if (raw === undefined || raw === "0" || raw === "false") {
           date1904 = false;

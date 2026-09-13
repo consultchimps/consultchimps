@@ -383,6 +383,14 @@ restore the declared schema before resuming managed writes.
 effective column additions. Custom import readers must declare their cell keys
 in `columns`; undeclared keys return `DB_INVALID_SOURCE_COLUMN` before capture.
 
+`prepareImport` requires unique source keys and unique selection keys within
+each source. `DB_DUPLICATE_IMPORT_SOURCE` and `DB_DUPLICATE_IMPORT_SELECTION`
+reject ambiguous inputs before hashing, opening readers, or writing captures.
+Different source aliases can still share captured content. Reusing an existing
+table application checks its stored count against the capture before reporting
+reused rows or recording a request receipt; a mismatch returns
+`DB_CORRUPT_DATABASE`.
+
 Request IDs identify retryable actions. `applyImport` rejects an ID already used
 by a standalone delivery with `DB_REQUEST_ID_CONFLICT`. `recordDelivery` cannot
 create a delivery under an import-only request ID. When an import also records a
@@ -477,6 +485,10 @@ Numeric cells retain their source token; formula cells distinguish cached values
 from missing caches. Scratch storage prevents a workbook's shared-string count
 from becoming an equally large JavaScript array. Expanded ZIP limits, cell-size
 limits, cancellation, and CRC verification protect the streaming boundary.
+
+Repeated `workbookPr` metadata elements return `XLSX_READ_FAILED`, even when
+their `date1904` values agree. The reader does not choose between ambiguous
+workbook-property declarations.
 
 For numeric date cells, the streaming reader preserves a timestamp at midnight
 when an explicit format code or a locale-independent built-in time format

@@ -9,6 +9,10 @@ numeric tokens and distinguishes formula caches, missing caches, and errors. It
 reads date styles and both workbook date systems without loading the entire
 worksheet into JavaScript arrays.
 
+Repeated workbook-property declarations are rejected with `XLSX_READ_FAILED`,
+including declarations with matching values, so a later declaration cannot
+silently replace the date system.
+
 Close region readers and their workbook session after use. If closure fails,
 resolve the storage issue and call `close()` again on the same reader or
 session. Concurrent close calls share a pending attempt, and a retry closes only

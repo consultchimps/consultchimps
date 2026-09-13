@@ -137,7 +137,7 @@ export async function resolve(specifier, context, nextResolve) {
 }
 `,
   );
-  return loader;
+  return pathToFileURL(loader).href;
 }
 
 test.each([

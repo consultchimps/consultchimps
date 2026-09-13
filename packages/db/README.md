@@ -42,6 +42,12 @@ Valid supplementary characters, including emoji, are supported. An unpaired
 UTF-16 surrogate is rejected before a schema is applied. Automatic table names
 and Record ID prefixes preserve whole Unicode code points when shortened.
 
+Import source keys must be unique within one preparation, and selection keys
+must be unique within each source. Duplicate keys return
+`DB_DUPLICATE_IMPORT_SOURCE` or `DB_DUPLICATE_IMPORT_SELECTION` before reading
+sources or writing captures. Different source aliases can still reuse matching
+file content and selections.
+
 Custom `ImportSource` readers must provide valid decimal or exponent numeric
 tokens and valid date payloads. Integer tokens accept an optional `+` or `-`
 sign; integer mappings retain signed 64-bit bounds. Date `iso` values must name
@@ -97,6 +103,10 @@ a capture requires one bounded read of its stored rows during preparation. Apply
 verifies reused rows when consuming them for a new table application. Checksum
 mismatches roll back the transaction before commit. Receipt-only retries and
 already-applied table applications do not rescan row contents.
+
+Reusing a table application validates that its stored row count is nonnegative
+and matches the capture. A mismatch returns `DB_CORRUPT_DATABASE` before reuse
+metrics or a new request receipt are recorded.
 
 These are integrity checks, not digital signatures. An editor who coherently
 rewrites the artifact and its checksums can produce a different valid artifact.

@@ -2,7 +2,11 @@ import { isConsultChimpsError } from "@consultchimps/core";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 
-import { valueAsBigInt, valueAsString } from "../database.js";
+import {
+  valueAsBigInt,
+  valueAsNonNegativeBigInt,
+  valueAsString,
+} from "../database.js";
 import { databaseError } from "../errors.js";
 import type { EngineTransaction } from "../internal/engine.js";
 import { canonicalJson } from "../internal/json.js";
@@ -74,6 +78,17 @@ export async function inspectApplicationIdentity(options: {
   }
   const application = applications[0];
   if (application === undefined) return { state: "not-applied" };
+  const rowCount = valueAsNonNegativeBigInt(
+    application["row_count"],
+    "import application row count",
+  );
+  if (rowCount !== options.capture.rowCount) {
+    throw databaseError(
+      "DB_CORRUPT_DATABASE",
+      "The saved import application row count does not match its captured selection. Restore a verified database copy before retrying.",
+      { captureId: options.captureId, table: options.tableName },
+    );
+  }
   let currentKey: string;
   try {
     currentKey = effectiveApplicationKey(options);
@@ -97,7 +112,7 @@ export async function inspectApplicationIdentity(options: {
     ? {
         state: "already-applied",
         importId: valueAsString(application["import_id"], "import ID"),
-        rowCount: valueAsBigInt(application["row_count"], "row count"),
+        rowCount,
       }
     : { state: "mapping-conflict" };
 }

@@ -449,6 +449,33 @@ describe("bounded workbook streaming", () => {
   );
 
   it.each([
+    ["matching", "true", "true"],
+    ["conflicting", "false", "true"],
+  ])(
+    "rejects %s repeated workbook properties",
+    async (_label, first, second) => {
+      const workbook = workbookMetadataXml({ date1904: first }).replace(
+        "<x:sheets>",
+        `<x:workbookPr date1904='${second}'></x:workbookPr><x:sheets>`,
+      );
+      const input = source(
+        await workbookFixtureWithParts({
+          "xl/workbook.xml": workbook,
+        }),
+      );
+
+      await expect(
+        inspectWorkbookStream(input.source, { scratch: new MemoryScratch() }),
+      ).rejects.toMatchObject({
+        code: "XLSX_READ_FAILED",
+        cause: expect.objectContaining({
+          message: expect.stringMatching(/workbookPr.*more than once/),
+        }),
+      });
+    },
+  );
+
+  it.each([
     ["omitted", undefined, "visible"],
     ["visible", "visible", "visible"],
     ["hidden", "hidden", "hidden"],
