@@ -26,18 +26,28 @@ async function copyDatabase(
   connection: DuckDBConnection,
   source: string,
   destination: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const destinationName = `cc_export_${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
   const quotedDestinationName = quoteIdentifier(destinationName);
   let attached = false;
   try {
+    throwIfAborted(signal, "db.export");
     await connection.run(
       `ATTACH ${quoteStringLiteral(destination)} AS ${quotedDestinationName}`,
     );
     attached = true;
-    await connection.run(
-      `COPY FROM DATABASE ${quoteIdentifier(source)} TO ${quotedDestinationName}`,
-    );
+    throwIfAborted(signal, "db.export");
+    const interrupt = (): void => connection.interrupt();
+    signal?.addEventListener("abort", interrupt, { once: true });
+    try {
+      await connection.run(
+        `COPY FROM DATABASE ${quoteIdentifier(source)} TO ${quotedDestinationName}`,
+      );
+    } finally {
+      signal?.removeEventListener("abort", interrupt);
+    }
+    throwIfAborted(signal, "db.export");
     await connection.run(`DETACH ${quotedDestinationName}`);
     attached = false;
   } catch (error) {
@@ -48,6 +58,7 @@ async function copyDatabase(
         // Preserve the copy failure while releasing the attached destination when possible.
       }
     }
+    throwIfAborted(signal, "db.export");
     throw error;
   }
 }
@@ -295,10 +306,12 @@ export class NodeDuckDbEngine implements DatabaseEngine {
     await this.#exclusive(() => this.#execute("CHECKPOINT"));
   }
 
-  async copyTo(destination: string): Promise<void> {
+  async copyTo(destination: string, signal?: AbortSignal): Promise<void> {
     await this.#exclusive(async () => {
+      throwIfAborted(signal, "db.export");
       if (!this.#readonly) {
         await this.#execute("CHECKPOINT");
+        throwIfAborted(signal, "db.export");
         const rows = await this.#query(
           "SELECT current_database() AS database_name",
         );
@@ -306,7 +319,7 @@ export class NodeDuckDbEngine implements DatabaseEngine {
         if (typeof source !== "string") {
           throw new Error("DuckDB returned an invalid database name");
         }
-        await copyDatabase(this.#connection, source, destination);
+        await copyDatabase(this.#connection, source, destination, signal);
         return;
       }
 
@@ -317,7 +330,7 @@ export class NodeDuckDbEngine implements DatabaseEngine {
         await connection.run(
           `ATTACH ${quoteStringLiteral(this.#path)} AS ${quoteIdentifier(sourceName)} (READ_ONLY)`,
         );
-        await copyDatabase(connection, sourceName, destination);
+        await copyDatabase(connection, sourceName, destination, signal);
         await connection.run(`DETACH ${quoteIdentifier(sourceName)}`);
       } finally {
         connection.closeSync();

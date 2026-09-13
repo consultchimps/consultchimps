@@ -430,6 +430,10 @@ exported file with `--force`, keep other applications from writing that
 destination until export finishes. Use a new filename if exclusive access is
 uncertain.
 
+Cancelling a CLI export before file publication leaves the destination unchanged
+and attempts to remove the private staged copy. Cancellation is no longer
+checked once file publication begins.
+
 The Node library refuses replacement with `DB_NATIVE_FILE_BUSY` while a database
 or plan remains open through the same runtime, including a filesystem alias.
 Close those handles first. Other processes must also release the destination
@@ -445,8 +449,8 @@ reuses that evidence.
 
 The native pipeline has been measured with a generated one-million-row workbook.
 That run took about 13 seconds to capture, 2 seconds to review captured values,
-and 13 seconds to apply to DuckDB. Its initial database occupied about 112 MB.
-Sampled process memory during apply reached about 799 MB in a process warmed by
+and 11 seconds to apply to DuckDB. Its initial database occupied about 110 MB.
+Sampled process memory during apply reached about 862 MB in a process warmed by
 the smaller benchmark. These measurements depend on row width, strings,
 constraints, storage, and concurrent work. They do not establish a browser
 capacity limit.

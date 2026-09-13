@@ -84,6 +84,11 @@ same runtime, including filesystem aliases, with `DB_NATIVE_FILE_BUSY`. Close
 those handles before replacement. Callers must also prevent other processes from
 opening or writing the destination during replacement.
 
+Native exports check cancellation after copying and validation, and again before
+entering file publication. Cancellation before that boundary leaves the
+destination unchanged and attempts to remove the private staged copy.
+Cancellation is no longer checked once file publication begins.
+
 `consultchimps db resolve --recipe` replaces the saved plan's table routes. A
 selection omitted from the replacement recipe is excluded from table loading.
 Its captured rows remain in the plan and become received evidence in the managed

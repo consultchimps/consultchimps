@@ -182,9 +182,16 @@ export class NodeSqliteEngine implements DatabaseEngine {
     });
   }
 
-  async backupTo(destination: string): Promise<void> {
+  async backupTo(destination: string, signal?: AbortSignal): Promise<void> {
     await this.#exclusive(async () => {
-      await this.#database.backup(destination);
+      throwIfAborted(signal, "db.export");
+      await this.#database.backup(destination, {
+        progress() {
+          throwIfAborted(signal, "db.export");
+          return 100;
+        },
+      });
+      throwIfAborted(signal, "db.export");
     });
   }
 

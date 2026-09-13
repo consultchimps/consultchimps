@@ -6,6 +6,7 @@ import {
   publishStagedFile,
   type FilePublicationPlan,
 } from "@consultchimps/files";
+import { throwIfAborted } from "@consultchimps/core";
 
 import { databaseError } from "./errors.js";
 
@@ -166,9 +167,12 @@ export class NativeFileRegistry {
   async publish(options: {
     readonly temporary: string;
     readonly plan: FilePublicationPlan;
+    readonly signal?: AbortSignal | undefined;
   }): Promise<void> {
     await this.#exclusive(async () => {
+      throwIfAborted(options.signal, "db.export");
       await this.#assertNotOpen(options.plan.output);
+      throwIfAborted(options.signal, "db.export");
       await publishStagedFile(options);
     });
   }

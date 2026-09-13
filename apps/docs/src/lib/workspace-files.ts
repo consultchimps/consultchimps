@@ -216,7 +216,10 @@ export class BrowserOpfsFile implements RandomAccessFile {
   readonly #access: OpfsSyncAccessHandle;
   readonly #removeOnClose: boolean;
   #size: number;
+  #accessClosed = false;
+  #removed = false;
   #closed = false;
+  #closing: Promise<void> | undefined;
 
   private constructor(
     name: string,
@@ -240,13 +243,25 @@ export class BrowserOpfsFile implements RandomAccessFile {
     const root = await storageManager().getDirectory();
     const handle = await root.getFileHandle(name, { create });
     const access = await handle.createSyncAccessHandle();
-    return new BrowserOpfsFile(
-      name,
-      handle,
-      access,
-      (await handle.getFile()).size,
-      removeOnClose,
-    );
+    try {
+      return new BrowserOpfsFile(
+        name,
+        handle,
+        access,
+        (await handle.getFile()).size,
+        removeOnClose,
+      );
+    } catch (openFailure) {
+      try {
+        access.close();
+      } catch (cleanupFailure) {
+        throw new AggregateError(
+          [openFailure, cleanupFailure],
+          "Opening and releasing the browser working file failed",
+        );
+      }
+      throw openFailure;
+    }
   }
 
   get size(): number {
@@ -288,18 +303,51 @@ export class BrowserOpfsFile implements RandomAccessFile {
     return this.#handle.getFile();
   }
 
-  async close(): Promise<void> {
-    if (this.#closed) return;
-    this.#closed = true;
-    this.#access.flush();
-    this.#access.close();
-    if (!this.#removeOnClose) return;
-    try {
-      await removeOpfsFile(this.name);
-    } catch (error) {
-      if (!(error instanceof DOMException && error.name === "NotFoundError")) {
-        throw error;
+  close(): Promise<void> {
+    if (this.#closing !== undefined) return this.#closing;
+    if (this.#closed) return Promise.resolve();
+    const closing = this.#closeOnce().finally(() => {
+      if (this.#closing === closing) this.#closing = undefined;
+    });
+    this.#closing = closing;
+    return closing;
+  }
+
+  async #closeOnce(): Promise<void> {
+    const failures: unknown[] = [];
+    if (!this.#accessClosed) {
+      try {
+        this.#access.flush();
+      } catch (error) {
+        failures.push(error);
       }
+      try {
+        this.#access.close();
+        this.#accessClosed = true;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (this.#accessClosed && this.#removeOnClose && !this.#removed) {
+      try {
+        await removeOpfsFile(this.name);
+        this.#removed = true;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "NotFoundError") {
+          this.#removed = true;
+        } else {
+          failures.push(error);
+        }
+      }
+    }
+    this.#closed =
+      this.#accessClosed && (!this.#removeOnClose || this.#removed);
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(
+        failures,
+        "Closing the browser working file failed",
+      );
     }
   }
 }

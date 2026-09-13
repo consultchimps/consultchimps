@@ -506,7 +506,7 @@ export interface ExportNodeDatabaseResult extends OperationResult<
 export async function exportDatabase(
   options: ExportNodeDatabaseOptions,
 ): Promise<ExportNodeDatabaseResult> {
-  options.signal?.throwIfAborted();
+  throwIfAborted(options.signal, "db.export");
   const sourcePath = databasePaths.get(options.database);
   if (sourcePath === undefined) {
     throw databaseError(
@@ -540,9 +540,9 @@ export async function exportDatabase(
     if (format === options.database.format) {
       const source = engineOf(options.database);
       if (source instanceof NodeSqliteEngine) {
-        await source.backupTo(temporary);
+        await source.backupTo(temporary, options.signal);
       } else if (source instanceof NodeDuckDbEngine) {
-        await source.copyTo(temporary);
+        await source.copyTo(temporary, options.signal);
       } else {
         throw databaseError(
           "DB_NATIVE_ENGINE_REQUIRED",
@@ -567,6 +567,7 @@ export async function exportDatabase(
       await target.close();
       target = undefined;
     }
+    throwIfAborted(options.signal, "db.export");
     const validationEngine = await openEngine(temporary, format, true);
     try {
       const validation = await openDatabaseHandle(validationEngine);
@@ -575,8 +576,14 @@ export async function exportDatabase(
       await validationEngine.close().catch(() => undefined);
       throw error;
     }
+    throwIfAborted(options.signal, "db.export");
     const bytesWritten = Number((await stat(temporary)).size);
-    await nativeFiles.publish({ temporary, plan: publication });
+    throwIfAborted(options.signal, "db.export");
+    await nativeFiles.publish({
+      temporary,
+      plan: publication,
+      signal: options.signal,
+    });
     return {
       operation: "db.export",
       artifacts: [

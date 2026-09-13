@@ -140,7 +140,10 @@ function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
 
 function errorDetails(error: unknown): {
   readonly code?: string;
+  readonly name?: string;
   readonly message: string;
+  readonly cause?: unknown;
+  readonly errors?: readonly unknown[];
 } {
   const code =
     typeof error === "object" && error !== null
@@ -148,7 +151,14 @@ function errorDetails(error: unknown): {
       : undefined;
   return {
     ...(typeof code === "string" ? { code } : {}),
+    ...(error instanceof Error ? { name: error.name } : {}),
     message: error instanceof Error ? error.message : String(error),
+    ...(error instanceof Error && error.cause !== undefined
+      ? { cause: errorDetails(error.cause) }
+      : {}),
+    ...(error instanceof AggregateError
+      ? { errors: error.errors.map(errorDetails) }
+      : {}),
   };
 }
 
