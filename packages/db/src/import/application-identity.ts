@@ -1,0 +1,262 @@
+import { isConsultChimpsError } from "@consultchimps/core";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
+
+import { valueAsBigInt, valueAsString } from "../database.js";
+import { databaseError } from "../errors.js";
+import type { EngineTransaction } from "../internal/engine.js";
+import { canonicalJson } from "../internal/json.js";
+import { APPLICATION_TABLE, PLAN_TABLE } from "../metadata.js";
+import { identifierKey, type TableSchema } from "../schema.js";
+import { parseImportRecipe } from "../validators.js";
+import { effectiveMappingKey } from "./application-key.js";
+import { routeColumns, routeKey, type PreparedCapture } from "./planning.js";
+import type { ImportRecipe } from "./types.js";
+
+function corruptHistory(message: string, cause?: unknown): never {
+  throw databaseError("DB_CORRUPT_DATABASE", message, undefined, cause);
+}
+
+function destinationTable(
+  route: ImportRecipe["routes"][number],
+): string | undefined {
+  if (route.destination.kind === "existing-table") {
+    return route.destination.table;
+  }
+  if (route.destination.kind === "new-table") {
+    return route.destination.schema.name;
+  }
+  return undefined;
+}
+
+export function effectiveApplicationKey(options: {
+  readonly captureId: string;
+  readonly tableName: string;
+  readonly schema: TableSchema;
+  readonly route: ImportRecipe["routes"][number];
+  readonly capture: PreparedCapture;
+}): string {
+  return effectiveMappingKey({
+    captureId: options.captureId,
+    tableName: options.tableName,
+    schema: options.schema,
+    columns: routeColumns(options.route, options.capture),
+  });
+}
+
+export type ImportApplicationState =
+  | { readonly state: "not-applied" }
+  | {
+      readonly state: "already-applied";
+      readonly importId: string;
+      readonly rowCount: bigint;
+    }
+  | { readonly state: "mapping-conflict" };
+
+export async function inspectApplicationIdentity(options: {
+  readonly transaction: EngineTransaction;
+  readonly captureId: string;
+  readonly tableName: string;
+  readonly schema: TableSchema;
+  readonly route: ImportRecipe["routes"][number];
+  readonly capture: PreparedCapture;
+}): Promise<ImportApplicationState> {
+  const applications = await options.transaction.query(
+    `SELECT import_id, application_key, plan_id, plan_revision, row_count FROM ${APPLICATION_TABLE} WHERE capture_id = ? AND table_name = ? ORDER BY import_id`,
+    [options.captureId, options.tableName],
+  );
+  if (applications.length > 1) {
+    throw databaseError(
+      "DB_CORRUPT_DATABASE",
+      "The database has duplicate import applications for one capture and table. Restore a verified database copy before retrying.",
+      { captureId: options.captureId, table: options.tableName },
+    );
+  }
+  const application = applications[0];
+  if (application === undefined) return { state: "not-applied" };
+  let currentKey: string;
+  try {
+    currentKey = effectiveApplicationKey(options);
+  } catch (cause) {
+    if (!isConsultChimpsError(cause) || cause.code !== "DB_STALE_IMPORT_PLAN") {
+      throw cause;
+    }
+    return { state: "mapping-conflict" };
+  }
+  const storedKey = await historicalEffectiveApplicationKey({
+    transaction: options.transaction,
+    storedKey: valueAsString(application["application_key"], "application key"),
+    planId: valueAsString(application["plan_id"], "plan ID"),
+    planRevision: valueAsBigInt(application["plan_revision"], "plan revision"),
+    captureId: options.captureId,
+    tableName: options.tableName,
+    schema: options.schema,
+    capture: options.capture,
+  });
+  return storedKey === currentKey
+    ? {
+        state: "already-applied",
+        importId: valueAsString(application["import_id"], "import ID"),
+        rowCount: valueAsBigInt(application["row_count"], "row count"),
+      }
+    : { state: "mapping-conflict" };
+}
+
+function legacyApplicationKey(options: {
+  readonly captureId: string;
+  readonly tableName: string;
+  readonly route: ImportRecipe["routes"][number];
+  readonly capture: PreparedCapture;
+}): string {
+  return bytesToHex(
+    sha256(
+      new TextEncoder().encode(
+        canonicalJson([
+          options.captureId,
+          options.tableName,
+          options.route.destination,
+          routeColumns(options.route, options.capture),
+        ]),
+      ),
+    ),
+  );
+}
+
+function parseHistoryJson(value: unknown, field: string): unknown {
+  try {
+    return JSON.parse(valueAsString(value, field));
+  } catch (cause) {
+    return corruptHistory(
+      "The saved import application has invalid plan history. Restore a verified database copy before retrying.",
+      cause,
+    );
+  }
+}
+
+function historicalBindingKeys(value: unknown, captureId: string): Set<string> {
+  if (!Array.isArray(value)) {
+    return corruptHistory(
+      "The saved import application has invalid source bindings. Restore a verified database copy before retrying.",
+    );
+  }
+  const keys = new Set<string>();
+  for (const binding of value) {
+    if (
+      typeof binding !== "object" ||
+      binding === null ||
+      Array.isArray(binding)
+    ) {
+      return corruptHistory(
+        "The saved import application has invalid source bindings. Restore a verified database copy before retrying.",
+      );
+    }
+    const fields = binding as Record<string, unknown>;
+    if (
+      typeof fields["captureId"] !== "string" ||
+      typeof fields["source"] !== "string" ||
+      typeof fields["selection"] !== "string"
+    ) {
+      return corruptHistory(
+        "The saved import application has invalid source bindings. Restore a verified database copy before retrying.",
+      );
+    }
+    if (fields["captureId"] === captureId) {
+      keys.add(routeKey(fields["source"], fields["selection"]));
+    }
+  }
+  if (keys.size === 0) {
+    return corruptHistory(
+      "The saved import application is missing its source binding. Restore a verified database copy before retrying.",
+    );
+  }
+  return keys;
+}
+
+export async function historicalEffectiveApplicationKey(options: {
+  readonly transaction: EngineTransaction;
+  readonly storedKey: string;
+  readonly planId: string;
+  readonly planRevision: bigint;
+  readonly captureId: string;
+  readonly tableName: string;
+  readonly schema: TableSchema;
+  readonly capture: PreparedCapture;
+}): Promise<string> {
+  if (/^mapping-v1:[0-9a-f]{64}$/u.test(options.storedKey)) {
+    return options.storedKey;
+  }
+  if (!/^[0-9a-f]{64}$/u.test(options.storedKey)) {
+    return corruptHistory(
+      "The saved import application has an invalid identity. Restore a verified database copy before retrying.",
+    );
+  }
+  const rows = await options.transaction.query(
+    `SELECT state, recipe_json, bindings_json FROM ${PLAN_TABLE} WHERE plan_id = ? AND plan_revision = ?`,
+    [options.planId, options.planRevision],
+  );
+  if (
+    rows.length !== 1 ||
+    valueAsString(rows[0]?.["state"], "plan state") !== "applied"
+  ) {
+    return corruptHistory(
+      "The saved import application is missing its applied plan history. Restore a verified database copy before retrying.",
+    );
+  }
+  let recipe: ImportRecipe;
+  try {
+    recipe = parseImportRecipe(
+      parseHistoryJson(rows[0]?.["recipe_json"], "import recipe"),
+    );
+  } catch (cause) {
+    return corruptHistory(
+      "The saved import application has invalid plan history. Restore a verified database copy before retrying.",
+      cause,
+    );
+  }
+  const bindings = historicalBindingKeys(
+    parseHistoryJson(rows[0]?.["bindings_json"], "source bindings"),
+    options.captureId,
+  );
+  const routes = recipe.routes.filter(
+    (route) =>
+      bindings.has(routeKey(route.source, route.selection)) &&
+      destinationTable(route) !== undefined &&
+      identifierKey(destinationTable(route)!) ===
+        identifierKey(options.tableName),
+  );
+  const legacyMatches = routes.filter(
+    (route) =>
+      legacyApplicationKey({
+        captureId: options.captureId,
+        tableName: options.tableName,
+        route,
+        capture: options.capture,
+      }) === options.storedKey,
+  );
+  let effectiveKeys: Set<string>;
+  try {
+    effectiveKeys = new Set(
+      legacyMatches.map((route) =>
+        effectiveApplicationKey({
+          captureId: options.captureId,
+          tableName: options.tableName,
+          schema: options.schema,
+          route,
+          capture: options.capture,
+        }),
+      ),
+    );
+  } catch (cause) {
+    if (!isConsultChimpsError(cause)) throw cause;
+    return corruptHistory(
+      "The saved import application has invalid column mapping history. Restore a verified database copy before retrying.",
+      cause,
+    );
+  }
+  if (effectiveKeys.size !== 1) {
+    return corruptHistory(
+      "The saved import application does not identify one column mapping. Restore a verified database copy before retrying.",
+    );
+  }
+  return [...effectiveKeys][0]!;
+}

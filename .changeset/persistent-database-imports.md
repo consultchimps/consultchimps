@@ -1,0 +1,37 @@
+---
+"@consultchimps/core": minor
+"@consultchimps/files": minor
+"@consultchimps/xlsx": minor
+"@consultchimps/db": major
+"@consultchimps/messages": minor
+"consultchimps": minor
+---
+
+Create and reopen persistent SQLite and DuckDB databases, prepare workbook
+imports for review, and retain source captures and separately recorded
+deliveries. Add bounded workbook reading and file access for large imports.
+
+Replace the database spike's synchronous in-memory API with asynchronous
+persistent operations. Applications must migrate to the new database and runtime
+entry points. Saved source files are not automatically rewritten.
+
+Add the `consultchimps db` command group. Portable CLI distribution now includes
+native engine assets in an archive for its operating system, architecture, and
+Node major, rather than a single JavaScript file.
+
+Bind prepared artifact format 3 reviews to their metadata fingerprint and
+capture row checksums. Verify consumed row values before committing an import.
+Version 1 and 2 spike plans must be regenerated from their source files;
+existing working database files keep their format.
+
+Accept leading-plus integer tokens consistently during inference and import.
+Keep database and import-plan replacement blocked after failed closure until a
+close retry succeeds.
+
+Reject ill-formed Unicode in schema identifiers and Record ID components. Reject
+added, missing, or reordered internal metadata columns when opening working
+databases and saved import plans.
+
+Preserve supplementary Unicode characters in inferred table names and Record ID
+prefixes. Keep streaming workbook cleanup retryable after a scratch-file close
+failure, and report failed browser candidate cleanup with recovery locations.

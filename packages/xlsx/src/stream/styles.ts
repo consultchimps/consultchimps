@@ -1,0 +1,214 @@
+import { attribute, localName, parseXml } from "./xml.js";
+import { readMetadataText, type ZipPackage } from "./zip.js";
+import type { FileEntry } from "@zip.js/zip.js";
+import { calendarIsoText, serialCalendarParts } from "../model/calendar.js";
+import {
+  activeNumberFormatSection,
+  parseNumberFormatSections,
+  type NumberFormatSection,
+} from "./number-format-sections.js";
+
+export interface WorkbookStyles {
+  readonly date1904: boolean;
+  hasStyle(styleIndex: number): boolean;
+  isDateStyle(styleIndex: number): boolean;
+  dateValue(raw: string, styleIndex: number): string | undefined;
+}
+
+const BUILT_IN_DATE_FORMATS = new Set([
+  14, 15, 16, 17, 18, 19, 20, 21, 22, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
+  45, 46, 47, 50, 51, 52, 53, 54, 55, 56, 57, 58,
+]);
+
+const LOCALE_INDEPENDENT_BUILT_IN_TIME_FORMATS = new Set([
+  18, 19, 20, 21, 22, 45, 46, 47,
+]);
+
+interface NumberFormat {
+  readonly id: number;
+  readonly code?: string | undefined;
+  readonly sections?: readonly NumberFormatSection[] | undefined;
+}
+
+function numberFormatId(
+  raw: string,
+  owner: "custom number format" | "cell style",
+): number {
+  const match = /^[\t\n\r ]*([+-]?)(\d+)[\t\n\r ]*$/u.exec(raw);
+  if (match === null) {
+    throw new Error(`A ${owner} has an invalid number format ID.`);
+  }
+  const sign = match[1];
+  const digits = match[2]!.replace(/^0+(?=\d)/u, "");
+  if (
+    (sign === "-" && digits !== "0") ||
+    digits.length > 10 ||
+    (digits.length === 10 && digits > "4294967295")
+  ) {
+    throw new Error(`A ${owner} has an invalid number format ID.`);
+  }
+  return Number(digits);
+}
+
+function cleanedFormat(format: string): string {
+  return format
+    .replace(/"[^"]*"/gu, "")
+    .replace(/\\./gu, "")
+    .replace(/\[(?!(?:h{1,2}|m{1,2}|s{1,2})\])[^\]]*\]/giu, "")
+    .replace(/_.|\*./gu, "")
+    .toLowerCase();
+}
+
+function customDateFormat(format: string): boolean {
+  return /(?:^|[^a-z])[ymdhs]+(?:[^a-z]|$)/u.test(cleanedFormat(format));
+}
+
+function hasTime(format: string | undefined): boolean {
+  if (!format) return false;
+  const cleaned = cleanedFormat(format);
+  return /[hs]/u.test(cleaned) || /\[[hms]+\]/u.test(cleaned);
+}
+
+function formatHasTime(format: NumberFormat): boolean {
+  return format.code === undefined
+    ? LOCALE_INDEPENDENT_BUILT_IN_TIME_FORMATS.has(format.id)
+    : hasTime(format.code);
+}
+
+function isElapsedFormat(format: NumberFormat): boolean {
+  if (format.code === undefined) return format.id === 46;
+  const cleaned = cleanedFormat(format.code);
+  return /\[(?:h{1,2}|m{1,2}|s{1,2})\]/iu.test(cleaned);
+}
+
+function serialDate(
+  raw: string,
+  date1904: boolean,
+  includeTime: boolean,
+): string | undefined {
+  if (!/^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?$/u.test(raw)) {
+    return undefined;
+  }
+  const serial = Number(raw);
+  const parts = serialCalendarParts(serial, date1904);
+  if (parts === undefined) return undefined;
+  const iso = calendarIsoText(parts);
+  const carriesTime =
+    parts.hour !== 0 ||
+    parts.minute !== 0 ||
+    parts.second !== 0 ||
+    parts.millisecond !== 0;
+  return !includeTime && !carriesTime ? iso.slice(0, 10) : iso.slice(0, -1);
+}
+
+export async function loadWorkbookStyles(
+  archive: ZipPackage,
+  entry: FileEntry | undefined,
+  date1904: boolean,
+  signal: AbortSignal | undefined,
+): Promise<WorkbookStyles> {
+  const customFormats = new Map<number, string>();
+  const cellFormatIds: number[] = [];
+  if (entry) {
+    const xml = await readMetadataText(entry, archive.limits, signal);
+    let insideCellFormats = false;
+    parseXml(xml, (parser) => {
+      parser.on("opentag", (tag) => {
+        const name = localName(tag.name);
+        if (name === "numFmt") {
+          const rawId = attribute(tag, "numFmtId");
+          const code = attribute(tag, "formatCode");
+          if (rawId === undefined) {
+            throw new Error(
+              "A custom number format has an invalid number format ID.",
+            );
+          }
+          if (code === undefined) {
+            throw new Error("A custom number format is missing formatCode.");
+          }
+          const id = numberFormatId(rawId, "custom number format");
+          if (customFormats.has(id)) {
+            throw new Error(
+              `Custom number format ID "${id}" is declared more than once.`,
+            );
+          }
+          customFormats.set(id, code);
+        } else if (name === "cellXfs") {
+          insideCellFormats = true;
+        } else if (insideCellFormats && name === "xf") {
+          const id = numberFormatId(
+            attribute(tag, "numFmtId") ?? "0",
+            "cell style",
+          );
+          cellFormatIds.push(id);
+        }
+      });
+      parser.on("closetag", (tag) => {
+        if (localName(tag.name) === "cellXfs") insideCellFormats = false;
+      });
+    });
+  }
+  const cellFormats = cellFormatIds.map((id): NumberFormat => {
+    const code = customFormats.get(id);
+    if (code === undefined && id >= 164) {
+      throw new Error(
+        `Cell style number format ID "${id}" has no custom number format declaration.`,
+      );
+    }
+    return code === undefined
+      ? { id }
+      : { id, code, sections: parseNumberFormatSections(code) };
+  });
+  const dateStyles = new Set<number>();
+  for (const [index, format] of cellFormats.entries()) {
+    if (
+      (format.code === undefined &&
+        !isElapsedFormat(format) &&
+        BUILT_IN_DATE_FORMATS.has(format.id)) ||
+      (format.sections !== undefined &&
+        format.sections
+          .slice(0, 3)
+          .some(
+            (section) =>
+              !isElapsedFormat({ id: format.id, code: section.code }) &&
+              customDateFormat(section.code),
+          ))
+    ) {
+      dateStyles.add(index);
+    }
+  }
+  return {
+    date1904,
+    hasStyle(styleIndex) {
+      return entry === undefined
+        ? styleIndex === 0
+        : cellFormats[styleIndex] !== undefined;
+    },
+    isDateStyle(styleIndex) {
+      return dateStyles.has(styleIndex);
+    },
+    dateValue(raw, styleIndex) {
+      const format = cellFormats[styleIndex];
+      if (!dateStyles.has(styleIndex) || format === undefined) return undefined;
+      const section =
+        format.sections === undefined
+          ? undefined
+          : activeNumberFormatSection(format.sections, Number(raw));
+      const activeFormat =
+        format.sections === undefined
+          ? format
+          : section === undefined
+            ? undefined
+            : { id: format.id, code: section.code };
+      if (
+        activeFormat === undefined ||
+        isElapsedFormat(activeFormat) ||
+        (activeFormat.code !== undefined &&
+          !customDateFormat(activeFormat.code))
+      ) {
+        return undefined;
+      }
+      return serialDate(raw, date1904, formatHasTime(activeFormat));
+    },
+  };
+}
