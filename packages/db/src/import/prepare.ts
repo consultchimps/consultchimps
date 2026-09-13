@@ -1,7 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 
-import { throwIfAborted } from "@consultchimps/core";
+import { isConsultChimpsError, throwIfAborted } from "@consultchimps/core";
 
 import { valueAsString } from "../database.js";
 import { databaseError } from "../errors.js";
@@ -31,6 +31,8 @@ import type {
   PrepareImportOutcome,
 } from "./types.js";
 import { validateColumnMappings, validateImportRecipe } from "../validators.js";
+import { assertValidImportDateCell } from "./date-cell.js";
+import { assertValidImportNumberCell } from "./number-cell.js";
 
 const HASH_CHUNK_BYTES = 1024 * 1024;
 const CAPTURE_BATCH_ROWS = 2_000;
@@ -273,6 +275,33 @@ export async function prepareImport(
                 );
               }
               lastSourceRow = row.sourceRow;
+              for (const column in row.cells) {
+                if (!Object.hasOwn(row.cells, column)) continue;
+                const cell = row.cells[column]!;
+                try {
+                  assertValidImportDateCell(cell, "source");
+                  assertValidImportNumberCell(cell, "source");
+                } catch (error) {
+                  if (
+                    !isConsultChimpsError(error) ||
+                    (error.code !== "DB_INVALID_SOURCE_DATE" &&
+                      error.code !== "DB_INVALID_SOURCE_NUMBER")
+                  ) {
+                    throw error;
+                  }
+                  throw databaseError(
+                    error.code,
+                    error.message,
+                    {
+                      source: source.key,
+                      selection: selection.key,
+                      sourceRow: row.sourceRow,
+                      column,
+                    },
+                    error,
+                  );
+                }
+              }
               for (const column of columnNames) {
                 const cell = row.cells[column] ?? { kind: "blank" };
                 const profile = profiles.get(column);

@@ -7,6 +7,11 @@ import {
   type ColumnType,
 } from "../schema.js";
 import type { ImportCell } from "./types.js";
+import {
+  assertValidImportDateCell,
+  validatedImportDateIso,
+} from "./date-cell.js";
+import { assertValidImportNumberCell } from "./number-cell.js";
 
 const SIGNED_BIGINT_MIN = -(2n ** 63n);
 const SIGNED_BIGINT_MAX = 2n ** 63n - 1n;
@@ -129,20 +134,26 @@ function parseStoredCell(value: unknown, allowFormula: boolean): ImportCell {
         kind: "string",
         value: storedString(cell["value"], "captured string value"),
       };
-    case "number":
-      return {
+    case "number": {
+      const parsed: ImportCell = {
         kind: "number",
         raw: storedString(cell["raw"], "captured number value"),
       };
+      assertValidImportNumberCell(parsed, "prepared");
+      return parsed;
+    }
     case "boolean":
       if (typeof cell["value"] !== "boolean") break;
       return { kind: "boolean", value: cell["value"] };
-    case "date":
-      return {
+    case "date": {
+      const parsed: ImportCell = {
         kind: "date",
         raw: storedString(cell["raw"], "captured date value"),
         iso: storedString(cell["iso"], "captured ISO date"),
       };
+      assertValidImportDateCell(parsed, "prepared");
+      return parsed;
+    }
     case "error":
       return {
         kind: "error",
@@ -208,10 +219,11 @@ function effectiveCell(
 
 function dateIso(cell: Extract<ImportCell, { readonly kind: "date" }>): string {
   const source = cell.raw.trim();
+  const iso = validatedImportDateIso(cell, "source");
   return /^\d{4}-\d{2}-\d{2}$/u.test(source) &&
-    cell.iso === `${source}T00:00:00.000Z`
+    iso === `${source}T00:00:00.000Z`
     ? source
-    : cell.iso;
+    : iso;
 }
 
 export function emptyProfile(): ColumnProfile {
@@ -301,6 +313,9 @@ export function valueForColumn(
   column: ColumnDefinition,
 ): EngineValue {
   const value = effectiveCell(cell ?? { kind: "blank" });
+  const normalizedDate =
+    value.kind === "date" ? validatedImportDateIso(value, "source") : undefined;
+  assertValidImportNumberCell(value, "source");
   const type = column.type;
   if (value.kind === "blank") {
     if (column.nullable === false) {
@@ -355,7 +370,14 @@ export function valueForColumn(
     }
   }
   if (value.kind === "date") {
-    const iso = dateIso(value);
+    if (normalizedDate === undefined) {
+      throw new Error("A validated date cell has no normalized date value.");
+    }
+    const iso =
+      /^\d{4}-\d{2}-\d{2}$/u.test(value.raw.trim()) &&
+      normalizedDate === `${value.raw.trim()}T00:00:00.000Z`
+        ? value.raw.trim()
+        : normalizedDate;
     if (type === "date" && !iso.includes("T")) return iso;
     if (type === "timestamp") {
       return iso.includes("T") ? iso : `${iso}T00:00:00.000Z`;

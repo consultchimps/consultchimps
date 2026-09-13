@@ -121,7 +121,9 @@ are not database content. Elapsed formats such as `[h]:mm` retain their numeric
 day fractions instead of becoming calendar dates. Missing declared style parts
 and invalid style references fail before those values can be interpreted.
 Invalid date-system flags and unknown worksheet visibility states also stop
-preparation instead of selecting a default interpretation.
+preparation instead of selecting a default interpretation. Duplicate or
+malformed number-format IDs, missing format codes, and references to undefined
+custom formats also fail instead of treating the cells as ordinary numbers.
 
 Each column in an explicit or named range needs a header. Worksheet selections
 use the span from the first populated header to the last, and reject blank

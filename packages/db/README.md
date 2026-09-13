@@ -37,6 +37,13 @@ Import composition:
 5. Pass its ready revision to `applyImport` with a retry request ID.
 6. Close handles and release scratch files.
 
+Custom `ImportSource` readers must provide valid decimal or exponent numeric
+tokens and valid date payloads. Date `iso` values must name real calendar dates
+or UTC timestamps; textual `raw` values must agree with them. Numeric date
+serials must be finite, and their reader owns epoch conversion. The same checks
+apply to cached formula values and saved plan rows. Malformed values are
+rejected instead of being coerced to zero or stored as invalid dates.
+
 Use `inspectImport({ database, prepared, page: { limit: 20 } })` to preview both
 newly captured rows and rows reused from the working database. Omitting
 `database` still returns plan metadata and staged rows, with

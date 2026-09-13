@@ -284,6 +284,16 @@ reused database captures return `DB_CORRUPT_DATABASE`. Other adapters can supply
 an `ImportSource` with random-access bytes and bounded region readers without
 importing CLI or browser code.
 
+Custom numeric cells require decimal or exponent tokens. Empty strings,
+whitespace, and hexadecimal text are not numeric values. Date cells require a
+valid calendar date or UTC timestamp in `iso`; textual `raw` dates must describe
+the same date or instant. A numeric `raw` date must be a finite serial number.
+The reader remains responsible for converting its serial epoch because
+`ImportCell` does not carry the workbook's date system. Cached formula values
+follow the same rules. Invalid fresh payloads return `DB_INVALID_SOURCE_NUMBER`
+or `DB_INVALID_SOURCE_DATE`; invalid saved payloads return
+`DB_INVALID_PREPARED_IMPORT`.
+
 Call `inspectImport({ database, prepared, page: { limit: 20 } })` to preview
 staged rows and reused captures. The database must have the plan's target ID.
 Without `database`, the result includes staged examples and

@@ -30,6 +30,26 @@ interface NumberFormat {
   readonly sections?: readonly NumberFormatSection[] | undefined;
 }
 
+function numberFormatId(
+  raw: string,
+  owner: "custom number format" | "cell style",
+): number {
+  const match = /^[\t\n\r ]*([+-]?)(\d+)[\t\n\r ]*$/u.exec(raw);
+  if (match === null) {
+    throw new Error(`A ${owner} has an invalid number format ID.`);
+  }
+  const sign = match[1];
+  const digits = match[2]!.replace(/^0+(?=\d)/u, "");
+  if (
+    (sign === "-" && digits !== "0") ||
+    digits.length > 10 ||
+    (digits.length === 10 && digits > "4294967295")
+  ) {
+    throw new Error(`A ${owner} has an invalid number format ID.`);
+  }
+  return Number(digits);
+}
+
 function cleanedFormat(format: string): string {
   return format
     .replace(/"[^"]*"/gu, "")
@@ -88,7 +108,7 @@ export async function loadWorkbookStyles(
   signal: AbortSignal | undefined,
 ): Promise<WorkbookStyles> {
   const customFormats = new Map<number, string>();
-  const cellFormats: NumberFormat[] = [];
+  const cellFormatIds: number[] = [];
   if (entry) {
     const xml = await readMetadataText(entry, archive.limits, signal);
     let insideCellFormats = false;
@@ -96,24 +116,31 @@ export async function loadWorkbookStyles(
       parser.on("opentag", (tag) => {
         const name = localName(tag.name);
         if (name === "numFmt") {
-          const id = Number(attribute(tag, "numFmtId"));
+          const rawId = attribute(tag, "numFmtId");
           const code = attribute(tag, "formatCode");
-          if (Number.isSafeInteger(id) && id >= 0 && code !== undefined) {
-            customFormats.set(id, code);
+          if (rawId === undefined) {
+            throw new Error(
+              "A custom number format has an invalid number format ID.",
+            );
           }
+          if (code === undefined) {
+            throw new Error("A custom number format is missing formatCode.");
+          }
+          const id = numberFormatId(rawId, "custom number format");
+          if (customFormats.has(id)) {
+            throw new Error(
+              `Custom number format ID "${id}" is declared more than once.`,
+            );
+          }
+          customFormats.set(id, code);
         } else if (name === "cellXfs") {
           insideCellFormats = true;
         } else if (insideCellFormats && name === "xf") {
-          const id = Number(attribute(tag, "numFmtId") ?? "0");
-          if (!Number.isSafeInteger(id) || id < 0) {
-            throw new Error("A cell style has an invalid number format ID.");
-          }
-          const code = customFormats.get(id);
-          cellFormats.push(
-            code === undefined
-              ? { id }
-              : { id, code, sections: parseNumberFormatSections(code) },
+          const id = numberFormatId(
+            attribute(tag, "numFmtId") ?? "0",
+            "cell style",
           );
+          cellFormatIds.push(id);
         }
       });
       parser.on("closetag", (tag) => {
@@ -121,6 +148,17 @@ export async function loadWorkbookStyles(
       });
     });
   }
+  const cellFormats = cellFormatIds.map((id): NumberFormat => {
+    const code = customFormats.get(id);
+    if (code === undefined && id >= 164) {
+      throw new Error(
+        `Cell style number format ID "${id}" has no custom number format declaration.`,
+      );
+    }
+    return code === undefined
+      ? { id }
+      : { id, code, sections: parseNumberFormatSections(code) };
+  });
   const dateStyles = new Set<number>();
   for (const [index, format] of cellFormats.entries()) {
     if (

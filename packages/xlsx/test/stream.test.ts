@@ -643,6 +643,189 @@ describe("bounded workbook streaming", () => {
     ]);
   });
 
+  it.each([
+    [
+      "identical declarations",
+      "<numFmt numFmtId='164' formatCode='yyyy-mm-dd'/><numFmt numFmtId='164' formatCode='yyyy-mm-dd'/>",
+    ],
+    [
+      "date then number",
+      "<numFmt numFmtId='164' formatCode='yyyy-mm-dd'/><numFmt numFmtId='164' formatCode='0.00'/>",
+    ],
+    [
+      "number then date",
+      "<numFmt numFmtId='164' formatCode='0.00'/><numFmt numFmtId='164' formatCode='yyyy-mm-dd'/>",
+    ],
+    [
+      "numeric ID aliases",
+      "<numFmt numFmtId='0164' formatCode='0.00'/><numFmt numFmtId='164' formatCode='yyyy-mm-dd'/>",
+    ],
+  ])(
+    "rejects duplicate custom number format IDs for %s",
+    async (_label, formats) => {
+      const styles =
+        "<styleSheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'>" +
+        `<numFmts count='2'>${formats}</numFmts>` +
+        "<cellXfs count='2'><xf numFmtId='0'/><xf numFmtId='164'/></cellXfs>" +
+        "</styleSheet>";
+      const input = source(
+        await workbookFixtureWithParts({ "xl/styles.xml": styles }),
+      );
+
+      await expect(
+        openWorkbookRegionStream(
+          input.source,
+          { table: "InventoryTable" },
+          { scratch: new MemoryScratch() },
+        ),
+      ).rejects.toMatchObject({
+        code: "XLSX_READ_FAILED",
+        cause: expect.objectContaining({
+          message: expect.stringContaining("declared more than once"),
+        }),
+      });
+    },
+  );
+
+  it("accepts schema-valid unsigned number format IDs", async () => {
+    const styles =
+      "<styleSheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'>" +
+      "<numFmts count='3'><numFmt numFmtId=' +0164 ' formatCode='yyyy-mm-dd'/><numFmt numFmtId='165' formatCode=''/><numFmt numFmtId='4294967295' formatCode=''/></numFmts>" +
+      "<cellXfs count='4'><xf/><xf numFmtId=' 00164 '/><xf numFmtId='165'/><xf numFmtId='4294967295'/></cellXfs>" +
+      "</styleSheet>";
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Date</t></is></c></row>" +
+      "<row r='2'><c r='A2' s='1'><v>1</v></c></row>" +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/styles.xml": styles,
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { range: "'Data & More'!A1:A2" },
+      { scratch: new MemoryScratch() },
+    );
+
+    expect(await rows(reader)).toEqual([
+      {
+        sourceRow: 2,
+        cells: { Date: { kind: "date", raw: "1", iso: "1904-01-02" } },
+      },
+    ]);
+  });
+
+  it.each([
+    ["a missing ID", "formatCode='yyyy-mm-dd'"],
+    ["an empty ID", "numFmtId='' formatCode='yyyy-mm-dd'"],
+    ["a hexadecimal ID", "numFmtId='0xA4' formatCode='yyyy-mm-dd'"],
+    ["an exponent ID", "numFmtId='1e2' formatCode='yyyy-mm-dd'"],
+    ["a negative ID", "numFmtId='-1' formatCode='yyyy-mm-dd'"],
+    ["an out-of-range ID", "numFmtId='4294967296' formatCode='yyyy-mm-dd'"],
+    ["a missing format code", "numFmtId='164'"],
+  ])("rejects a custom number format with %s", async (_label, attributes) => {
+    const styles =
+      "<styleSheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'>" +
+      `<numFmts count='1'><numFmt ${attributes}/></numFmts>` +
+      "<cellXfs count='2'><xf numFmtId='0'/><xf numFmtId='164'/></cellXfs>" +
+      "</styleSheet>";
+    const input = source(
+      await workbookFixtureWithParts({ "xl/styles.xml": styles }),
+    );
+
+    await expect(
+      openWorkbookRegionStream(
+        input.source,
+        { table: "InventoryTable" },
+        { scratch: new MemoryScratch() },
+      ),
+    ).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+      cause: expect.objectContaining({
+        message: expect.stringContaining("custom number format"),
+      }),
+    });
+  });
+
+  it.each(["", "0xA4", "1e2", "-1", "4294967296"])(
+    "rejects the invalid cell number format ID %j",
+    async (id) => {
+      const styles =
+        "<styleSheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'>" +
+        `<cellXfs count='1'><xf numFmtId='${id}'/></cellXfs>` +
+        "</styleSheet>";
+      const input = source(
+        await workbookFixtureWithParts({ "xl/styles.xml": styles }),
+      );
+
+      await expect(
+        openWorkbookRegionStream(
+          input.source,
+          { table: "InventoryTable" },
+          { scratch: new MemoryScratch() },
+        ),
+      ).rejects.toMatchObject({
+        code: "XLSX_READ_FAILED",
+        cause: expect.objectContaining({
+          message: expect.stringContaining("cell style"),
+        }),
+      });
+    },
+  );
+
+  it("requires custom number format references to resolve", async () => {
+    const missing = source(
+      await workbookFixtureWithParts({
+        "xl/styles.xml":
+          "<styleSheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'>" +
+          "<cellXfs count='2'><xf/><xf numFmtId='164'/></cellXfs>" +
+          "</styleSheet>",
+      }),
+    );
+
+    await expect(
+      openWorkbookRegionStream(
+        missing.source,
+        { table: "InventoryTable" },
+        { scratch: new MemoryScratch() },
+      ),
+    ).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+      cause: expect.objectContaining({
+        message: expect.stringContaining("no custom number format declaration"),
+      }),
+    });
+
+    const declared = source(
+      await workbookFixtureWithParts({
+        "xl/styles.xml":
+          "<styleSheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'>" +
+          "<cellXfs count='2'><xf/><xf numFmtId='164'/></cellXfs>" +
+          "<numFmts count='1'><numFmt numFmtId='164' formatCode='yyyy-mm-dd'/></numFmts>" +
+          "</styleSheet>",
+        "xl/worksheets/sheet1.xml":
+          "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+          "<row r='1'><c r='A1' t='inlineStr'><is><t>Date</t></is></c></row>" +
+          "<row r='2'><c r='A2' s='1'><v>1</v></c></row>" +
+          "</sheetData></worksheet>",
+      }),
+    );
+    const reader = await openWorkbookRegionStream(
+      declared.source,
+      { range: "'Data & More'!A1:A2" },
+      { scratch: new MemoryScratch() },
+    );
+    expect(await rows(reader)).toEqual([
+      {
+        sourceRow: 2,
+        cells: { Date: { kind: "date", raw: "1", iso: "1904-01-02" } },
+      },
+    ]);
+  });
+
   it("ignores color and condition brackets when classifying date and time formats", async () => {
     const styles =
       "<styleSheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'>" +
