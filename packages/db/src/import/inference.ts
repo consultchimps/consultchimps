@@ -1,4 +1,5 @@
 import { databaseError } from "../errors.js";
+import { exactDecimal, normalizeDecimal } from "../internal/decimal.js";
 import type { EngineValue } from "../internal/engine.js";
 import {
   COLUMN_TYPES,
@@ -213,19 +214,6 @@ function dateIso(cell: Extract<ImportCell, { readonly kind: "date" }>): string {
     : cell.iso;
 }
 
-function decimalShape(
-  raw: string,
-): { readonly precision: number; readonly scale: number } | null {
-  const match = /^[-+]?(\d+)(?:\.(\d+))?$/u.exec(raw);
-  if (match === null) return null;
-  const whole = (match[1] ?? "0").replace(/^0+(?=\d)/u, "");
-  const fraction = match[2] ?? "";
-  return {
-    precision: Math.max(1, whole.length + fraction.length),
-    scale: fraction.length,
-  };
-}
-
 export function emptyProfile(): ColumnProfile {
   return {
     seen: false,
@@ -262,13 +250,13 @@ export function addToProfile(profile: ColumnProfile, input: ImportCell): void {
     profile.integerInRange &&=
       integer >= SIGNED_BIGINT_MIN && integer <= SIGNED_BIGINT_MAX;
   }
-  const shape = decimalShape(cell.raw);
-  if (shape === null || shape.precision > 38) {
+  const shape = exactDecimal(cell.raw);
+  if (shape === undefined) {
     profile.decimalCompatible = false;
   } else {
     profile.integerDigits = Math.max(
       profile.integerDigits,
-      shape.precision - shape.scale,
+      shape.integerDigits,
     );
     profile.scale = Math.max(profile.scale, shape.scale);
   }
@@ -357,15 +345,13 @@ export function valueForColumn(
     if (Number.isFinite(parsed)) return parsed;
   }
   if (type === "decimal" && value.kind === "number") {
-    const shape = decimalShape(value.raw);
-    if (
-      shape !== null &&
-      column.precision !== undefined &&
-      column.scale !== undefined &&
-      shape.scale <= column.scale &&
-      shape.precision - shape.scale <= column.precision - column.scale
-    ) {
-      return value.raw;
+    if (column.precision !== undefined && column.scale !== undefined) {
+      const normalized = normalizeDecimal(
+        value.raw,
+        column.precision,
+        column.scale,
+      );
+      if (normalized !== undefined) return normalized;
     }
   }
   if (value.kind === "date") {

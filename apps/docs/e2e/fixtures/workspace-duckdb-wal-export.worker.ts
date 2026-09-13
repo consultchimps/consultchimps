@@ -13,7 +13,6 @@ import { configureBrowserDatabaseRuntime } from "@consultchimps/db/browser";
 interface RunRequest {
   readonly id: number;
   readonly type: "run";
-  readonly origin: string;
   readonly runId: string;
   readonly sourceMainBase64: string;
   readonly sourceWalBase64: string;
@@ -292,8 +291,14 @@ async function atStage<T>(
 }
 
 async function run(request: RunRequest) {
-  const wasmUrl = `${request.origin}/database-wasm/duckdb-eh.wasm`;
-  const workerUrl = `${request.origin}/database-wasm/duckdb-browser-eh.worker.js`;
+  const wasmUrl = new URL(
+    "/database-wasm/duckdb-eh.wasm",
+    globalThis.location.href,
+  ).href;
+  const workerUrl = new URL(
+    "/database-wasm/duckdb-browser-eh.worker.js",
+    globalThis.location.href,
+  ).href;
   const directoryName = `consultchimps-duckdb-wal-${request.runId}`;
   const name = `source-${request.runId}.duckdb`;
   const storage = await directory(directoryName);
@@ -303,7 +308,8 @@ async function run(request: RunRequest) {
   await replaceFile(storage, `${name}.wal`, beforeWal);
   const runtime = await configureBrowserDatabaseRuntime({
     sqlite: {
-      wasmUrl: `${request.origin}/database-wasm/sqlite3.wasm`,
+      wasmUrl: new URL("/database-wasm/sqlite3.wasm", globalThis.location.href)
+        .href,
       directory: `/consultchimps-duckdb-wal-${request.runId}`,
       initialCapacity: 8,
     },

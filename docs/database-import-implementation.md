@@ -337,9 +337,12 @@ The same `db import`, schema, delivery, and inspection commands operate on
 either managed format. Default export preserves format. `--format` on export
 requests conversion. Source identity, record IDs, delivery memberships, and
 receipt history are preserved only where the conversion contract can verify
-them. Give the output its own artifact identity and invalidate source-bound
-pending plans. The resulting files are independent snapshots, not synchronized
-databases.
+them. A cross-format conversion retains the newly created target database's ID
+and requires a new import review. A same-format export retains the source's
+logical database ID, revision, and schema so a saved review can resume after
+restoring or moving that snapshot. Applying still validates the saved revision
+and schema. These IDs identify logical databases, not physical files or locks
+across copies. Exported copies are independent and do not synchronize.
 
 Conversion is a schema-and-data operation, not a renamed file or a generic copy
 of SQL strings. `planConversion` must inspect:

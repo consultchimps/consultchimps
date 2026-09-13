@@ -337,6 +337,14 @@ Export does not repair an incomplete recovery log. Committed writes in the
 browser engine are not guaranteed to survive abrupt worker or browser
 termination.
 
+Cross-format browser export uses a temporary conversion working copy. A
+successful export reports a warning if that copy cannot be closed or removed. If
+export also fails, `DB_BROWSER_CONVERSION_CLEANUP_REQUIRED` identifies the
+retained copy through `conversionName`, `format`, and `directory`. Configure the
+same storage and open that logical name to inspect or export recoverable data
+after resolving the storage issue. A SQLite conversion name belongs to the
+pool's logical namespace; it is not the physical filename of an OPFS entry.
+
 Call `discardPreparedImport({ name })` to remove a closed private plan that the
 caller created and no longer needs. It rejects an open plan, database, or
 unrecognized artifact, and it does not remove database working copies.

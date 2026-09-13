@@ -6,6 +6,7 @@ import { throwIfAborted } from "@consultchimps/core";
 import { valueAsString } from "../database.js";
 import { databaseError } from "../errors.js";
 import type { EngineValue } from "../internal/engine.js";
+import { validateTableSchema } from "../schema.js";
 import {
   PREPARED_BINDING_TABLE,
   PREPARED_CAPTURE_TABLE,
@@ -29,10 +30,62 @@ import type {
   PrepareImportOptions,
   PrepareImportOutcome,
 } from "./types.js";
-import { validateImportRecipe } from "../validators.js";
+import { validateColumnMappings, validateImportRecipe } from "../validators.js";
 
 const HASH_CHUNK_BYTES = 1024 * 1024;
 const CAPTURE_BATCH_ROWS = 2_000;
+
+function validateReaderColumns(options: {
+  readonly source: string;
+  readonly selection: string;
+  readonly columns: readonly string[];
+  readonly recipe: PrepareImportOptions["recipe"];
+}): void {
+  const exactNames = new Set<string>();
+  for (const column of options.columns) {
+    if (exactNames.has(column)) {
+      throw databaseError(
+        "DB_INVALID_RECIPE",
+        `Source "${options.source}" selection "${options.selection}" declares column "${column}" more than once. Source columns must be unique.`,
+        {
+          source: options.source,
+          selection: options.selection,
+          column,
+        },
+      );
+    }
+    exactNames.add(column);
+  }
+  const route = options.recipe.routes.find(
+    (candidate) =>
+      candidate.source === options.source &&
+      candidate.selection === options.selection,
+  );
+  if (route === undefined) return;
+  const effectiveColumns =
+    route.columns.length === 0
+      ? options.columns.map((column) => ({
+          source: column,
+          target: column,
+          type: "text" as const,
+        }))
+      : route.columns;
+  if (route.columns.length === 0) {
+    validateColumnMappings(options.source, options.selection, effectiveColumns);
+  }
+  if (route.destination.kind === "new-table-infer") {
+    validateTableSchema({
+      name: route.destination.name,
+      columns: effectiveColumns.map((column) => ({
+        name: column.target,
+        type: "text",
+      })),
+      recordId: route.destination.recordId,
+      foreignKeys: [],
+    });
+    return;
+  }
+}
 
 async function readAndClose<T>(
   reader: ImportRegionReader,
@@ -186,6 +239,12 @@ export async function prepareImport(
       try {
         const columns = await readAndClose(reader, async () => {
           const columnNames = [...reader.columns];
+          validateReaderColumns({
+            source: source.key,
+            selection: selection.key,
+            columns: columnNames,
+            recipe: options.recipe,
+          });
           const profiles = new Map<string, ColumnProfile>(
             columnNames.map((column) => [column, emptyProfile()]),
           );

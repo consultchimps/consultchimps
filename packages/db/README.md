@@ -97,6 +97,20 @@ coerce them. For example, SQLite can store `2` in a Boolean column or `1.5` in
 an integer column; those values need correction before conversion to DuckDB. An
 export dry run checks schema compatibility without scanning stored rows.
 
+A same-format export retains the logical database ID. A saved review can resume
+against that snapshot when its revision and schema still match. Cross-format
+conversion creates a new database ID and requires a new review. Copies do not
+synchronize, and a shared ID is not a lock or a guarantee of equal row contents.
+
+Browser cross-format export uses a temporary conversion working copy. If cleanup
+fails after export succeeds, the result includes a warning identifying that
+copy. If export and cleanup both fail, `DB_BROWSER_CONVERSION_CLEANUP_REQUIRED`
+reports `conversionName`, `format`, and `directory`. Reconfigure the same
+browser storage and use `openDatabase` with that logical name to inspect or
+export recoverable data after resolving the storage issue. SQLite pool files
+have opaque physical names; the reported conversion name is a logical database
+name, not an OPFS filename.
+
 The former in-memory spike API and analytics grid have been retired. Browser
 storage is an OPFS working copy; it does not synchronize to a selected OS file.
 

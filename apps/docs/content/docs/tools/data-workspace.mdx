@@ -341,6 +341,16 @@ working source and verify the output in the receiving application. SQLite stores
 exact decimals as text, while DuckDB uses its decimal type; this changes how raw
 SQL should interpret those columns.
 
+Decimal inference and decimal column mappings accept exponent notation such as
+`1.25E-2` and normalize it to `0.0125` without a floating-point conversion.
+Values must fit the destination precision and scale.
+
+A same-format snapshot keeps the logical database ID, so a saved import review
+can resume after restoring or moving it when the revision and schema still
+match. Converting formats creates a new database ID and requires a new review.
+Exported copies do not synchronize. A shared ID does not establish that their
+rows remain equal or prevent another copy from being edited.
+
 Cross-format export also checks stored values while copying rows. If another
 application has put a value outside a column's registered type, conversion stops
 before publishing the output. For example, a SQLite Boolean value of `2` or an

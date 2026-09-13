@@ -24,6 +24,7 @@ import {
   restoreBrowserFile,
   type BrowserFileHandle,
 } from "./browser-file-copy.js";
+import { useBrowserConversionArtifact } from "./browser-conversion-cleanup.js";
 import {
   BrowserDuckDbEngine,
   type BrowserDuckDbSnapshotStorage,
@@ -498,6 +499,7 @@ export async function configureBrowserDatabaseRuntime(
   const duckDirectoryName = opfsDirectoryName(
     options.opfsDirectory ?? "consultchimps-databases",
   );
+  const sqliteDirectoryName = opfsDirectoryName(options.sqlite.directory);
   const duckDirectory = await opfsDirectory(duckDirectoryName);
   const sqliteDirectory = await sqlitePoolDirectory(options.sqlite.directory);
   const stored = new WeakMap<Database, StoredDatabase>();
@@ -1317,6 +1319,7 @@ export async function configureBrowserDatabaseRuntime(
         },
         async close() {},
       };
+      const conversionWarnings: string[] = [];
       const writeExport = async (): Promise<number> => {
         if (source.format === exportOptions.format) {
           return exportStored(
@@ -1336,6 +1339,7 @@ export async function configureBrowserDatabaseRuntime(
           format: exportOptions.format,
           signal: exportOptions.signal,
         });
+        conversionWarnings.push(...created.result.warnings);
         const converted = stored.get(created.database);
         if (converted === undefined) {
           await created.database.close();
@@ -1344,24 +1348,41 @@ export async function configureBrowserDatabaseRuntime(
             "The conversion database was not registered by the browser runtime.",
           );
         }
-        try {
-          await executeConversion({
-            source: exportOptions.database,
-            target: created.database,
-            plan,
-            signal: exportOptions.signal,
-            onProgress: exportOptions.onProgress,
-          });
-          return await exportStored(
-            created.database,
-            converted,
-            publicationDestination,
-            exportOptions,
-          );
-        } finally {
-          await created.database.close().catch(() => undefined);
-          await removeStored(converted).catch(() => undefined);
-        }
+        const conversionDirectory =
+          exportOptions.format === "sqlite"
+            ? sqliteDirectoryName
+            : duckDirectoryName;
+        const conversion = await useBrowserConversionArtifact(
+          {
+            name: temporaryName,
+            format: exportOptions.format,
+            directory: conversionDirectory,
+            ...(exportOptions.format === "duckdb"
+              ? {
+                  storageNames: [temporaryName, `${temporaryName}.wal`],
+                }
+              : {}),
+            close: () => created.database.close(),
+            remove: () => removeStored(converted),
+          },
+          async () => {
+            await executeConversion({
+              source: exportOptions.database,
+              target: created.database,
+              plan,
+              signal: exportOptions.signal,
+              onProgress: exportOptions.onProgress,
+            });
+            return exportStored(
+              created.database,
+              converted,
+              publicationDestination,
+              exportOptions,
+            );
+          },
+        );
+        conversionWarnings.push(...conversion.warnings);
+        return conversion.value;
       };
       const originalSize = exportOptions.destination.size;
       let backupName: string | undefined;
@@ -1454,12 +1475,14 @@ export async function configureBrowserDatabaseRuntime(
       return {
         operation: "db.export",
         artifacts: [],
-        warnings:
-          published.cleanupFailures.length === 0
+        warnings: [
+          ...(published.cleanupFailures.length === 0
             ? []
             : [
                 `The export completed, but browser storage could not remove its temporary backup at "${duckDirectoryName}/${backupName ?? "(unavailable)"}". Remove that backup when it is no longer needed.`,
-              ],
+              ]),
+          ...conversionWarnings,
+        ],
         metrics: { bytesWritten: published.value },
       };
     },

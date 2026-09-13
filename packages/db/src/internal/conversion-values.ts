@@ -1,5 +1,6 @@
 import type { ColumnDefinition } from "../schema.js";
 import { databaseError } from "../errors.js";
+import { normalizeDecimal } from "./decimal.js";
 import type { EngineRow, EngineValue } from "./engine.js";
 
 function invalidValue(table: string, column: ColumnDefinition): never {
@@ -16,49 +17,6 @@ function safeInteger(value: EngineValue): bigint | undefined {
     return BigInt(value);
   }
   return undefined;
-}
-
-function normalizedDecimal(
-  value: string,
-  precision: number,
-  scale: number,
-): string | undefined {
-  const fixedScale = (magnitude: string): string => {
-    if (scale === 0) return magnitude;
-    const [whole, fraction = ""] = magnitude.split(".");
-    return `${whole}.${fraction.padEnd(scale, "0")}`;
-  };
-  const match = /^[+-]?(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:[eE]([+-]?\d+))?$/u.exec(
-    value,
-  );
-  if (match === null) return undefined;
-  const integer = match[1] ?? "";
-  const fraction = match[2] ?? match[3] ?? "";
-  const coefficient = `${integer}${fraction}`;
-  const firstNonzero = coefficient.search(/[1-9]/u);
-  if (firstNonzero === -1) return fixedScale("0");
-  const exponentText = match[4] ?? "0";
-  if (exponentText.replace(/^[+-]?0*/u, "").length > 8) return undefined;
-  const significant = coefficient.slice(firstNonzero).replace(/0+$/u, "");
-  const exponent = BigInt(exponentText);
-  const decimalPosition = BigInt(integer.length - firstNonzero) + exponent;
-  const integerDigits = decimalPosition > 0n ? decimalPosition : 0n;
-  const fractionalDigits = BigInt(significant.length) - decimalPosition;
-  if (
-    integerDigits > BigInt(precision - scale) ||
-    (fractionalDigits > 0n ? fractionalDigits : 0n) > BigInt(scale)
-  ) {
-    return undefined;
-  }
-  const position = Number(decimalPosition);
-  const magnitude =
-    position <= 0
-      ? `0.${"0".repeat(-position)}${significant}`
-      : position >= significant.length
-        ? `${significant}${"0".repeat(position - significant.length)}`
-        : `${significant.slice(0, position)}.${significant.slice(position)}`;
-  const normalized = fixedScale(magnitude);
-  return value.startsWith("-") ? `-${normalized}` : normalized;
 }
 
 function floorDivide(value: bigint, divisor: bigint): bigint {
@@ -191,11 +149,7 @@ function validatedValue(
         column.precision !== undefined &&
         column.scale !== undefined
       ) {
-        const decimal = normalizedDecimal(
-          value,
-          column.precision,
-          column.scale,
-        );
+        const decimal = normalizeDecimal(value, column.precision, column.scale);
         if (decimal !== undefined) return decimal;
       }
       break;

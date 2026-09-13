@@ -230,7 +230,6 @@ test("exports committed DuckDB WAL contents from a read-only workspace", async (
           worker.postMessage({
             id: 1,
             type: "run",
-            origin: window.location.origin,
             runId: crypto.randomUUID(),
             sourceMainBase64,
             sourceWalBase64,

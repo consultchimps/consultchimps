@@ -69,6 +69,18 @@ publishing its destination. Unsupported or lossy conversions are refused by
 default. Exported files are independent copies and do not remain synchronized.
 Source files remain intact.
 
+The managed database ID identifies a logical working database, not a physical
+file. A same-format export is a snapshot of that database and retains its ID,
+revision, record IDs, and history. This permits restoring a backup or moving a
+working copy without invalidating a saved import review solely because its
+storage location changed. Applying still checks the saved revision and schema.
+Copies can diverge and are not synchronized; the ID does not prove that two
+files contain the same rows or provide a cross-copy lock.
+
+A cross-format conversion populates a newly created target database and retains
+that target's new database ID. Prepare a new review for the converted database.
+An export does not create a separately tracked branch or merge divergent copies.
+
 External tools can query the resulting file. DuckDB UI is a candidate for that
 work, not an embedded dependency of ConsultChimps. Query editors, charts,
 analytical browsing, and general grid migration are paused. Their old APIs do
