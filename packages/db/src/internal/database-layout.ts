@@ -379,20 +379,39 @@ export async function validateDatabaseLayout(
     const rows = await queryDatabaseMetadata(
       engine,
       engine.format === "sqlite"
-        ? "SELECT name AS column_name FROM pragma_table_info(?)"
+        ? "SELECT name AS column_name FROM pragma_table_info(?) ORDER BY cid"
         : "SELECT column_name FROM information_schema.columns WHERE table_schema = 'main' AND table_name = ? ORDER BY ordinal_position",
       [required.table],
     );
-    const columns = new Set(
-      rows.flatMap((row) =>
-        typeof row["column_name"] === "string" ? [row["column_name"]] : [],
-      ),
+    const columns = rows.map((row) =>
+      typeof row["column_name"] === "string" ? row["column_name"] : null,
+    );
+    const columnNames = new Set(
+      columns.filter((column): column is string => column !== null),
     );
     const missingColumns = required.columns.filter(
-      (column) => !columns.has(column),
+      (column) => !columnNames.has(column),
     );
-    if (missingColumns.length > 0) {
-      throw corruptDatabase({ table: required.table, missingColumns });
+    const columnOrderMatches = required.columns.every(
+      (column, index) => columns[index] === column,
+    );
+    if (
+      missingColumns.length > 0 ||
+      columns.length !== required.columns.length ||
+      !columnOrderMatches
+    ) {
+      throw corruptDatabase({
+        table: required.table,
+        ...(missingColumns.length === 0 ? {} : { missingColumns }),
+        ...(columns.length <= required.columns.length
+          ? {}
+          : {
+              unexpectedColumnCount: columns.length - required.columns.length,
+            }),
+        ...(!columnOrderMatches && missingColumns.length === 0
+          ? { columnOrderMismatch: true }
+          : {}),
+      });
     }
   }
 }

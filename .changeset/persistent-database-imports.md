@@ -27,3 +27,7 @@ existing working database files keep their format.
 Accept leading-plus integer tokens consistently during inference and import.
 Keep database and import-plan replacement blocked after failed closure until a
 close retry succeeds.
+
+Reject ill-formed Unicode in schema identifiers and Record ID components. Reject
+added, missing, or reordered internal metadata columns when opening working
+databases and saved import plans.

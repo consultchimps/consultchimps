@@ -37,6 +37,10 @@ Import composition:
 5. Pass its ready revision to `applyImport` with a retry request ID.
 6. Close handles and release scratch files.
 
+Schema identifiers and Record ID components must contain well-formed Unicode.
+Valid supplementary characters, including emoji, are supported. An unpaired
+UTF-16 surrogate is rejected before a schema is applied.
+
 Custom `ImportSource` readers must provide valid decimal or exponent numeric
 tokens and valid date payloads. Integer tokens accept an optional `+` or `-`
 sign; integer mappings retain signed 64-bit bounds. Date `iso` values must name
@@ -95,6 +99,12 @@ already-applied table applications do not rescan row contents.
 
 These are integrity checks, not digital signatures. An editor who coherently
 rewrites the artifact and its checksums can produce a different valid artifact.
+Internal metadata tables have a fixed column-name sequence. Opening a database
+with added, missing, or reordered internal columns returns
+`DB_CORRUPT_DATABASE`; a damaged prepared plan returns
+`DB_INVALID_PREPARED_IMPORT`. Restore a verified copy rather than altering these
+reserved tables.
+
 Version 1 and 2 spike plans are unsupported. Regenerate them from their original
 sources with this build. Existing working database files keep their format.
 

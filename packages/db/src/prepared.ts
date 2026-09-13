@@ -231,19 +231,21 @@ async function validatePreparedSchema(engine: DatabaseEngine): Promise<void> {
   for (const required of REQUIRED_PREPARED_SCHEMA) {
     const columns = await preparedQuery(
       engine,
-      "SELECT name FROM pragma_table_info(?)",
+      "SELECT name FROM pragma_table_info(?) ORDER BY cid",
       [required.table],
     );
-    const columnNames = new Set(
-      columns.flatMap((row) =>
-        typeof row["name"] === "string" ? [row["name"]] : [],
-      ),
+    const actualColumns = columns.map((row) =>
+      typeof row["name"] === "string" ? row["name"] : null,
     );
-    const missingColumns = required.columns.filter(
-      (column) => !columnNames.has(column),
-    );
-    if (missingColumns.length > 0) {
-      throw invalidPreparedImport({ table: required.table, missingColumns });
+    if (
+      actualColumns.length !== required.columns.length ||
+      actualColumns.some((column, index) => column !== required.columns[index])
+    ) {
+      throw invalidPreparedImport({
+        table: required.table,
+        expectedColumns: [...required.columns],
+        actualColumns,
+      });
     }
   }
 }

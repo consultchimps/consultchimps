@@ -157,6 +157,68 @@ for (const format of ["sqlite", "duckdb"] as const) {
     await rename(moved, damaged);
   });
 
+  test(`${format}: rejects added internal columns without changing data`, async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "cc-db-columns-"));
+    directories.push(directory);
+    const damaged = path.join(directory, `added-column.${format}`);
+    await copyFile(templates[format], damaged);
+    const engine = await openEngine(damaged, format);
+    try {
+      await engine.execute(
+        `ALTER TABLE ${CAPTURE_TABLE} ADD COLUMN unexpected_metadata VARCHAR`,
+      );
+      await expect(engine.query("SELECT value FROM sentinel")).resolves.toEqual(
+        [{ value: "preserved" }],
+      );
+    } finally {
+      await engine.close();
+    }
+    const before = await readFile(damaged);
+
+    await expect(
+      openDatabase({ path: damaged, readonly: true }),
+    ).rejects.toMatchObject({
+      code: "DB_CORRUPT_DATABASE",
+      details: { table: CAPTURE_TABLE, unexpectedColumnCount: 1 },
+    });
+    expect((await readFile(damaged)).equals(before)).toBe(true);
+  });
+
+  test(`${format}: rejects reordered internal columns without changing data`, async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "cc-db-columns-"));
+    directories.push(directory);
+    const damaged = path.join(directory, `reordered-columns.${format}`);
+    await copyFile(templates[format], damaged);
+    const engine = await openEngine(damaged, format);
+    const replacement = `${DATABASE_METADATA_TABLE}_reordered`;
+    try {
+      await engine.execute(
+        `CREATE TABLE ${replacement} (revision BIGINT NOT NULL, database_id VARCHAR PRIMARY KEY, format VARCHAR NOT NULL, format_version BIGINT NOT NULL)`,
+      );
+      await engine.execute(
+        `INSERT INTO ${replacement} (revision, database_id, format, format_version) SELECT revision, database_id, format, format_version FROM ${DATABASE_METADATA_TABLE}`,
+      );
+      await engine.execute(`DROP TABLE ${DATABASE_METADATA_TABLE}`);
+      await engine.execute(
+        `ALTER TABLE ${replacement} RENAME TO ${DATABASE_METADATA_TABLE}`,
+      );
+      await expect(engine.query("SELECT value FROM sentinel")).resolves.toEqual(
+        [{ value: "preserved" }],
+      );
+    } finally {
+      await engine.close();
+    }
+    const before = await readFile(damaged);
+
+    await expect(
+      openDatabase({ path: damaged, readonly: true }),
+    ).rejects.toMatchObject({
+      code: "DB_CORRUPT_DATABASE",
+      details: { table: DATABASE_METADATA_TABLE, columnOrderMismatch: true },
+    });
+    expect((await readFile(damaged)).equals(before)).toBe(true);
+  });
+
   test(`${format}: leaves valid databases unaffected by inspection`, async () => {
     const template = templates[format];
     const validBefore = await readFile(template);

@@ -59,6 +59,13 @@ export const DEFAULT_RECORD_ID_SEPARATOR = "-";
 export const MAX_IDENTIFIER_LENGTH = 200;
 export const MAX_RECORD_ID_PADDING = 18;
 
+function hasUnpairedSurrogate(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0)!;
+    return codePoint >= 0xd800 && codePoint <= 0xdfff;
+  });
+}
+
 export function identifierKey(value: string): string {
   return value.normalize("NFKC").trim().toLowerCase();
 }
@@ -81,6 +88,7 @@ export function assertSafeIdentifier(
     value.length === 0 ||
     value.length > MAX_IDENTIFIER_LENGTH ||
     value.trim() !== value ||
+    hasUnpairedSurrogate(value) ||
     Array.from(value).some((character) => character.codePointAt(0)! < 32) ||
     (!allowReserved && identifierKey(value).startsWith(RESERVED_TABLE_PREFIX))
   ) {
@@ -96,6 +104,8 @@ export function assertRecordIdConfig(config: RecordIdConfig): void {
   if (
     config.prefix.trim().length === 0 ||
     config.prefix.length > MAX_IDENTIFIER_LENGTH ||
+    hasUnpairedSurrogate(config.prefix) ||
+    hasUnpairedSurrogate(config.separator ?? "") ||
     Array.from(config.prefix + (config.separator ?? "")).some(
       (character) => character.codePointAt(0)! < 32,
     ) ||
@@ -163,6 +173,7 @@ export function validateTableSchema(schema: TableSchema): void {
   }
   const referencedColumns = new Set<string>();
   for (const foreignKey of schema.foreignKeys ?? []) {
+    assertSafeIdentifier(foreignKey.column, "column");
     assertSafeIdentifier(foreignKey.referencesTable, "table");
     const key = identifierKey(foreignKey.column);
     const column = schema.columns.find(

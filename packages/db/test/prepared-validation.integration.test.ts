@@ -62,6 +62,18 @@ const damageCases = [
     label: "row column",
     sql: `ALTER TABLE ${PREPARED_ROW_TABLE} DROP COLUMN values_json`,
   },
+  {
+    label: "extra row column",
+    sql: `ALTER TABLE ${PREPARED_ROW_TABLE} ADD COLUMN unreviewed_value VARCHAR`,
+  },
+  {
+    label: "reordered row columns",
+    sql: [
+      `ALTER TABLE ${PREPARED_ROW_TABLE} RENAME COLUMN capture_id TO previous_capture_id`,
+      `ALTER TABLE ${PREPARED_ROW_TABLE} RENAME COLUMN source_row TO capture_id`,
+      `ALTER TABLE ${PREPARED_ROW_TABLE} RENAME COLUMN previous_capture_id TO source_row`,
+    ],
+  },
 ] as const;
 
 test.each([false, true])(
@@ -89,7 +101,11 @@ test.each([false, true])(
         });
         await created.close();
         const corrupt = NodeSqliteEngine.open(planPath);
-        await corrupt.execute(damage.sql);
+        for (const sql of typeof damage.sql === "string"
+          ? [damage.sql]
+          : damage.sql) {
+          await corrupt.execute(sql);
+        }
         await corrupt.close();
         const before = await readFile(planPath);
 
