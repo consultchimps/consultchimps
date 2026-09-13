@@ -1,10 +1,13 @@
 import { isConsultChimpsError } from "@consultchimps/core";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 
 import type { DatabaseId } from "./database.js";
 import { assertOpen, databaseError } from "./errors.js";
 import type {
   DatabaseEngine,
   EngineRow,
+  EngineTransaction,
   EngineValue,
 } from "./internal/engine.js";
 import { canonicalJson } from "./internal/json.js";
@@ -27,7 +30,7 @@ export const PREPARED_METADATA_TABLE = "_consultchimps_prepared";
 export const PREPARED_CAPTURE_TABLE = "_consultchimps_prepared_captures";
 export const PREPARED_BINDING_TABLE = "_consultchimps_prepared_bindings";
 export const PREPARED_ROW_TABLE = "_consultchimps_prepared_rows";
-export const PREPARED_FORMAT_VERSION = 1;
+export const PREPARED_FORMAT_VERSION = 2;
 
 const REQUIRED_PREPARED_SCHEMA = [
   {
@@ -43,6 +46,7 @@ const REQUIRED_PREPARED_SCHEMA = [
       "recipe_json",
       "conflicts_json",
       "decisions_json",
+      "review_fingerprint",
     ],
   },
   {
@@ -86,6 +90,42 @@ function preparedBigInt(value: unknown, field: string): bigint {
     "DB_INVALID_PREPARED_IMPORT",
     `The import plan has an invalid ${field}.`,
     { field },
+  );
+}
+
+function reviewFingerprint(options: {
+  readonly formatVersion: bigint;
+  readonly planId: string;
+  readonly databaseId: string;
+  readonly baselineRevision: bigint;
+  readonly schemaFingerprint: string;
+  readonly planRevision: bigint;
+  readonly state: string;
+  readonly recipeJson: string;
+  readonly conflictsJson: string;
+  readonly decisionsJson: string;
+  readonly captureDefinitionsJson: string;
+  readonly bindingsJson: string;
+}): string {
+  return bytesToHex(
+    sha256(
+      new TextEncoder().encode(
+        JSON.stringify([
+          options.formatVersion.toString(),
+          options.planId,
+          options.databaseId,
+          options.baselineRevision.toString(),
+          options.schemaFingerprint,
+          options.planRevision.toString(),
+          options.state,
+          options.recipeJson,
+          options.conflictsJson,
+          options.decisionsJson,
+          options.captureDefinitionsJson,
+          options.bindingsJson,
+        ]),
+      ),
+    ),
   );
 }
 
@@ -152,7 +192,7 @@ function invalidPreparedImport(
 }
 
 async function preparedQuery(
-  engine: DatabaseEngine,
+  engine: Pick<DatabaseEngine, "query">,
   sql: string,
   values?: readonly EngineValue[],
 ): Promise<readonly EngineRow[]> {
@@ -210,23 +250,44 @@ export async function createPreparedImportHandle(options: {
 }): Promise<PreparedImport> {
   validateImportRecipe(options.recipe);
   const id = preparedId();
+  const formatVersion = BigInt(PREPARED_FORMAT_VERSION);
+  const planRevision = 1n;
+  const state = "needs-review";
+  const recipeJson = canonicalJson(options.recipe);
+  const conflictsJson = "[]";
+  const decisionsJson = "[]";
+  const fingerprint = reviewFingerprint({
+    formatVersion,
+    planId: id,
+    databaseId: options.databaseId,
+    baselineRevision: options.baselineRevision,
+    schemaFingerprint: options.baselineSchemaFingerprint,
+    planRevision,
+    state,
+    recipeJson,
+    conflictsJson,
+    decisionsJson,
+    captureDefinitionsJson: "[]",
+    bindingsJson: "[]",
+  });
   await options.engine.transaction(async (transaction) => {
     await transaction.execute(
-      `CREATE TABLE ${PREPARED_METADATA_TABLE} (format_version BIGINT NOT NULL, plan_id VARCHAR PRIMARY KEY, database_id VARCHAR NOT NULL, baseline_revision BIGINT NOT NULL, schema_fingerprint VARCHAR NOT NULL, plan_revision BIGINT NOT NULL, state VARCHAR NOT NULL, recipe_json VARCHAR NOT NULL, conflicts_json VARCHAR NOT NULL, decisions_json VARCHAR NOT NULL)`,
+      `CREATE TABLE ${PREPARED_METADATA_TABLE} (format_version BIGINT NOT NULL, plan_id VARCHAR PRIMARY KEY, database_id VARCHAR NOT NULL, baseline_revision BIGINT NOT NULL, schema_fingerprint VARCHAR NOT NULL, plan_revision BIGINT NOT NULL, state VARCHAR NOT NULL, recipe_json VARCHAR NOT NULL, conflicts_json VARCHAR NOT NULL, decisions_json VARCHAR NOT NULL, review_fingerprint VARCHAR NOT NULL)`,
     );
     await transaction.execute(
-      `INSERT INTO ${PREPARED_METADATA_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ${PREPARED_METADATA_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        BigInt(PREPARED_FORMAT_VERSION),
+        formatVersion,
         id,
         options.databaseId,
         options.baselineRevision,
         options.baselineSchemaFingerprint,
-        1n,
-        "needs-review",
-        canonicalJson(options.recipe),
-        "[]",
-        "[]",
+        planRevision,
+        state,
+        recipeJson,
+        conflictsJson,
+        decisionsJson,
+        fingerprint,
       ],
     );
     await transaction.execute(
@@ -276,7 +337,7 @@ export async function openPreparedImportHandle(
   if (formatVersion !== BigInt(PREPARED_FORMAT_VERSION)) {
     throw databaseError(
       "DB_UNSUPPORTED_PREPARED_IMPORT_VERSION",
-      `This import plan uses format version ${String(row["format_version"])}, but this build supports version ${PREPARED_FORMAT_VERSION}.`,
+      `This import plan uses format version ${String(row["format_version"])}, but this build supports version ${PREPARED_FORMAT_VERSION}. Regenerate the plan from its original sources with this build.`,
       {
         fileVersion: String(row["format_version"]),
         supportedVersion: PREPARED_FORMAT_VERSION,
@@ -284,58 +345,284 @@ export async function openPreparedImportHandle(
     );
   }
   await validatePreparedSchema(engine);
+  const review = await readStoredPreparedReview(engine);
   const prepared = new ManagedPreparedImport(
-    row["plan_id"] as PreparedImportId,
-    row["database_id"] as DatabaseId,
+    review.prepared.id,
+    review.prepared.databaseId,
   );
   engines.set(prepared, engine);
   return prepared;
 }
 
-export async function preparedRef(
-  prepared: PreparedImport,
-): Promise<PreparedImportRef | ReadyImportRef> {
-  const rows = await preparedEngineOf(prepared).query(
-    `SELECT plan_id, database_id, baseline_revision, schema_fingerprint, plan_revision, state FROM ${PREPARED_METADATA_TABLE}`,
+export interface PreparedReview {
+  readonly prepared: PreparedImportRef | ReadyImportRef;
+  readonly recipe: ImportRecipe;
+  readonly conflicts: readonly ImportConflict[];
+  readonly decisions: readonly ImportDecision[];
+}
+
+interface StoredPreparedReview extends PreparedReview {
+  readonly raw: {
+    readonly state: "needs-review" | "ready";
+    readonly recipeJson: string;
+    readonly conflictsJson: string;
+    readonly decisionsJson: string;
+    readonly captureDefinitionsJson: string;
+    readonly bindingsJson: string;
+  };
+}
+
+function preparedString(value: unknown, field: string): string {
+  if (typeof value === "string") return value;
+  throw databaseError(
+    "DB_INVALID_PREPARED_IMPORT",
+    `The import plan has an invalid ${field}.`,
+    { field },
+  );
+}
+
+function requiredPreparedString(value: unknown, field: string): string {
+  if (typeof value === "string" && value.trim().length > 0) return value;
+  throw databaseError(
+    "DB_INVALID_PREPARED_IMPORT",
+    `The import plan has an invalid ${field}.`,
+    { field },
+  );
+}
+
+function nonNegativePreparedBigInt(value: unknown, field: string): bigint {
+  const parsed = preparedBigInt(value, field);
+  if (parsed >= 0n) return parsed;
+  throw databaseError(
+    "DB_INVALID_PREPARED_IMPORT",
+    `The import plan has an invalid ${field}.`,
+    { field },
+  );
+}
+
+function positivePreparedBigInt(value: unknown, field: string): bigint {
+  const parsed = preparedBigInt(value, field);
+  if (parsed > 0n) return parsed;
+  throw databaseError(
+    "DB_INVALID_PREPARED_IMPORT",
+    `The import plan has an invalid ${field}.`,
+    { field },
+  );
+}
+
+function compareStoredTuple(
+  left: readonly (string | null)[],
+  right: readonly (string | null)[],
+): number {
+  const leftKey = JSON.stringify(left);
+  const rightKey = JSON.stringify(right);
+  return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+}
+
+async function readPreparedCaptureMetadata(
+  engine: Pick<DatabaseEngine, "query">,
+): Promise<{
+  readonly captureDefinitionsJson: string;
+  readonly bindingsJson: string;
+}> {
+  const captureRows = await preparedQuery(
+    engine,
+    `SELECT capture_id, source_file_id, source_key, display_name, selection_key, selection_label, reader_version, content_hash, byte_count, reused, row_count, columns_json FROM ${PREPARED_CAPTURE_TABLE}`,
+  );
+  const captures = captureRows.map(
+    (row) =>
+      [
+        requiredPreparedString(row["capture_id"], "capture ID"),
+        row["source_file_id"] === null
+          ? null
+          : requiredPreparedString(row["source_file_id"], "source file ID"),
+        requiredPreparedString(row["source_key"], "source key"),
+        preparedString(row["display_name"], "source display name"),
+        requiredPreparedString(row["selection_key"], "selection key"),
+        preparedString(row["selection_label"], "selection label"),
+        requiredPreparedString(row["reader_version"], "reader version"),
+        requiredPreparedString(row["content_hash"], "content hash"),
+        nonNegativePreparedBigInt(row["byte_count"], "byte count").toString(),
+        nonNegativePreparedBigInt(row["reused"], "reuse marker").toString(),
+        nonNegativePreparedBigInt(row["row_count"], "row count").toString(),
+        preparedString(row["columns_json"], "captured columns"),
+      ] satisfies readonly (string | null)[],
+  );
+  const bindingRows = await preparedQuery(
+    engine,
+    `SELECT source_key, selection_key, capture_id, display_name FROM ${PREPARED_BINDING_TABLE}`,
+  );
+  const bindings = bindingRows.map(
+    (row) =>
+      [
+        requiredPreparedString(row["source_key"], "source key"),
+        requiredPreparedString(row["selection_key"], "selection key"),
+        requiredPreparedString(row["capture_id"], "capture ID"),
+        preparedString(row["display_name"], "source display name"),
+      ] satisfies readonly (string | null)[],
+  );
+  captures.sort(compareStoredTuple);
+  bindings.sort(compareStoredTuple);
+  return {
+    captureDefinitionsJson: JSON.stringify(captures),
+    bindingsJson: JSON.stringify(bindings),
+  };
+}
+
+async function readStoredPreparedReview(
+  engine: Pick<DatabaseEngine, "query">,
+): Promise<StoredPreparedReview> {
+  const rows = await preparedQuery(
+    engine,
+    `SELECT format_version, plan_id, database_id, baseline_revision, schema_fingerprint, plan_revision, state, recipe_json, conflicts_json, decisions_json, review_fingerprint FROM ${PREPARED_METADATA_TABLE}`,
   );
   const row = rows[0];
-  if (
-    row === undefined ||
-    typeof row["plan_id"] !== "string" ||
-    typeof row["database_id"] !== "string"
-  ) {
+  if (row === undefined || rows.length !== 1) {
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",
       "The import plan metadata is missing.",
     );
   }
-  const common = {
-    id: row["plan_id"] as PreparedImportId,
-    databaseId: row["database_id"] as DatabaseId,
-    baselineRevision: preparedBigInt(
-      row["baseline_revision"],
-      "baseline revision",
-    ),
-    baselineSchemaFingerprint:
-      typeof row["schema_fingerprint"] === "string"
-        ? row["schema_fingerprint"]
-        : (() => {
-            throw databaseError(
-              "DB_INVALID_PREPARED_IMPORT",
-              "The import plan is missing its database schema fingerprint.",
-            );
-          })(),
-    planRevision: preparedBigInt(row["plan_revision"], "plan revision"),
-  };
-  if (row["state"] === "ready") return { ...common, state: "ready" };
-  if (row["state"] === "needs-review") {
-    return { ...common, state: "needs-review" };
-  }
-  throw databaseError(
-    "DB_INVALID_PREPARED_IMPORT",
-    "The import plan has an invalid review state.",
-    { state: row["state"] },
+  const formatVersion = nonNegativePreparedBigInt(
+    row["format_version"],
+    "format version",
   );
+  if (formatVersion !== BigInt(PREPARED_FORMAT_VERSION)) {
+    throw databaseError(
+      "DB_UNSUPPORTED_PREPARED_IMPORT_VERSION",
+      `This import plan uses format version ${formatVersion.toString()}, but this build supports version ${PREPARED_FORMAT_VERSION}. Regenerate the plan from its original sources with this build.`,
+      {
+        fileVersion: formatVersion.toString(),
+        supportedVersion: PREPARED_FORMAT_VERSION,
+      },
+    );
+  }
+  const planId = requiredPreparedString(row["plan_id"], "plan ID");
+  const databaseId = requiredPreparedString(row["database_id"], "database ID");
+  const baselineRevision = nonNegativePreparedBigInt(
+    row["baseline_revision"],
+    "baseline revision",
+  );
+  const schemaFingerprint = requiredPreparedString(
+    row["schema_fingerprint"],
+    "database schema fingerprint",
+  );
+  const planRevision = positivePreparedBigInt(
+    row["plan_revision"],
+    "plan revision",
+  );
+  if (row["state"] !== "ready" && row["state"] !== "needs-review") {
+    throw databaseError(
+      "DB_INVALID_PREPARED_IMPORT",
+      "The import plan has an invalid review state.",
+      { state: row["state"] },
+    );
+  }
+  const state = row["state"];
+  const recipeJson = requiredPreparedString(row["recipe_json"], "recipe");
+  if (
+    typeof row["conflicts_json"] !== "string" ||
+    typeof row["decisions_json"] !== "string"
+  ) {
+    throw databaseError(
+      "DB_INVALID_PREPARED_IMPORT",
+      "The import plan recipe or conflicts are missing.",
+    );
+  }
+  const conflictsJson = row["conflicts_json"];
+  const decisionsJson = row["decisions_json"];
+  let recipeValue: unknown;
+  let conflictsValue: unknown;
+  let decisionsValue: unknown;
+  try {
+    recipeValue = JSON.parse(recipeJson);
+    conflictsValue = JSON.parse(conflictsJson);
+    decisionsValue = JSON.parse(decisionsJson);
+  } catch (cause) {
+    throw databaseError(
+      "DB_INVALID_PREPARED_IMPORT",
+      "The import plan recipe or conflicts are not valid JSON.",
+      undefined,
+      cause,
+    );
+  }
+  const recipe = parseImportRecipe(recipeValue);
+  const conflicts = parseImportConflicts(conflictsValue);
+  const decisions = parseImportDecisions(decisionsValue);
+  if (state === "ready" && conflicts.length > 0) {
+    throw databaseError(
+      "DB_INVALID_PREPARED_IMPORT",
+      "The import plan is marked ready but still contains conflicts. Review the plan again before applying it.",
+    );
+  }
+  const storedFingerprint = requiredPreparedString(
+    row["review_fingerprint"],
+    "review fingerprint",
+  );
+  const { captureDefinitionsJson, bindingsJson } =
+    await readPreparedCaptureMetadata(engine);
+  const expectedFingerprint = reviewFingerprint({
+    formatVersion,
+    planId,
+    databaseId,
+    baselineRevision,
+    schemaFingerprint,
+    planRevision,
+    state,
+    recipeJson,
+    conflictsJson,
+    decisionsJson,
+    captureDefinitionsJson,
+    bindingsJson,
+  });
+  if (
+    !/^[0-9a-f]{64}$/u.test(storedFingerprint) ||
+    storedFingerprint !== expectedFingerprint
+  ) {
+    throw databaseError(
+      "DB_INVALID_PREPARED_IMPORT",
+      "The import plan review metadata changed outside the review workflow. Regenerate the plan from its original sources or restore a verified plan copy.",
+    );
+  }
+  const common = {
+    id: planId as PreparedImportId,
+    databaseId: databaseId as DatabaseId,
+    baselineRevision,
+    baselineSchemaFingerprint: schemaFingerprint,
+    planRevision,
+    reviewFingerprint: storedFingerprint,
+  };
+  return {
+    prepared:
+      state === "ready"
+        ? { ...common, state: "ready" }
+        : { ...common, state: "needs-review" },
+    recipe,
+    conflicts,
+    decisions,
+    raw: {
+      state,
+      recipeJson,
+      conflictsJson,
+      decisionsJson,
+      captureDefinitionsJson,
+      bindingsJson,
+    },
+  };
+}
+
+export async function readPreparedReview(
+  prepared: PreparedImport,
+): Promise<PreparedReview> {
+  return preparedEngineOf(prepared).readTransaction((transaction) =>
+    readStoredPreparedReview(transaction),
+  );
+}
+
+export async function preparedRef(
+  prepared: PreparedImport,
+): Promise<PreparedImportRef | ReadyImportRef> {
+  return (await readPreparedReview(prepared)).prepared;
 }
 
 export async function updatePreparedPlan(options: {
@@ -348,48 +635,119 @@ export async function updatePreparedPlan(options: {
   readonly baselineSchemaFingerprint?: string | undefined;
 }): Promise<PreparedImportRef | ReadyImportRef> {
   validateImportRecipe(options.recipe);
+  if (options.ready && options.conflicts.length > 0) {
+    throw databaseError(
+      "DB_INVALID_PREPARED_IMPORT",
+      "An import plan with unresolved conflicts cannot be marked ready.",
+    );
+  }
   const engine = preparedEngineOf(options.prepared);
   const recipeJson = canonicalJson(options.recipe);
   const conflictsJson = canonicalJson(options.conflicts);
   const decisionsJson = canonicalJson(options.decisions ?? []);
   const state = options.ready ? "ready" : "needs-review";
-  const current = await engine.query(
-    `SELECT state, recipe_json, conflicts_json, decisions_json, baseline_revision, schema_fingerprint FROM ${PREPARED_METADATA_TABLE}`,
-  );
-  const baselineRevision =
-    options.baselineRevision ??
-    preparedBigInt(current[0]?.["baseline_revision"], "baseline revision");
-  const baselineSchemaFingerprint =
-    options.baselineSchemaFingerprint ?? current[0]?.["schema_fingerprint"];
-  if (typeof baselineSchemaFingerprint !== "string") {
-    throw databaseError(
-      "DB_INVALID_PREPARED_IMPORT",
-      "The import plan is missing its database schema fingerprint.",
-    );
-  }
-  if (
-    current[0]?.["state"] === state &&
-    current[0]?.["recipe_json"] === recipeJson &&
-    current[0]?.["conflicts_json"] === conflictsJson &&
-    current[0]?.["decisions_json"] === decisionsJson &&
-    preparedBigInt(current[0]?.["baseline_revision"], "baseline revision") ===
-      baselineRevision &&
-    current[0]?.["schema_fingerprint"] === baselineSchemaFingerprint
-  ) {
-    return preparedRef(options.prepared);
-  }
-  await engine.execute(
-    `UPDATE ${PREPARED_METADATA_TABLE} SET plan_revision = plan_revision + 1, baseline_revision = ?, schema_fingerprint = ?, state = ?, recipe_json = ?, conflicts_json = ?, decisions_json = ?`,
-    [
+  return engine.transaction(async (transaction) => {
+    const current = await readStoredPreparedReview(transaction);
+    const baselineRevision =
+      options.baselineRevision ?? current.prepared.baselineRevision;
+    const baselineSchemaFingerprint =
+      options.baselineSchemaFingerprint ??
+      current.prepared.baselineSchemaFingerprint;
+    if (
+      current.raw.state === state &&
+      current.raw.recipeJson === recipeJson &&
+      current.raw.conflictsJson === conflictsJson &&
+      current.raw.decisionsJson === decisionsJson &&
+      current.prepared.baselineRevision === baselineRevision &&
+      current.prepared.baselineSchemaFingerprint === baselineSchemaFingerprint
+    ) {
+      return current.prepared;
+    }
+    const planRevision = current.prepared.planRevision + 1n;
+    const fingerprint = reviewFingerprint({
+      formatVersion: BigInt(PREPARED_FORMAT_VERSION),
+      planId: current.prepared.id,
+      databaseId: current.prepared.databaseId,
       baselineRevision,
-      baselineSchemaFingerprint,
+      schemaFingerprint: baselineSchemaFingerprint,
+      planRevision,
       state,
       recipeJson,
       conflictsJson,
       decisionsJson,
-    ],
-  );
-  return preparedRef(options.prepared);
+      captureDefinitionsJson: current.raw.captureDefinitionsJson,
+      bindingsJson: current.raw.bindingsJson,
+    });
+    await transaction.execute(
+      `UPDATE ${PREPARED_METADATA_TABLE} SET plan_revision = ?, baseline_revision = ?, schema_fingerprint = ?, state = ?, recipe_json = ?, conflicts_json = ?, decisions_json = ?, review_fingerprint = ?`,
+      [
+        planRevision,
+        baselineRevision,
+        baselineSchemaFingerprint,
+        state,
+        recipeJson,
+        conflictsJson,
+        decisionsJson,
+        fingerprint,
+      ],
+    );
+    const common = {
+      id: current.prepared.id,
+      databaseId: current.prepared.databaseId,
+      planRevision,
+      baselineRevision,
+      baselineSchemaFingerprint,
+      reviewFingerprint: fingerprint,
+    };
+    return state === "ready"
+      ? { ...common, state: "ready" }
+      : { ...common, state: "needs-review" };
+  });
+}
+
+export async function updatePreparedCaptureMetadata(
+  prepared: PreparedImport,
+  mutate: (transaction: EngineTransaction) => Promise<void>,
+): Promise<PreparedImportRef> {
+  const engine = preparedEngineOf(prepared);
+  return engine.transaction(async (transaction) => {
+    const current = await readStoredPreparedReview(transaction);
+    await mutate(transaction);
+    const { captureDefinitionsJson, bindingsJson } =
+      await readPreparedCaptureMetadata(transaction);
+    const planRevision =
+      current.prepared.state === "ready"
+        ? current.prepared.planRevision + 1n
+        : current.prepared.planRevision;
+    const state = "needs-review";
+    const fingerprint = reviewFingerprint({
+      formatVersion: BigInt(PREPARED_FORMAT_VERSION),
+      planId: current.prepared.id,
+      databaseId: current.prepared.databaseId,
+      baselineRevision: current.prepared.baselineRevision,
+      schemaFingerprint: current.prepared.baselineSchemaFingerprint,
+      planRevision,
+      state,
+      recipeJson: current.raw.recipeJson,
+      conflictsJson: current.raw.conflictsJson,
+      decisionsJson: current.raw.decisionsJson,
+      captureDefinitionsJson,
+      bindingsJson,
+    });
+    await transaction.execute(
+      `UPDATE ${PREPARED_METADATA_TABLE} SET plan_revision = ?, state = ?, review_fingerprint = ?`,
+      [planRevision, state, fingerprint],
+    );
+    return {
+      id: current.prepared.id,
+      databaseId: current.prepared.databaseId,
+      baselineRevision: current.prepared.baselineRevision,
+      baselineSchemaFingerprint: current.prepared.baselineSchemaFingerprint,
+      planRevision,
+      reviewFingerprint: fingerprint,
+      state,
+    };
+  });
 }
 
 export async function readPreparedRecipe(prepared: PreparedImport): Promise<{
@@ -397,39 +755,10 @@ export async function readPreparedRecipe(prepared: PreparedImport): Promise<{
   readonly conflicts: readonly ImportConflict[];
   readonly decisions: readonly ImportDecision[];
 }> {
-  const rows = await preparedEngineOf(prepared).query(
-    `SELECT recipe_json, conflicts_json, decisions_json FROM ${PREPARED_METADATA_TABLE}`,
-  );
-  const row = rows[0];
-  if (
-    row === undefined ||
-    typeof row["recipe_json"] !== "string" ||
-    typeof row["conflicts_json"] !== "string" ||
-    typeof row["decisions_json"] !== "string"
-  ) {
-    throw databaseError(
-      "DB_INVALID_PREPARED_IMPORT",
-      "The import plan recipe is missing.",
-    );
-  }
-  let recipeValue: unknown;
-  let conflictsValue: unknown;
-  let decisionsValue: unknown;
-  try {
-    recipeValue = JSON.parse(row["recipe_json"]);
-    conflictsValue = JSON.parse(row["conflicts_json"]);
-    decisionsValue = JSON.parse(row["decisions_json"]);
-  } catch (cause) {
-    throw databaseError(
-      "DB_INVALID_PREPARED_IMPORT",
-      "The import plan recipe or conflicts are not valid JSON.",
-      undefined,
-      cause,
-    );
-  }
+  const review = await readPreparedReview(prepared);
   return {
-    recipe: parseImportRecipe(recipeValue),
-    conflicts: parseImportConflicts(conflictsValue),
-    decisions: parseImportDecisions(decisionsValue),
+    recipe: review.recipe,
+    conflicts: review.conflicts,
+    decisions: review.decisions,
   };
 }

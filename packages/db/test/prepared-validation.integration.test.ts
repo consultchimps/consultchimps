@@ -172,7 +172,7 @@ test("reports an unsupported future version before validating its changed layout
     await created.close();
     const future = NodeSqliteEngine.open(planPath);
     await future.execute(
-      `UPDATE ${PREPARED_METADATA_TABLE} SET format_version = 2`,
+      `UPDATE ${PREPARED_METADATA_TABLE} SET format_version = 3`,
     );
     await future.execute(`DROP TABLE ${PREPARED_CAPTURE_TABLE}`);
     await future.close();
@@ -182,9 +182,46 @@ test("reports an unsupported future version before validating its changed layout
       openPreparedImport({ path: planPath, readonly: true }),
     ).rejects.toMatchObject({
       code: "DB_UNSUPPORTED_PREPARED_IMPORT_VERSION",
-      details: { fileVersion: "2", supportedVersion: 1 },
+      details: { fileVersion: "3", supportedVersion: 2 },
     });
     expect(await readFile(planPath)).toEqual(before);
+  } finally {
+    await database.close();
+  }
+});
+
+test("reports that version 1 plans must be regenerated from their sources", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "cc-plan-v1-"));
+  directories.push(directory);
+  const databasePath = path.join(directory, "workspace.sqlite");
+  const planPath = path.join(directory, "version-1.ccplan");
+  const { database } = await createDatabase({
+    path: databasePath,
+    format: "sqlite",
+  });
+  try {
+    const created = await createPreparedImport({
+      path: planPath,
+      database,
+      recipe: { version: 1, routes: [] },
+      baselineRevision: (await inspectDatabase({ database })).revision,
+    });
+    await created.close();
+    const oldVersion = NodeSqliteEngine.open(planPath);
+    await oldVersion.execute(
+      `UPDATE ${PREPARED_METADATA_TABLE} SET format_version = 1`,
+    );
+    await oldVersion.close();
+
+    await expect(
+      openPreparedImport({ path: planPath, readonly: true }),
+    ).rejects.toMatchObject({
+      code: "DB_UNSUPPORTED_PREPARED_IMPORT_VERSION",
+      message: expect.stringContaining(
+        "Regenerate the plan from its original sources with this build.",
+      ),
+      details: { fileVersion: "1", supportedVersion: 2 },
+    });
   } finally {
     await database.close();
   }

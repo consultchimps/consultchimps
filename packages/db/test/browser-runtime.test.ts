@@ -1424,6 +1424,22 @@ describe("browser database runtime", () => {
       }),
     ).rejects.toMatchObject({ code: "DB_BROWSER_DATABASE_BUSY" });
     await prepared.close();
+    const legacy = await runtime.createPreparedImport({
+      name: ".consultchimps-import-legacy.sqlite",
+      database: created.database,
+      recipe: { version: 1, routes: [] },
+      baselineRevision: inspection.revision,
+    });
+    await legacy.close();
+    const legacyStorage = harness.openDatabase(
+      "/.consultchimps-import-legacy.sqlite",
+      "w",
+    );
+    legacyStorage.exec("UPDATE _consultchimps_prepared SET format_version = 1");
+    legacyStorage.exec(
+      "ALTER TABLE _consultchimps_prepared DROP COLUMN review_fingerprint",
+    );
+    legacyStorage.close();
     const unrelated = await runtime.createDatabase({
       name: ".consultchimps-import-unrelated.sqlite",
       format: "sqlite",
@@ -1458,7 +1474,21 @@ describe("browser database runtime", () => {
           application: "pending",
         },
       ],
-      ignored: [".consultchimps-import-unrelated.sqlite"],
+      ignored: [
+        {
+          name: ".consultchimps-import-legacy.sqlite",
+          code: "DB_UNSUPPORTED_PREPARED_IMPORT_VERSION",
+          message: expect.stringMatching(
+            /format version 1.*supports version 2.*original sources/iu,
+          ),
+        },
+        {
+          name: ".consultchimps-import-unrelated.sqlite",
+          code: "DB_INVALID_PREPARED_IMPORT",
+          message:
+            "This import plan is incomplete or damaged. Prepare the workbook again or restore a verified plan copy.",
+        },
+      ],
     });
 
     const reopened = await runtime.openPreparedImport({

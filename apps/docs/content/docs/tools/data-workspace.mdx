@@ -413,6 +413,13 @@ writing or downloading it. When Web Locks are unavailable, cleanup leaves the
 file in place instead of risking an active download. These temporary files need
 browser storage in addition to the working database until cleanup completes.
 
+Saved reviews use prepared artifact format 2. The application checks a stored
+fingerprint of the reviewed metadata before using a plan. Editing its mappings
+outside the review workflow can invalidate that check. The fingerprint is not a
+digital signature and does not authenticate captured row contents. Version 1
+spike plans must be regenerated from the original sources; working database
+files keep their format.
+
 Saved import reviews use the same browser storage. If a tab closes or an apply
 is cancelled, reopen the working database and resume the saved review. A
 cancelled apply rolls back its transaction, so retrying the plan does not keep a

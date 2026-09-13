@@ -6,6 +6,7 @@ import {
   valueAsBigInt,
   valueAsString,
 } from "../database.js";
+import { databaseError } from "../errors.js";
 import { canonicalJson } from "../internal/json.js";
 import {
   APPLICATION_TABLE,
@@ -46,6 +47,7 @@ import { effectiveMappingKey } from "./application-key.js";
 
 const REVIEW_BATCH_ROWS = 2_000;
 const REFERENCE_QUERY_VALUES = 400;
+const MAX_CAPTURE_COUNT = BigInt(Number.MAX_SAFE_INTEGER);
 
 export interface PreparedCapture {
   readonly captureId: string;
@@ -60,6 +62,39 @@ export interface PreparedCapture {
   readonly reused: boolean;
   readonly rowCount: bigint;
   readonly columns: readonly InferredColumn[];
+}
+
+function invalidPreparedCaptureField(
+  field: string,
+  cause?: unknown,
+): ReturnType<typeof databaseError> {
+  return databaseError(
+    "DB_INVALID_PREPARED_IMPORT",
+    `The import plan has an invalid captured ${field}. Prepare the source again or restore a verified plan copy.`,
+    { field },
+    cause,
+  );
+}
+
+function preparedCaptureCount(value: unknown, field: string): bigint {
+  let count: bigint;
+  try {
+    count = valueAsBigInt(value, field);
+  } catch (cause) {
+    throw invalidPreparedCaptureField(field, cause);
+  }
+  if (count < 0n || count > MAX_CAPTURE_COUNT) {
+    throw invalidPreparedCaptureField(field);
+  }
+  return count;
+}
+
+function preparedCaptureReuse(value: unknown): boolean {
+  const reused = preparedCaptureCount(value, "reuse flag");
+  if (reused !== 0n && reused !== 1n) {
+    throw invalidPreparedCaptureField("reuse flag");
+  }
+  return reused === 1n;
 }
 
 export async function preparedCaptures(
@@ -80,9 +115,9 @@ export async function preparedCaptures(
     selectionLabel: valueAsString(row["selection_label"], "selection label"),
     readerVersion: valueAsString(row["reader_version"], "reader version"),
     contentHash: valueAsString(row["content_hash"], "content hash"),
-    byteCount: valueAsBigInt(row["byte_count"], "byte count"),
-    reused: valueAsBigInt(row["reused"], "reused flag") === 1n,
-    rowCount: valueAsBigInt(row["row_count"], "row count"),
+    byteCount: preparedCaptureCount(row["byte_count"], "byte count"),
+    reused: preparedCaptureReuse(row["reused"]),
+    rowCount: preparedCaptureCount(row["row_count"], "row count"),
     columns: parseInferredColumnsJson(
       valueAsString(row["columns_json"], "captured columns"),
     ),

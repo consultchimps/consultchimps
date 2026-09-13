@@ -74,6 +74,18 @@ if capture, source verification, or cancellation fails before publication. List
 filesystem-backed source, recipe, and context files in `protectedInputPaths` so
 overwrite validation can reject those destinations.
 
+Prepared plans use artifact format version 2. Their stored review fingerprint
+binds the plan identity, database baseline, revision, state, recipe, conflicts,
+decisions, source bindings, and capture definitions. Reading a plan checks that
+fingerprint, and applying requires the same `reviewFingerprint` as the approved
+reference. Inconsistent edits are rejected before applying changed mappings.
+This is an integrity check, not a signature or authentication of the artifact or
+captured row contents. An editor who rewrites both metadata and its fingerprint
+can produce a different valid artifact.
+
+Version 1 spike plans are unsupported. Regenerate them from their original
+sources with this build. Existing working database files keep their format.
+
 Use `openPreparedImport({ path, readonly: true })` for inspection. This opens
 the saved plan without enabling SQLite's writable journal mode. Omit `readonly`
 when preparing, resolving, or applying a plan, because those operations update
@@ -158,6 +170,10 @@ or resume it. This recovery covers failures reported to the running operation.
 An abrupt tab, worker, or browser termination can interrupt publication. DuckDB
 stores its main file and write-ahead log as separate OPFS entries, so browser
 replacement is not crash-atomic across those entries.
+
+`BrowserDatabaseRuntime.listPreparedImports` returns readable `imports` and
+`ignored` entries with a `name`, stable error `code`, and recovery `message`.
+Unsupported plan versions remain stored and are reported through those entries.
 
 Call `BrowserDatabaseRuntime.discardPreparedImport({ name })` only for a private
 plan that the caller created and no longer needs. The runtime refuses to remove

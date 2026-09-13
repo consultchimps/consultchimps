@@ -165,9 +165,15 @@ export interface BrowserPreparedImportSummary {
   readonly application: "applied" | "pending";
 }
 
+export interface BrowserIgnoredPreparedImport {
+  readonly name: string;
+  readonly code: string;
+  readonly message: string;
+}
+
 export interface BrowserPreparedImportListing {
   readonly imports: readonly BrowserPreparedImportSummary[];
-  readonly ignored: readonly string[];
+  readonly ignored: readonly BrowserIgnoredPreparedImport[];
 }
 
 export interface BrowserDatabaseRuntime {
@@ -1381,7 +1387,7 @@ export async function configureBrowserDatabaseRuntime(
         .map((name) => name.slice(1))
         .sort();
       const imports: BrowserPreparedImportSummary[] = [];
-      const ignored: string[] = [];
+      const ignored: BrowserIgnoredPreparedImport[] = [];
       for (const name of names) {
         let engine: BrowserSqliteEngine | undefined;
         let prepared: PreparedImport | undefined;
@@ -1407,8 +1413,17 @@ export async function configureBrowserDatabaseRuntime(
             databaseId: prepared.databaseId,
             application: applied ? "applied" : "pending",
           });
-        } catch {
-          ignored.push(name);
+        } catch (error) {
+          ignored.push(
+            isConsultChimpsError(error)
+              ? { name, code: error.code, message: error.message }
+              : {
+                  name,
+                  code: "DB_BROWSER_PREPARED_IMPORT_UNREADABLE",
+                  message:
+                    "This saved import plan could not be reopened. Reload the workspace, then prepare the original sources again or restore a verified plan copy if it remains unavailable.",
+                },
+          );
         } finally {
           if (prepared !== undefined) await prepared.close();
           else await engine?.close().catch(() => undefined);

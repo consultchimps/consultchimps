@@ -197,7 +197,7 @@ establish a safe DuckDB-Wasm size in a browser process.
 ## Historical experiment decision
 
 This was the experiment's recommendation. The later product decision in
-[ADR 0004](../../docs/adr/0004-persistent-database-imports.md) supersedes it:
+[ADR 0005](../../docs/adr/0005-persistent-database-imports.md) supersedes it:
 both formats are persistent working databases, the in-memory spike is retired,
 and the analytics UI is paused. These measurements remain an engine baseline;
 they do not measure the current import metadata and index layout.

@@ -62,6 +62,19 @@ staging artifact. Applying rechecks the destination identity and relevant live
 schema, then commits a connected group of tables and its receipt together.
 Cancellation and retry must not expose partially accepted observations.
 
+Prepared artifact format 2 stores a fingerprint over reviewed metadata,
+including source bindings and capture definitions. Approval references carry
+that fingerprint. Inspection returns the reference and reviewed metadata from
+one snapshot, and apply compares the approval with the same metadata snapshot
+used for its recipe and decisions. This prevents an inconsistent external
+metadata edit from borrowing a prior ready state or approval. It avoids a second
+scan of captured rows. Preparation updates capture metadata and invalidates
+prior approval in the same transaction; row batches remain outside the
+fingerprint. The fingerprint is not an authentication mechanism and does not
+protect against an editor who coherently rewrites the artifact and fingerprint.
+Version 1 spike plans require regeneration from their original sources; the
+working database format does not change.
+
 ## Conversion and external analysis
 
 Conversion validates types, values, keys, and unsupported engine features before

@@ -12,6 +12,7 @@ import {
   PREPARED_CAPTURE_TABLE,
   PREPARED_ROW_TABLE,
   preparedEngineOf,
+  updatePreparedCaptureMetadata,
   updatePreparedPlan,
 } from "../prepared.js";
 import {
@@ -186,14 +187,23 @@ export async function prepareImport(
         [contentHash, selection.key, source.readerVersion],
       );
       if (duplicate[0] !== undefined) {
-        await preparedEngine.execute(
-          `INSERT INTO ${PREPARED_BINDING_TABLE} VALUES (?, ?, ?, ?)`,
-          [
-            source.key,
-            selection.key,
-            valueAsString(duplicate[0]["capture_id"], "capture ID"),
-            source.bytes.name,
-          ],
+        const duplicateCaptureId = valueAsString(
+          duplicate[0]["capture_id"],
+          "capture ID",
+        );
+        await updatePreparedCaptureMetadata(
+          options.prepared,
+          async (transaction) => {
+            await transaction.execute(
+              `INSERT INTO ${PREPARED_BINDING_TABLE} VALUES (?, ?, ?, ?)`,
+              [
+                source.key,
+                selection.key,
+                duplicateCaptureId,
+                source.bytes.name,
+              ],
+            );
+          },
         );
         reusedSource = true;
         continue;
@@ -205,29 +215,37 @@ export async function prepareImport(
         readerVersion: source.readerVersion,
       });
       if (reusable !== null) {
-        await preparedEngine.transaction(async (transaction) => {
-          await transaction.execute(
-            `INSERT INTO ${PREPARED_CAPTURE_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              reusable.captureId,
-              reusable.sourceFileId,
-              source.key,
-              source.bytes.name,
-              selection.key,
-              selection.label,
-              source.readerVersion,
-              contentHash,
-              BigInt(source.bytes.size),
-              1n,
-              reusable.rowCount,
-              reusable.columns,
-            ],
-          );
-          await transaction.execute(
-            `INSERT INTO ${PREPARED_BINDING_TABLE} VALUES (?, ?, ?, ?)`,
-            [source.key, selection.key, reusable.captureId, source.bytes.name],
-          );
-        });
+        await updatePreparedCaptureMetadata(
+          options.prepared,
+          async (transaction) => {
+            await transaction.execute(
+              `INSERT INTO ${PREPARED_CAPTURE_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                reusable.captureId,
+                reusable.sourceFileId,
+                source.key,
+                source.bytes.name,
+                selection.key,
+                selection.label,
+                source.readerVersion,
+                contentHash,
+                BigInt(source.bytes.size),
+                1n,
+                reusable.rowCount,
+                reusable.columns,
+              ],
+            );
+            await transaction.execute(
+              `INSERT INTO ${PREPARED_BINDING_TABLE} VALUES (?, ?, ?, ?)`,
+              [
+                source.key,
+                selection.key,
+                reusable.captureId,
+                source.bytes.name,
+              ],
+            );
+          },
+        );
         reusedSource = true;
         continue;
       }
@@ -327,29 +345,32 @@ export async function prepareImport(
           return inferColumns(columnNames, profiles);
         });
         await source.verifyUnchanged?.();
-        await preparedEngine.transaction(async (transaction) => {
-          await transaction.execute(
-            `INSERT INTO ${PREPARED_CAPTURE_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              captureId,
-              null,
-              source.key,
-              source.bytes.name,
-              selection.key,
-              selection.label,
-              source.readerVersion,
-              contentHash,
-              BigInt(source.bytes.size),
-              0n,
-              BigInt(rowCount),
-              JSON.stringify(columns),
-            ],
-          );
-          await transaction.execute(
-            `INSERT INTO ${PREPARED_BINDING_TABLE} VALUES (?, ?, ?, ?)`,
-            [source.key, selection.key, captureId, source.bytes.name],
-          );
-        });
+        await updatePreparedCaptureMetadata(
+          options.prepared,
+          async (transaction) => {
+            await transaction.execute(
+              `INSERT INTO ${PREPARED_CAPTURE_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                captureId,
+                null,
+                source.key,
+                source.bytes.name,
+                selection.key,
+                selection.label,
+                source.readerVersion,
+                contentHash,
+                BigInt(source.bytes.size),
+                0n,
+                BigInt(rowCount),
+                JSON.stringify(columns),
+              ],
+            );
+            await transaction.execute(
+              `INSERT INTO ${PREPARED_BINDING_TABLE} VALUES (?, ?, ?, ?)`,
+              [source.key, selection.key, captureId, source.bytes.name],
+            );
+          },
+        );
       } catch (error) {
         try {
           await preparedEngine.execute(

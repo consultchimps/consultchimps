@@ -6,10 +6,12 @@ import {
   secondaryButtonClass,
   sectionClass,
 } from "@/components/tool-kit";
+import { WorkspaceImportDiagnostics } from "@/components/workspace-import-diagnostics";
 import { WORKBOOK_FILES } from "@/lib/accepted-files";
 import type {
   WorkspaceDeliveryContext,
   WorkspaceImportFile,
+  WorkspaceImportListing,
   WorkspacePreparedImport,
   WorkspacePreviewPage,
   WorkspaceProgress,
@@ -252,7 +254,9 @@ export function WorkspaceImport({
   const [savedPlans, setSavedPlans] = useState<
     readonly WorkspacePreparedImport[]
   >([]);
-  const [ignoredPlanCount, setIgnoredPlanCount] = useState(0);
+  const [ignoredPlans, setIgnoredPlans] = useState<
+    WorkspaceImportListing["ignoredPlans"]
+  >([]);
   const [decisions, setDecisions] = useState<readonly WorkspaceRouteDecision[]>(
     [],
   );
@@ -283,7 +287,7 @@ export function WorkspaceImport({
               pendingImport(summary.databaseId, saved.id) !== null,
           ),
         );
-        setIgnoredPlanCount(listing.ignoredPlanCount);
+        setIgnoredPlans(listing.ignoredPlans);
       })
       .catch((error: unknown) => {
         if (active) reportError(error);
@@ -680,12 +684,7 @@ export function WorkspaceImport({
           </div>
         </div>
       )}
-      {ignoredPlanCount === 0 ? null : (
-        <p className="mt-4 rounded-lg border p-3 text-sm" role="status">
-          {ignoredPlanCount.toLocaleString()} unreadable saved import files were
-          ignored
-        </p>
-      )}
+      <WorkspaceImportDiagnostics ignoredPlans={ignoredPlans} />
 
       {sources.length === 0 ? null : (
         <div className="mt-5 space-y-3" data-testid="workspace-import-sources">

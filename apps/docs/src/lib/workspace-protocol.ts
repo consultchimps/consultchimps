@@ -127,9 +127,15 @@ export interface WorkspacePreparedImport {
   readonly warningCount: number;
 }
 
+export interface WorkspaceIgnoredImport {
+  readonly name: string;
+  readonly code: string;
+  readonly message: string;
+}
+
 export interface WorkspaceImportListing {
   readonly plans: readonly WorkspacePreparedImport[];
-  readonly ignoredPlanCount: number;
+  readonly ignoredPlans: readonly WorkspaceIgnoredImport[];
 }
 
 export interface WorkspacePreviewPage {
@@ -293,7 +299,7 @@ export type WorkspaceEvent =
   | (WorkspaceEventBase & {
       readonly type: "importsListed";
       readonly plans: readonly WorkspacePreparedImport[];
-      readonly ignoredPlanCount: number;
+      readonly ignoredPlans: readonly WorkspaceIgnoredImport[];
     })
   | (WorkspaceEventBase & {
       readonly type: "importPreview";

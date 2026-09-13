@@ -786,7 +786,7 @@ async function listSavedImports(id: number): Promise<void> {
   const listing = await (
     await runtime()
   ).listPreparedImports({ database: current().database });
-  let ignoredPlanCount = listing.ignored.length;
+  const ignoredPlans = [...listing.ignored];
   for (const entry of listing.imports) {
     if (entry.databaseId !== current().database.id) continue;
     let prepared: PreparedImport | undefined;
@@ -817,8 +817,17 @@ async function listSavedImports(id: number): Promise<void> {
       const held = heldFromInspection(prepared, inspection, application);
       imports.set(held.ref.id, held);
       prepared = undefined;
-    } catch {
-      ignoredPlanCount += 1;
+    } catch (error) {
+      ignoredPlans.push(
+        isConsultChimpsError(error)
+          ? { name: entry.name, code: error.code, message: error.message }
+          : {
+              name: entry.name,
+              code: "DB_BROWSER_PREPARED_IMPORT_UNREADABLE",
+              message:
+                "This saved import plan could not be reopened. Reload the workspace, then prepare the original sources again or restore a verified plan copy if it remains unavailable.",
+            },
+      );
       await prepared?.close().catch(() => undefined);
     }
   }
@@ -828,7 +837,7 @@ async function listSavedImports(id: number): Promise<void> {
     type: "importsListed",
     id,
     plans,
-    ignoredPlanCount,
+    ignoredPlans,
   });
 }
 

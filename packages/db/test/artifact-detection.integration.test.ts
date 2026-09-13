@@ -7,7 +7,6 @@ import { afterEach, expect, test } from "vitest";
 import { inspectDatabase } from "../src/database.js";
 import { NodeDuckDbEngine } from "../src/engines/duckdb/node.js";
 import { NodeSqliteEngine } from "../src/engines/sqlite/node.js";
-import { inspectImport } from "../src/import/inspection.js";
 import { DATABASE_METADATA_TABLE } from "../src/metadata.js";
 import {
   createDatabase,
@@ -181,7 +180,7 @@ test("rejects unsupported prepared versions", async () => {
   }
   const corrupt = NodeSqliteEngine.open(planPath);
   await corrupt.execute(
-    `UPDATE ${PREPARED_METADATA_TABLE} SET format_version = 2`,
+    `UPDATE ${PREPARED_METADATA_TABLE} SET format_version = 3`,
   );
   await corrupt.close();
   await expect(openPreparedImport({ path: planPath })).rejects.toMatchObject({
@@ -190,29 +189,19 @@ test("rejects unsupported prepared versions", async () => {
 
   const invalidState = NodeSqliteEngine.open(planPath);
   await invalidState.execute(
-    `UPDATE ${PREPARED_METADATA_TABLE} SET format_version = 1, state = 'unknown'`,
+    `UPDATE ${PREPARED_METADATA_TABLE} SET format_version = 2, state = 'unknown'`,
   );
   await invalidState.close();
-  const statePlan = await openPreparedImport({ path: planPath });
-  try {
-    await expect(
-      inspectImport({ prepared: statePlan, page: { limit: 1 } }),
-    ).rejects.toMatchObject({ code: "DB_INVALID_PREPARED_IMPORT" });
-  } finally {
-    await statePlan.close();
-  }
+  await expect(openPreparedImport({ path: planPath })).rejects.toMatchObject({
+    code: "DB_INVALID_PREPARED_IMPORT",
+  });
 
   const invalidJson = NodeSqliteEngine.open(planPath);
   await invalidJson.execute(
     `UPDATE ${PREPARED_METADATA_TABLE} SET state = 'needs-review', recipe_json = 'not-json'`,
   );
   await invalidJson.close();
-  const jsonPlan = await openPreparedImport({ path: planPath });
-  try {
-    await expect(
-      inspectImport({ prepared: jsonPlan, page: { limit: 1 } }),
-    ).rejects.toMatchObject({ code: "DB_INVALID_PREPARED_IMPORT" });
-  } finally {
-    await jsonPlan.close();
-  }
+  await expect(openPreparedImport({ path: planPath })).rejects.toMatchObject({
+    code: "DB_INVALID_PREPARED_IMPORT",
+  });
 });

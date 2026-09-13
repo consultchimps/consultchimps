@@ -126,6 +126,32 @@ describe("WorkspaceClient", () => {
     await expect(opened).resolves.toEqual(EMPTY_SUMMARY);
   });
 
+  it("keeps saved-plan diagnostics when listing resumable imports", async () => {
+    const client = new WorkspaceClient();
+    const listing = client.listImports();
+    await settle();
+
+    expect(ScriptedWorker.latest?.posted[0]).toMatchObject({
+      type: "listImports",
+    });
+    const ignoredPlan = {
+      name: ".consultchimps-import-old.sqlite",
+      code: "DB_UNSUPPORTED_PREPARED_IMPORT_VERSION",
+      message:
+        "This import plan uses format version 1, but this build supports version 2. Regenerate the plan from its original sources with this build.",
+    };
+    ScriptedWorker.latest?.reply(0, {
+      type: "importsListed",
+      plans: [],
+      ignoredPlans: [ignoredPlan],
+    });
+
+    await expect(listing).resolves.toEqual({
+      plans: [],
+      ignoredPlans: [ignoredPlan],
+    });
+  });
+
   it("sends cancellation beside the active command", async () => {
     const controller = new AbortController();
     const client = new WorkspaceClient();

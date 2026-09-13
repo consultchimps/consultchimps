@@ -12,6 +12,7 @@ import {
   PREPARED_CAPTURE_TABLE,
   PREPARED_ROW_TABLE,
   preparedEngineOf,
+  updatePreparedCaptureMetadata,
 } from "../src/prepared.js";
 import { createDatabase, createPreparedImport } from "../src/node.js";
 
@@ -46,27 +47,29 @@ for (const format of ["sqlite", "duckdb"] as const) {
         ["CAPTURE-A", "A"],
         ["CAPTURE-B", "B"],
       ] as const) {
-        await engine.execute(
-          `INSERT INTO ${PREPARED_CAPTURE_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            capture,
-            null,
-            source,
-            `${source}.xlsx`,
-            "Sheet1",
-            "Sheet1",
-            "test-1",
-            source.repeat(64),
-            1n,
-            source === "B" ? 1n : 0n,
-            2n,
-            '[{"name":"Value","type":"text"}]',
-          ],
-        );
-        await engine.execute(
-          `INSERT INTO ${PREPARED_BINDING_TABLE} VALUES (?, ?, ?, ?)`,
-          [source, "Sheet1", capture, `${source}.xlsx`],
-        );
+        await updatePreparedCaptureMetadata(prepared, async (transaction) => {
+          await transaction.execute(
+            `INSERT INTO ${PREPARED_CAPTURE_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              capture,
+              null,
+              source,
+              `${source}.xlsx`,
+              "Sheet1",
+              "Sheet1",
+              "test-1",
+              source.repeat(64),
+              1n,
+              source === "B" ? 1n : 0n,
+              2n,
+              '[{"name":"Value","type":"text"}]',
+            ],
+          );
+          await transaction.execute(
+            `INSERT INTO ${PREPARED_BINDING_TABLE} VALUES (?, ?, ?, ?)`,
+            [source, "Sheet1", capture, `${source}.xlsx`],
+          );
+        });
         for (const sourceRow of [1n, 2n]) {
           await (source === "B" ? engineOf(database) : engine).execute(
             `INSERT INTO ${source === "B" ? CAPTURE_ROW_TABLE : PREPARED_ROW_TABLE} VALUES (?, ?, ?)`,
@@ -139,10 +142,12 @@ for (const format of ["sqlite", "duckdb"] as const) {
         value: "B2",
       });
 
-      await engine.execute(
-        `INSERT INTO ${PREPARED_BINDING_TABLE} VALUES (?, ?, ?, ?)`,
-        ["C", "Sheet1", "CAPTURE-B", "renamed.xlsx"],
-      );
+      await updatePreparedCaptureMetadata(prepared, async (transaction) => {
+        await transaction.execute(
+          `INSERT INTO ${PREPARED_BINDING_TABLE} VALUES (?, ?, ?, ?)`,
+          ["C", "Sheet1", "CAPTURE-B", "renamed.xlsx"],
+        );
+      });
       const aliases = await inspectImport({
         database,
         prepared,

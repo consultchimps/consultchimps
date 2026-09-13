@@ -243,7 +243,7 @@ export class WorkspaceClient {
     if (event.type !== "importsListed") throw unexpected("import");
     return {
       plans: event.plans,
-      ignoredPlanCount: event.ignoredPlanCount,
+      ignoredPlans: event.ignoredPlans,
     };
   }
 

@@ -11,8 +11,7 @@ import {
   PREPARED_CAPTURE_TABLE,
   PREPARED_ROW_TABLE,
   preparedEngineOf,
-  preparedRef,
-  readPreparedRecipe,
+  readPreparedReview,
 } from "../prepared.js";
 import { parseImportCellsJson } from "./inference.js";
 import { inspectApplicationIdentity } from "./application-identity.js";
@@ -117,7 +116,8 @@ export async function inspectImport(options: {
       "This import plan belongs to a different database.",
     );
   }
-  const { recipe, conflicts } = await readPreparedRecipe(options.prepared);
+  const review = await readPreparedReview(options.prepared);
+  const { recipe, conflicts } = review;
   const preparedCaptureList = await preparedCaptures(options.prepared);
   const selected = preparedCaptureList.filter(
     (capture) =>
@@ -266,7 +266,7 @@ export async function inspectImport(options: {
     }),
   );
   return {
-    prepared: await preparedRef(options.prepared),
+    prepared: review.prepared,
     conflicts,
     capturedRows: valueAsBigInt(captures[0]?.["count"] ?? 0n, "captured rows"),
     routes,

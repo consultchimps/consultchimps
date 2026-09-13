@@ -5,7 +5,6 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { inspectDatabase } from "../src/database.js";
-import { applyImport } from "../src/import/apply.js";
 import type { ImportRecipe, ImportSource } from "../src/import/types.js";
 import {
   PREPARED_METADATA_TABLE,
@@ -248,16 +247,9 @@ describe.each(["sqlite", "duckdb"] as const)(
             `UPDATE ${PREPARED_METADATA_TABLE} SET state = 'ready', recipe_json = ?`,
             [JSON.stringify(duplicateTargetRecipe)],
           );
-          const approved = await preparedRef(reopened);
-          if (approved.state !== "ready") throw new Error("Plan not ready");
-          await expect(
-            applyImport({
-              database,
-              prepared: reopened,
-              approved,
-              requestId: `request-${format}`,
-            }),
-          ).rejects.toMatchObject({ code: "DB_INVALID_RECIPE" });
+          await expect(preparedRef(reopened)).rejects.toMatchObject({
+            code: "DB_INVALID_RECIPE",
+          });
           expect((await inspectDatabase({ database })).completedImports).toBe(
             0n,
           );

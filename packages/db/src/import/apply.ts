@@ -28,8 +28,7 @@ import {
 import {
   PREPARED_ROW_TABLE,
   preparedEngineOf,
-  preparedRef,
-  readPreparedRecipe,
+  readPreparedReview,
 } from "../prepared.js";
 import {
   createManagedTable,
@@ -129,20 +128,26 @@ export async function applyImport(
       "The import plan still needs review.",
     );
   }
-  const actual = await preparedRef(options.prepared);
+  const preparedPlan = await readPreparedReview(options.prepared);
+  const actual = preparedPlan.prepared;
   if (
     actual.state !== "ready" ||
     actual.id !== options.approved.id ||
-    actual.planRevision !== options.approved.planRevision
+    actual.databaseId !== options.approved.databaseId ||
+    actual.planRevision !== options.approved.planRevision ||
+    actual.baselineRevision !== options.approved.baselineRevision ||
+    actual.baselineSchemaFingerprint !==
+      options.approved.baselineSchemaFingerprint ||
+    actual.reviewFingerprint !== options.approved.reviewFingerprint
   ) {
     throw databaseError(
       "DB_STALE_IMPORT_PLAN",
       "The approved import plan is no longer current. Inspect and approve its latest revision.",
     );
   }
+  const approved = actual;
   const target = engineOf(options.database);
   const preparedEngine = preparedEngineOf(options.prepared);
-  const preparedPlan = await readPreparedRecipe(options.prepared);
   let recipe = preparedPlan.recipe;
   const { conflicts, decisions } = preparedPlan;
   const captures = await preparedCaptures(options.prepared);
@@ -161,9 +166,9 @@ export async function applyImport(
     if (existingRequest[0] !== undefined) {
       const samePlan =
         valueAsString(existingRequest[0]["plan_id"], "plan ID") ===
-          options.approved.id &&
+          approved.id &&
         valueAsBigInt(existingRequest[0]["plan_revision"], "plan revision") ===
-          options.approved.planRevision;
+          approved.planRevision;
       if (!samePlan) {
         throw databaseError(
           "DB_REQUEST_ID_CONFLICT",
@@ -230,9 +235,9 @@ export async function applyImport(
       options.database.format,
     );
     if (
-      options.approved.databaseId !== options.database.id ||
-      revision !== options.approved.baselineRevision ||
-      schemaFingerprint !== options.approved.baselineSchemaFingerprint
+      approved.databaseId !== options.database.id ||
+      revision !== approved.baselineRevision ||
+      schemaFingerprint !== approved.baselineSchemaFingerprint
     ) {
       throw databaseError(
         "DB_STALE_IMPORT_PLAN",
@@ -428,15 +433,15 @@ export async function applyImport(
     );
     const savedPlan = await transaction.query(
       `SELECT baseline_revision, state, recipe_json, conflicts_json, decisions_json, bindings_json FROM ${PLAN_TABLE} WHERE plan_id = ? AND plan_revision = ?`,
-      [options.approved.id, options.approved.planRevision],
+      [approved.id, approved.planRevision],
     );
     if (savedPlan[0] === undefined) {
       await transaction.execute(
         `INSERT INTO ${PLAN_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          options.approved.id,
-          options.approved.planRevision,
-          options.approved.baselineRevision,
+          approved.id,
+          approved.planRevision,
+          approved.baselineRevision,
           "applied",
           recipeJson,
           conflictsJson,
@@ -446,7 +451,7 @@ export async function applyImport(
       );
     } else if (
       valueAsBigInt(savedPlan[0]["baseline_revision"], "baseline revision") !==
-        options.approved.baselineRevision ||
+        approved.baselineRevision ||
       valueAsString(savedPlan[0]["state"], "plan state") !== "applied" ||
       valueAsString(savedPlan[0]["recipe_json"], "import recipe") !==
         recipeJson ||
@@ -460,7 +465,7 @@ export async function applyImport(
       throw databaseError(
         "DB_IMPORT_PLAN_HISTORY_CONFLICT",
         "This import plan revision conflicts with saved database history.",
-        { planId: options.approved.id },
+        { planId: approved.id },
       );
     }
     const registeredNames = new Set<string>();
@@ -693,8 +698,8 @@ export async function applyImport(
           options.requestId,
           captureId,
           tableName,
-          options.approved.id,
-          options.approved.planRevision,
+          approved.id,
+          approved.planRevision,
           capture.rowCount,
         ],
       );
@@ -704,8 +709,8 @@ export async function applyImport(
       `INSERT INTO ${IMPORT_REQUEST_TABLE} VALUES (?, ?, ?, ?, ?, ?)`,
       [
         options.requestId,
-        options.approved.id,
-        options.approved.planRevision,
+        approved.id,
+        approved.planRevision,
         JSON.stringify(importIds),
         JSON.stringify([...appliedCaptureIds].sort()),
         BigInt(rowsImported + rowsReused),

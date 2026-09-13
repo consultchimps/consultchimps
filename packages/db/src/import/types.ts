@@ -180,6 +180,7 @@ export interface PreparedImportRef {
   readonly planRevision: bigint;
   readonly baselineRevision: bigint;
   readonly baselineSchemaFingerprint: string;
+  readonly reviewFingerprint: string;
   readonly state: "needs-review";
 }
 
@@ -189,6 +190,7 @@ export interface ReadyImportRef {
   readonly planRevision: bigint;
   readonly baselineRevision: bigint;
   readonly baselineSchemaFingerprint: string;
+  readonly reviewFingerprint: string;
   readonly state: "ready";
 }
 
