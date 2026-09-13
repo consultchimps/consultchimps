@@ -20,6 +20,12 @@ under **Saved import reviews**. The database tool discovers its saved plans in
 browser storage and reconstructs the review from captured rows, so it does not
 need to read the Excel files again.
 
+Browser preparation reports success after closing its workbook sources. If
+`DB_BROWSER_IMPORT_CLEANUP_REQUIRED` appears, retry **Prepare review** to finish
+releasing retained workbook or private-plan resources. Preparation retries that
+cleanup before opening new sources. Keep the tab open while retrying so the
+worker retains the handles needed for cleanup.
+
 The browser disables application while destination, column mapping, or type
 decisions differ from the accepted review. Review the edited decisions again
 before applying them.

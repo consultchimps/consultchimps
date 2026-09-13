@@ -178,6 +178,12 @@ export async function applyImport(
     );
   }
   const approved = actual;
+  if (approved.databaseId !== options.database.id) {
+    throw databaseError(
+      "DB_STALE_IMPORT_PLAN",
+      "The approved import plan belongs to another database. Prepare it again for this database before applying.",
+    );
+  }
   const target = engineOf(options.database);
   const preparedEngine = preparedEngineOf(options.prepared);
   let recipe = preparedPlan.recipe;
@@ -268,7 +274,6 @@ export async function applyImport(
       options.database.format,
     );
     if (
-      approved.databaseId !== options.database.id ||
       revision !== approved.baselineRevision ||
       schemaFingerprint !== approved.baselineSchemaFingerprint
     ) {

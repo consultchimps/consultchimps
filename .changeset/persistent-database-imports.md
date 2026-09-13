@@ -64,3 +64,6 @@ metadata allocation counters when opening a database and row allocation before
 new table applications. Report structured corruption errors for counter
 conflicts and pending Record ID collisions while preserving valid counter gaps
 and the already-applied retry path.
+
+Reject import receipt replay when the approved plan belongs to another database,
+including a copy converted to a different format.

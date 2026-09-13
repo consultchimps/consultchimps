@@ -227,7 +227,8 @@ export dry run checks schema compatibility without scanning stored rows.
 
 A same-format export retains the logical database ID. A saved review can resume
 against that snapshot when its revision and schema still match. Cross-format
-conversion creates a new database ID and requires a new review. Copies do not
+conversion creates a new database ID and requires a new review. Replaying a
+copied import receipt does not bypass this identity check. Copies do not
 synchronize, and a shared ID is not a lock or a guarantee of equal row contents.
 
 Browser cross-format export uses a temporary conversion working copy. If cleanup

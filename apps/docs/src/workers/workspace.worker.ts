@@ -75,6 +75,13 @@ import type {
   WorkspaceSchemaPlan,
   WorkspaceSummary,
 } from "@/lib/workspace-protocol";
+import {
+  closeAndRetainFailures,
+  type CleanupFailure,
+  importCleanupError,
+  RetryableCleanupOwners,
+  stagedPrivatePlanCleanup,
+} from "./workspace-import-cleanup";
 
 const scope = self as unknown as {
   addEventListener(
@@ -116,6 +123,8 @@ let workspace: OpenWorkspace | null = null;
 const schemaPlans = new Map<string, SchemaPlan>();
 const imports = new Map<string, HeldImport>();
 const controllers = new Map<number, AbortController>();
+const sourceCleanupOwners = new RetryableCleanupOwners();
+const privatePlanCleanupOwners = new RetryableCleanupOwners();
 
 function runtime(): Promise<BrowserDatabaseRuntime> {
   const configured =
@@ -215,6 +224,31 @@ async function closeImports(): Promise<void> {
     resources: imports,
     close: ({ prepared }) => prepared.close(),
   });
+}
+
+async function cleanupFailureOf(
+  cleanup: () => Promise<void>,
+): Promise<CleanupFailure | undefined> {
+  try {
+    await cleanup();
+    return undefined;
+  } catch (error) {
+    return { error };
+  }
+}
+
+async function retryImportPreparationCleanup(): Promise<void> {
+  const [sources, plans] = await Promise.all([
+    cleanupFailureOf(() => sourceCleanupOwners.close()),
+    cleanupFailureOf(() => privatePlanCleanupOwners.close()),
+  ]);
+  if (sources !== undefined || plans !== undefined) {
+    throw importCleanupError({
+      ...(sources === undefined ? {} : { sourceCleanupFailure: sources }),
+      ...(plans === undefined ? {} : { planCleanupFailure: plans }),
+      preparationCompleted: false,
+    });
+  }
 }
 
 async function replaceWorkspace(
@@ -838,7 +872,10 @@ async function prepareSources(
   command: Extract<WorkspaceCommand, { readonly type: "prepareImport" }>,
   signal: AbortSignal,
 ): Promise<void> {
-  const workbookSources = [];
+  await retryImportPreparationCleanup();
+  const workbookSources: Awaited<
+    ReturnType<typeof createWorkbookImportSource>
+  >[] = [];
   const sourceInputs = command.sources.map((source, ordinal) => ({
     source,
     key: workspaceSourceKey(source, ordinal),
@@ -848,6 +885,10 @@ async function prepareSources(
   );
   let privatePlan:
     { readonly name: string; readonly prepared: PreparedImport } | undefined;
+  let completed:
+    | { readonly held: HeldImport; readonly plan: WorkspacePreparedImport }
+    | undefined;
+  let operationFailure: CleanupFailure | undefined;
   try {
     for (const { key, source } of sourceInputs) {
       workbookSources.push(
@@ -1015,38 +1056,48 @@ async function prepareSources(
         }),
       };
     }
-    imports.set(held.ref.id, held);
-    privatePlan = undefined;
-    scope.postMessage({
-      type: "importPrepared",
-      id,
-      plan: await importDto(held),
-    });
+    completed = { held, plan: await importDto(held) };
   } catch (error) {
+    operationFailure = { error };
+  }
+
+  const sourceCleanupFailure = await cleanupFailureOf(() =>
+    closeAndRetainFailures(workbookSources, sourceCleanupOwners),
+  );
+  if (operationFailure !== undefined || sourceCleanupFailure !== undefined) {
+    let planCleanupFailure: CleanupFailure | undefined;
     if (privatePlan !== undefined) {
       const plan = privatePlan;
-      const cleanupFailures: unknown[] = [];
-      try {
-        await plan.prepared.close();
-      } catch (cleanupError) {
-        cleanupFailures.push(cleanupError);
-      }
-      try {
-        await (await runtime()).discardPreparedImport({ name: plan.name });
-      } catch (cleanupError) {
-        cleanupFailures.push(cleanupError);
-      }
-      if (cleanupFailures.length > 0) {
-        throw new AggregateError(
-          [error, ...cleanupFailures],
-          "Preparing the import failed, and its private plan could not be removed",
-        );
+      const cleanupOwner = stagedPrivatePlanCleanup({
+        close: () => plan.prepared.close(),
+        discard: async () =>
+          (await runtime()).discardPreparedImport({ name: plan.name }),
+      });
+      planCleanupFailure = await cleanupFailureOf(() => cleanupOwner.close());
+      if (planCleanupFailure !== undefined) {
+        privatePlanCleanupOwners.retain(cleanupOwner);
       }
     }
-    throw error;
-  } finally {
-    await Promise.all(workbookSources.map((source) => source.close()));
+    if (
+      sourceCleanupFailure !== undefined ||
+      planCleanupFailure !== undefined
+    ) {
+      throw importCleanupError({
+        ...(operationFailure === undefined ? {} : { operationFailure }),
+        ...(sourceCleanupFailure === undefined ? {} : { sourceCleanupFailure }),
+        ...(planCleanupFailure === undefined ? {} : { planCleanupFailure }),
+        preparationCompleted: operationFailure === undefined,
+      });
+    }
+    throw operationFailure!.error;
   }
+
+  if (completed === undefined) {
+    throw new Error("The prepared import result is unavailable");
+  }
+  imports.set(completed.held.ref.id, completed.held);
+  privatePlan = undefined;
+  scope.postMessage({ type: "importPrepared", id, plan: completed.plan });
 }
 
 async function previewImport(
@@ -1358,13 +1409,33 @@ async function handle(id: number, command: WorkspaceCommand): Promise<void> {
       case "export":
         await exportWorkspace(id, command, controller.signal);
         return;
-      case "close":
-        await closeImports();
+      case "close": {
+        const activeWorkspace = workspace;
+        const [importCleanup, retainedCleanup, databaseCleanup] =
+          await Promise.allSettled([
+            closeImports(),
+            retryImportPreparationCleanup(),
+            activeWorkspace?.database.close() ?? Promise.resolve(),
+          ]);
         schemaPlans.clear();
-        await workspace?.database.close();
-        workspace = null;
+        if (databaseCleanup.status === "fulfilled") workspace = null;
+        const failures = [
+          importCleanup,
+          retainedCleanup,
+          databaseCleanup,
+        ].flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : [],
+        );
+        if (failures.length === 1) throw failures[0];
+        if (failures.length > 1) {
+          throw new AggregateError(
+            failures,
+            "The workspace could not finish closing its resources",
+          );
+        }
         scope.postMessage({ type: "closed", id });
         return;
+      }
     }
   } finally {
     controllers.delete(id);

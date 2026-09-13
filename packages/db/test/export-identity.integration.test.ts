@@ -184,4 +184,88 @@ for (const format of ["sqlite", "duckdb"] as const) {
       await sourceDatabase.close();
     }
   });
+
+  test(`${format}: a converted receipt cannot replay an approval for the source database`, async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), `cc-converted-receipt-${format}-`),
+    );
+    directories.push(directory);
+    const convertedFormat = format === "sqlite" ? "duckdb" : "sqlite";
+    const convertedPath = path.join(directory, `converted.${convertedFormat}`);
+    const { database } = await createDatabase({
+      path: path.join(directory, `source.${format}`),
+      format,
+    });
+    const importSource = source();
+    const recipe = await draftImportRecipe({ sources: [importSource] });
+    const prepared = await createPreparedImport({
+      path: path.join(directory, "applied.ccplan"),
+      database,
+      recipe,
+      baselineRevision: 0n,
+    });
+    let converted: Database | undefined;
+    try {
+      await prepareImport({
+        database,
+        prepared,
+        sources: [importSource],
+        recipe,
+      });
+      const approved = await resolveImport({
+        database,
+        prepared,
+        decisions: [],
+      });
+      if (approved.state !== "ready") throw new Error("Plan failed review");
+      const requestId = `${format}-source-application`;
+      const applied = await applyImport({
+        database,
+        prepared,
+        approved,
+        requestId,
+      });
+      const sourceAfterApply = await inspectDatabase({ database });
+
+      await expect(
+        applyImport({ database, prepared, approved, requestId }),
+      ).resolves.toMatchObject({
+        importIds: applied.importIds,
+        metrics: { rowsImported: 0, rowsReused: 1 },
+      });
+      expect(await inspectDatabase({ database })).toEqual(sourceAfterApply);
+
+      await exportDatabase({
+        database,
+        output: convertedPath,
+        format: convertedFormat,
+      });
+      converted = await openDatabase({ path: convertedPath });
+      const convertedBefore = await inspectDatabase({ database: converted });
+      expect(convertedBefore).toMatchObject({
+        format: convertedFormat,
+        revision: 1n,
+        completedImports: 1n,
+        tables: [{ name: "Inventory", rowCount: 1n }],
+      });
+      expect(convertedBefore.id).not.toBe(database.id);
+
+      await expect(
+        applyImport({
+          database: converted,
+          prepared,
+          approved,
+          requestId,
+        }),
+      ).rejects.toMatchObject({ code: "DB_STALE_IMPORT_PLAN" });
+      expect(await inspectDatabase({ database: converted })).toEqual(
+        convertedBefore,
+      );
+      expect(await inspectDatabase({ database })).toEqual(sourceAfterApply);
+    } finally {
+      await converted?.close();
+      await prepared.close();
+      await database.close();
+    }
+  });
 }

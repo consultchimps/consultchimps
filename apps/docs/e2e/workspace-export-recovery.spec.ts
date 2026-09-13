@@ -41,7 +41,7 @@ test.afterAll(async () => {
 
 test("restores caller export files across real browser database engines", async ({
   page,
-}) => {
+}, testInfo) => {
   await page.route(
     "**/__tests__/workspace-export-recovery.worker.js",
     (route) =>
@@ -99,6 +99,11 @@ test("restores caller export files across real browser database engines", async 
     } finally {
       worker.terminate();
     }
+  });
+
+  await testInfo.attach("export-recovery-result", {
+    body: Buffer.from(JSON.stringify(result, null, 2)),
+    contentType: "application/json",
   });
 
   const preservedFailure = (source: string, target: string, mode: string) => ({
