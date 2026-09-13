@@ -8,27 +8,27 @@
       "rowCount": 100000,
       "sourceBytes": 2125972,
       "preparedBytes": 32141312,
-      "targetBytes": 17313792,
-      "inspectMilliseconds": 28,
-      "prepareMilliseconds": 1555,
-      "parseMilliseconds": 1054,
-      "captureOverheadMilliseconds": 501,
-      "resolveMilliseconds": 188,
-      "applyMilliseconds": 1243,
+      "targetBytes": 17575936,
+      "inspectMilliseconds": 29,
+      "prepareMilliseconds": 1385,
+      "parseMilliseconds": 1025,
+      "captureOverheadMilliseconds": 360,
+      "resolveMilliseconds": 173,
+      "applyMilliseconds": 1106,
       "replay": {
-        "prepareMilliseconds": 282,
-        "applyMilliseconds": 992,
-        "targetBytes": 25964544
+        "prepareMilliseconds": 12,
+        "applyMilliseconds": 832,
+        "targetBytes": 26226688
       },
       "conversion": {
-        "milliseconds": 1201,
+        "milliseconds": 1192,
         "rows": 200000,
         "bytes": 48041984
       },
       "throughput": {
-        "prepareRowsPerSecond": 64309,
-        "parseRowsPerSecond": 94901,
-        "applyRowsPerSecond": 80451
+        "prepareRowsPerSecond": 72202,
+        "parseRowsPerSecond": 97581,
+        "applyRowsPerSecond": 90416
       },
       "sourceReads": {
         "calls": 3,
@@ -36,10 +36,10 @@
         "milliseconds": 1
       },
       "storage": {
-        "database_size": "24.7 MiB",
+        "database_size": "25.0 MiB",
         "block_size": "262144",
-        "total_blocks": "99",
-        "used_blocks": "86",
+        "total_blocks": "100",
+        "used_blocks": "87",
         "free_blocks": "13",
         "memory": [
           {
@@ -199,44 +199,44 @@
       },
       "memory": {
         "setup": {
-          "rss": 82247680,
-          "heapUsed": 12612224,
-          "external": 2504268
+          "rss": 81330176,
+          "heapUsed": 18117112,
+          "external": 2524853
         },
         "inspect": {
-          "rss": 113950720,
-          "heapUsed": 20133328,
-          "external": 4392254
+          "rss": 113623040,
+          "heapUsed": 19761584,
+          "external": 4316845
         },
         "prepare": {
-          "rss": 376651776,
-          "heapUsed": 102743056,
-          "external": 22836548
+          "rss": 377044992,
+          "heapUsed": 99322000,
+          "external": 22752811
         },
         "resolve": {
-          "rss": 376668160,
-          "heapUsed": 64739080,
-          "external": 5369279
+          "rss": 377077760,
+          "heapUsed": 35952120,
+          "external": 4692570
         },
         "apply": {
-          "rss": 525877248,
-          "heapUsed": 119272440,
-          "external": 10537229
+          "rss": 547307520,
+          "heapUsed": 122446800,
+          "external": 7314040
         },
         "replay": {
-          "rss": 564068352,
-          "heapUsed": 140838960,
-          "external": 16243767
+          "rss": 566837248,
+          "heapUsed": 141695376,
+          "external": 10318485
         },
         "conversion": {
-          "rss": 571621376,
-          "heapUsed": 75814976,
-          "external": 11615989
+          "rss": 574963712,
+          "heapUsed": 74124360,
+          "external": 11146088
         },
         "queries": {
-          "rss": 575209472,
-          "heapUsed": 47179152,
-          "external": 4880412
+          "rss": 576307200,
+          "heapUsed": 47336888,
+          "external": 4880311
         }
       }
     },
@@ -244,27 +244,27 @@
       "rowCount": 1000000,
       "sourceBytes": 21464593,
       "preparedBytes": 335564800,
-      "targetBytes": 107753472,
+      "targetBytes": 108539904,
       "inspectMilliseconds": 3,
-      "prepareMilliseconds": 14875,
-      "parseMilliseconds": 10270,
-      "captureOverheadMilliseconds": 4605,
-      "resolveMilliseconds": 1790,
-      "applyMilliseconds": 12592,
+      "prepareMilliseconds": 13275,
+      "parseMilliseconds": 9913,
+      "captureOverheadMilliseconds": 3362,
+      "resolveMilliseconds": 1750,
+      "applyMilliseconds": 11142,
       "replay": {
-        "prepareMilliseconds": 3814,
-        "applyMilliseconds": 11483,
-        "targetBytes": 163065856
+        "prepareMilliseconds": 73,
+        "applyMilliseconds": 9906,
+        "targetBytes": 163852288
       },
       "conversion": {
-        "milliseconds": 15059,
+        "milliseconds": 14643,
         "rows": 2000000,
         "bytes": 484904960
       },
       "throughput": {
-        "prepareRowsPerSecond": 67227,
-        "parseRowsPerSecond": 97372,
-        "applyRowsPerSecond": 79416
+        "prepareRowsPerSecond": 75330,
+        "parseRowsPerSecond": 100875,
+        "applyRowsPerSecond": 89750
       },
       "sourceReads": {
         "calls": 21,
@@ -272,10 +272,10 @@
         "milliseconds": 3
       },
       "storage": {
-        "database_size": "155.5 MiB",
+        "database_size": "156.2 MiB",
         "block_size": "262144",
-        "total_blocks": "622",
-        "used_blocks": "609",
+        "total_blocks": "625",
+        "used_blocks": "612",
         "free_blocks": "13",
         "memory": [
           {
@@ -435,44 +435,44 @@
       },
       "memory": {
         "setup": {
-          "rss": 575225856,
-          "heapUsed": 47301136,
-          "external": 4946628
+          "rss": 576307200,
+          "heapUsed": 47458928,
+          "external": 4946527
         },
         "inspect": {
-          "rss": 575520768,
-          "heapUsed": 49423944,
-          "external": 5229097
+          "rss": 576667648,
+          "heapUsed": 49549688,
+          "external": 5228826
         },
         "prepare": {
-          "rss": 609992704,
-          "heapUsed": 143180912,
-          "external": 77387835
+          "rss": 604012544,
+          "heapUsed": 112491448,
+          "external": 72783478
         },
         "resolve": {
-          "rss": 609992704,
-          "heapUsed": 95084672,
-          "external": 6898266
+          "rss": 604028928,
+          "heapUsed": 44481016,
+          "external": 4948257
         },
         "apply": {
-          "rss": 876199936,
-          "heapUsed": 148246312,
-          "external": 9960275
+          "rss": 954466304,
+          "heapUsed": 134749624,
+          "external": 7593699
         },
         "replay": {
-          "rss": 897564672,
-          "heapUsed": 116902488,
-          "external": 31165453
+          "rss": 960053248,
+          "heapUsed": 120323984,
+          "external": 29052396
         },
         "conversion": {
-          "rss": 890716160,
-          "heapUsed": 99851712,
-          "external": 12144665
+          "rss": 948207616,
+          "heapUsed": 99431064,
+          "external": 12144564
         },
         "queries": {
-          "rss": 867663872,
-          "heapUsed": 83893592,
-          "external": 5393290
+          "rss": 935821312,
+          "heapUsed": 97405488,
+          "external": 5909189
         }
       }
     }

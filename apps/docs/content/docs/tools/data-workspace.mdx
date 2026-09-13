@@ -457,9 +457,9 @@ Excel inputs substantially. Recording another delivery of an existing capture
 reuses that evidence.
 
 The native pipeline has been measured with a generated one-million-row workbook.
-That run took about 13 seconds to capture, 2 seconds to review captured values,
-and 11 seconds to apply to DuckDB. Its initial database occupied about 110 MB.
-Sampled process memory during apply reached about 862 MB in a process warmed by
+That run took about 15 seconds to capture, 2 seconds to review captured values,
+and 13 seconds to apply to DuckDB. Its initial database occupied about 108 MB.
+Sampled process memory during apply reached about 876 MB in a process warmed by
 the smaller benchmark. These measurements depend on row width, strings,
 constraints, storage, and concurrent work. They do not establish a browser
 capacity limit.
