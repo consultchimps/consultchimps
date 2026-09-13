@@ -247,14 +247,47 @@ export function workbookFailure(
   source: RandomAccessSource,
   cause: unknown,
   signal?: AbortSignal | undefined,
+  cleanupFailure?: { readonly cause: unknown },
 ): ConsultChimpsError {
-  throwIfAborted(signal, "xlsx.stream", "memory");
-  if (cause instanceof ConsultChimpsError) return cause;
+  const operationCause =
+    cause instanceof WorkbookOperationCleanupFailure ? cause.errors[0] : cause;
+  const cleanupCauses = [
+    ...(cause instanceof WorkbookOperationCleanupFailure
+      ? cause.errors.slice(1)
+      : []),
+    ...(cleanupFailure === undefined ? [] : [cleanupFailure.cause]),
+  ];
+  if (cleanupCauses.length === 0) {
+    throwIfAborted(signal, "xlsx.stream", "memory");
+    if (operationCause instanceof ConsultChimpsError) return operationCause;
+  }
+  if (cleanupCauses.length > 0) {
+    return new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_READ_FAILED,
+      `Could not finish reading workbook "${source.name}", and its temporary resources could not be released. Resolve the scratch storage problem before trying again.`,
+      {
+        cause: new AggregateError(
+          [operationCause, ...cleanupCauses],
+          "Workbook reading and cleanup both failed.",
+        ),
+        details: { source: source.name },
+      },
+    );
+  }
   return new ConsultChimpsError(
     XLSX_ERRORS.XLSX_READ_FAILED,
     `Could not read workbook "${source.name}". Check that it is a valid, unencrypted Excel workbook and try again.`,
     { cause, details: { source: source.name } },
   );
+}
+
+export class WorkbookOperationCleanupFailure extends AggregateError {
+  constructor(operationFailure: unknown, cleanupFailure: unknown) {
+    super(
+      [operationFailure, cleanupFailure],
+      "Workbook reading and cleanup both failed.",
+    );
+  }
 }
 
 function entryKind(filename: string): "large" | "metadata" {
@@ -334,8 +367,13 @@ export async function openZipPackage(
     }
     return { reader, entries, limits };
   } catch (cause) {
-    await reader.close().catch(() => undefined);
-    throw workbookFailure(source, cause, options.signal);
+    let cleanupFailure: { readonly cause: unknown } | undefined;
+    try {
+      await reader.close();
+    } catch (cleanupCause) {
+      cleanupFailure = { cause: cleanupCause };
+    }
+    throw workbookFailure(source, cause, options.signal, cleanupFailure);
   }
 }
 

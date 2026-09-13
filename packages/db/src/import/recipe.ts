@@ -1,18 +1,32 @@
 import { databaseError } from "../errors.js";
-import { assertSafeIdentifier } from "../schema.js";
+import { assertSafeIdentifier, MAX_IDENTIFIER_LENGTH } from "../schema.js";
 import type { ImportRecipe, ImportRoute, ImportSource } from "./types.js";
+
+function takeCodePoints(value: string, limit: number): string {
+  return Array.from(value).slice(0, limit).join("");
+}
+
+function truncateUtf16(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  let result = "";
+  for (const character of value) {
+    if (result.length + character.length > limit) break;
+    result += character;
+  }
+  return result;
+}
 
 function safeSuggestedName(value: string): string {
   const normalized = value
     .normalize("NFKC")
     .trim()
     .replace(/[^\p{L}\p{N}_]+/gu, "_")
-    .replace(/^_+|_+$/gu, "")
-    .slice(0, 200);
+    .replace(/^_+|_+$/gu, "");
+  const truncated = truncateUtf16(normalized, MAX_IDENTIFIER_LENGTH);
   const result =
-    normalized.length === 0 || normalized.startsWith("_consultchimps")
+    truncated.length === 0 || truncated.startsWith("_consultchimps")
       ? "Imported_Data"
-      : normalized;
+      : truncated;
   assertSafeIdentifier(result, "table");
   return result;
 }
@@ -21,10 +35,10 @@ function prefixFor(name: string): string {
   const letters = name
     .split(/[^\p{L}\p{N}]+/gu)
     .filter((part) => part.length > 0)
-    .map((part) => part[0])
+    .map((part) => takeCodePoints(part, 1))
     .join("")
     .toUpperCase();
-  return (letters || name.slice(0, 3)).slice(0, 8).toUpperCase();
+  return takeCodePoints((letters || takeCodePoints(name, 3)).toUpperCase(), 8);
 }
 
 export async function draftImportRecipe(options: {

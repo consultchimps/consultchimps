@@ -4,10 +4,18 @@ import { SaxesParser } from "saxes";
 
 import { BoundedXmlText, localName } from "./xml.js";
 import type { ScratchFactory, WorkbookStreamOptions } from "./types.js";
-import { forEachEntryChunk, type StreamLimits } from "./zip.js";
+import {
+  forEachEntryChunk,
+  type StreamLimits,
+  WorkbookOperationCleanupFailure,
+} from "./zip.js";
 
 export class SharedStrings {
   #closed = false;
+  #closeAttempt: Promise<void> | undefined;
+  #closeRequested = false;
+  #indexClosed = false;
+  #payloadClosed = false;
   #count = 0;
   #payloadBytes = 0;
   readonly #decoder = new TextDecoder();
@@ -35,7 +43,24 @@ export class SharedStrings {
       await Promise.all([payload.truncate(0), index.truncate(0)]);
       return new SharedStrings(payload, index, limits);
     } catch (cause) {
-      await Promise.allSettled([payload.close(), index?.close()]);
+      const cleanupResults = await Promise.allSettled([
+        Promise.resolve().then(() => payload.close()),
+        ...(index ? [Promise.resolve().then(() => index?.close())] : []),
+      ]);
+      const cleanupFailures = cleanupResults.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      if (cleanupFailures.length > 0) {
+        throw new WorkbookOperationCleanupFailure(
+          cause,
+          cleanupFailures.length === 1
+            ? cleanupFailures[0]
+            : new AggregateError(
+                cleanupFailures,
+                "More than one shared-string scratch file could not be closed after initialization failed.",
+              ),
+        );
+      }
       throw cause;
     }
   }
@@ -45,6 +70,9 @@ export class SharedStrings {
   }
 
   async append(value: string): Promise<void> {
+    if (this.#closeRequested) {
+      throw new Error("The shared-string store is closing.");
+    }
     if (this.#count >= this.limits.maximumSharedStrings) {
       throw new Error(
         `The workbook has more than ${this.limits.maximumSharedStrings} shared strings.`,
@@ -70,6 +98,9 @@ export class SharedStrings {
   }
 
   async value(index: number): Promise<string> {
+    if (this.#closeRequested) {
+      throw new Error("The shared-string store is closing.");
+    }
     if (!Number.isSafeInteger(index) || index < 0 || index >= this.#count) {
       throw new Error(
         `Shared-string index ${index} is outside the workbook table of ${this.#count} strings.`,
@@ -100,17 +131,62 @@ export class SharedStrings {
     return this.#decoder.decode(bytes);
   }
 
-  async close(): Promise<void> {
-    if (this.#closed) return;
-    this.#closed = true;
-    const results = await Promise.allSettled([
-      this.payload.close(),
-      this.index.close(),
-    ]);
-    const failure = results.find(
-      (result): result is PromiseRejectedResult => result.status === "rejected",
+  close(): Promise<void> {
+    if (this.#closeAttempt) return this.#closeAttempt;
+    if (this.#closed) return Promise.resolve();
+    this.#closeRequested = true;
+    const attempt = this.#closeRemaining();
+    this.#closeAttempt = attempt;
+    void attempt.then(
+      () => {
+        if (this.#closeAttempt === attempt) this.#closeAttempt = undefined;
+      },
+      () => {
+        if (this.#closeAttempt === attempt) this.#closeAttempt = undefined;
+      },
     );
-    if (failure) throw failure.reason;
+    return attempt;
+  }
+
+  async #closeRemaining(): Promise<void> {
+    const stages = [
+      ...(!this.#payloadClosed
+        ? [
+            {
+              close: () => this.payload.close(),
+              complete: () => {
+                this.#payloadClosed = true;
+              },
+            },
+          ]
+        : []),
+      ...(!this.#indexClosed
+        ? [
+            {
+              close: () => this.index.close(),
+              complete: () => {
+                this.#indexClosed = true;
+              },
+            },
+          ]
+        : []),
+    ];
+    const results = await Promise.allSettled(
+      stages.map(async ({ close }) => close()),
+    );
+    const failures: unknown[] = [];
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") stages[index]?.complete();
+      else failures.push(result.reason);
+    });
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(
+        failures,
+        "More than one shared-string scratch file could not be closed.",
+      );
+    }
+    this.#closed = this.#payloadClosed && this.#indexClosed;
   }
 }
 
@@ -207,7 +283,11 @@ export async function loadSharedStrings(
     }
     return store;
   } catch (cause) {
-    await store.close().catch(() => undefined);
+    try {
+      await store.close();
+    } catch (cleanupCause) {
+      throw new WorkbookOperationCleanupFailure(cause, cleanupCause);
+    }
     throw cause;
   }
 }

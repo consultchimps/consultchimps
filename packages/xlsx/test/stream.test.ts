@@ -60,6 +60,56 @@ class MemoryScratch implements ScratchFactory {
   }
 }
 
+class RetryCloseFile extends MemoryFile {
+  closeAttempts = 0;
+
+  constructor(
+    name: string,
+    private failuresRemaining: number,
+    private readonly closeGate?: Promise<void>,
+  ) {
+    super(name);
+  }
+
+  override async close(): Promise<void> {
+    this.closeAttempts += 1;
+    await this.closeGate;
+    if (this.failuresRemaining > 0) {
+      this.failuresRemaining -= 1;
+      throw new Error(`${this.name} close failed`);
+    }
+    await super.close();
+  }
+}
+
+class RetryCloseScratch implements ScratchFactory {
+  readonly files: RetryCloseFile[] = [];
+
+  constructor(
+    private readonly failures: readonly number[],
+    private readonly closeGate?: Promise<void>,
+  ) {}
+
+  async create(): Promise<RetryCloseFile> {
+    const index = this.files.length;
+    const file = new RetryCloseFile(
+      `scratch-${index}`,
+      this.failures[index] ?? 0,
+      this.closeGate,
+    );
+    this.files.push(file);
+    return file;
+  }
+}
+
+function deferred(): { readonly promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 function source(bytes: Uint8Array, maximumRead = Number.MAX_SAFE_INTEGER) {
   let largestRead = 0;
   return {
@@ -1782,6 +1832,148 @@ describe("bounded workbook streaming", () => {
     expect(scratch.files.every((file) => !file.closed)).toBe(true);
     await session.close();
     expect(scratch.files.every((file) => file.closed)).toBe(true);
+  });
+
+  it("shares concurrent close attempts and retries only failed scratch cleanup", async () => {
+    const gate = deferred();
+    const scratch = new RetryCloseScratch([1, 0], gate.promise);
+    const input = source(await workbookFixture());
+    const session = await openWorkbookStream(input.source, { scratch });
+
+    const firstClose = session.close();
+    const concurrentClose = session.close();
+    expect(concurrentClose).toBe(firstClose);
+    expect(scratch.files.map((file) => file.closeAttempts)).toEqual([1, 1]);
+    gate.resolve();
+    await expect(firstClose).rejects.toMatchObject({
+      code: "XLSX_CLEANUP_FAILED",
+    });
+    await expect(concurrentClose).rejects.toMatchObject({
+      code: "XLSX_CLEANUP_FAILED",
+    });
+    expect(scratch.files.map((file) => file.closed)).toEqual([false, true]);
+
+    await expect(
+      session.openRegion({ table: "InventoryTable" }),
+    ).rejects.toMatchObject({ code: "XLSX_READ_FAILED" });
+    await session.close();
+    expect(scratch.files.map((file) => file.closeAttempts)).toEqual([2, 1]);
+    expect(scratch.files.every((file) => file.closed)).toBe(true);
+  });
+
+  it("attempts both scratch closes and preserves both failures", async () => {
+    const scratch = new RetryCloseScratch([1, 1]);
+    const input = source(await workbookFixture());
+    const session = await openWorkbookStream(input.source, { scratch });
+
+    let failure: unknown;
+    try {
+      await session.close();
+    } catch (cause) {
+      failure = cause;
+    }
+    expect(failure).toMatchObject({ code: "XLSX_CLEANUP_FAILED" });
+    const cleanupCause = (failure as Error & { cause?: unknown }).cause;
+    expect(cleanupCause).toBeInstanceOf(AggregateError);
+    expect((cleanupCause as AggregateError).errors).toEqual([
+      new Error("scratch-0 close failed"),
+      new Error("scratch-1 close failed"),
+    ]);
+    expect(scratch.files.map((file) => file.closeAttempts)).toEqual([1, 1]);
+
+    await session.close();
+    expect(scratch.files.map((file) => file.closeAttempts)).toEqual([2, 2]);
+  });
+
+  it("preserves shared-string parsing and cleanup failures during initialization", async () => {
+    const scratch = new RetryCloseScratch([1, 1]);
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/sharedStrings.xml":
+          "<sst xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><si><t>unterminated",
+      }),
+    );
+
+    let failure: unknown;
+    try {
+      await openWorkbookStream(input.source, { scratch });
+    } catch (cause) {
+      failure = cause;
+    }
+    expect(failure).toMatchObject({ code: "XLSX_READ_FAILED" });
+    const combined = (failure as Error & { cause?: unknown }).cause;
+    expect(combined).toBeInstanceOf(AggregateError);
+    expect((combined as AggregateError).errors).toHaveLength(2);
+    expect(scratch.files.map((file) => file.closeAttempts)).toEqual([1, 1]);
+  });
+
+  it("keeps region cleanup retryable after cancellation and a scratch close failure", async () => {
+    const scratch = new RetryCloseScratch([1, 0]);
+    const input = source(await workbookFixture());
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { table: "InventoryTable" },
+      { scratch },
+    );
+    const controller = new AbortController();
+    try {
+      const batches = reader.batches({
+        batchSize: 1,
+        signal: controller.signal,
+      });
+      const iterator = batches[Symbol.asyncIterator]();
+      expect((await iterator.next()).done).toBe(false);
+      controller.abort("synthetic cancellation after preview");
+      await expect(iterator.next()).rejects.toMatchObject({
+        code: "XLSX_READ_FAILED",
+        cause: {
+          errors: [
+            expect.objectContaining({ code: "OPERATION_ABORTED" }),
+            expect.objectContaining({ code: "XLSX_CLEANUP_FAILED" }),
+          ],
+        },
+      });
+      expect(scratch.files.map((file) => file.closed)).toEqual([false, true]);
+      await reader.close();
+      expect(scratch.files.map((file) => file.closeAttempts)).toEqual([2, 1]);
+      expect(scratch.files.every((file) => file.closed)).toBe(true);
+    } finally {
+      await reader.close();
+    }
+  });
+
+  it("retains nested shared-string cleanup failures when opening is canceled", async () => {
+    const scratch = new RetryCloseScratch([1, 0]);
+    const input = source(await workbookFixture());
+    const controller = new AbortController();
+    const operationFailure = new ConsultChimpsError(
+      "OPERATION_ABORTED",
+      "Synthetic cancellation during shared-string capture",
+    );
+    await expect(
+      openWorkbookStream(input.source, {
+        scratch,
+        signal: controller.signal,
+        onProgress(event) {
+          if (event.stage === "shared-strings") {
+            controller.abort("synthetic capture cancellation");
+            throw operationFailure;
+          }
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+      cause: {
+        errors: [
+          operationFailure,
+          expect.objectContaining({ message: "scratch-0 close failed" }),
+        ],
+      },
+    });
+    expect(controller.signal.aborted).toBe(true);
+    expect(scratch.files.map((file) => file.closed)).toEqual([false, true]);
+    expect(scratch.files.map((file) => file.closeAttempts)).toEqual([1, 1]);
+    await scratch.files[0]?.close();
   });
 
   it("uses the ordinary 1900 date system when workbookPr disables date1904", async () => {

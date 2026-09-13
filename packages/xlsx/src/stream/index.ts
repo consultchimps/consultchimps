@@ -283,6 +283,8 @@ async function regionColumns(
 
 class RegionReader implements WorkbookRegionReader {
   #closed = false;
+  #closeAttempt: Promise<void> | undefined;
+  #closeRequested = false;
 
   constructor(
     private readonly metadata: WorkbookMetadata,
@@ -298,7 +300,7 @@ class RegionReader implements WorkbookRegionReader {
     readonly signal?: AbortSignal | undefined;
     readonly onProgress?: WorkbookStreamOptions["onProgress"];
   }): AsyncIterable<readonly StreamRow[]> {
-    if (this.#closed) {
+    if (this.#closeRequested) {
       throw new ConsultChimpsError(
         XLSX_ERRORS.XLSX_READ_FAILED,
         "The workbook region reader is closed. Open the region again before reading rows.",
@@ -328,15 +330,39 @@ class RegionReader implements WorkbookRegionReader {
         onProgress: options.onProgress ?? this.options.onProgress,
       });
     } catch (cause) {
-      if (this.closeResources) await this.close().catch(() => undefined);
-      throw workbookFailure(this.metadata.source, cause, signal);
+      let cleanupFailure: { readonly cause: unknown } | undefined;
+      try {
+        if (this.closeResources) await this.close();
+      } catch (cleanupCause) {
+        cleanupFailure = { cause: cleanupCause };
+      }
+      throw workbookFailure(
+        this.metadata.source,
+        cause,
+        signal,
+        cleanupFailure,
+      );
     }
   }
 
-  async close(): Promise<void> {
-    if (this.#closed) return;
-    this.#closed = true;
-    await this.closeResources?.();
+  close(): Promise<void> {
+    if (this.#closeAttempt) return this.#closeAttempt;
+    if (this.#closed) return Promise.resolve();
+    this.#closeRequested = true;
+    const attempt = (async () => {
+      await this.closeResources?.();
+      this.#closed = true;
+    })();
+    this.#closeAttempt = attempt;
+    void attempt.then(
+      () => {
+        if (this.#closeAttempt === attempt) this.#closeAttempt = undefined;
+      },
+      () => {
+        if (this.#closeAttempt === attempt) this.#closeAttempt = undefined;
+      },
+    );
+    return attempt;
   }
 }
 
@@ -439,18 +465,81 @@ async function loadResources(
   return { styles, sharedStrings };
 }
 
-async function closeSession(
-  metadata: WorkbookMetadata,
-  resources: SessionResources | undefined,
-): Promise<void> {
-  const results = await Promise.allSettled([
-    metadata.archive.reader.close(),
-    resources?.sharedStrings.close(),
-  ]);
-  const failure = results.find(
-    (result): result is PromiseRejectedResult => result.status === "rejected",
-  );
-  if (failure) throw workbookFailure(metadata.source, failure.reason);
+class SessionCloser {
+  #archiveClosed = false;
+  #closeAttempt: Promise<void> | undefined;
+  #sharedStringsClosed = false;
+
+  constructor(
+    private readonly metadata: WorkbookMetadata,
+    private readonly resources: SessionResources | undefined,
+  ) {}
+
+  close(): Promise<void> {
+    if (this.#closeAttempt) return this.#closeAttempt;
+    if (this.#archiveClosed && this.#sharedStringsClosed)
+      return Promise.resolve();
+    const attempt = this.#closeRemaining();
+    this.#closeAttempt = attempt;
+    void attempt.then(
+      () => {
+        if (this.#closeAttempt === attempt) this.#closeAttempt = undefined;
+      },
+      () => {
+        if (this.#closeAttempt === attempt) this.#closeAttempt = undefined;
+      },
+    );
+    return attempt;
+  }
+
+  async #closeRemaining(): Promise<void> {
+    const resources = this.resources;
+    const stages = [
+      ...(!this.#archiveClosed
+        ? [
+            {
+              close: () => this.metadata.archive.reader.close(),
+              complete: () => {
+                this.#archiveClosed = true;
+              },
+            },
+          ]
+        : []),
+      ...(!this.#sharedStringsClosed && resources
+        ? [
+            {
+              close: () => resources.sharedStrings.close(),
+              complete: () => {
+                this.#sharedStringsClosed = true;
+              },
+            },
+          ]
+        : []),
+    ];
+    if (!resources) this.#sharedStringsClosed = true;
+    const results = await Promise.allSettled(
+      stages.map(async ({ close }) => close()),
+    );
+    const failures: unknown[] = [];
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") stages[index]?.complete();
+      else failures.push(result.reason);
+    });
+    if (failures.length > 0) {
+      const cause =
+        failures.length === 1
+          ? failures[0]
+          : new AggregateError(
+              failures,
+              "More than one workbook resource could not be closed.",
+            );
+      throw new ConsultChimpsError(
+        XLSX_ERRORS.XLSX_CLEANUP_FAILED,
+        `Could not release temporary resources for workbook "${this.metadata.source.name}". Fix the scratch storage problem, then call close again.`,
+        { cause, details: { source: this.metadata.source.name } },
+      );
+    }
+  }
 }
 
 export async function inspectWorkbookStream(
@@ -476,15 +565,22 @@ export async function openWorkbookStream(
   try {
     resources = await loadResources(metadata, options);
   } catch (cause) {
-    await closeSession(metadata, resources).catch(() => undefined);
-    throw workbookFailure(source, cause, options.signal);
+    const closer = new SessionCloser(metadata, resources);
+    let cleanupFailure: { readonly cause: unknown } | undefined;
+    try {
+      await closer.close();
+    } catch (cleanupCause) {
+      cleanupFailure = { cause: cleanupCause };
+    }
+    throw workbookFailure(source, cause, options.signal, cleanupFailure);
   }
-  let closed = false;
+  let closeRequested = false;
   const currentResources = resources;
+  const closer = new SessionCloser(metadata, currentResources);
   return {
     inspection: metadata.inspection,
     async openRegion(selection) {
-      if (closed) {
+      if (closeRequested) {
         throw new ConsultChimpsError(
           XLSX_ERRORS.XLSX_READ_FAILED,
           "The workbook stream is closed. Open the workbook again before selecting a region.",
@@ -501,10 +597,9 @@ export async function openWorkbookStream(
         throw workbookFailure(source, cause, options.signal);
       }
     },
-    async close() {
-      if (closed) return;
-      closed = true;
-      await closeSession(metadata, currentResources);
+    close() {
+      closeRequested = true;
+      return closer.close();
     },
   };
 }
@@ -516,13 +611,12 @@ export async function openWorkbookRegionStream(
 ): Promise<WorkbookRegionReader> {
   const metadata = await loadWorkbookMetadata(source, options);
   let resources: SessionResources | undefined;
+  let closer: SessionCloser | undefined;
   try {
     resources = await loadResources(metadata, options);
-    let closed = false;
+    closer = new SessionCloser(metadata, resources);
     const close = async () => {
-      if (closed) return;
-      closed = true;
-      await closeSession(metadata, resources);
+      await closer?.close();
     };
     return await createRegionReader(
       metadata,
@@ -532,7 +626,13 @@ export async function openWorkbookRegionStream(
       close,
     );
   } catch (cause) {
-    await closeSession(metadata, resources).catch(() => undefined);
-    throw workbookFailure(source, cause, options.signal);
+    closer ??= new SessionCloser(metadata, resources);
+    let cleanupFailure: { readonly cause: unknown } | undefined;
+    try {
+      await closer.close();
+    } catch (cleanupCause) {
+      cleanupFailure = { cause: cleanupCause };
+    }
+    throw workbookFailure(source, cause, options.signal, cleanupFailure);
   }
 }

@@ -39,7 +39,8 @@ Import composition:
 
 Schema identifiers and Record ID components must contain well-formed Unicode.
 Valid supplementary characters, including emoji, are supported. An unpaired
-UTF-16 surrogate is rejected before a schema is applied.
+UTF-16 surrogate is rejected before a schema is applied. Automatic table names
+and Record ID prefixes preserve whole Unicode code points when shortened.
 
 Custom `ImportSource` readers must provide valid decimal or exponent numeric
 tokens and valid date payloads. Integer tokens accept an optional `+` or `-`
@@ -196,6 +197,13 @@ or resume it. This recovery covers failures reported to the running operation.
 An abrupt tab, worker, or browser termination can interrupt publication. DuckDB
 stores its main file and write-ahead log as separate OPFS entries, so browser
 replacement is not crash-atomic across those entries.
+
+If candidate cleanup fails after browser creation, plan creation, or import
+fails, `DB_BROWSER_CANDIDATE_CLEANUP_REQUIRED` retains the operation and cleanup
+causes. Its details identify the candidate name, storage namespace, and whether
+closure or removal failed. Resolve the storage issue and release remaining
+handles before removing abandoned candidates. DuckDB locations include the main
+file and WAL; SQLite candidate names refer to the logical pool namespace.
 
 `BrowserDatabaseRuntime.listPreparedImports` returns readable `imports` and
 `ignored` entries with a `name`, stable error `code`, and recovery `message`.

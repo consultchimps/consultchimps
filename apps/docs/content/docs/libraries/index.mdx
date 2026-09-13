@@ -424,7 +424,12 @@ delivery, and browser-copy semantics.
 workbook metadata. `openWorkbookStream` shares a ZIP session and scratch-backed
 shared-string storage across region readers. Use `openRegion` with a worksheet
 and header row, named table, named range, or explicit rectangle, then consume
-`batches` and close the reader and session.
+`batches` and close the reader and session. If closure fails, resolve the
+storage issue and retry `close()` on the same handle. Concurrent close calls
+share the pending attempt; retries continue cleanup of resources that remain. A
+failed close returns `XLSX_CLEANUP_FAILED`. If opening or reading and cleanup
+both fail, `XLSX_READ_FAILED` retains both causes, including when cancellation
+is active.
 
 Numeric cells retain their source token; formula cells distinguish cached values
 from missing caches. Scratch storage prevents a workbook's shared-string count

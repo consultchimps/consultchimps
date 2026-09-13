@@ -704,14 +704,103 @@ export async function configureBrowserDatabaseRuntime(
     candidate: string,
   ): Promise<void> => {
     if (format === "sqlite") {
-      try {
-        pool.unlink(sqliteName(candidate));
-      } catch {
-        // Candidate cleanup cannot replace the operational or recovery error.
-      }
+      pool.unlink(sqliteName(candidate));
       return;
     }
-    await removeDuckDbFiles(duckDirectory, candidate).catch(() => undefined);
+    await removeDuckDbFiles(duckDirectory, candidate);
+  };
+
+  const failAfterCandidateCleanup = async (cleanup: {
+    readonly operation: "create" | "import" | "plan";
+    readonly candidateKind: "database" | "prepared";
+    readonly format: DatabaseFormat;
+    readonly candidate: string;
+    readonly cause: unknown;
+    readonly close?: (() => Promise<void>) | undefined;
+  }): Promise<never> => {
+    let closeOutcome:
+      | { readonly status: "completed" }
+      | { readonly status: "failed"; readonly error: unknown } = {
+      status: "completed",
+    };
+    try {
+      await cleanup.close?.();
+    } catch (error) {
+      closeOutcome = { status: "failed", error };
+    }
+    let removalOutcome:
+      | { readonly status: "completed" }
+      | { readonly status: "failed"; readonly error: unknown };
+    try {
+      await discardCandidate(cleanup.format, cleanup.candidate);
+      removalOutcome = { status: "completed" };
+    } catch (error) {
+      removalOutcome = { status: "failed", error };
+    }
+    if (
+      closeOutcome.status === "completed" &&
+      removalOutcome.status === "completed"
+    ) {
+      throw cleanup.cause;
+    }
+
+    const storageNames =
+      cleanup.format === "sqlite"
+        ? [cleanup.candidate]
+        : [cleanup.candidate, `${cleanup.candidate}.wal`];
+    const retainedLocation =
+      cleanup.format === "sqlite"
+        ? `The logical name "${cleanup.candidate}" may remain in the SQLite SAH pool at "${sqliteDirectoryName}".`
+        : `Files may remain in the "${duckDirectoryName}" origin-private directory as ${storageNames.join(" and ")}.`;
+    const releaseGuidance =
+      closeOutcome.status === "completed"
+        ? ""
+        : " The candidate handle could not be confirmed closed. Release browser handles or shut down the runtime before inspecting or removing it.";
+    const published =
+      isConsultChimpsError(cleanup.cause) &&
+      cleanup.cause.details?.["published"] === true;
+    const publicName =
+      published && typeof cleanup.cause.details?.["name"] === "string"
+        ? cleanup.cause.details["name"]
+        : undefined;
+    const publicationOutcome =
+      publicName === undefined
+        ? ""
+        : ` The public working copy was published as "${publicName}" and remains available under that name.`;
+    const recoveryGuidance =
+      cleanup.candidateKind === "prepared"
+        ? `If it opens, use BrowserDatabaseRuntime.openPreparedImport({ name: "${cleanup.candidate}" }) to inspect or resume the candidate.`
+        : `If it opens, use BrowserDatabaseRuntime.openDatabase({ name: "${cleanup.candidate}" }) to inspect or export recoverable data.`;
+    throw databaseError(
+      "DB_BROWSER_CANDIDATE_CLEANUP_REQUIRED",
+      `The browser ${cleanup.operation} operation failed, and cleanup of its private ${cleanup.candidateKind} candidate did not finish.${publicationOutcome} ${retainedLocation}${releaseGuidance} ${recoveryGuidance} Resolve the browser storage issue before retrying.`,
+      {
+        operation: cleanup.operation,
+        candidateKind: cleanup.candidateKind,
+        candidateFormat: cleanup.format,
+        candidateName: cleanup.candidate,
+        storageNames,
+        sqlitePoolDirectory: sqliteDirectoryName,
+        duckdbDirectory: duckDirectoryName,
+        closeFailed: closeOutcome.status === "failed",
+        removalFailed: removalOutcome.status === "failed",
+        ...(published ? { published: true } : {}),
+        ...(publicName === undefined ? {} : { publicName }),
+        ...(isConsultChimpsError(cleanup.cause)
+          ? { primaryCode: cleanup.cause.code }
+          : {}),
+      },
+      new AggregateError(
+        [
+          cleanup.cause,
+          ...(closeOutcome.status === "completed" ? [] : [closeOutcome.error]),
+          ...(removalOutcome.status === "completed"
+            ? []
+            : [removalOutcome.error]),
+        ],
+        "Browser candidate operation and cleanup failed",
+      ),
+    );
   };
 
   const createReadonlyDuckDbSnapshot =
@@ -1067,6 +1156,7 @@ export async function configureBrowserDatabaseRuntime(
     if (state.sqlite || state.duckdb) assertNotBusy(name);
     const candidate = `.consultchimps-create-${globalThis.crypto.randomUUID()}.${create.format}`;
     let engine: BrowserSqliteEngine | BrowserDuckDbEngine | undefined;
+    let candidateClosed = false;
     try {
       if (create.format === "sqlite") {
         engine = sqliteEngine(candidate);
@@ -1087,6 +1177,7 @@ export async function configureBrowserDatabaseRuntime(
       const tablesCreated = await initializeSchema(database, create.schema);
       await database.checkpoint();
       await database.close();
+      candidateClosed = true;
       throwIfAborted(create.signal, "db.browser.create");
       const published = await publishCandidate(
         name,
@@ -1110,9 +1201,17 @@ export async function configureBrowserDatabaseRuntime(
         },
       };
     } catch (error) {
-      await engine?.close().catch(() => undefined);
-      await discardCandidate(create.format, candidate);
-      throw error;
+      const candidateEngine = engine;
+      return failAfterCandidateCleanup({
+        operation: "create",
+        candidateKind: "database",
+        format: create.format,
+        candidate,
+        cause: error,
+        ...(candidateClosed || candidateEngine === undefined
+          ? {}
+          : { close: () => candidateEngine.close() }),
+      });
     }
   };
 
@@ -1177,6 +1276,7 @@ export async function configureBrowserDatabaseRuntime(
       const candidate = `.consultchimps-plan-candidate-${globalThis.crypto.randomUUID()}.sqlite`;
       let engine: BrowserSqliteEngine | undefined;
       let prepared: PreparedImport | undefined;
+      let candidateClosed = false;
       try {
         engine = sqliteEngine(candidate);
         prepared = await createPreparedImportHandle({
@@ -1188,6 +1288,7 @@ export async function configureBrowserDatabaseRuntime(
         });
         await preparedEngineOf(prepared).checkpoint();
         await prepared.close();
+        candidateClosed = true;
         throwIfAborted(create.signal, "db.browser.plan");
         return (
           await publishCandidate(
@@ -1201,10 +1302,22 @@ export async function configureBrowserDatabaseRuntime(
           )
         ).value;
       } catch (error) {
-        await prepared?.close().catch(() => undefined);
-        await engine?.close().catch(() => undefined);
-        await discardCandidate("sqlite", candidate);
-        throw error;
+        const candidatePrepared = prepared;
+        const candidateEngine = engine;
+        return failAfterCandidateCleanup({
+          operation: "plan",
+          candidateKind: "prepared",
+          format: "sqlite",
+          candidate,
+          cause: error,
+          ...(candidateClosed
+            ? {}
+            : candidatePrepared !== undefined
+              ? { close: () => candidatePrepared.close() }
+              : candidateEngine === undefined
+                ? {}
+                : { close: () => candidateEngine.close() }),
+        });
       }
     });
   };
@@ -1293,6 +1406,7 @@ export async function configureBrowserDatabaseRuntime(
         if (state.sqlite || state.duckdb) assertNotBusy(name);
         const candidate = `.consultchimps-import-${globalThis.crypto.randomUUID()}.${format}`;
         let candidateDatabase: Database | undefined;
+        let candidateClosed = false;
         try {
           if (format === "sqlite") {
             let offset = 0;
@@ -1354,6 +1468,7 @@ export async function configureBrowserDatabaseRuntime(
           }
           await candidateDatabase.checkpoint();
           await candidateDatabase.close();
+          candidateClosed = true;
           throwIfAborted(importOptions.signal, "db.browser.import");
           return (
             await publishCandidate(
@@ -1367,9 +1482,17 @@ export async function configureBrowserDatabaseRuntime(
             )
           ).value;
         } catch (error) {
-          await candidateDatabase?.close().catch(() => undefined);
-          await discardCandidate(format, candidate);
-          throw error;
+          const failedCandidate = candidateDatabase;
+          return failAfterCandidateCleanup({
+            operation: "import",
+            candidateKind: "database",
+            format,
+            candidate,
+            cause: error,
+            ...(candidateClosed || failedCandidate === undefined
+              ? {}
+              : { close: () => failedCandidate.close() }),
+          });
         }
       });
     },

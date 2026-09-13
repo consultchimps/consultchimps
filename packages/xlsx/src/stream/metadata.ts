@@ -439,7 +439,12 @@ export async function loadWorkbookMetadata(
       date1904: workbook.date1904,
     };
   } catch (cause) {
-    await archive.reader.close().catch(() => undefined);
-    throw workbookFailure(source, cause, options.signal);
+    let cleanupFailure: { readonly cause: unknown } | undefined;
+    try {
+      await archive.reader.close();
+    } catch (cleanupCause) {
+      cleanupFailure = { cause: cleanupCause };
+    }
+    throw workbookFailure(source, cause, options.signal, cleanupFailure);
   }
 }

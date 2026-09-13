@@ -186,6 +186,7 @@ class MemoryDirectoryHandle {
   readonly name: string;
   readonly directories = new Map<string, MemoryDirectoryHandle>();
   readonly files = new Map<string, MemoryFileHandle>();
+  failNextRemoveName: string | undefined;
 
   constructor(name: string) {
     this.name = name;
@@ -223,6 +224,10 @@ class MemoryDirectoryHandle {
   }
 
   async removeEntry(name: string): Promise<void> {
+    if (this.failNextRemoveName === name) {
+      this.failNextRemoveName = undefined;
+      throw new Error("Injected origin-private cleanup failure");
+    }
     if (!this.files.delete(name) && !this.directories.delete(name)) {
       throw notFound();
     }
@@ -683,6 +688,133 @@ describe("browser database runtime", () => {
       ).toEqual(["Preserved"]);
       await reopened.close();
     }
+  });
+
+  test("reports a retained DuckDB import candidate when failure cleanup cannot remove it", async () => {
+    const runtime = await createRuntime();
+    const original = await runtime.createDatabase({
+      name: "protected.sqlite",
+      format: "sqlite",
+      schema: {
+        version: 1,
+        tables: [
+          {
+            name: "Preserved",
+            columns: [{ name: "value", type: "text" }],
+            recordId: { prefix: "KEEP", padding: 3 },
+          },
+        ],
+      },
+    });
+    const originalId = original.database.id;
+    await original.database.close();
+    const originalBytes = harness.databases.get("/protected.sqlite")?.slice();
+    if (originalBytes === undefined) throw new Error("Missing original bytes");
+
+    const candidateId = "00000000-0000-4000-8000-000000000009";
+    const candidate = `.consultchimps-import-${candidateId}.duckdb`;
+    const sourceBytes = new Uint8Array([1, 2, 3, 4, 5, 6]);
+    const source = new MemoryFile("selected.duckdb", sourceBytes);
+    const randomUuid = vi
+      .spyOn(globalThis.crypto, "randomUUID")
+      .mockReturnValueOnce(candidateId);
+    const duckDirectory = await harness.directory("consultchimps", "databases");
+    duckDirectory.failNextRemoveName = `${candidate}.wal`;
+
+    let failure: unknown;
+    try {
+      await runtime.importDatabase({
+        name: "protected.sqlite",
+        source,
+        overwrite: true,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    randomUuid.mockRestore();
+
+    expect(failure).toMatchObject({
+      code: "DB_BROWSER_CANDIDATE_CLEANUP_REQUIRED",
+      details: {
+        operation: "import",
+        candidateKind: "database",
+        candidateFormat: "duckdb",
+        candidateName: candidate,
+        storageNames: [candidate, `${candidate}.wal`],
+        duckdbDirectory: "consultchimps/databases",
+        closeFailed: false,
+        removalFailed: true,
+      },
+    });
+    if (!(failure instanceof Error)) throw new Error("Expected import to fail");
+    expect(failure.message).toContain(candidate);
+    expect(failure.message).toContain(`${candidate}.wal`);
+    expect(failure.cause).toBeInstanceOf(AggregateError);
+    expect((failure.cause as AggregateError).errors).toEqual([
+      expect.objectContaining({ code: "DB_UNSUPPORTED_FILE_FORMAT" }),
+      expect.objectContaining({
+        message: "Injected origin-private cleanup failure",
+      }),
+    ]);
+
+    expect(source.bytes()).toEqual(sourceBytes);
+    expect(harness.databases.get("/protected.sqlite")).toEqual(originalBytes);
+    const retainedFile = await (
+      await duckDirectory.getFileHandle(candidate)
+    ).getFile();
+    expect(new Uint8Array(await retainedFile.arrayBuffer())).toEqual(
+      sourceBytes,
+    );
+    expect(duckDirectory.files.has(`${candidate}.wal`)).toBe(true);
+    const reopened = await runtime.openDatabase({ name: "protected.sqlite" });
+    expect(reopened.id).toBe(originalId);
+    expect(
+      (await inspectDatabase({ database: reopened })).tables.map(
+        (table) => table.name,
+      ),
+    ).toEqual(["Preserved"]);
+    await reopened.close();
+  });
+
+  test("retains an undefined import failure when candidate cleanup also fails", async () => {
+    const runtime = await createRuntime();
+    const candidateId = "00000000-0000-4000-8000-000000000011";
+    const candidate = `.consultchimps-import-${candidateId}.duckdb`;
+    const randomUuid = vi
+      .spyOn(globalThis.crypto, "randomUUID")
+      .mockReturnValueOnce(candidateId);
+    const duckDirectory = await harness.directory("consultchimps", "databases");
+    duckDirectory.failNextRemoveName = `${candidate}.wal`;
+    let reads = 0;
+    const source: RandomAccessSource = {
+      name: "unreadable.duckdb",
+      size: 32,
+      async readAt(_offset, length) {
+        reads += 1;
+        if (reads === 1) return new Uint8Array(length);
+        throw undefined;
+      },
+    };
+
+    let failure: unknown;
+    try {
+      await runtime.importDatabase({ name: "unreadable.duckdb", source });
+    } catch (error) {
+      failure = error;
+    }
+    randomUuid.mockRestore();
+
+    expect(failure).toMatchObject({
+      code: "DB_BROWSER_CANDIDATE_CLEANUP_REQUIRED",
+      details: { closeFailed: false, removalFailed: true },
+    });
+    expect((failure as Error).cause).toBeInstanceOf(AggregateError);
+    expect(((failure as Error).cause as AggregateError).errors).toEqual([
+      undefined,
+      expect.objectContaining({
+        message: "Injected origin-private cleanup failure",
+      }),
+    ]);
   });
 
   test("does not relabel a source callback failure as a database format error", async () => {
@@ -1625,6 +1757,101 @@ describe("browser database runtime", () => {
       ),
     ).toEqual([]);
     await reopened.close();
+    await created.database.close();
+  });
+
+  test("reports an unconfirmed prepared candidate close even after storage removal", async () => {
+    const runtime = await createRuntime();
+    const created = await runtime.createDatabase({
+      name: "candidate-close-workspace.sqlite",
+      format: "sqlite",
+    });
+    const inspection = await inspectDatabase({ database: created.database });
+    const candidateId = "00000000-0000-4000-8000-000000000010";
+    const candidate = `.consultchimps-plan-candidate-${candidateId}.sqlite`;
+    const randomUuid = vi
+      .spyOn(globalThis.crypto, "randomUUID")
+      .mockReturnValueOnce(candidateId);
+    harness.failNextSqlContaining = "CREATE TABLE _consultchimps_prepared";
+    harness.failNextCloseName = `/${candidate}`;
+
+    let failure: unknown;
+    try {
+      await runtime.createPreparedImport({
+        name: ".consultchimps-import-new.sqlite",
+        database: created.database,
+        recipe: { version: 1, routes: [] },
+        baselineRevision: inspection.revision,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    randomUuid.mockRestore();
+
+    expect(failure).toMatchObject({
+      code: "DB_BROWSER_CANDIDATE_CLEANUP_REQUIRED",
+      details: {
+        operation: "plan",
+        candidateKind: "prepared",
+        candidateFormat: "sqlite",
+        candidateName: candidate,
+        storageNames: [candidate],
+        sqlitePoolDirectory: "consultchimps/sqlite",
+        closeFailed: true,
+        removalFailed: false,
+      },
+    });
+    if (!(failure instanceof Error)) throw new Error("Expected plan to fail");
+    expect(failure.message).toContain(candidate);
+    expect(failure.message).toContain("could not be confirmed closed");
+    expect(failure.cause).toBeInstanceOf(AggregateError);
+    expect((failure.cause as AggregateError).errors).toEqual([
+      expect.objectContaining({
+        message: "Injected SQLite metadata failure",
+      }),
+      expect.objectContaining({ message: "Injected SQLite close failure" }),
+    ]);
+    expect(harness.databases.has(`/${candidate}`)).toBe(false);
+    await created.database.close();
+  });
+
+  test("reports a retained logical prepared candidate when removal fails", async () => {
+    const runtime = await createRuntime();
+    const created = await runtime.createDatabase({
+      name: "candidate-removal-workspace.sqlite",
+      format: "sqlite",
+    });
+    const inspection = await inspectDatabase({ database: created.database });
+    const candidateId = "00000000-0000-4000-8000-000000000012";
+    const candidate = `.consultchimps-plan-candidate-${candidateId}.sqlite`;
+    const randomUuid = vi
+      .spyOn(globalThis.crypto, "randomUUID")
+      .mockReturnValueOnce(candidateId);
+    harness.failNextSqlContaining = "CREATE TABLE _consultchimps_prepared";
+    harness.failNextUnlinkName = `/${candidate}`;
+
+    await expect(
+      runtime.createPreparedImport({
+        name: ".consultchimps-import-new.sqlite",
+        database: created.database,
+        recipe: { version: 1, routes: [] },
+        baselineRevision: inspection.revision,
+      }),
+    ).rejects.toMatchObject({
+      code: "DB_BROWSER_CANDIDATE_CLEANUP_REQUIRED",
+      details: {
+        operation: "plan",
+        candidateKind: "prepared",
+        candidateFormat: "sqlite",
+        candidateName: candidate,
+        storageNames: [candidate],
+        sqlitePoolDirectory: "consultchimps/sqlite",
+        closeFailed: false,
+        removalFailed: true,
+      },
+    });
+    randomUuid.mockRestore();
+    expect(harness.databases.has(`/${candidate}`)).toBe(true);
     await created.database.close();
   });
 

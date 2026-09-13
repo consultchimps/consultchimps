@@ -31,3 +31,7 @@ close retry succeeds.
 Reject ill-formed Unicode in schema identifiers and Record ID components. Reject
 added, missing, or reordered internal metadata columns when opening working
 databases and saved import plans.
+
+Preserve supplementary Unicode characters in inferred table names and Record ID
+prefixes. Keep streaming workbook cleanup retryable after a scratch-file close
+failure, and report failed browser candidate cleanup with recovery locations.
