@@ -8,6 +8,7 @@ import {
 } from "../database.js";
 import { databaseError } from "../errors.js";
 import { canonicalJson } from "../internal/json.js";
+import type { DatabaseEngine } from "../internal/engine.js";
 import {
   APPLICATION_TABLE,
   CAPTURE_ROW_TABLE,
@@ -101,7 +102,13 @@ function preparedCaptureReuse(value: unknown): boolean {
 export async function preparedCaptures(
   prepared: PrepareImportOptions["prepared"],
 ): Promise<PreparedCapture[]> {
-  const rows = await preparedEngineOf(prepared).query(
+  return preparedCapturesFromEngine(preparedEngineOf(prepared));
+}
+
+export async function preparedCapturesFromEngine(
+  engine: Pick<DatabaseEngine, "query">,
+): Promise<PreparedCapture[]> {
+  const rows = await engine.query(
     `SELECT c.capture_id, c.source_file_id, b.source_key, b.display_name, b.selection_key, c.selection_label, c.reader_version, c.content_hash, c.byte_count, c.reused, c.row_count, c.columns_json, c.row_checksum FROM ${PREPARED_CAPTURE_TABLE} c JOIN ${PREPARED_BINDING_TABLE} b ON b.capture_id = c.capture_id ORDER BY b.source_key, b.selection_key`,
   );
   return rows.map((row) => ({

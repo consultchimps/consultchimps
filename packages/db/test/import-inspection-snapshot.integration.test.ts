@@ -12,7 +12,8 @@ import {
 import { replaceImportRecipe } from "../src/import/resolve.js";
 import type { ImportRecipe, ImportSource } from "../src/import/types.js";
 import { createDatabase, createPreparedImport } from "../src/node.js";
-import { PREPARED_CAPTURE_TABLE, preparedEngineOf } from "../src/prepared.js";
+import { inspectDatabase } from "../src/database.js";
+import { preparedEngineOf } from "../src/prepared.js";
 
 const directories: string[] = [];
 
@@ -24,13 +25,17 @@ afterEach(async () => {
   );
 });
 
-function recipe(table: string): ImportRecipe {
+function recipe(
+  table: string,
+  sourceKey = "submission",
+  selectionKey = "Inventory",
+): ImportRecipe {
   return {
     version: 1,
     routes: [
       {
-        source: "submission",
-        selection: "Inventory",
+        source: sourceKey,
+        selection: selectionKey,
         destination: {
           kind: "new-table",
           schema: {
@@ -48,10 +53,16 @@ function recipe(table: string): ImportRecipe {
   };
 }
 
-function source(): ImportSource {
-  const bytes = new TextEncoder().encode("synthetic inspection snapshot");
+function source(
+  sourceKey = "submission",
+  selectionKey = "Inventory",
+  value = "North",
+): ImportSource {
+  const bytes = new TextEncoder().encode(
+    `synthetic inspection snapshot ${sourceKey} ${selectionKey}`,
+  );
   return {
-    key: "submission",
+    key: sourceKey,
     readerVersion: "synthetic-snapshot-1",
     bytes: {
       name: "submission.synthetic",
@@ -62,8 +73,8 @@ function source(): ImportSource {
     },
     selections: [
       {
-        key: "Inventory",
-        label: "Inventory",
+        key: selectionKey,
+        label: selectionKey,
         async open() {
           return {
             columns: ["Value"],
@@ -72,7 +83,7 @@ function source(): ImportSource {
                 {
                   sourceRow: 2,
                   cells: {
-                    Value: { kind: "string" as const, value: "North" },
+                    Value: { kind: "string" as const, value },
                   },
                 },
               ];
@@ -83,17 +94,6 @@ function source(): ImportSource {
       },
     ],
   };
-}
-
-function deferred(): {
-  readonly promise: Promise<void>;
-  readonly resolve: () => void;
-} {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
 }
 
 for (const format of ["sqlite", "duckdb"] as const) {
@@ -112,9 +112,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       baselineRevision: 0n,
     });
     const engine = preparedEngineOf(prepared);
-    const originalQuery = engine.query.bind(engine);
-    const captureCountReached = deferred();
-    const releaseCaptureCount = deferred();
+    const originalReadTransaction = engine.readTransaction.bind(engine);
     try {
       const initial = await prepareImport({
         database,
@@ -127,32 +125,27 @@ for (const format of ["sqlite", "duckdb"] as const) {
         throw new Error("The synthetic import plan did not become ready.");
       }
 
-      engine.query = async (sql, values) => {
-        if (
-          sql.includes(`sum(row_count)`) &&
-          sql.includes(PREPARED_CAPTURE_TABLE)
-        ) {
-          captureCountReached.resolve();
-          await releaseCaptureCount.promise;
+      let revised = false;
+      engine.readTransaction = async (read) => {
+        const snapshot = await originalReadTransaction(read);
+        if (!revised) {
+          revised = true;
+          engine.readTransaction = originalReadTransaction;
+          const replacement = await replaceImportRecipe({
+            database,
+            prepared,
+            recipe: recipe("RevisedInventory"),
+          });
+          expect(replacement.state).toBe("ready");
         }
-        return originalQuery(sql, values);
+        return snapshot;
       };
 
-      const pendingInspection = inspectImport({
+      const inspection = await inspectImport({
         database,
         prepared,
         page: { limit: 10 },
       });
-      await captureCountReached.promise;
-      const revised = await replaceImportRecipe({
-        database,
-        prepared,
-        recipe: recipe("RevisedInventory"),
-      });
-      expect(revised.state).toBe("ready");
-      releaseCaptureCount.resolve();
-
-      const inspection = await pendingInspection;
       expect(inspection.routes[0]?.destination).toMatchObject({
         kind: "new-table",
         schema: { name: "Inventory" },
@@ -171,8 +164,78 @@ for (const format of ["sqlite", "duckdb"] as const) {
         }),
       ).rejects.toMatchObject({ code: "DB_STALE_IMPORT_PLAN" });
     } finally {
-      engine.query = originalQuery;
-      releaseCaptureCount.resolve();
+      engine.readTransaction = originalReadTransaction;
+      await prepared.close();
+      await database.close();
+    }
+  });
+
+  test(`${format}: apply consumes only captures from its approved review snapshot`, async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "cc-apply-snapshot-"));
+    directories.push(directory);
+    const { database } = await createDatabase({
+      path: path.join(directory, `workspace.${format}`),
+      format,
+    });
+    const initialRecipe = recipe("Inventory");
+    const prepared = await createPreparedImport({
+      path: path.join(directory, "review.ccplan"),
+      database,
+      recipe: initialRecipe,
+      baselineRevision: 0n,
+    });
+    const engine = preparedEngineOf(prepared);
+    const originalReadTransaction = engine.readTransaction.bind(engine);
+    try {
+      const initial = await prepareImport({
+        database,
+        prepared,
+        recipe: initialRecipe,
+        sources: [source()],
+      });
+      expect(initial.prepared.state).toBe("ready");
+      if (initial.prepared.state !== "ready") {
+        throw new Error("The synthetic import plan did not become ready.");
+      }
+      const addedRecipe = recipe("Added", "added", "Added");
+      const expandedRecipe: ImportRecipe = {
+        version: 1,
+        routes: [...initialRecipe.routes, ...addedRecipe.routes],
+      };
+      let preparedConcurrently = false;
+      engine.readTransaction = async (read) => {
+        const snapshot = await originalReadTransaction(read);
+        if (!preparedConcurrently) {
+          preparedConcurrently = true;
+          engine.readTransaction = originalReadTransaction;
+          const expanded = await prepareImport({
+            database,
+            prepared,
+            recipe: expandedRecipe,
+            sources: [source("added", "Added", "South")],
+          });
+          expect(expanded.prepared.state).toBe("ready");
+        }
+        return snapshot;
+      };
+
+      await expect(
+        applyImport({
+          database,
+          prepared,
+          approved: initial.prepared,
+          requestId: `apply-snapshot-${format}`,
+        }),
+      ).resolves.toMatchObject({
+        metrics: { rowsImported: 1, tablesCreated: 1 },
+      });
+      await expect(inspectDatabase({ database })).resolves.toMatchObject({
+        captures: 1n,
+        completedImports: 1n,
+        tables: [{ name: "Inventory", rowCount: 1n }],
+      });
+    } finally {
+      engine.readTransaction = originalReadTransaction;
       await prepared.close();
       await database.close();
     }

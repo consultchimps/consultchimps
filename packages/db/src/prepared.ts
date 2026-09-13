@@ -616,9 +616,19 @@ async function readStoredPreparedReview(
 export async function readPreparedReview(
   prepared: PreparedImport,
 ): Promise<PreparedReview> {
-  return preparedEngineOf(prepared).readTransaction((transaction) =>
-    readStoredPreparedReview(transaction),
+  return readPreparedReviewSnapshot(prepared, (review) =>
+    Promise.resolve(review),
   );
+}
+
+export async function readPreparedReviewSnapshot<T>(
+  prepared: PreparedImport,
+  read: (review: PreparedReview, transaction: EngineTransaction) => Promise<T>,
+): Promise<T> {
+  return preparedEngineOf(prepared).readTransaction(async (transaction) => {
+    const review = await readStoredPreparedReview(transaction);
+    return read(review, transaction);
+  });
 }
 
 export async function preparedRef(
@@ -635,6 +645,7 @@ export async function updatePreparedPlan(options: {
   readonly decisions?: readonly ImportDecision[] | undefined;
   readonly baselineRevision?: bigint | undefined;
   readonly baselineSchemaFingerprint?: string | undefined;
+  readonly expectedReviewFingerprint?: string | undefined;
 }): Promise<PreparedImportRef | ReadyImportRef> {
   validateImportRecipe(options.recipe);
   if (options.ready && options.conflicts.length > 0) {
@@ -650,6 +661,15 @@ export async function updatePreparedPlan(options: {
   const state = options.ready ? "ready" : "needs-review";
   return engine.transaction(async (transaction) => {
     const current = await readStoredPreparedReview(transaction);
+    if (
+      options.expectedReviewFingerprint !== undefined &&
+      current.prepared.reviewFingerprint !== options.expectedReviewFingerprint
+    ) {
+      throw databaseError(
+        "DB_STALE_IMPORT_PLAN",
+        "The import plan changed while it was being reviewed. Inspect and approve its latest revision.",
+      );
+    }
     const baselineRevision =
       options.baselineRevision ?? current.prepared.baselineRevision;
     const baselineSchemaFingerprint =

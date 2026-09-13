@@ -13,6 +13,7 @@ import {
   PREPARED_CAPTURE_TABLE,
   PREPARED_ROW_TABLE,
   preparedEngineOf,
+  readPreparedReviewSnapshot,
   updatePreparedCaptureMetadata,
   updatePreparedPlan,
 } from "../prepared.js";
@@ -25,7 +26,7 @@ import {
 import {
   evaluateConflicts,
   findReusableCapture,
-  preparedCaptures,
+  preparedCapturesFromEngine,
 } from "./planning.js";
 import type {
   ImportRegionReader,
@@ -443,7 +444,14 @@ export async function prepareImport(
     if (capturedSource) sourcesRead += 1;
     if (reusedSource) sourcesReused += 1;
   }
-  const captures = await preparedCaptures(options.prepared);
+  const reviewSnapshot = await readPreparedReviewSnapshot(
+    options.prepared,
+    async (review, transaction) => ({
+      review,
+      captures: await preparedCapturesFromEngine(transaction),
+    }),
+  );
+  const captures = reviewSnapshot.captures;
   const conflicts = await evaluateConflicts(
     options.database,
     options.prepared,
@@ -455,6 +463,7 @@ export async function prepareImport(
     recipe: options.recipe,
     conflicts,
     ready: conflicts.length === 0,
+    expectedReviewFingerprint: reviewSnapshot.review.prepared.reviewFingerprint,
   });
   await preparedEngine.checkpoint();
   return {

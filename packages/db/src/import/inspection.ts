@@ -8,14 +8,17 @@ import { databaseError } from "../errors.js";
 import { CAPTURE_ROW_TABLE, TABLE_REGISTRY_TABLE } from "../metadata.js";
 import { identifierKey } from "../schema.js";
 import {
-  PREPARED_CAPTURE_TABLE,
   PREPARED_ROW_TABLE,
   preparedEngineOf,
-  readPreparedReview,
+  readPreparedReviewSnapshot,
 } from "../prepared.js";
 import { parseImportCellsJson } from "./inference.js";
 import { inspectApplicationIdentity } from "./application-identity.js";
-import { preparedCaptures, routeColumns, routeKey } from "./planning.js";
+import {
+  preparedCapturesFromEngine,
+  routeColumns,
+  routeKey,
+} from "./planning.js";
 import type {
   ImportInspection,
   ImportExample,
@@ -116,9 +119,16 @@ export async function inspectImport(options: {
       "This import plan belongs to a different database.",
     );
   }
-  const review = await readPreparedReview(options.prepared);
+  const snapshot = await readPreparedReviewSnapshot(
+    options.prepared,
+    async (review, transaction) => ({
+      review,
+      captures: await preparedCapturesFromEngine(transaction),
+    }),
+  );
+  const review = snapshot.review;
   const { recipe, conflicts } = review;
-  const preparedCaptureList = await preparedCaptures(options.prepared);
+  const preparedCaptureList = snapshot.captures;
   const selected = preparedCaptureList.filter(
     (capture) =>
       options.page.source === undefined ||
@@ -190,8 +200,9 @@ export async function inspectImport(options: {
       route,
     ]),
   );
-  const captures = await engine.query(
-    `SELECT sum(row_count) AS count FROM ${PREPARED_CAPTURE_TABLE} WHERE reused = 0`,
+  const capturedRows = preparedCaptureList.reduce(
+    (total, capture) => total + (capture.reused ? 0n : capture.rowCount),
+    0n,
   );
   const examples = pageExamples.slice(0, options.page.limit);
   const last = examples.at(-1);
@@ -268,7 +279,7 @@ export async function inspectImport(options: {
   return {
     prepared: review.prepared,
     conflicts,
-    capturedRows: valueAsBigInt(captures[0]?.["count"] ?? 0n, "captured rows"),
+    capturedRows,
     routes,
     examples,
     previewWarnings,

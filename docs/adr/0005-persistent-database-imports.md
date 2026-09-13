@@ -66,10 +66,14 @@ Prepared artifact format 3 stores a fingerprint over reviewed metadata,
 including source bindings and capture definitions. Each capture definition
 contains a checksum of its ordered row coordinates and serialized values.
 Approval references carry the metadata fingerprint. Inspection returns the
-reference and reviewed metadata from one snapshot, and apply compares the
-approval with the same metadata snapshot used for its recipe and decisions.
-Preparation updates capture metadata and invalidates prior approval in the same
-transaction.
+reference, reviewed metadata, and capture definitions from one snapshot. Apply
+compares the approval with the same metadata snapshot used for its recipe,
+decisions, and consumed capture definitions. A concurrent preparation cannot add
+captures to an already-read approval. Preparation and resolution compare the
+evaluated fingerprint inside the final metadata write transaction, rejecting
+stale review writes. Recipe replacement derives its omissions and review from
+one snapshot. Preparation updates capture metadata and invalidates prior
+approval in the same transaction.
 
 Fresh capture checksums are computed during capture. Apply verifies them during
 its existing copy, including excluded selections, before committing the target

@@ -79,7 +79,10 @@ binds the plan identity, database baseline, revision, state, recipe, conflicts,
 decisions, source bindings, and capture definitions, including a checksum of
 each capture's row coordinates and serialized values. Reading a plan checks its
 metadata fingerprint, and applying requires the same `reviewFingerprint` as the
-approved reference.
+approved reference. Inspection and apply read capture definitions in the same
+snapshot as that metadata. Preparing or resolving a review rejects a stale write
+if the plan changed during evaluation; inspect and review its latest revision
+before retrying.
 
 Fresh capture checksums are computed during capture and verified during the
 existing copy into the working database, including excluded selections. Reusing

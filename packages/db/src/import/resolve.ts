@@ -1,15 +1,16 @@
 import { engineOf, inspectDatabase } from "../database.js";
 import { databaseError } from "../errors.js";
 import { APPLICATION_TABLE } from "../metadata.js";
-import { readPreparedRecipe, updatePreparedPlan } from "../prepared.js";
-import type { preparedRef } from "../prepared.js";
+import { readPreparedReviewSnapshot, updatePreparedPlan } from "../prepared.js";
+import type { PreparedReview, preparedRef } from "../prepared.js";
 import { readSchemaFingerprint } from "../records.js";
 import { validateImportRecipe } from "../validators.js";
 import {
   evaluateConflicts,
-  preparedCaptures,
+  preparedCapturesFromEngine,
   routeColumns,
   routeKey,
+  type PreparedCapture,
 } from "./planning.js";
 import type {
   ImportDecision,
@@ -17,11 +18,26 @@ import type {
   PrepareImportOptions,
 } from "./types.js";
 
-export async function resolveImport(options: {
+interface ReviewSnapshot {
+  readonly review: PreparedReview;
+  readonly captures: readonly PreparedCapture[];
+}
+
+async function preparedReviewSnapshot(
+  prepared: PrepareImportOptions["prepared"],
+): Promise<ReviewSnapshot> {
+  return readPreparedReviewSnapshot(prepared, async (review, transaction) => ({
+    review,
+    captures: await preparedCapturesFromEngine(transaction),
+  }));
+}
+
+async function resolveReviewedImport(options: {
   readonly database: PrepareImportOptions["database"];
   readonly prepared: PrepareImportOptions["prepared"];
   readonly decisions: readonly ImportDecision[];
   readonly rebase?: boolean | undefined;
+  readonly snapshot: ReviewSnapshot;
 }): Promise<
   ReturnType<typeof preparedRef> extends Promise<infer T> ? T : never
 > {
@@ -40,8 +56,8 @@ export async function resolveImport(options: {
         ),
       }
     : undefined;
-  const current = await readPreparedRecipe(options.prepared);
-  const captures = await preparedCaptures(options.prepared);
+  const current = options.snapshot.review;
+  const captures = options.snapshot.captures;
   const routes = new Map(
     current.recipe.routes.map((route) => [
       routeKey(route.source, route.selection),
@@ -142,12 +158,27 @@ export async function resolveImport(options: {
     conflicts,
     ready: conflicts.length === 0,
     decisions: [...reviewDecisions.values()],
+    expectedReviewFingerprint: current.prepared.reviewFingerprint,
     ...(baseline === undefined
       ? {}
       : {
           baselineRevision: baseline.inspection.revision,
           baselineSchemaFingerprint: baseline.schemaFingerprint,
         }),
+  });
+}
+
+export async function resolveImport(options: {
+  readonly database: PrepareImportOptions["database"];
+  readonly prepared: PrepareImportOptions["prepared"];
+  readonly decisions: readonly ImportDecision[];
+  readonly rebase?: boolean | undefined;
+}): Promise<
+  ReturnType<typeof preparedRef> extends Promise<infer T> ? T : never
+> {
+  return resolveReviewedImport({
+    ...options,
+    snapshot: await preparedReviewSnapshot(options.prepared),
   });
 }
 
@@ -158,8 +189,9 @@ export async function replaceImportRecipe(options: {
   readonly rebase?: boolean | undefined;
 }): ReturnType<typeof resolveImport> {
   validateImportRecipe(options.recipe);
-  const current = await readPreparedRecipe(options.prepared);
-  const captures = await preparedCaptures(options.prepared);
+  const snapshot = await preparedReviewSnapshot(options.prepared);
+  const current = snapshot.review;
+  const captures = snapshot.captures;
   const replacementKeys = new Set(
     options.recipe.routes.map((route) =>
       routeKey(route.source, route.selection),
@@ -177,7 +209,7 @@ export async function replaceImportRecipe(options: {
       { source: route.source, selection: route.selection },
     ]),
   );
-  return resolveImport({
+  return resolveReviewedImport({
     database: options.database,
     prepared: options.prepared,
     decisions: [
@@ -198,5 +230,6 @@ export async function replaceImportRecipe(options: {
         })),
     ],
     rebase: options.rebase,
+    snapshot,
   });
 }

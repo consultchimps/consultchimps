@@ -28,7 +28,7 @@ import {
 import {
   PREPARED_ROW_TABLE,
   preparedEngineOf,
-  readPreparedReview,
+  readPreparedReviewSnapshot,
 } from "../prepared.js";
 import {
   createManagedTable,
@@ -45,7 +45,7 @@ import {
 } from "./application-identity.js";
 import {
   orderRoutesByReferences,
-  preparedCaptures,
+  preparedCapturesFromEngine,
   routeColumns,
   routeKey,
 } from "./planning.js";
@@ -147,7 +147,14 @@ export async function applyImport(
       "The import plan still needs review.",
     );
   }
-  const preparedPlan = await readPreparedReview(options.prepared);
+  const preparedSnapshot = await readPreparedReviewSnapshot(
+    options.prepared,
+    async (review, transaction) => ({
+      review,
+      captures: await preparedCapturesFromEngine(transaction),
+    }),
+  );
+  const preparedPlan = preparedSnapshot.review;
   const actual = preparedPlan.prepared;
   if (
     actual.state !== "ready" ||
@@ -169,7 +176,7 @@ export async function applyImport(
   const preparedEngine = preparedEngineOf(options.prepared);
   let recipe = preparedPlan.recipe;
   const { conflicts, decisions } = preparedPlan;
-  const captures = await preparedCaptures(options.prepared);
+  const captures = preparedSnapshot.captures;
   let rowsImported = 0;
   let rowsReused = 0;
   let tablesCreated = 0;
