@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -159,3 +159,134 @@ test("keeps unresolved case-distinct leaf names separate", async () => {
   ).resolves.toMatchObject({ output: path.resolve(second) });
   await opened.close();
 });
+
+test("blocks replacement after registration cleanup fails until the handle closes", async () => {
+  const { first, second } = await paths();
+  const registrationFailure = new Error("Synthetic identity lookup failure");
+  let failIdentity = true;
+  const registry = new NativeFileRegistry(async (filePath) => {
+    if (failIdentity) throw registrationFailure;
+    return { pathKey: path.resolve(filePath) };
+  });
+  let open = true;
+  let failClose = true;
+  const opened = {
+    get isOpen() {
+      return open;
+    },
+    async close() {
+      if (failClose) throw undefined;
+      open = false;
+    },
+  };
+  try {
+    await expect(
+      registry.open(first, async () => opened),
+    ).rejects.toMatchObject({
+      code: "DB_NATIVE_HANDLE_CLEANUP_REQUIRED",
+      details: { path: path.resolve(first) },
+      cause: { errors: [registrationFailure, undefined] },
+    });
+    failIdentity = false;
+    await expect(
+      registry.planPublication({
+        output: second,
+        inputs: [],
+        overwrite: true,
+      }),
+    ).rejects.toMatchObject({ code: "DB_NATIVE_HANDLE_CLEANUP_REQUIRED" });
+    expect(await readFile(first, "utf8")).toBe("first");
+    expect(await readFile(second, "utf8")).toBe("second");
+    failClose = false;
+    await opened.close();
+    await expect(
+      registry.planPublication({
+        output: second,
+        inputs: [],
+        overwrite: true,
+      }),
+    ).resolves.toMatchObject({ output: path.resolve(second) });
+  } finally {
+    failClose = false;
+    await opened.close();
+  }
+});
+
+test("reports a published output when reopening it fails", async () => {
+  const { first, second } = await paths();
+  const registry = new NativeFileRegistry();
+  const plan = await registry.planPublication({
+    output: first,
+    inputs: [],
+    overwrite: true,
+  });
+  const failure = new Error("Synthetic reopen failure");
+  await expect(
+    registry.publishAndOpen({
+      temporary: second,
+      plan,
+      async open() {
+        throw failure;
+      },
+    }),
+  ).rejects.toMatchObject({
+    code: "DB_NATIVE_PUBLISHED_OPEN_FAILED",
+    details: { path: path.resolve(first), published: true },
+    cause: failure,
+  });
+  expect(await readFile(first, "utf8")).toBe("second");
+});
+
+test.each([false, true])(
+  "preserves publication status when registration fails, failed close=%s",
+  async (failClose) => {
+    const { first, second } = await paths();
+    const registrationFailure = new Error("Synthetic registration failure");
+    const cleanupFailure = new Error("Synthetic handle close failure");
+    let failIdentity = false;
+    const registry = new NativeFileRegistry(async (filePath) => {
+      if (failIdentity) throw registrationFailure;
+      return { pathKey: path.resolve(filePath) };
+    });
+    let open = true;
+    const opened = {
+      get isOpen() {
+        return open;
+      },
+      async close() {
+        if (failClose) throw cleanupFailure;
+        open = false;
+      },
+    };
+    const plan = await registry.planPublication({
+      output: first,
+      inputs: [],
+      overwrite: true,
+    });
+    try {
+      await expect(
+        registry.publishAndOpen({
+          temporary: second,
+          plan,
+          async open() {
+            failIdentity = true;
+            return opened;
+          },
+        }),
+      ).rejects.toMatchObject({
+        code: failClose
+          ? "DB_NATIVE_HANDLE_CLEANUP_REQUIRED"
+          : "DB_NATIVE_PUBLISHED_OPEN_FAILED",
+        details: { path: path.resolve(first), published: true },
+        cause: failClose
+          ? { errors: [registrationFailure, cleanupFailure] }
+          : registrationFailure,
+      });
+      expect(await readFile(first, "utf8")).toBe("second");
+      expect(opened.isOpen).toBe(failClose);
+    } finally {
+      failClose = false;
+      await opened.close();
+    }
+  },
+);

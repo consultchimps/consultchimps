@@ -35,3 +35,10 @@ databases and saved import plans.
 Preserve supplementary Unicode characters in inferred table names and Record ID
 prefixes. Keep streaming workbook cleanup retryable after a scratch-file close
 failure, and report failed browser candidate cleanup with recovery locations.
+
+Reject automatic imports with no selected workbook regions before recording an
+import. Report retained native staging files and outputs published before a
+reopen failure. Keep scratch cleanup retryable and block native replacement
+after failed registration cleanup until the unresolved handle closes. Report
+successful publication when removing the staging filename fails, and retain
+private files when initialization leaves an unclosed engine connection.

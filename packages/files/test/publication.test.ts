@@ -1,8 +1,33 @@
 import { link, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import type { rm as remove } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
+
+const filesystemFailure = vi.hoisted(() => ({
+  stagingRemovalFailures: 0,
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown> & {
+    rm: typeof remove;
+  };
+  return {
+    ...actual,
+    async rm(...args: Parameters<typeof actual.rm>) {
+      const target = String(args[0]);
+      if (
+        path.basename(target) === "staged.sqlite" &&
+        filesystemFailure.stagingRemovalFailures > 0
+      ) {
+        filesystemFailure.stagingRemovalFailures -= 1;
+        throw new Error("synthetic staging removal failure");
+      }
+      return actual.rm(...args);
+    },
+  };
+});
 
 import { planFilePublication, publishStagedFile } from "../src/index.js";
 
@@ -28,6 +53,7 @@ afterEach(async () => {
       .splice(0)
       .map((directory) => rm(directory, { recursive: true, force: true })),
   );
+  filesystemFailure.stagingRemovalFailures = 0;
 });
 
 test("publishes a staged file without replacing a source", async () => {
@@ -35,6 +61,27 @@ test("publishes a staged file without replacing a source", async () => {
   const plan = await planFilePublication({ output, inputs: [source] });
   await publishStagedFile({ temporary, plan });
   expect(await readFile(output, "utf8")).toBe("new database");
+  expect(await readFile(source, "utf8")).toBe("source");
+});
+
+test("reports when a new output was published but staging cleanup failed", async () => {
+  const { source, output, temporary } = await fixture();
+  const plan = await planFilePublication({ output, inputs: [source] });
+  filesystemFailure.stagingRemovalFailures = 1;
+
+  await expect(publishStagedFile({ temporary, plan })).rejects.toMatchObject({
+    code: "FILES_PUBLICATION_CLEANUP_FAILED",
+    details: {
+      published: true,
+      output,
+      temporary,
+    },
+    cause: expect.objectContaining({
+      message: "synthetic staging removal failure",
+    }),
+  });
+  expect(await readFile(output, "utf8")).toBe("new database");
+  expect(await readFile(temporary, "utf8")).toBe("new database");
   expect(await readFile(source, "utf8")).toBe("source");
 });
 

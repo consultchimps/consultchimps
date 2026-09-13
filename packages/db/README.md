@@ -123,6 +123,27 @@ A failed database or prepared-plan close keeps runtime replacement protection
 active. Retry `close()` before replacing the file. Concurrent close calls share
 the pending close attempt; a later call can retry failed cleanup.
 
+Native staging failures use `DB_NATIVE_TEMPORARY_CLEANUP_REQUIRED` when cleanup
+also fails. The error retains the original and cleanup causes and identifies the
+private file paths to inspect after releasing remaining handles, including
+SQLite WAL and shared-memory files or DuckDB WAL and spill storage. If
+initialization leaves a connection that could not be closed, cleanup retains the
+private files for inspection after the process exits.
+`FILES_PUBLICATION_CLEANUP_FAILED` reports a saved output whose staging filename
+could not be removed; check its `output` before repeating creation or export.
+`DB_NATIVE_PUBLISHED_OPEN_FAILED` means publication succeeded but reopening or
+registration failed; its `output` path identifies the saved file. If
+registration and handle closure both fail, `DB_NATIVE_HANDLE_CLEANUP_REQUIRED`
+blocks native file replacement until that handle closes or the process restarts,
+because its filesystem identity could not be confirmed.
+`DB_NATIVE_SQLITE_CLEANUP_REQUIRED` means initialization and connection closure
+both failed. Restart the process before retrying that file.
+`DB_DUCKDB_OPEN_CLEANUP_FAILED` reports the corresponding DuckDB initialization
+failure. `DB_DUCKDB_EXPORT_CLEANUP_FAILED` retains failures to detach an export
+or close its private engine. Follow its guidance to close the source or restart
+the process before removing temporary files. Read-only DuckDB export places
+private spill storage beside its staged destination.
+
 Native exports check cancellation after copying and validation, and again before
 entering file publication. Cancellation before that boundary leaves the
 destination unchanged and attempts to remove the private staged copy.
@@ -149,6 +170,11 @@ effective mappings, preparation and review report
 `conflicting-application-mapping` for the affected routes. Use matching mappings
 or separate destination tables before applying. Equivalent alias routes can
 share one application.
+
+Automatic recipe drafting rejects sources with no selected regions using
+`DB_IMPORT_NO_SELECTIONS`. Select a worksheet or range, or enable hidden
+worksheets when intended. An explicitly empty recipe remains valid for excluding
+captured routes during review.
 
 `inspectImport` reports capture reuse separately from each route's
 `applicationState`. The `already-applied` state requires a matching captured

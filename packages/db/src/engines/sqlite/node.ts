@@ -2,6 +2,7 @@ import BetterSqlite3 from "better-sqlite3";
 
 import { throwIfAborted } from "@consultchimps/core";
 
+import { databaseError } from "../../errors.js";
 import type {
   DatabaseEngine,
   EngineRow,
@@ -51,7 +52,19 @@ export class NodeSqliteEngine implements DatabaseEngine {
       database.pragma("foreign_keys = ON");
       database.defaultSafeIntegers(true);
     } catch (cause) {
-      database.close();
+      try {
+        database.close();
+      } catch (cleanupFailure) {
+        throw databaseError(
+          "DB_NATIVE_SQLITE_CLEANUP_REQUIRED",
+          "SQLite initialization failed and its connection could not be closed. Restart the process before retrying this file.",
+          { path: database.name },
+          new AggregateError(
+            [cause, cleanupFailure],
+            "SQLite initialization and connection cleanup failed",
+          ),
+        );
+      }
       throw cause;
     }
   }

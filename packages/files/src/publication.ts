@@ -124,7 +124,22 @@ export async function publishStagedFile(options: {
         { cause },
       );
     }
-    await rm(temporary);
+    try {
+      await rm(temporary);
+    } catch (cause) {
+      throw new ConsultChimpsError(
+        "FILES_PUBLICATION_CLEANUP_FAILED",
+        "The output was published, but its private staging file could not be removed. Inspect the published output before retrying, then remove the staging file after resolving the file access problem.",
+        {
+          cause,
+          details: {
+            published: true,
+            output: plan.output,
+            temporary,
+          },
+        },
+      );
+    }
     return;
   }
   if (!plan.overwrite)

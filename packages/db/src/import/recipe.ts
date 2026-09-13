@@ -72,6 +72,12 @@ export async function draftImportRecipe(options: {
       });
     }
   }
+  if (selectionCount === 0) {
+    throw databaseError(
+      "DB_IMPORT_NO_SELECTIONS",
+      "Choose at least one source region before importing. If the workbook contains only hidden worksheets, include hidden sheets and try again.",
+    );
+  }
   if (options.into !== undefined && selectionCount !== 1) {
     throw databaseError(
       "DB_IMPORT_INTO_AMBIGUOUS",

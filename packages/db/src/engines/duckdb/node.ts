@@ -6,7 +6,7 @@ import {
   type DuckDBValue,
 } from "@duckdb/node-api";
 
-import { throwIfAborted } from "@consultchimps/core";
+import { ConsultChimpsError, throwIfAborted } from "@consultchimps/core";
 
 import type {
   DatabaseEngine,
@@ -14,6 +14,7 @@ import type {
   EngineTransaction,
   EngineValue,
 } from "../../internal/engine.js";
+import { databaseError } from "../../errors.js";
 import { quoteIdentifier } from "../../schema.js";
 
 const APPENDER_FLUSH_ROWS = 2_048;
@@ -31,6 +32,7 @@ async function copyDatabase(
   const destinationName = `cc_export_${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
   const quotedDestinationName = quoteIdentifier(destinationName);
   let attached = false;
+  let operationFailure: { readonly error: unknown } | undefined;
   try {
     throwIfAborted(signal, "db.export");
     await connection.run(
@@ -48,19 +50,63 @@ async function copyDatabase(
       signal?.removeEventListener("abort", interrupt);
     }
     throwIfAborted(signal, "db.export");
-    await connection.run(`DETACH ${quotedDestinationName}`);
-    attached = false;
   } catch (error) {
-    if (attached) {
-      try {
-        await connection.run(`DETACH ${quotedDestinationName}`);
-      } catch {
-        // Preserve the copy failure while releasing the attached destination when possible.
-      }
-    }
-    throwIfAborted(signal, "db.export");
-    throw error;
+    operationFailure = { error };
   }
+  let detachFailure: { readonly error: unknown } | undefined;
+  if (attached) {
+    try {
+      await connection.run(`DETACH ${quotedDestinationName}`);
+    } catch (error) {
+      detachFailure = { error };
+    }
+  }
+  if (detachFailure !== undefined) {
+    const causes =
+      operationFailure === undefined
+        ? [detachFailure.error]
+        : [operationFailure.error, detachFailure.error];
+    throw databaseError(
+      "DB_DUCKDB_EXPORT_CLEANUP_FAILED",
+      "DuckDB could not release its private export attachment. Close the source database before retrying. If cleanup still fails, restart the process before removing the private export files.",
+      {
+        destination,
+        attachment: destinationName,
+        storagePaths: [destination, `${destination}.wal`, `${destination}.tmp`],
+        closeFailed: true,
+      },
+      new AggregateError(causes, "DuckDB export attachment cleanup failed."),
+    );
+  }
+  if (operationFailure !== undefined) {
+    throwIfAborted(signal, "db.export");
+    throw operationFailure.error;
+  }
+}
+
+function throwResourceCleanupFailure(
+  operation: string,
+  destination: string,
+  operationFailure: { readonly error: unknown } | undefined,
+  cleanupFailures: readonly unknown[],
+): never {
+  throw databaseError(
+    "DB_DUCKDB_EXPORT_CLEANUP_FAILED",
+    "DuckDB could not release its private export resources. Restart the process before retrying or removing the private export files.",
+    {
+      operation,
+      destination,
+      storagePaths: [destination, `${destination}.wal`, `${destination}.tmp`],
+      closeFailed: true,
+    },
+    new AggregateError(
+      [
+        ...(operationFailure === undefined ? [] : [operationFailure.error]),
+        ...cleanupFailures,
+      ],
+      "DuckDB export resource cleanup failed.",
+    ),
+  );
 }
 
 function normalizeValue(value: DuckDBValue): EngineValue {
@@ -124,12 +170,33 @@ export class NodeDuckDbEngine implements DatabaseEngine {
     const instance = await DuckDBInstance.create(path, {
       access_mode: readonly ? "READ_ONLY" : "READ_WRITE",
     });
-    return new NodeDuckDbEngine(
-      instance,
-      await instance.connect(),
-      path,
-      readonly,
-    );
+    try {
+      return new NodeDuckDbEngine(
+        instance,
+        await instance.connect(),
+        path,
+        readonly,
+      );
+    } catch (error) {
+      try {
+        instance.closeSync();
+      } catch (cleanupError) {
+        throw databaseError(
+          "DB_DUCKDB_OPEN_CLEANUP_FAILED",
+          "DuckDB could not release a database after opening it failed. Restart the process before retrying or removing the database files.",
+          {
+            path,
+            storagePaths: [path, `${path}.wal`, `${path}.tmp`],
+            closeFailed: true,
+          },
+          new AggregateError(
+            [error, cleanupError],
+            "DuckDB connection creation and instance cleanup failed.",
+          ),
+        );
+      }
+      throw error;
+    }
   }
 
   async #exclusive<T>(work: () => Promise<T>): Promise<T> {
@@ -323,18 +390,53 @@ export class NodeDuckDbEngine implements DatabaseEngine {
         return;
       }
 
-      const instance = await DuckDBInstance.create(":memory:");
-      const connection = await instance.connect();
+      const instance = await DuckDBInstance.create(":memory:", {
+        temp_directory: `${destination}.tmp`,
+      });
+      let connection: DuckDBConnection | undefined;
       const sourceName = `cc_source_${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
+      let operationFailure: { readonly error: unknown } | undefined;
       try {
+        connection = await instance.connect();
         await connection.run(
           `ATTACH ${quoteStringLiteral(this.#path)} AS ${quoteIdentifier(sourceName)} (READ_ONLY)`,
         );
         await copyDatabase(connection, sourceName, destination, signal);
         await connection.run(`DETACH ${quoteIdentifier(sourceName)}`);
+      } catch (error) {
+        operationFailure = { error };
       } finally {
-        connection.closeSync();
-        instance.closeSync();
+        const cleanupFailures: unknown[] = [];
+        if (connection !== undefined) {
+          try {
+            connection.closeSync();
+          } catch (error) {
+            cleanupFailures.push(error);
+          }
+        }
+        try {
+          instance.closeSync();
+        } catch (error) {
+          cleanupFailures.push(error);
+        }
+        if (cleanupFailures.length > 0) {
+          throwResourceCleanupFailure(
+            "readonly-copy",
+            destination,
+            operationFailure,
+            cleanupFailures,
+          );
+        }
+      }
+      if (operationFailure !== undefined) {
+        if (
+          operationFailure.error instanceof ConsultChimpsError &&
+          operationFailure.error.code === "DB_DUCKDB_EXPORT_CLEANUP_FAILED"
+        ) {
+          throw operationFailure.error;
+        }
+        throwIfAborted(signal, "db.export");
+        throw operationFailure.error;
       }
     });
   }

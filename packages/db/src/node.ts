@@ -1,4 +1,4 @@
-import { rm, stat } from "node:fs/promises";
+import { lstat, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -40,6 +40,7 @@ import type { DatabaseFormat, DatabaseSchema } from "./schema.js";
 import { readSchemaFingerprint } from "./records.js";
 import { prepareImport } from "./import/prepare.js";
 import { NativeFileRegistry } from "./native-files.js";
+import { failAfterNativeArtifactCleanup } from "./native-artifact-cleanup.js";
 import type {
   ImportRecipe,
   ImportSource,
@@ -49,6 +50,56 @@ import type {
 const SQLITE_HEADER = new TextEncoder().encode("SQLite format 3\0");
 const databasePaths = new WeakMap<Database, string>();
 const nativeFiles = new NativeFileRegistry();
+
+function nativeTemporaryPaths(
+  temporary: string,
+  format: DatabaseFormat,
+): readonly string[] {
+  return format === "sqlite"
+    ? [temporary, `${temporary}-wal`, `${temporary}-shm`]
+    : [temporary, `${temporary}.wal`, `${temporary}.tmp`];
+}
+
+async function removeNativeTemporary(paths: readonly string[]): Promise<void> {
+  const removals = await Promise.allSettled(
+    paths.map((filePath) =>
+      rm(filePath, {
+        force: true,
+        ...(filePath.endsWith(".tmp") ? { recursive: true } : {}),
+      }),
+    ),
+  );
+  const failures = removals.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
+  if (failures.length > 0) {
+    throw new AggregateError(failures, "Native temporary file removal failed");
+  }
+}
+
+async function assertNativeTemporaryAvailable(
+  paths: readonly string[],
+): Promise<void> {
+  for (const filePath of paths) {
+    try {
+      await lstat(filePath);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ) {
+        continue;
+      }
+      throw error;
+    }
+    throw databaseError(
+      "DB_OUTPUT_EXISTS",
+      "A private database working path already exists. Resolve or remove that path before retrying.",
+      { path: filePath },
+    );
+  }
+}
 
 export type NodeDatabaseFileKind =
   | {
@@ -267,17 +318,25 @@ export async function createDatabase(
     path.dirname(output),
     `.${path.basename(output)}.cc-create-${globalThis.crypto.randomUUID()}`,
   );
+  const storagePaths = nativeTemporaryPaths(temporary, options.format);
+  await assertNativeTemporaryAvailable(storagePaths);
+  let stage: "preparation" | "publication" = "preparation";
+  let engine: DatabaseEngine | undefined;
   let database: Database | undefined;
+  let candidateClosed = false;
   try {
-    const engine =
+    engine =
       options.format === "sqlite"
         ? NodeSqliteEngine.create(temporary)
         : await NodeDuckDbEngine.create(temporary);
     database = await createDatabaseHandle(engine);
+    engine = undefined;
     const tablesCreated = await initializeSchema(database, options.schema);
     await database.checkpoint();
     await database.close();
+    candidateClosed = true;
     database = undefined;
+    stage = "publication";
     const opened = await nativeFiles.publishAndOpen({
       temporary,
       plan: publication,
@@ -302,9 +361,25 @@ export async function createDatabase(
       },
     };
   } catch (error) {
-    await database?.close().catch(() => undefined);
-    await rm(temporary, { force: true }).catch(() => undefined);
-    throw error;
+    const candidateDatabase = database;
+    const candidateEngine = engine;
+    return failAfterNativeArtifactCleanup({
+      operation: "create",
+      stage,
+      kind: "database",
+      format: options.format,
+      temporaryPath: temporary,
+      storagePaths,
+      cause: error,
+      close: candidateClosed
+        ? []
+        : candidateDatabase !== undefined
+          ? [() => candidateDatabase.close()]
+          : candidateEngine === undefined
+            ? []
+            : [() => candidateEngine.close()],
+      remove: () => removeNativeTemporary(storagePaths),
+    });
   }
 }
 
@@ -357,9 +432,14 @@ export async function createPreparedImport(options: {
     path.dirname(output),
     `.${path.basename(output)}.cc-plan-${globalThis.crypto.randomUUID()}`,
   );
-  const engine = NodeSqliteEngine.create(temporary);
+  const storagePaths = nativeTemporaryPaths(temporary, "sqlite");
+  await assertNativeTemporaryAvailable(storagePaths);
+  let stage: "preparation" | "publication" = "preparation";
+  let engine: NodeSqliteEngine | undefined;
   let prepared: PreparedImport | undefined;
+  let candidateClosed = false;
   try {
+    engine = NodeSqliteEngine.create(temporary);
     prepared = await createPreparedImportHandle({
       engine,
       databaseId: options.database.id,
@@ -370,18 +450,36 @@ export async function createPreparedImport(options: {
       ),
       recipe: options.recipe,
     });
+    engine = undefined;
     await prepared.close();
+    candidateClosed = true;
     prepared = undefined;
+    stage = "publication";
     return await nativeFiles.publishAndOpen({
       temporary,
       plan: publication,
       open: () => openPreparedImportUnlocked({ path: output }),
     });
   } catch (error) {
-    await prepared?.close().catch(() => undefined);
-    await engine.close().catch(() => undefined);
-    await rm(temporary, { force: true }).catch(() => undefined);
-    throw error;
+    const candidatePrepared = prepared;
+    const candidateEngine = engine;
+    return failAfterNativeArtifactCleanup({
+      operation: "plan",
+      stage,
+      kind: "prepared",
+      format: "sqlite",
+      temporaryPath: temporary,
+      storagePaths,
+      cause: error,
+      close: candidateClosed
+        ? []
+        : candidatePrepared !== undefined
+          ? [() => candidatePrepared.close()]
+          : candidateEngine === undefined
+            ? []
+            : [() => candidateEngine.close()],
+      remove: () => removeNativeTemporary(storagePaths),
+    });
   }
 }
 
@@ -413,15 +511,33 @@ export async function prepareImportFile(
     path.dirname(output),
     `.${path.basename(output)}.cc-prepare-${globalThis.crypto.randomUUID()}`,
   );
+  const storagePaths = nativeTemporaryPaths(temporary, "sqlite");
+  await assertNativeTemporaryAvailable(storagePaths);
+  let stage: "preparation" | "publication" = "preparation";
+  let engine: NodeSqliteEngine | undefined;
   let prepared: PreparedImport | undefined;
+  let candidateClosed = false;
   try {
-    prepared = await createPreparedImport({
-      path: temporary,
-      database: options.database,
-      recipe: options.recipe,
-      baselineRevision: options.baselineRevision,
-      protectedInputPaths: options.protectedInputPaths,
+    await nativeFiles.planPublication({
+      output: temporary,
+      inputs: [
+        ...(databasePath === undefined ? [] : [databasePath]),
+        ...(options.protectedInputPaths ?? []),
+      ],
+      overwrite: false,
     });
+    engine = NodeSqliteEngine.create(temporary);
+    prepared = await createPreparedImportHandle({
+      engine,
+      databaseId: options.database.id,
+      baselineRevision: options.baselineRevision,
+      baselineSchemaFingerprint: await readSchemaFingerprint(
+        engineOf(options.database),
+        options.database.format,
+      ),
+      recipe: options.recipe,
+    });
+    engine = undefined;
     const outcome = await prepareImport({
       database: options.database,
       prepared,
@@ -431,8 +547,10 @@ export async function prepareImportFile(
       onProgress: options.onProgress,
     });
     await prepared.close();
+    candidateClosed = true;
     prepared = undefined;
     throwIfAborted(options.signal, "db.prepare");
+    stage = "publication";
     await nativeFiles.publish({ temporary, plan: publication });
     return {
       prepared: outcome.prepared,
@@ -448,9 +566,25 @@ export async function prepareImportFile(
       },
     };
   } catch (error) {
-    await prepared?.close().catch(() => undefined);
-    await rm(temporary, { force: true }).catch(() => undefined);
-    throw error;
+    const candidatePrepared = prepared;
+    const candidateEngine = engine;
+    return failAfterNativeArtifactCleanup({
+      operation: "prepare",
+      stage,
+      kind: "prepared",
+      format: "sqlite",
+      temporaryPath: temporary,
+      storagePaths,
+      cause: error,
+      close: candidateClosed
+        ? []
+        : candidatePrepared !== undefined
+          ? [() => candidatePrepared.close()]
+          : candidateEngine === undefined
+            ? []
+            : [() => candidateEngine.close()],
+      remove: () => removeNativeTemporary(storagePaths),
+    });
   }
 }
 
@@ -533,7 +667,13 @@ export async function exportDatabase(
     path.dirname(output),
     `.${path.basename(output)}.cc-export-${globalThis.crypto.randomUUID()}`,
   );
+  const storagePaths = nativeTemporaryPaths(temporary, format);
+  await assertNativeTemporaryAvailable(storagePaths);
+  let stage: "preparation" | "validation" | "publication" = "preparation";
+  let targetEngine: DatabaseEngine | undefined;
   let target: Database | undefined;
+  let validationEngine: DatabaseEngine | undefined;
+  let validation: Database | undefined;
   let tablesConverted = 0;
   let rowsConverted = 0;
   try {
@@ -550,11 +690,12 @@ export async function exportDatabase(
         );
       }
     } else {
-      const targetEngine =
+      targetEngine =
         format === "sqlite"
           ? NodeSqliteEngine.create(temporary)
           : await NodeDuckDbEngine.create(temporary);
       target = await createDatabaseHandle(targetEngine);
+      targetEngine = undefined;
       const conversion = await executeConversion({
         source: options.database,
         target,
@@ -568,17 +709,16 @@ export async function exportDatabase(
       target = undefined;
     }
     throwIfAborted(options.signal, "db.export");
-    const validationEngine = await openEngine(temporary, format, true);
-    try {
-      const validation = await openDatabaseHandle(validationEngine);
-      await validation.close();
-    } catch (error) {
-      await validationEngine.close().catch(() => undefined);
-      throw error;
-    }
+    stage = "validation";
+    validationEngine = await openEngine(temporary, format, true);
+    validation = await openDatabaseHandle(validationEngine);
+    validationEngine = undefined;
+    await validation.close();
+    validation = undefined;
     throwIfAborted(options.signal, "db.export");
     const bytesWritten = Number((await stat(temporary)).size);
     throwIfAborted(options.signal, "db.export");
+    stage = "publication";
     await nativeFiles.publish({
       temporary,
       plan: publication,
@@ -601,8 +741,31 @@ export async function exportDatabase(
       plan,
     };
   } catch (error) {
-    await target?.close().catch(() => undefined);
-    await rm(temporary, { force: true }).catch(() => undefined);
-    throw error;
+    const candidateTarget = target;
+    const candidateTargetEngine = targetEngine;
+    const candidateValidation = validation;
+    const candidateValidationEngine = validationEngine;
+    return failAfterNativeArtifactCleanup({
+      operation: "export",
+      stage,
+      kind: "database",
+      format,
+      temporaryPath: temporary,
+      storagePaths,
+      cause: error,
+      close: [
+        ...(candidateTarget !== undefined
+          ? [() => candidateTarget.close()]
+          : candidateTargetEngine === undefined
+            ? []
+            : [() => candidateTargetEngine.close()]),
+        ...(candidateValidation !== undefined
+          ? [() => candidateValidation.close()]
+          : candidateValidationEngine === undefined
+            ? []
+            : [() => candidateValidationEngine.close()]),
+      ],
+      remove: () => removeNativeTemporary(storagePaths),
+    });
   }
 }

@@ -101,8 +101,10 @@ corrections.
 The default selection uses visible worksheets with the first row as the header.
 Use `--hidden` to include hidden worksheets, or `--header-row` to change the
 default header row. Chart sheets are not importable tables and do not prevent
-selecting an ordinary worksheet in the same workbook. A single workbook can
-instead select one region:
+selecting an ordinary worksheet in the same workbook. Automatic imports reject a
+selection with no eligible regions before recording an import. For example, a
+workbook containing only hidden worksheets needs `--hidden`. A single workbook
+can instead select one region:
 
 ```bash
 consultchimps db plan inventory.duckdb --input north=north.xlsx --sheet Inventory --header-row 3 -o north.ccplan

@@ -127,63 +127,146 @@ export async function createScratchDirectory(
   const directory = await mkdtemp(
     path.join(path.resolve(parentPath), "cc-scratch-"),
   );
-  const handles = new Set<FileHandle>();
+  interface ScratchHandle {
+    readonly handle: FileHandle;
+    closeAttempt?: Promise<void> | undefined;
+  }
+  const handles = new Set<ScratchHandle>();
+  const pendingCreates = new Set<Promise<void>>();
   let sequence = 0;
-  let closed = false;
+  let closeAttempt: Promise<void> | undefined;
+  let closeRequested = false;
+  let removed = false;
+
+  const cleanupFailure = (causes: readonly unknown[]) =>
+    new ConsultChimpsError(
+      "FILES_SCRATCH_CLEANUP_FAILED",
+      "Temporary storage could not be fully removed. Resolve the file access problem, then call close again.",
+      {
+        cause:
+          causes.length === 1
+            ? causes[0]
+            : new AggregateError(
+                causes,
+                "More than one temporary file could not be closed.",
+              ),
+        details: { directory },
+      },
+    );
+
+  const closeHandle = (entry: ScratchHandle): Promise<void> => {
+    if (entry.closeAttempt) return entry.closeAttempt;
+    if (!handles.has(entry)) return Promise.resolve();
+    const attempt = (async () => {
+      await entry.handle.close();
+      handles.delete(entry);
+    })();
+    entry.closeAttempt = attempt;
+    void attempt.then(
+      () => {
+        if (entry.closeAttempt === attempt) entry.closeAttempt = undefined;
+      },
+      () => {
+        if (entry.closeAttempt === attempt) entry.closeAttempt = undefined;
+      },
+    );
+    return attempt;
+  };
+
+  const closeDirectory = (): Promise<void> => {
+    closeRequested = true;
+    if (closeAttempt) return closeAttempt;
+    if (removed) return Promise.resolve();
+    const attempt = (async () => {
+      await Promise.all([...pendingCreates]);
+      const results = await Promise.allSettled([...handles].map(closeHandle));
+      const failures = results.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      if (failures.length > 0) throw cleanupFailure(failures);
+      try {
+        await rm(directory, { recursive: true, force: true });
+        removed = true;
+      } catch (cause) {
+        throw cleanupFailure([cause]);
+      }
+    })();
+    closeAttempt = attempt;
+    void attempt.then(
+      () => {
+        if (closeAttempt === attempt) closeAttempt = undefined;
+      },
+      () => {
+        if (closeAttempt === attempt) closeAttempt = undefined;
+      },
+    );
+    return attempt;
+  };
+
   return {
     async create() {
-      if (closed) {
+      if (closeRequested) {
         throw new ConsultChimpsError(
           "FILES_SCRATCH_CLOSED",
           "Temporary storage is closed. Start a new operation before writing more data.",
         );
       }
       const name = `part-${sequence++}`;
-      const handle = await open(path.join(directory, name), "wx+", 0o600);
-      handles.add(handle);
-      let size = 0;
-      return {
-        name,
-        get size() {
-          return size;
-        },
-        readAt: (offset, length, signal) =>
-          readRange(handle, size, offset, length, signal),
-        async writeAt(offset, bytes) {
-          assertRange(offset, bytes.length);
-          let completed = 0;
-          while (completed < bytes.length) {
-            const result = await handle.write(
-              bytes,
-              completed,
-              bytes.length - completed,
-              offset + completed,
-            );
-            if (result.bytesWritten === 0) {
-              throw new ConsultChimpsError(
-                "FILES_WRITE_FAILED",
-                "Temporary storage could not accept more data. Check available disk space.",
+      let finishCreate!: () => void;
+      const pendingCreate = new Promise<void>((resolve) => {
+        finishCreate = resolve;
+      });
+      pendingCreates.add(pendingCreate);
+      try {
+        const handle = await open(path.join(directory, name), "wx+", 0o600);
+        const entry: ScratchHandle = { handle };
+        handles.add(entry);
+        if (closeRequested) {
+          throw new ConsultChimpsError(
+            "FILES_SCRATCH_CLOSED",
+            "Temporary storage began closing before the file was ready. Start a new operation.",
+          );
+        }
+        let size = 0;
+        return {
+          name,
+          get size() {
+            return size;
+          },
+          readAt: (offset, length, signal) =>
+            readRange(handle, size, offset, length, signal),
+          async writeAt(offset, bytes) {
+            assertRange(offset, bytes.length);
+            let completed = 0;
+            while (completed < bytes.length) {
+              const result = await handle.write(
+                bytes,
+                completed,
+                bytes.length - completed,
+                offset + completed,
               );
+              if (result.bytesWritten === 0) {
+                throw new ConsultChimpsError(
+                  "FILES_WRITE_FAILED",
+                  "Temporary storage could not accept more data. Check available disk space.",
+                );
+              }
+              completed += result.bytesWritten;
             }
-            completed += result.bytesWritten;
-          }
-          size = Math.max(size, offset + bytes.length);
-        },
-        async truncate(length) {
-          assertRange(0, length);
-          await handle.truncate(length);
-          size = length;
-        },
-        async close() {
-          if (handles.delete(handle)) await handle.close();
-        },
-      };
+            size = Math.max(size, offset + bytes.length);
+          },
+          async truncate(length) {
+            assertRange(0, length);
+            await handle.truncate(length);
+            size = length;
+          },
+          close: () => closeHandle(entry),
+        };
+      } finally {
+        pendingCreates.delete(pendingCreate);
+        finishCreate();
+      }
     },
-    async close() {
-      closed = true;
-      await Promise.all([...handles].map((handle) => handle.close()));
-      handles.clear();
-      await rm(directory, { recursive: true, force: true });
-    },
+    close: closeDirectory,
   };
 }

@@ -188,8 +188,53 @@ test("an existing workbook path containing an equals sign remains a plain path",
   ]);
 });
 
+test("a hidden-only workbook requires explicit hidden-sheet selection", async () => {
+  const root = await directory();
+  const database = path.join(root, "inventory.sqlite");
+  const source = path.join(root, "hidden.xlsx");
+  await writeFile(source, workbook([["Name"], ["North"]], true));
+  const sourceBefore = await readFile(source);
+  await run(["create", "-o", database]);
+  const databaseBefore = await run(["inspect", database]);
+
+  const failure = await runFailure([
+    "--json",
+    "db",
+    "import",
+    database,
+    "--input",
+    source,
+  ]);
+  const expectedFailure = {
+    ok: false,
+    error: {
+      code: "DB_IMPORT_NO_SELECTIONS",
+      message:
+        "Choose at least one source region before importing. If the workbook contains only hidden worksheets, include hidden sheets and try again.",
+    },
+  };
+  expect(JSON.parse(failure.stdout)).toEqual(expectedFailure);
+  expect(JSON.parse(failure.stderr)).toEqual(expectedFailure);
+  expect(await run(["inspect", database])).toEqual(databaseBefore);
+  expect((await readFile(source)).equals(sourceBefore)).toBe(true);
+
+  const imported = await run([
+    "import",
+    database,
+    "--input",
+    source,
+    "--hidden",
+  ]);
+  expect(imported["metrics"]).toMatchObject({
+    rowsImported: 1,
+    tablesCreated: 1,
+  });
+  expect((await readFile(source)).equals(sourceBefore)).toBe(true);
+});
+
 function workbook(
   rows: readonly (readonly (string | number | boolean)[])[],
+  hidden = false,
 ): Uint8Array {
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(
@@ -197,6 +242,9 @@ function workbook(
     XLSX.utils.aoa_to_sheet(rows.map((row) => [...row])),
     "Inventory",
   );
+  if (hidden) {
+    book.Workbook = { Sheets: [{ Hidden: 1, name: "Inventory" }] };
+  }
   return XLSX.write(book, { type: "buffer", bookType: "xlsx" }) as Uint8Array;
 }
 

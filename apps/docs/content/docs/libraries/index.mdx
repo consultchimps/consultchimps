@@ -295,6 +295,24 @@ capture reuse flags must be stored as 0 or 1. Invalid prepared rows return
 random-access bytes and bounded region readers without importing CLI or browser
 code.
 
+Native staging errors report `DB_NATIVE_TEMPORARY_CLEANUP_REQUIRED` if private
+files or handles cannot be cleaned up, with the owned paths and failure causes.
+These paths include SQLite WAL and shared-memory files or DuckDB WAL and spill
+storage. SQLite initialization followed by failed connection closure returns
+`DB_NATIVE_SQLITE_CLEANUP_REQUIRED`; restart the process before retrying. DuckDB
+reports `DB_DUCKDB_OPEN_CLEANUP_FAILED` for failed initialization cleanup and
+`DB_DUCKDB_EXPORT_CLEANUP_FAILED` for failed export attachment or engine
+cleanup. Follow the error's close or restart guidance before removing private
+storage. Read-only exports keep their private spill storage beside the staged
+destination. `FILES_PUBLICATION_CLEANUP_FAILED` reports that the output was
+saved but its staging filename could not be removed. Inspect its `output` before
+repeating the operation, then remove the reported `temporary` file after
+resolving access. `DB_NATIVE_PUBLISHED_OPEN_FAILED` reports a saved output that
+could not be reopened. A registration failure followed by failed handle closure
+returns `DB_NATIVE_HANDLE_CLEANUP_REQUIRED` and blocks replacement until the
+handle closes or the process restarts. Check these outcomes before repeating
+creation or export.
+
 In the browser, `BrowserDatabaseRuntime.listPreparedImports` returns readable
 `imports` and structured `ignored` entries containing `name`, `code`, and
 `message`. An unsupported saved-plan version is reported without deleting it.
@@ -445,7 +463,10 @@ On Node.js, `openRandomAccessSource` and `createScratchDirectory` from
 `@consultchimps/files` supply these contracts. `verifyUnchanged` detects edits
 or replacement of the opened source. `planFilePublication` and
 `publishStagedFile` validate destinations and publish staged output without
-silently overwriting an input.
+silently overwriting an input. Scratch close failures remain retryable through
+the file or directory owner. `FILES_SCRATCH_CLEANUP_FAILED` reports a directory
+cleanup failure with its owned path and causes; resolve the storage issue and
+retry `close()` on that owner.
 
 ## Read workbooks without writing anything
 

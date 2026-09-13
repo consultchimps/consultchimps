@@ -7,6 +7,8 @@ const fakes = vi.hoisted(() => ({
   duckInterrupt: vi.fn(),
   duckConnectionClose: vi.fn(),
   duckInstanceClose: vi.fn(),
+  duckConnect: vi.fn(async (connection: unknown) => connection),
+  duckCreate: vi.fn(),
   onDuckCopy: (): void => {},
   rejectDuckCopy: (error: unknown): void => {
     void error;
@@ -43,10 +45,13 @@ vi.mock("@duckdb/node-api", () => {
     blobValue: (value: unknown) => value,
     DuckDBBlobValue: class FakeDuckDbBlobValue {},
     DuckDBInstance: {
-      create: vi.fn(async () => ({
-        connect: async () => connection,
-        closeSync: fakes.duckInstanceClose,
-      })),
+      create: async (...args: unknown[]) => {
+        fakes.duckCreate(...args);
+        return {
+          connect: () => fakes.duckConnect(connection),
+          closeSync: fakes.duckInstanceClose,
+        };
+      },
     },
   };
 });
@@ -58,6 +63,38 @@ afterEach(() => {
   vi.clearAllMocks();
   fakes.onDuckCopy = (): void => {};
   fakes.rejectDuckCopy = (): void => {};
+});
+
+test("DuckDB closes its instance when connection creation fails", async () => {
+  const connectionFailure = new Error("connect failed");
+  fakes.duckConnect.mockRejectedValueOnce(connectionFailure);
+
+  await expect(NodeDuckDbEngine.create("source.duckdb")).rejects.toBe(
+    connectionFailure,
+  );
+  expect(fakes.duckInstanceClose).toHaveBeenCalledOnce();
+});
+
+test("DuckDB preserves connection and cleanup failures during creation", async () => {
+  const connectionFailure = new Error("connect failed");
+  const cleanupFailure = new Error("close failed");
+  fakes.duckConnect.mockRejectedValueOnce(connectionFailure);
+  fakes.duckInstanceClose.mockImplementationOnce(() => {
+    throw cleanupFailure;
+  });
+
+  const failure = await NodeDuckDbEngine.create("source.duckdb").catch(
+    (error: unknown) => error,
+  );
+  expect(failure).toMatchObject({
+    code: "DB_DUCKDB_OPEN_CLEANUP_FAILED",
+    details: { path: "source.duckdb", closeFailed: true },
+  });
+  expect((failure as Error).cause).toBeInstanceOf(AggregateError);
+  expect(((failure as Error).cause as AggregateError).errors).toEqual([
+    connectionFailure,
+    cleanupFailure,
+  ]);
 });
 
 test("SQLite backup stops from its progress boundary", async () => {
@@ -114,6 +151,140 @@ test("DuckDB cancellation interrupts the active database copy and detaches its t
       ),
     ).toBe(true);
   } finally {
+    await engine.close();
+  }
+});
+
+test("DuckDB readonly cancellation releases its private export resources", async () => {
+  const controller = new AbortController();
+  fakes.duckRun.mockImplementation(async (sql: string) => {
+    if (!sql.startsWith("COPY FROM DATABASE")) return;
+    await new Promise<void>((_resolve, reject) => {
+      fakes.rejectDuckCopy = reject;
+      queueMicrotask(fakes.onDuckCopy);
+    });
+  });
+  fakes.duckInterrupt.mockImplementation(() => {
+    fakes.rejectDuckCopy(new Error("interrupted"));
+  });
+  fakes.onDuckCopy = () => controller.abort("cancelled during copy");
+  const engine = await NodeDuckDbEngine.create("source.duckdb", true);
+  try {
+    await expect(
+      engine.copyTo("private.duckdb", controller.signal),
+    ).rejects.toMatchObject({ code: "OPERATION_ABORTED" });
+    expect(fakes.duckInterrupt).toHaveBeenCalledOnce();
+    expect(fakes.duckConnectionClose).toHaveBeenCalledOnce();
+    expect(fakes.duckInstanceClose).toHaveBeenCalledOnce();
+  } finally {
+    await engine.close();
+  }
+});
+
+test("DuckDB readonly copy owns its temp directory and attempts every resource close", async () => {
+  const engine = await NodeDuckDbEngine.create("source.duckdb", true);
+  const copyFailure = new Error("copy failed");
+  const connectionCleanupFailure = new Error("connection close failed");
+  const instanceCleanupFailure = new Error("instance close failed");
+  fakes.duckRun.mockImplementation(async (sql: string) => {
+    if (sql.startsWith("COPY FROM DATABASE")) throw copyFailure;
+  });
+  fakes.duckConnectionClose.mockImplementationOnce(() => {
+    throw connectionCleanupFailure;
+  });
+  fakes.duckInstanceClose.mockImplementationOnce(() => {
+    throw instanceCleanupFailure;
+  });
+  try {
+    const failure = await engine
+      .copyTo("private.duckdb")
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      code: "DB_DUCKDB_EXPORT_CLEANUP_FAILED",
+      details: { operation: "readonly-copy" },
+    });
+    expect(fakes.duckCreate).toHaveBeenNthCalledWith(2, ":memory:", {
+      temp_directory: "private.duckdb.tmp",
+    });
+    expect(fakes.duckInstanceClose).toHaveBeenCalledOnce();
+    expect((failure as Error).cause).toBeInstanceOf(AggregateError);
+    expect(((failure as Error).cause as AggregateError).errors).toEqual([
+      copyFailure,
+      connectionCleanupFailure,
+      instanceCleanupFailure,
+    ]);
+  } finally {
+    fakes.duckRun.mockResolvedValue(undefined);
+    await engine.close();
+  }
+});
+
+test("DuckDB reports copy and destination detach failures without replacing either", async () => {
+  const copyFailure = new Error("copy failed");
+  const detachFailure = new Error("detach failed");
+  fakes.duckRead.mockResolvedValue({
+    getRowObjects: () => [{ database_name: "source" }],
+  });
+  fakes.duckRun.mockImplementation(async (sql: string) => {
+    if (sql.startsWith("COPY FROM DATABASE")) throw copyFailure;
+    if (sql.startsWith("DETACH")) throw detachFailure;
+  });
+  const engine = await NodeDuckDbEngine.create("source.duckdb");
+  try {
+    const failure = await engine
+      .copyTo("private.duckdb")
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      code: "DB_DUCKDB_EXPORT_CLEANUP_FAILED",
+      details: {
+        destination: "private.duckdb",
+        attachment: expect.stringMatching(/^cc_export_/),
+      },
+    });
+    expect((failure as Error).cause).toBeInstanceOf(AggregateError);
+    expect(((failure as Error).cause as AggregateError).errors).toEqual([
+      copyFailure,
+      detachFailure,
+    ]);
+    expect(
+      fakes.duckRun.mock.calls.filter(([sql]) =>
+        String(sql).startsWith("DETACH"),
+      ),
+    ).toHaveLength(1);
+  } finally {
+    fakes.duckRun.mockResolvedValue(undefined);
+    await engine.close();
+  }
+});
+
+test("DuckDB preserves failed destination cleanup when cancellation interrupts copy", async () => {
+  const controller = new AbortController();
+  const copyFailure = new Error("interrupted");
+  const detachFailure = new Error("detach failed");
+  fakes.duckRead.mockResolvedValue({
+    getRowObjects: () => [{ database_name: "source" }],
+  });
+  fakes.duckRun.mockImplementation(async (sql: string) => {
+    if (sql.startsWith("COPY FROM DATABASE")) {
+      controller.abort("cancelled during copy");
+      throw copyFailure;
+    }
+    if (sql.startsWith("DETACH")) throw detachFailure;
+  });
+  const engine = await NodeDuckDbEngine.create("source.duckdb");
+  try {
+    const failure = await engine
+      .copyTo("private.duckdb", controller.signal)
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      code: "DB_DUCKDB_EXPORT_CLEANUP_FAILED",
+    });
+    expect(((failure as Error).cause as AggregateError).errors).toEqual([
+      copyFailure,
+      detachFailure,
+    ]);
+  } finally {
+    fakes.duckRun.mockResolvedValue(undefined);
     await engine.close();
   }
 });

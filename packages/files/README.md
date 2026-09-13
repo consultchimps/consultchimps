@@ -15,5 +15,16 @@ observed before replacement, but portable Node filesystem APIs do not provide an
 atomic compare-and-replace operation against an unrelated writer. Choose a new
 output filename when another process may replace the same destination.
 
+`FILES_PUBLICATION_CLEANUP_FAILED` means the new output was published but the
+staging filename could not be removed. Its details include `published: true`,
+`output`, and `temporary`. Inspect the saved output before retrying; remove the
+staging file after resolving the access problem.
+
+Scratch file and directory closes share pending attempts and retain failed
+cleanup for retry. Successful closes are not repeated. If directory cleanup
+fails, `FILES_SCRATCH_CLEANUP_FAILED` retains the causes and its private
+directory path. Resolve the storage issue and retry `close()` before discarding
+the owner.
+
 See the
 [library guide](https://consultchimps.github.io/consultchimps/docs/libraries/).

@@ -71,8 +71,22 @@ type NativeFileIdentityResolver = (
   filePath: string,
 ) => Promise<NativeFileIdentity>;
 
+function publishedOpenFailure(filePath: string, cause: unknown) {
+  return databaseError(
+    "DB_NATIVE_PUBLISHED_OPEN_FAILED",
+    "The file was saved, but it could not be reopened. The published output remains at the reported path. Resolve the access or database error before reopening it; do not repeat the creation operation without checking that output.",
+    {
+      path: path.resolve(filePath),
+      output: path.resolve(filePath),
+      published: true,
+    },
+    cause,
+  );
+}
+
 export class NativeFileRegistry {
   readonly #openHandles = new Set<OpenNativeHandle>();
+  readonly #failedClosures = new Map<NativeFileHandle, string>();
   readonly #resolveIdentity: NativeFileIdentityResolver;
   #tail: Promise<void> = Promise.resolve();
 
@@ -110,6 +124,16 @@ export class NativeFileRegistry {
   }
 
   async #assertNotOpen(filePath: string): Promise<void> {
+    for (const [handle] of this.#failedClosures) {
+      if (!handle.isOpen) this.#failedClosures.delete(handle);
+    }
+    if (this.#failedClosures.size > 0) {
+      throw databaseError(
+        "DB_NATIVE_HANDLE_CLEANUP_REQUIRED",
+        "A database or import plan could not be registered or closed. File replacement is blocked because its filesystem identity could not be confirmed. Retry closing the handle if it is available, or restart the process before replacing files.",
+        { paths: [...this.#failedClosures.values()] },
+      );
+    }
     const identity = await this.#resolveIdentity(filePath);
     if (
       !this.#liveHandles().some((entry) =>
@@ -132,6 +156,34 @@ export class NativeFileRegistry {
     });
   }
 
+  async #failRegistration(
+    filePath: string,
+    handle: NativeFileHandle,
+    cause: unknown,
+    published: boolean,
+  ): Promise<never> {
+    try {
+      await handle.close();
+    } catch (cleanupFailure) {
+      const resolved = path.resolve(filePath);
+      this.#failedClosures.set(handle, resolved);
+      throw databaseError(
+        "DB_NATIVE_HANDLE_CLEANUP_REQUIRED",
+        `${published ? "The file was saved, but its" : "The"} database or import-plan handle could not be registered or closed. File replacement is blocked until the handle closes. Retry closing it if available, or restart the process before reopening or replacing the reported file.`,
+        {
+          path: resolved,
+          ...(published ? { published: true, output: resolved } : {}),
+        },
+        new AggregateError(
+          [cause, cleanupFailure],
+          "Native file registration and handle cleanup failed",
+        ),
+      );
+    }
+    if (published) throw publishedOpenFailure(filePath, cause);
+    throw cause;
+  }
+
   async inspect<T>(work: () => Promise<T>): Promise<T> {
     return this.#exclusive(work);
   }
@@ -146,8 +198,7 @@ export class NativeFileRegistry {
         await this.#register(filePath, handle);
         return handle;
       } catch (error) {
-        await handle.close().catch(() => undefined);
-        throw error;
+        return this.#failRegistration(filePath, handle, error, false);
       }
     });
   }
@@ -185,13 +236,16 @@ export class NativeFileRegistry {
     return this.#exclusive(async () => {
       await this.#assertNotOpen(options.plan.output);
       await publishStagedFile(options);
-      const handle = await options.open();
+      let handle: T | undefined;
       try {
+        handle = await options.open();
         await this.#register(options.plan.output, handle);
         return handle;
       } catch (error) {
-        await handle.close().catch(() => undefined);
-        throw error;
+        if (handle === undefined) {
+          throw publishedOpenFailure(options.plan.output, error);
+        }
+        return this.#failRegistration(options.plan.output, handle, error, true);
       }
     });
   }

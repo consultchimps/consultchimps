@@ -6,10 +6,59 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import type { open as openFile, rm as remove } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
+
+const filesystemFailure = vi.hoisted(() => ({
+  closeCalls: 0,
+  closeFailures: 0,
+  openGate: undefined as Promise<void> | undefined,
+  openStarted: undefined as (() => void) | undefined,
+  removeCalls: 0,
+  removeFailures: 0,
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown> & {
+    open: typeof openFile;
+    rm: typeof remove;
+  };
+  return {
+    ...actual,
+    async open(...args: Parameters<typeof actual.open>) {
+      const filePath = String(args[0]);
+      if (path.basename(filePath).startsWith("part-")) {
+        filesystemFailure.openStarted?.();
+        await filesystemFailure.openGate;
+      }
+      const handle = await actual.open(...args);
+      const close = handle.close.bind(handle);
+      handle.close = async () => {
+        filesystemFailure.closeCalls += 1;
+        if (filesystemFailure.closeFailures > 0) {
+          filesystemFailure.closeFailures -= 1;
+          throw new Error("synthetic scratch close failure");
+        }
+        await close();
+      };
+      return handle;
+    },
+    async rm(...args: Parameters<typeof actual.rm>) {
+      const target = String(args[0]);
+      if (path.basename(target).startsWith("cc-scratch-")) {
+        filesystemFailure.removeCalls += 1;
+        if (filesystemFailure.removeFailures > 0) {
+          filesystemFailure.removeFailures -= 1;
+          throw new Error("synthetic scratch removal failure");
+        }
+      }
+      return actual.rm(...args);
+    },
+  };
+});
 
 import {
   createScratchDirectory,
@@ -24,12 +73,26 @@ async function fixture(): Promise<string> {
   return directory;
 }
 
+function deferred(): { readonly promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 afterEach(async () => {
   await Promise.all(
     directories
       .splice(0)
       .map((directory) => rm(directory, { recursive: true, force: true })),
   );
+  filesystemFailure.closeCalls = 0;
+  filesystemFailure.closeFailures = 0;
+  filesystemFailure.openGate = undefined;
+  filesystemFailure.openStarted = undefined;
+  filesystemFailure.removeCalls = 0;
+  filesystemFailure.removeFailures = 0;
 });
 
 test("reads file ranges without changing the source", async () => {
@@ -106,4 +169,115 @@ test("temporary random-access storage cleans only its owned files", async () => 
   await expect(scratch.create()).rejects.toMatchObject({
     code: "FILES_SCRATCH_CLOSED",
   });
+});
+
+test("retries a failed scratch file close and shares concurrent attempts", async () => {
+  const directory = await fixture();
+  filesystemFailure.closeFailures = 1;
+  const scratch = await createScratchDirectory(directory);
+  const file = await scratch.create();
+  const first = file.close();
+  const concurrent = file.close();
+  expect(concurrent).toBe(first);
+  await expect(first).rejects.toThrow("synthetic scratch close failure");
+  await expect(concurrent).rejects.toThrow("synthetic scratch close failure");
+
+  await file.close();
+  await scratch.close();
+  expect(filesystemFailure.closeCalls).toBe(2);
+});
+
+test("retries directory cleanup without repeating successfully closed files", async () => {
+  const directory = await fixture();
+  filesystemFailure.closeFailures = 1;
+  const scratch = await createScratchDirectory(directory);
+  await scratch.create();
+  await scratch.create();
+  const first = scratch.close();
+  const concurrent = scratch.close();
+  expect(concurrent).toBe(first);
+  await expect(first).rejects.toMatchObject({
+    code: "FILES_SCRATCH_CLEANUP_FAILED",
+    details: { directory: expect.stringContaining("cc-scratch-") },
+  });
+  await expect(concurrent).rejects.toMatchObject({
+    code: "FILES_SCRATCH_CLEANUP_FAILED",
+  });
+  expect(filesystemFailure.closeCalls).toBe(2);
+  await expect(scratch.create()).rejects.toMatchObject({
+    code: "FILES_SCRATCH_CLOSED",
+  });
+
+  await scratch.close();
+  expect(filesystemFailure.closeCalls).toBe(3);
+  expect(await readdir(directory)).toEqual([]);
+});
+
+test("preserves every scratch handle failure from one directory close", async () => {
+  const directory = await fixture();
+  filesystemFailure.closeFailures = 2;
+  const scratch = await createScratchDirectory(directory);
+  await scratch.create();
+  await scratch.create();
+
+  let failure: unknown;
+  try {
+    await scratch.close();
+  } catch (cause) {
+    failure = cause;
+  }
+  expect(failure).toMatchObject({ code: "FILES_SCRATCH_CLEANUP_FAILED" });
+  const cause = (failure as Error & { cause?: unknown }).cause;
+  expect(cause).toBeInstanceOf(AggregateError);
+  expect((cause as AggregateError).errors).toHaveLength(2);
+
+  await scratch.close();
+  expect(filesystemFailure.closeCalls).toBe(4);
+});
+
+test("retries directory removal without reclosing files", async () => {
+  const directory = await fixture();
+  filesystemFailure.removeFailures = 1;
+  const scratch = await createScratchDirectory(directory);
+  await scratch.create();
+
+  await expect(scratch.close()).rejects.toMatchObject({
+    code: "FILES_SCRATCH_CLEANUP_FAILED",
+    cause: expect.objectContaining({
+      message: "synthetic scratch removal failure",
+    }),
+  });
+  expect(filesystemFailure.closeCalls).toBe(1);
+  expect(filesystemFailure.removeCalls).toBe(1);
+
+  await scratch.close();
+  expect(filesystemFailure.closeCalls).toBe(1);
+  expect(filesystemFailure.removeCalls).toBe(2);
+});
+
+test("waits for an in-flight create before closing the directory", async () => {
+  const directory = await fixture();
+  const openGate = deferred();
+  const openStarted = deferred();
+  filesystemFailure.openGate = openGate.promise;
+  filesystemFailure.openStarted = openStarted.resolve;
+  const scratch = await createScratchDirectory(directory);
+
+  const creating = scratch.create();
+  await openStarted.promise;
+  const closing = scratch.close();
+  let closeSettled = false;
+  void closing.then(() => {
+    closeSettled = true;
+  });
+  await Promise.resolve();
+  expect(closeSettled).toBe(false);
+  openGate.resolve();
+
+  await expect(creating).rejects.toMatchObject({
+    code: "FILES_SCRATCH_CLOSED",
+  });
+  await closing;
+  expect(filesystemFailure.closeCalls).toBe(1);
+  expect(await readdir(directory)).toEqual([]);
 });
