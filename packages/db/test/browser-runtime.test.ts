@@ -78,6 +78,63 @@ class MemoryFile implements RandomAccessFile {
   }
 }
 
+class ControlledMemoryFile implements RandomAccessFile {
+  readonly name: string;
+  readonly file: MemoryFile;
+  readonly readLengths: number[] = [];
+  closeCalls = 0;
+  truncateCalls = 0;
+  writeCalls = 0;
+  failEveryTruncate = false;
+  failEveryWrite = false;
+  failNextWrite: unknown;
+  afterNextWrite: (() => void) | undefined;
+
+  constructor(name: string, bytes: Uint8Array) {
+    this.name = name;
+    this.file = new MemoryFile(name, bytes);
+  }
+
+  get size(): number {
+    return this.file.size;
+  }
+
+  async readAt(offset: number, length: number): Promise<Uint8Array> {
+    this.readLengths.push(length);
+    return this.file.readAt(offset, length);
+  }
+
+  async writeAt(offset: number, bytes: Uint8Array): Promise<void> {
+    this.writeCalls += 1;
+    const failure = this.failNextWrite;
+    this.failNextWrite = undefined;
+    if (this.failEveryWrite || failure !== undefined) {
+      await this.file.writeAt(offset, bytes.subarray(0, bytes.length / 2));
+      throw failure ?? new Error("Injected persistent destination failure");
+    }
+    await this.file.writeAt(offset, bytes);
+    const afterWrite = this.afterNextWrite;
+    this.afterNextWrite = undefined;
+    afterWrite?.();
+  }
+
+  async truncate(size: number): Promise<void> {
+    this.truncateCalls += 1;
+    if (this.failEveryTruncate) {
+      throw new Error("Injected persistent truncate failure");
+    }
+    await this.file.truncate(size);
+  }
+
+  async close(): Promise<void> {
+    this.closeCalls += 1;
+  }
+
+  bytes(): Uint8Array {
+    return this.file.bytes();
+  }
+}
+
 class MemoryFileHandle {
   readonly kind = "file" as const;
   readonly name: string;
@@ -687,6 +744,200 @@ describe("browser database runtime", () => {
     expect(destination.bytes().subarray(0, SQLITE_HEADER.length)).toEqual(
       SQLITE_HEADER,
     );
+    const duckDirectory = await harness.directory("consultchimps", "databases");
+    expect(
+      [...duckDirectory.files.keys()].filter((name) =>
+        name.startsWith(".consultchimps-export-backup-"),
+      ),
+    ).toEqual([]);
+    await created.database.close();
+  });
+
+  test.each(["write failure", "cancellation"] as const)(
+    "restores a nonempty export destination after %s",
+    async (failureKind) => {
+      const runtime = await createRuntime();
+      const created = await runtime.createDatabase({
+        name: `export-${failureKind.replace(" ", "-")}.sqlite`,
+        format: "sqlite",
+        schema: {
+          version: 1,
+          tables: [
+            {
+              name: "Preserved",
+              columns: [{ name: "value", type: "text" }],
+              recordId: { prefix: "KEEP", padding: 3 },
+            },
+          ],
+        },
+      });
+      const before = await inspectDatabase({ database: created.database });
+      const originalBytes = Uint8Array.from(
+        { length: 1024 * 1024 + 17 },
+        (_, index) => index % 251,
+      );
+      const destination = new ControlledMemoryFile(
+        "existing.sqlite",
+        originalBytes,
+      );
+      const controller = new AbortController();
+      const writeFailure = new Error("Injected destination write failure");
+      if (failureKind === "write failure") {
+        destination.failNextWrite = writeFailure;
+      } else {
+        destination.afterNextWrite = () => controller.abort();
+      }
+
+      let rejection: unknown;
+      try {
+        await runtime.exportDatabase({
+          database: created.database,
+          name: destination.name,
+          destination,
+          format: "sqlite",
+          overwrite: true,
+          signal: controller.signal,
+        });
+      } catch (error) {
+        rejection = error;
+      }
+      if (failureKind === "write failure") {
+        expect(rejection).toBe(writeFailure);
+      } else {
+        expect(rejection).toMatchObject({ code: "OPERATION_ABORTED" });
+      }
+      expect(destination.bytes()).toEqual(originalBytes);
+      expect(destination.readLengths).toEqual([1024 * 1024, 17]);
+      expect(destination.closeCalls).toBe(0);
+      expect(await inspectDatabase({ database: created.database })).toEqual(
+        before,
+      );
+      const duckDirectory = await harness.directory(
+        "consultchimps",
+        "databases",
+      );
+      expect(
+        [...duckDirectory.files.keys()].filter((name) =>
+          name.startsWith(".consultchimps-export-backup-"),
+        ),
+      ).toEqual([]);
+      await created.database.close();
+    },
+  );
+
+  test("retains a bounded OPFS backup when export restoration fails", async () => {
+    const runtime = await createRuntime();
+    const created = await runtime.createDatabase({
+      name: "export-recovery.sqlite",
+      format: "sqlite",
+    });
+    const originalBytes = new Uint8Array([10, 20, 30, 40, 50]);
+    const destination = new ControlledMemoryFile(
+      "existing.sqlite",
+      originalBytes,
+    );
+    destination.failEveryWrite = true;
+
+    let rejection: unknown;
+    try {
+      await runtime.exportDatabase({
+        database: created.database,
+        name: destination.name,
+        destination,
+        format: "sqlite",
+        overwrite: true,
+      });
+    } catch (error) {
+      rejection = error;
+    }
+    expect(rejection).toMatchObject({
+      code: "DB_BROWSER_EXPORT_RECOVERY_REQUIRED",
+      details: {
+        name: destination.name,
+        originalSize: originalBytes.length,
+        backupDirectory: "consultchimps/databases",
+        backupName: expect.stringMatching(/^\.consultchimps-export-backup-/u),
+      },
+    });
+    const backupName = (rejection as { details: { backupName: string } })
+      .details.backupName;
+    const duckDirectory = await harness.directory("consultchimps", "databases");
+    const backup = await duckDirectory.files.get(backupName)?.getFile();
+    expect(
+      backup === undefined
+        ? undefined
+        : new Uint8Array(await backup.arrayBuffer()),
+    ).toEqual(originalBytes);
+    expect(destination.closeCalls).toBe(0);
+    await expect(
+      inspectDatabase({ database: created.database }),
+    ).resolves.toMatchObject({ id: created.database.id });
+    await created.database.close();
+  });
+
+  test("does not touch the destination when export validation fails before writing", async () => {
+    const runtime = await createRuntime();
+    const created = await runtime.createDatabase({
+      name: "export-prewrite.sqlite",
+      format: "sqlite",
+    });
+    await created.database.close();
+    const originalBytes = new Uint8Array([10, 20, 30, 40]);
+    const destination = new ControlledMemoryFile(
+      "existing.sqlite",
+      originalBytes,
+    );
+    destination.failEveryTruncate = true;
+    destination.failEveryWrite = true;
+
+    await expect(
+      runtime.exportDatabase({
+        database: created.database,
+        name: destination.name,
+        destination,
+        format: "sqlite",
+        overwrite: true,
+      }),
+    ).rejects.toMatchObject({ code: "DB_CLOSED" });
+    expect(destination.bytes()).toEqual(originalBytes);
+    expect(destination.writeCalls).toBe(0);
+    expect(destination.truncateCalls).toBe(0);
+    expect(destination.closeCalls).toBe(0);
+  });
+
+  test("reports an incomplete initially empty destination without inventing a backup", async () => {
+    const runtime = await createRuntime();
+    const created = await runtime.createDatabase({
+      name: "export-empty-recovery.sqlite",
+      format: "sqlite",
+    });
+    const destination = new ControlledMemoryFile(
+      "empty.sqlite",
+      new Uint8Array(),
+    );
+    destination.failEveryTruncate = true;
+
+    await expect(
+      runtime.exportDatabase({
+        database: created.database,
+        name: destination.name,
+        destination,
+        format: "sqlite",
+      }),
+    ).rejects.toMatchObject({
+      code: "DB_BROWSER_EXPORT_RECOVERY_REQUIRED",
+      details: {
+        name: destination.name,
+        originalSize: 0,
+      },
+    });
+    const duckDirectory = await harness.directory("consultchimps", "databases");
+    expect(
+      [...duckDirectory.files.keys()].some((name) =>
+        name.startsWith(".consultchimps-export-backup-"),
+      ),
+    ).toBe(false);
+    expect(destination.closeCalls).toBe(0);
     await created.database.close();
   });
 

@@ -187,7 +187,7 @@ function registerCorruptionTest(
       await expect(
         openDatabase({ path: filePath, readonly: options.openReadonly }),
       ).rejects.toMatchObject({ code: options.code });
-      expect(await readFile(filePath)).toEqual(before);
+      expect((await readFile(filePath)).equals(before)).toBe(true);
     });
   });
 }

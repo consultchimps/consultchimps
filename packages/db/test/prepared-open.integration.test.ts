@@ -58,7 +58,8 @@ test.each(cases)(
       code: "DB_INVALID_PREPARED_IMPORT",
       message: expect.stringMatching(/import plan/u),
     });
-    if (before !== undefined) expect(await readFile(filePath)).toEqual(before);
+    if (before !== undefined)
+      expect((await readFile(filePath)).equals(before)).toBe(true);
     if (kind === "missing" || kind === "missing-parent") {
       await expect(stat(filePath)).rejects.toMatchObject({ code: "ENOENT" });
     } else {

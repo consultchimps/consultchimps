@@ -184,9 +184,9 @@ test.each(["missing", "invalid", "duckdb"] as const)(
       expect(output).not.toContain(planPath);
       expect(output).not.toContain("SqliteError");
     }
-    expect(await readFile(databasePath)).toEqual(before);
+    expect((await readFile(databasePath)).equals(before)).toBe(true);
     if (planBefore !== undefined)
-      expect(await readFile(planPath)).toEqual(planBefore);
+      expect((await readFile(planPath)).equals(planBefore)).toBe(true);
     else await expect(stat(planPath)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );

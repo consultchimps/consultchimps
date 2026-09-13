@@ -277,7 +277,10 @@ stored routes that did not match a captured source.
 `inspectAppliedImportPlan({ database, planId, planRevision })` reads its applied
 recipe, decisions, and source bindings from the working database, including
 after the private plan file has been removed. `createWorkbookImportSource`
-bridges the streaming Excel reader into this pipeline. Other adapters can supply
+bridges the streaming Excel reader into this pipeline. Applying a plan validates
+positive safe source-row coordinates and captured row counts before committing
+provenance. Invalid prepared rows return `DB_INVALID_PREPARED_IMPORT`; invalid
+reused database captures return `DB_CORRUPT_DATABASE`. Other adapters can supply
 an `ImportSource` with random-access bytes and bounded region readers without
 importing CLI or browser code.
 
@@ -310,8 +313,18 @@ In the browser runtime, `openDatabase({ name, readonly: true })` opens a
 read-only working copy for inspection or export. `exportDatabase` refuses a
 nonempty `RandomAccessFile` destination unless `overwrite: true` is supplied.
 The caller owns that destination and must provide storage separate from the
-working database; matching filenames alone do not establish file identity. Call
-`discardPreparedImport({ name })` to remove a closed private plan that the
+working database; matching filenames alone do not establish file identity.
+Replacement uses a bounded OPFS backup and attempts to restore prior contents
+after a reported cancellation or write failure. If restoration fails,
+`DB_BROWSER_EXPORT_RECOVERY_REQUIRED` retains that backup and reports its
+`backupDirectory` and `backupName`. Retrieve it through
+`navigator.storage.getDirectory()` before retrying. An initially empty failed
+destination instead needs clearing and has no prior backup. Backup cleanup
+failures produce a warning after successful export or
+`DB_BROWSER_EXPORT_CLEANUP_REQUIRED` after a failed export with preserved prior
+contents. Abrupt browser termination can interrupt these recovery steps.
+
+Call `discardPreparedImport({ name })` to remove a closed private plan that the
 caller created and no longer needs. It rejects an open plan, database, or
 unrecognized artifact, and it does not remove database working copies.
 

@@ -18,6 +18,11 @@ import {
   type Database,
 } from "./database.js";
 import { executeConversion, planConversion } from "./conversion.js";
+import {
+  copySourceToBrowserFile,
+  restoreBrowserFile,
+  type BrowserFileHandle,
+} from "./browser-file-copy.js";
 import { BrowserDuckDbEngine } from "./engines/duckdb/browser.js";
 import { BrowserSqliteEngine } from "./engines/sqlite/browser.js";
 import { databaseError } from "./errors.js";
@@ -31,8 +36,10 @@ import {
   type PreparedImport,
 } from "./prepared.js";
 import {
+  BrowserExportCleanupError,
   BrowserPublicationRecoveryError,
   publishBrowserCandidate,
+  publishBrowserExport,
 } from "./browser-publication.js";
 import type { DatabaseFormat, DatabaseSchema } from "./schema.js";
 import type { ImportRecipe } from "./import/types.js";
@@ -65,24 +72,6 @@ interface TrackedBrowserHandle {
 interface OpenedBrowserHandle {
   readonly reference: WeakRef<TrackedBrowserHandle>;
   readonly sqliteKind?: Exclude<SqliteStorageKind, "unknown"> | undefined;
-}
-
-interface BrowserWritable {
-  write(data: {
-    readonly type: "write";
-    readonly position: number;
-    readonly data: Uint8Array;
-  }): Promise<void>;
-  truncate(size: number): Promise<void>;
-  close(): Promise<void>;
-  abort?(reason?: unknown): Promise<void>;
-}
-
-interface BrowserFileHandle {
-  readonly kind: "file";
-  readonly name: string;
-  getFile(): Promise<Blob>;
-  createWritable(): Promise<BrowserWritable>;
 }
 
 interface BrowserDirectoryHandle {
@@ -324,39 +313,6 @@ async function copyDuckDbFiles(
   );
 }
 
-async function writeSource(
-  source: RandomAccessSource,
-  handle: BrowserFileHandle,
-  signal?: AbortSignal,
-  onProgress?: OperationControlOptions["onProgress"],
-): Promise<void> {
-  const writable = await handle.createWritable();
-  let closed = false;
-  try {
-    for (let offset = 0; offset < source.size; offset += COPY_CHUNK_BYTES) {
-      throwIfAborted(signal, "db.browser.import");
-      const length = Math.min(COPY_CHUNK_BYTES, source.size - offset);
-      const bytes = await readSourceChunk(source, offset, length, signal);
-      await writable.write({ type: "write", position: offset, data: bytes });
-      onProgress?.({
-        operation: "db.browser.import",
-        stage: "copying",
-        completed: offset + bytes.length,
-        total: source.size,
-        detail: source.name,
-      });
-    }
-    await writable.truncate(source.size);
-    await writable.close();
-    closed = true;
-  } catch (error) {
-    if (!closed && writable.abort !== undefined) {
-      await writable.abort(error).catch(() => undefined);
-    }
-    throw error;
-  }
-}
-
 async function readSourceChunk(
   source: RandomAccessSource,
   offset: number,
@@ -517,9 +473,8 @@ export async function configureBrowserDatabaseRuntime(
   if (options.sqlite.initialCapacity !== undefined) {
     await pool.reserveMinimumCapacity(options.sqlite.initialCapacity);
   }
-  const duckDirectory = await opfsDirectory(
-    options.opfsDirectory ?? "consultchimps-databases",
-  );
+  const duckDirectoryName = options.opfsDirectory ?? "consultchimps-databases";
+  const duckDirectory = await opfsDirectory(duckDirectoryName);
   const sqliteDirectory = await sqlitePoolDirectory(options.sqlite.directory);
   const stored = new WeakMap<Database, StoredDatabase>();
   const openedByName = new Map<string, Set<OpenedBrowserHandle>>();
@@ -708,6 +663,7 @@ export async function configureBrowserDatabaseRuntime(
           })
         : new pool.OpfsSAHPoolDb(sqliteName(name)),
       readonly,
+      { owner: pool, name: sqliteName(name) },
     );
 
   const discardCandidate = async (
@@ -1067,14 +1023,22 @@ export async function configureBrowserDatabaseRuntime(
     controls: OperationControlOptions,
   ): Promise<number> => {
     if (source.format === "sqlite") {
-      await database.checkpoint();
-      return copySqlitePoolFile({
-        poolDirectory: sqliteDirectory,
-        name: source.name,
-        destination,
-        signal: controls.signal,
-        onProgress: controls.onProgress,
-      });
+      const engine = engineOf(database);
+      if (!(engine instanceof BrowserSqliteEngine)) {
+        throw databaseError(
+          "DB_UNKNOWN_BROWSER_DATABASE",
+          "This SQLite database was not opened by the current browser runtime.",
+        );
+      }
+      return engine.copySnapshot(() =>
+        copySqlitePoolFile({
+          poolDirectory: sqliteDirectory,
+          name: source.name,
+          destination,
+          signal: controls.signal,
+          onProgress: controls.onProgress,
+        }),
+      );
     }
     return source.duckdb!.copyTo(destination, controls.signal);
   };
@@ -1160,12 +1124,13 @@ export async function configureBrowserDatabaseRuntime(
               candidate,
               false,
             );
-            await writeSource(
-              importOptions.source,
-              handles.file,
-              importOptions.signal,
-              importOptions.onProgress,
-            );
+            await copySourceToBrowserFile({
+              source: importOptions.source,
+              destination: handles.file,
+              operation: "db.browser.import",
+              signal: importOptions.signal,
+              onProgress: importOptions.onProgress,
+            });
           }
           try {
             candidateDatabase = await openDatabaseUnlocked(
@@ -1212,6 +1177,8 @@ export async function configureBrowserDatabaseRuntime(
           engine = new BrowserSqliteEngine(
             sqlite,
             new pool.OpfsSAHPoolDb(sqliteName(name)),
+            false,
+            { owner: pool, name: sqliteName(name) },
           );
           prepared = await openPreparedImportHandle(engine);
           const ref = await preparedRef(prepared);
@@ -1259,15 +1226,34 @@ export async function configureBrowserDatabaseRuntime(
           "This database was not opened by the current browser runtime.",
         );
       }
-      let bytesWritten: number;
-      if (source.format === exportOptions.format) {
-        bytesWritten = await exportStored(
-          exportOptions.database,
-          source,
-          exportOptions.destination,
-          exportOptions,
-        );
-      } else {
+      let destinationTouched = false;
+      const publicationDestination: RandomAccessFile = {
+        name: exportOptions.destination.name,
+        get size() {
+          return exportOptions.destination.size;
+        },
+        readAt(offset, length, signal) {
+          return exportOptions.destination.readAt(offset, length, signal);
+        },
+        async writeAt(offset, bytes) {
+          destinationTouched = true;
+          await exportOptions.destination.writeAt(offset, bytes);
+        },
+        async truncate(size) {
+          destinationTouched = true;
+          await exportOptions.destination.truncate(size);
+        },
+        async close() {},
+      };
+      const writeExport = async (): Promise<number> => {
+        if (source.format === exportOptions.format) {
+          return exportStored(
+            exportOptions.database,
+            source,
+            publicationDestination,
+            exportOptions,
+          );
+        }
         const plan = await planConversion({
           database: exportOptions.database,
           format: exportOptions.format,
@@ -1294,22 +1280,115 @@ export async function configureBrowserDatabaseRuntime(
             signal: exportOptions.signal,
             onProgress: exportOptions.onProgress,
           });
-          bytesWritten = await exportStored(
+          return await exportStored(
             created.database,
             converted,
-            exportOptions.destination,
+            publicationDestination,
             exportOptions,
           );
         } finally {
           await created.database.close().catch(() => undefined);
           await removeStored(converted).catch(() => undefined);
         }
+      };
+      const originalSize = exportOptions.destination.size;
+      let backupName: string | undefined;
+      let backupHandle: BrowserFileHandle | undefined;
+      const removeBackup = async (): Promise<void> => {
+        if (
+          backupName !== undefined &&
+          (await fileExists(duckDirectory, backupName))
+        ) {
+          await duckDirectory.removeEntry(backupName);
+        }
+      };
+      let published;
+      try {
+        published = await publishBrowserExport({
+          async backup() {
+            if (originalSize === 0) return;
+            do {
+              backupName = `.consultchimps-export-backup-${globalThis.crypto.randomUUID()}`;
+            } while (await fileExists(duckDirectory, backupName));
+            backupHandle = await duckDirectory.getFileHandle(backupName, {
+              create: true,
+            });
+            await copySourceToBrowserFile({
+              source: exportOptions.destination,
+              destination: backupHandle,
+              operation: "db.browser.export",
+              signal: exportOptions.signal,
+            });
+          },
+          async publish() {
+            const bytesWritten = await writeExport();
+            throwIfAborted(exportOptions.signal, "db.browser.export");
+            return bytesWritten;
+          },
+          async restore() {
+            if (!destinationTouched) return;
+            if (originalSize === 0) {
+              await exportOptions.destination.truncate(0);
+              return;
+            }
+            if (backupHandle === undefined) {
+              throw new Error("The browser export backup is unavailable");
+            }
+            await restoreBrowserFile({
+              source: await backupHandle.getFile(),
+              destination: exportOptions.destination,
+              expectedSize: originalSize,
+            });
+          },
+          cleanupBackup: removeBackup,
+        });
+      } catch (error) {
+        if (error instanceof BrowserPublicationRecoveryError) {
+          if (backupName === undefined) {
+            throw databaseError(
+              "DB_BROWSER_EXPORT_RECOVERY_REQUIRED",
+              "The export failed and the initially empty destination could not be cleared. Replace or clear the incomplete destination before retrying.",
+              { name: exportOptions.name, originalSize },
+              error,
+            );
+          }
+          throw databaseError(
+            "DB_BROWSER_EXPORT_RECOVERY_REQUIRED",
+            `The export failed and the prior destination could not be restored. Its prior bytes remain in browser storage at "${duckDirectoryName}/${backupName}". Copy that OPFS file back to the destination before retrying.`,
+            {
+              name: exportOptions.name,
+              originalSize,
+              backupDirectory: duckDirectoryName,
+              backupName,
+            },
+            error,
+          );
+        }
+        if (error instanceof BrowserExportCleanupError) {
+          throw databaseError(
+            "DB_BROWSER_EXPORT_CLEANUP_REQUIRED",
+            `The export did not complete, and browser storage could not remove its temporary backup at "${duckDirectoryName}/${backupName ?? "(unavailable)"}". The prior destination contents were not replaced or were restored. Remove the temporary backup before retrying.`,
+            {
+              name: exportOptions.name,
+              originalSize,
+              backupDirectory: duckDirectoryName,
+              backupName,
+            },
+            error,
+          );
+        }
+        throw error;
       }
       return {
         operation: "db.export",
         artifacts: [],
-        warnings: [],
-        metrics: { bytesWritten },
+        warnings:
+          published.cleanupFailures.length === 0
+            ? []
+            : [
+                `The export completed, but browser storage could not remove its temporary backup at "${duckDirectoryName}/${backupName ?? "(unavailable)"}". Remove that backup when it is no longer needed.`,
+              ],
+        metrics: { bytesWritten: published.value },
       };
     },
   };

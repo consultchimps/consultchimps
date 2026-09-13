@@ -49,6 +49,7 @@ import {
   routeColumns,
   routeKey,
 } from "./planning.js";
+import { assertCaptureRowCount, readSourceRowPage } from "./source-rows.js";
 import type { ApplyImportOptions, ImportResult } from "./types.js";
 
 const CAPTURE_BATCH_ROWS = 2_000;
@@ -342,28 +343,41 @@ export async function applyImport(
               JSON.stringify(capture.columns),
             ],
           );
-          let sourceRowCursor = -1n;
+          let sourceRowCursor: bigint | undefined;
+          let copiedRows = 0n;
           while (true) {
-            const staged = await preparedEngine.query(
-              `SELECT source_row, values_json FROM ${PREPARED_ROW_TABLE} WHERE capture_id = ? AND source_row > ? ORDER BY source_row LIMIT ?`,
-              [capture.captureId, sourceRowCursor, BigInt(CAPTURE_BATCH_ROWS)],
+            const page = await readSourceRowPage({
+              engine: preparedEngine,
+              table: PREPARED_ROW_TABLE,
+              captureId: capture.captureId,
+              cursor: sourceRowCursor,
+              limit: CAPTURE_BATCH_ROWS,
+              owner: "prepared-import",
+            });
+            if (page.rows.length === 0) break;
+            const rows = page.rows.map(
+              ({ row, sourceRow }) =>
+                [
+                  targetCaptureId,
+                  sourceRow,
+                  valueAsString(row["values_json"], "captured values"),
+                ] as const,
             );
-            if (staged.length === 0) break;
             await transaction.bulkInsert({
               table: CAPTURE_ROW_TABLE,
               columns: ["capture_id", "source_row", "values_json"],
-              rows: staged.map((row) => [
-                targetCaptureId,
-                valueAsBigInt(row["source_row"], "source row"),
-                valueAsString(row["values_json"], "captured values"),
-              ]),
+              rows,
               signal: options.signal,
             });
-            sourceRowCursor = valueAsBigInt(
-              staged.at(-1)?.["source_row"],
-              "source row",
-            );
+            copiedRows += BigInt(rows.length);
+            sourceRowCursor = page.cursor;
           }
+          assertCaptureRowCount({
+            owner: "prepared-import",
+            captureId: capture.captureId,
+            expected: capture.rowCount,
+            actual: copiedRows,
+          });
         }
       }
       if (targetCaptureId === null || sourceFileId === null) {
@@ -578,16 +592,21 @@ export async function applyImport(
         importedRowRows[0]?.["next_value"],
         "imported row counter",
       );
-      let sourceRowCursor = -1n;
+      let sourceRowCursor: bigint | undefined;
+      let loadedRows = 0n;
       while (true) {
         throwIfAborted(options.signal, "db.apply");
-        const batch = await transaction.query(
-          `SELECT source_row, values_json FROM ${CAPTURE_ROW_TABLE} WHERE capture_id = ? AND source_row > ? ORDER BY source_row LIMIT ?`,
-          [captureId, sourceRowCursor, BigInt(CAPTURE_BATCH_ROWS)],
-        );
-        if (batch.length === 0) break;
+        const page = await readSourceRowPage({
+          engine: transaction,
+          table: CAPTURE_ROW_TABLE,
+          captureId,
+          cursor: sourceRowCursor,
+          limit: CAPTURE_BATCH_ROWS,
+          owner: "database",
+        });
+        if (page.rows.length === 0) break;
         const output: Array<readonly EngineValue[]> = [];
-        for (const row of batch) {
+        for (const { row, sourceRow } of page.rows) {
           const importedRowId = nextImportedRow++;
           const values = parseImportCellsJson(
             valueAsString(row["values_json"], "captured values"),
@@ -598,7 +617,7 @@ export async function applyImport(
             importId,
             sourceFileId,
             capture.selectionLabel,
-            valueAsBigInt(row["source_row"], "source row"),
+            sourceRow,
             ...columns.map((column) =>
               valueForColumn(
                 values[column.source],
@@ -625,11 +644,15 @@ export async function applyImport(
           signal: options.signal,
         });
         rowsImported += output.length;
-        sourceRowCursor = valueAsBigInt(
-          batch.at(-1)?.["source_row"],
-          "source row",
-        );
+        loadedRows += BigInt(output.length);
+        sourceRowCursor = page.cursor;
       }
+      assertCaptureRowCount({
+        owner: "database",
+        captureId,
+        expected: capture.rowCount,
+        actual: loadedRows,
+      });
       await transaction.execute(
         `UPDATE ${COUNTERS_TABLE} SET next_value = ? WHERE counter_name = ?`,
         [nextImportedRow, "imported_row"],

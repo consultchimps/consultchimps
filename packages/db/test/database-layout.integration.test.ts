@@ -122,7 +122,7 @@ test.each(missingTableCases)(
           ? "DB_NOT_A_DATABASE"
           : "DB_CORRUPT_DATABASE",
     });
-    expect(await readFile(damaged)).toEqual(before);
+    expect((await readFile(damaged)).equals(before)).toBe(true);
     const moved = `${damaged}.moved`;
     await rename(damaged, moved);
     await rename(moved, damaged);
@@ -151,7 +151,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
     await expect(
       openDatabase({ path: damaged, readonly: true }),
     ).rejects.toMatchObject({ code: "DB_CORRUPT_DATABASE" });
-    expect(await readFile(damaged)).toEqual(before);
+    expect((await readFile(damaged)).equals(before)).toBe(true);
     const moved = `${damaged}.moved`;
     await rename(damaged, moved);
     await rename(moved, damaged);
@@ -170,7 +170,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       engineOf(valid).query("SELECT value FROM sentinel"),
     ).resolves.toEqual([{ value: "preserved" }]);
     await valid.close();
-    expect(await readFile(template)).toEqual(validBefore);
+    expect((await readFile(template)).equals(validBefore)).toBe(true);
   });
 
   test(`${format}: reports a future version before validating its changed layout`, async () => {
@@ -198,7 +198,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       code: "DB_UNSUPPORTED_FORMAT_VERSION",
       details: { fileVersion: "2", supportedVersion: 1 },
     });
-    expect(await readFile(filePath)).toEqual(before);
+    expect((await readFile(filePath)).equals(before)).toBe(true);
     const moved = `${filePath}.moved`;
     await rename(filePath, moved);
     await rename(moved, filePath);
@@ -232,7 +232,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       code: "DB_CORRUPT_DATABASE",
       details: { missingTables: [CAPTURE_TABLE] },
     });
-    expect(await readFile(filePath)).toEqual(before);
+    expect((await readFile(filePath)).equals(before)).toBe(true);
     const moved = `${filePath}.moved`;
     await rename(filePath, moved);
     await rename(moved, filePath);

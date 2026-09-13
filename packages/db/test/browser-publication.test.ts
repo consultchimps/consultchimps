@@ -1,8 +1,10 @@
 import { describe, expect, test, vi } from "vitest";
 
 import {
+  BrowserExportCleanupError,
   BrowserPublicationRecoveryError,
   publishBrowserCandidate,
+  publishBrowserExport,
   type BrowserPublicationOperations,
 } from "../src/browser-publication.js";
 
@@ -108,5 +110,79 @@ describe("browser database publication", () => {
     );
     expect(stored.current).toEqual(["old row"]);
     expect(stored.candidate).toBeUndefined();
+  });
+});
+
+describe("browser export publication", () => {
+  test("restores the destination after a failed export", async () => {
+    const stored: StoredRows = { current: ["old row"] };
+    const failure = new Error("export failed");
+
+    await expect(
+      publishBrowserExport({
+        async backup() {
+          stored.backup = [...stored.current];
+        },
+        async publish() {
+          stored.current = ["partial export"];
+          throw failure;
+        },
+        async restore() {
+          stored.current = [...(stored.backup ?? [])];
+        },
+        async cleanupBackup() {
+          delete stored.backup;
+        },
+      }),
+    ).rejects.toBe(failure);
+    expect(stored.current).toEqual(["old row"]);
+    expect(stored.backup).toBeUndefined();
+  });
+
+  test("retains the export backup when restoration fails", async () => {
+    const stored: StoredRows = { current: ["old row"] };
+
+    await expect(
+      publishBrowserExport({
+        async backup() {
+          stored.backup = [...stored.current];
+        },
+        async publish() {
+          stored.current = ["partial export"];
+          throw new Error("export failed");
+        },
+        async restore() {
+          throw new Error("restore failed");
+        },
+        async cleanupBackup() {
+          delete stored.backup;
+        },
+      }),
+    ).rejects.toBeInstanceOf(BrowserPublicationRecoveryError);
+    expect(stored.backup).toEqual(["old row"]);
+  });
+
+  test("reports cleanup failure after restoring the destination", async () => {
+    const stored: StoredRows = { current: ["old row"] };
+
+    await expect(
+      publishBrowserExport({
+        async backup() {
+          stored.backup = [...stored.current];
+        },
+        async publish() {
+          stored.current = ["partial export"];
+          throw new Error("export failed");
+        },
+        async restore() {
+          stored.current = [...(stored.backup ?? [])];
+        },
+        async cleanupBackup() {
+          throw new Error("cleanup failed");
+        },
+      }),
+    ).rejects.toBeInstanceOf(BrowserExportCleanupError);
+    expect(stored.current).toEqual(["old row"]);
+    expect(stored.backup).toEqual(["old row"]);
   });
 });

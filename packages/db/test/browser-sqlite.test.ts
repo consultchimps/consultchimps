@@ -13,6 +13,13 @@ function createEngine(): BrowserSqliteEngine {
   return new BrowserSqliteEngine(sqlite, new sqlite.oo1.DB(":memory:"));
 }
 
+function createStoredEngine(owner: object, name: string): BrowserSqliteEngine {
+  return new BrowserSqliteEngine(sqlite, new sqlite.oo1.DB(":memory:"), false, {
+    owner,
+    name,
+  });
+}
+
 describe("browser SQLite engine", () => {
   test("preserves large integers and blobs through prepared batches", async () => {
     const engine = createEngine();
@@ -114,5 +121,120 @@ describe("browser SQLite engine", () => {
     await expect(engine.execute("SELECT 1")).rejects.toThrow(
       "SQLite engine is closed",
     );
+  });
+
+  test("holds queued mutations until a snapshot copy finishes", async () => {
+    const engine = createEngine();
+    let releaseCopy: () => void = () => undefined;
+    const copyGate = new Promise<void>((resolve) => {
+      releaseCopy = resolve;
+    });
+    let snapshotStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      snapshotStarted = resolve;
+    });
+    try {
+      await engine.execute("CREATE TABLE events (value TEXT NOT NULL)");
+      const snapshot = engine.copySnapshot(async () => {
+        snapshotStarted();
+        await copyGate;
+        return "copied";
+      });
+      await started;
+
+      let mutationFinished = false;
+      const mutation = engine
+        .execute("INSERT INTO events (value) VALUES ('after snapshot')")
+        .then(() => {
+          mutationFinished = true;
+        });
+      await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+      expect(mutationFinished).toBe(false);
+
+      releaseCopy();
+      await expect(snapshot).resolves.toBe("copied");
+      await mutation;
+      expect(
+        await engine.query("SELECT value FROM events ORDER BY rowid"),
+      ).toEqual([{ value: "after snapshot" }]);
+    } finally {
+      releaseCopy();
+      await engine.close();
+    }
+  });
+
+  test("releases queued work when a snapshot copy fails", async () => {
+    const owner = {};
+    const first = createStoredEngine(owner, "/failed.sqlite");
+    const second = createStoredEngine(owner, "/failed.sqlite");
+    let rejectCopy: (reason: Error) => void = () => undefined;
+    const copyGate = new Promise<never>((_resolve, reject) => {
+      rejectCopy = reject;
+    });
+    let snapshotStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      snapshotStarted = resolve;
+    });
+    let snapshot: Promise<never> | undefined;
+    try {
+      snapshot = first.copySnapshot(async () => {
+        snapshotStarted();
+        return copyGate;
+      });
+      await started;
+
+      let secondHandleFinished = false;
+      const secondHandleWork = second.execute("SELECT 1").then(() => {
+        secondHandleFinished = true;
+      });
+      await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+      expect(secondHandleFinished).toBe(false);
+
+      const failure = new Error("copy failed");
+      rejectCopy(failure);
+      await expect(snapshot).rejects.toBe(failure);
+      await secondHandleWork;
+      expect(secondHandleFinished).toBe(true);
+    } finally {
+      rejectCopy(new Error("test cleanup"));
+      await snapshot?.catch(() => undefined);
+      await Promise.all([first.close(), second.close()]);
+    }
+  });
+
+  test("coordinates snapshot copies across handles for the same storage", async () => {
+    const owner = {};
+    const first = createStoredEngine(owner, "/shared.sqlite");
+    const second = createStoredEngine(owner, "/shared.sqlite");
+    let releaseCopy: () => void = () => undefined;
+    const copyGate = new Promise<void>((resolve) => {
+      releaseCopy = resolve;
+    });
+    let snapshotStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      snapshotStarted = resolve;
+    });
+    try {
+      const snapshot = first.copySnapshot(async () => {
+        snapshotStarted();
+        await copyGate;
+      });
+      await started;
+
+      let secondHandleFinished = false;
+      const secondHandleWork = second.execute("SELECT 1").then(() => {
+        secondHandleFinished = true;
+      });
+      await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+      expect(secondHandleFinished).toBe(false);
+
+      releaseCopy();
+      await snapshot;
+      await secondHandleWork;
+      expect(secondHandleFinished).toBe(true);
+    } finally {
+      releaseCopy();
+      await Promise.all([first.close(), second.close()]);
+    }
   });
 });

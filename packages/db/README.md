@@ -116,6 +116,20 @@ without permitting database writes. Browser exports require an empty
 owns the destination and must keep its backing storage separate from the working
 database.
 
+Replacing a nonempty export destination creates a temporary OPFS backup using
+bounded reads. This requires additional browser storage for the prior output.
+The runtime attempts to restore prior bytes and length after cancellation or a
+reported write failure. If restoration fails,
+`DB_BROWSER_EXPORT_RECOVERY_REQUIRED` identifies the retained file through
+`backupDirectory` and `backupName` in its error details. Use
+`navigator.storage.getDirectory()` and those names to retrieve that file before
+retrying. Recovery of an initially empty destination requires clearing its
+incomplete contents instead; no backup is needed for an empty file. Cleanup
+failures produce a warning after successful export, or
+`DB_BROWSER_EXPORT_CLEANUP_REQUIRED` after a failed export whose prior contents
+were preserved. These recovery paths require the operation to remain running;
+they do not make abrupt browser termination atomic.
+
 See the
 [database guide](https://consultchimps.github.io/consultchimps/docs/tools/data-workspace/)
 and

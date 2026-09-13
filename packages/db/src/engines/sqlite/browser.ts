@@ -14,6 +14,11 @@ import type {
   EngineValue,
 } from "../../internal/engine.js";
 import { quoteIdentifier } from "../../schema.js";
+import {
+  acquireBrowserSqliteOperationLease,
+  type BrowserSqliteOperationLease,
+  type BrowserSqliteStorageIdentity,
+} from "./browser-ownership.js";
 
 function sqliteValue(value: EngineValue): BindableValue {
   return value;
@@ -33,6 +38,7 @@ export class BrowserSqliteEngine implements DatabaseEngine {
   readonly #sqlite: Sqlite3Static;
   readonly #database: SqliteDatabase;
   readonly #readonly: boolean;
+  readonly #sharedOperations?: BrowserSqliteOperationLease | undefined;
   #tail: Promise<void> = Promise.resolve();
   #closed = false;
 
@@ -40,12 +46,17 @@ export class BrowserSqliteEngine implements DatabaseEngine {
     sqlite: Sqlite3Static,
     database: SqliteDatabase,
     readonly = false,
+    storage?: BrowserSqliteStorageIdentity,
   ) {
     this.#sqlite = sqlite;
     this.#database = database;
     this.#readonly = readonly;
     database.exec("PRAGMA foreign_keys = ON");
     if (readonly) database.exec("PRAGMA query_only = ON");
+    this.#sharedOperations =
+      storage === undefined
+        ? undefined
+        : acquireBrowserSqliteOperationLease(storage);
   }
 
   async #exclusive<T>(work: () => Promise<T>): Promise<T> {
@@ -57,7 +68,9 @@ export class BrowserSqliteEngine implements DatabaseEngine {
     await previous;
     try {
       if (this.#closed) throw new Error("SQLite engine is closed");
-      return await work();
+      return this.#sharedOperations === undefined
+        ? await work()
+        : await this.#sharedOperations.run(work);
     } finally {
       release();
     }
@@ -183,6 +196,22 @@ export class BrowserSqliteEngine implements DatabaseEngine {
     });
   }
 
+  async copySnapshot<T>(copy: () => Promise<T>): Promise<T> {
+    return this.#exclusive(async () => {
+      if (!this.#readonly) this.#database.exec("PRAGMA optimize");
+      this.#database.exec("BEGIN");
+      try {
+        this.#query("SELECT count(*) AS count FROM sqlite_schema");
+        const result = await copy();
+        this.#database.exec("COMMIT");
+        return result;
+      } catch (error) {
+        this.#database.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
   interrupt(): void {
     const pointer = this.#database.pointer;
     if (pointer !== undefined) this.#sqlite.capi.sqlite3_interrupt(pointer);
@@ -193,5 +222,6 @@ export class BrowserSqliteEngine implements DatabaseEngine {
       this.#database.close();
       this.#closed = true;
     });
+    this.#sharedOperations?.release();
   }
 }

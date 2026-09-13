@@ -24,6 +24,73 @@ export class BrowserPublicationRecoveryError extends Error {
   }
 }
 
+export interface BrowserExportPublicationOperations<T> {
+  backup(): Promise<void>;
+  publish(): Promise<T>;
+  restore(): Promise<void>;
+  cleanupBackup(): Promise<void>;
+}
+
+export interface BrowserExportPublicationResult<T> {
+  readonly value: T;
+  readonly cleanupFailures: readonly unknown[];
+}
+
+export class BrowserExportCleanupError extends Error {
+  readonly exportCause: unknown;
+  readonly cleanupCause: unknown;
+
+  constructor(exportCause: unknown, cleanupCause: unknown) {
+    super("Browser export backup cleanup failed", {
+      cause: new AggregateError([exportCause, cleanupCause]),
+    });
+    this.exportCause = exportCause;
+    this.cleanupCause = cleanupCause;
+  }
+}
+
+export async function publishBrowserExport<T>(
+  operations: BrowserExportPublicationOperations<T>,
+): Promise<BrowserExportPublicationResult<T>> {
+  try {
+    await operations.backup();
+  } catch (exportCause) {
+    try {
+      await operations.cleanupBackup();
+    } catch (cleanupCause) {
+      throw new BrowserExportCleanupError(exportCause, cleanupCause);
+    }
+    throw exportCause;
+  }
+
+  let value: T;
+  try {
+    value = await operations.publish();
+  } catch (publicationCause) {
+    try {
+      await operations.restore();
+    } catch (recoveryCause) {
+      throw new BrowserPublicationRecoveryError(
+        publicationCause,
+        recoveryCause,
+      );
+    }
+    try {
+      await operations.cleanupBackup();
+    } catch (cleanupCause) {
+      throw new BrowserExportCleanupError(publicationCause, cleanupCause);
+    }
+    throw publicationCause;
+  }
+
+  try {
+    await operations.cleanupBackup();
+    return { value, cleanupFailures: [] };
+  } catch (cleanupError) {
+    return { value, cleanupFailures: [cleanupError] };
+  }
+}
+
 async function cleanup(
   operations: Pick<
     BrowserPublicationOperations<unknown>,
