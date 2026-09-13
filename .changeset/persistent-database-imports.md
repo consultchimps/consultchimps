@@ -89,3 +89,6 @@ Apply namespace and ancestry checks to worksheet values, shared strings, styles,
 and table references. Advance the workbook reader version so new preparations
 read files again when only an older reader capture exists. Existing imported
 rows and capture history are not rewritten automatically.
+
+Reject unsupported schema and import-recipe versions from JavaScript callers
+before publishing database or prepared-plan outputs.

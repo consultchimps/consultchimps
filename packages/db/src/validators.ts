@@ -60,6 +60,12 @@ function validateImportRoute(route: ImportRoute): void {
 }
 
 export function validateImportRecipe(recipe: ImportRecipe): void {
+  if (recipe.version !== 1) {
+    throw databaseError(
+      "DB_INVALID_RECIPE",
+      "The import recipe must have version 1 and a routes array.",
+    );
+  }
   const keys = new Set<string>();
   for (const route of recipe.routes) {
     validateImportRoute(route);

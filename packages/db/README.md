@@ -27,6 +27,9 @@ DuckDB. Browser consumers provide the pinned `@duckdb/duckdb-wasm` and
 `@sqlite.org/sqlite-wasm` runtimes and serve their assets from their own origin.
 The runtime entries keep native bindings out of the browser operation layer.
 
+Schema documents and import recipes must declare `version: 1`. Unsupported
+versions are rejected before publishing database or prepared-plan outputs.
+
 Import composition:
 
 1. Create or open a persistent working database.

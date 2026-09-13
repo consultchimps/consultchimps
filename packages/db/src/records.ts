@@ -218,6 +218,7 @@ export async function planSchema(options: {
   readonly database: Database;
   readonly schema: DatabaseSchema;
 }): Promise<SchemaPlan> {
+  const schema = parseDatabaseSchema(options.schema);
   const inspection = await inspectDatabase({ database: options.database });
   await assertRegisteredColumns(
     engineOf(options.database),
@@ -230,7 +231,7 @@ export async function planSchema(options: {
   const creates: TableSchema[] = [];
   const adds: AddColumnsPlan[] = [];
   const conflicts: SchemaConflict[] = [];
-  const proposedTables = sortTablesByReferences(options.schema.tables);
+  const proposedTables = sortTablesByReferences(schema.tables);
   const knownNames = new Set([
     ...existingByName.keys(),
     ...proposedTables.map((table) => identifierKey(table.name)),
