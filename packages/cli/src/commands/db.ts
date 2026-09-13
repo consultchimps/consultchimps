@@ -5,7 +5,6 @@ import path from "node:path";
 import {
   ConsultChimpsError,
   type OperationControlOptions,
-  type OperationResult,
 } from "@consultchimps/core";
 import {
   applyImport,
@@ -56,14 +55,12 @@ import {
   finishCliImport,
   type CliImportOutcome,
 } from "../db-import-cleanup.js";
+import {
+  type DbCommandOutput,
+  withDeferredDbCommandOutput,
+} from "../db-command-output.js";
 import { createCliProgress } from "../progress.js";
 import { withoutTerminalControlsInProse } from "../text.js";
-
-export interface DbCommandOutput {
-  json(): boolean;
-  result(value: OperationResult): void;
-  data(value: unknown, humanText: string): void;
-}
 
 interface ImportOptions extends DbInputOptions {
   output?: string;
@@ -175,106 +172,118 @@ async function prepare(
   output: DbCommandOutput,
   apply: boolean,
 ): Promise<void> {
-  await withControls(output, async (controls) => {
-    const delivery = options.context
-      ? parseDeliveryContext(await readDbDocument(options.context))
-      : undefined;
-    const database = await openDatabase({ path: databasePath });
-    let temporary: string | undefined;
-    let inputs: Awaited<ReturnType<typeof openDbInputs>> | undefined;
-    let prepared: Awaited<ReturnType<typeof createPreparedImport>> | undefined;
-    let outcome: CliImportOutcome = { status: "completed" };
-    try {
-      const suppliedRecipe = options.recipe
-        ? parseImportRecipe(await readDbDocument(options.recipe))
-        : undefined;
-      inputs = await openDbInputs(options, controls, suppliedRecipe);
-      const sourceList = inputs.workbooks.map((workbook) => workbook.source);
-      const recipe =
-        suppliedRecipe ??
-        (await draftImportRecipe({
-          sources: sourceList,
-          into: options.into,
-        }));
-      const inspected = await inspectDatabase({ database });
-      if (!options.output)
-        temporary = await mkdtemp(path.join(tmpdir(), "cc-import-plan-"));
-      const planPath =
-        options.output ?? path.join(temporary ?? "", "review.ccplan");
-      const protectedInputPaths = [
-        ...inputs.paths,
-        ...(options.recipe ? [options.recipe] : []),
-        ...(options.context ? [options.context] : []),
-      ];
-      if (!apply) {
-        const preparedFile = await prepareImportFile({
-          path: planPath,
-          database,
-          sources: sourceList,
-          recipe,
-          baselineRevision: inspected.revision,
-          overwrite: options.force,
-          protectedInputPaths,
-          ...controls,
-        });
-        output.result(preparedFile.result);
-        if (!output.json())
-          process.stdout.write(
-            "Review this plan with db inspect, then apply it with db apply. The captured plan can contain source values; keep it private.\n",
+  await withDeferredDbCommandOutput(
+    output,
+    async (output) => {
+      await withControls(output, async (controls) => {
+        const delivery = options.context
+          ? parseDeliveryContext(await readDbDocument(options.context))
+          : undefined;
+        const database = await openDatabase({ path: databasePath });
+        let temporary: string | undefined;
+        let inputs: Awaited<ReturnType<typeof openDbInputs>> | undefined;
+        let prepared:
+          Awaited<ReturnType<typeof createPreparedImport>> | undefined;
+        let outcome: CliImportOutcome = { status: "completed" };
+        try {
+          const suppliedRecipe = options.recipe
+            ? parseImportRecipe(await readDbDocument(options.recipe))
+            : undefined;
+          inputs = await openDbInputs(options, controls, suppliedRecipe);
+          const sourceList = inputs.workbooks.map(
+            (workbook) => workbook.source,
           );
-      } else {
-        prepared = await createPreparedImport({
-          path: planPath,
-          database,
-          recipe,
-          baselineRevision: inspected.revision,
-          overwrite: options.force,
-          protectedInputPaths,
+          const recipe =
+            suppliedRecipe ??
+            (await draftImportRecipe({
+              sources: sourceList,
+              into: options.into,
+            }));
+          const inspected = await inspectDatabase({ database });
+          if (!options.output)
+            temporary = await mkdtemp(path.join(tmpdir(), "cc-import-plan-"));
+          const planPath =
+            options.output ?? path.join(temporary ?? "", "review.ccplan");
+          const protectedInputPaths = [
+            ...inputs.paths,
+            ...(options.recipe ? [options.recipe] : []),
+            ...(options.context ? [options.context] : []),
+          ];
+          if (!apply) {
+            const preparedFile = await prepareImportFile({
+              path: planPath,
+              database,
+              sources: sourceList,
+              recipe,
+              baselineRevision: inspected.revision,
+              overwrite: options.force,
+              protectedInputPaths,
+              ...controls,
+            });
+            output.result(preparedFile.result);
+            output.prose(
+              "Review this plan with db inspect, then apply it with db apply. The captured plan can contain source values; keep it private.\n",
+            );
+          } else {
+            prepared = await createPreparedImport({
+              path: planPath,
+              database,
+              recipe,
+              baselineRevision: inspected.revision,
+              overwrite: options.force,
+              protectedInputPaths,
+            });
+            const preparedOutcome = await prepareImport({
+              database,
+              prepared,
+              sources: sourceList,
+              recipe,
+              ...controls,
+            });
+            const approved = requireReady(
+              preparedOutcome.prepared.state === "ready"
+                ? preparedOutcome.prepared
+                : await resolveImport({ database, prepared, decisions: [] }),
+            );
+            output.result(
+              await applyImport({
+                database,
+                prepared,
+                approved,
+                requestId: options.requestId ?? prepared.id,
+                delivery,
+                ...controls,
+              }),
+            );
+          }
+        } catch (error) {
+          outcome = { status: "failed", error };
+        }
+        const ownedPrepared = prepared;
+        const ownedInputs = inputs;
+        await finishCliImport({
+          outcome,
+          temporaryPath: temporary,
+          ...(ownedPrepared === undefined
+            ? {}
+            : { closePrepared: () => ownedPrepared.close() }),
+          ...(ownedInputs === undefined
+            ? {}
+            : { closeInputs: () => ownedInputs.close() }),
+          closeDatabase: () => database.close(),
+          removeTemporary: () =>
+            temporary === undefined
+              ? Promise.resolve()
+              : rm(temporary, { recursive: true, force: true }),
         });
-        const preparedOutcome = await prepareImport({
-          database,
-          prepared,
-          sources: sourceList,
-          recipe,
-          ...controls,
-        });
-        const approved = requireReady(
-          preparedOutcome.prepared.state === "ready"
-            ? preparedOutcome.prepared
-            : await resolveImport({ database, prepared, decisions: [] }),
-        );
-        output.result(
-          await applyImport({
-            database,
-            prepared,
-            approved,
-            requestId: options.requestId ?? prepared.id,
-            delivery,
-            ...controls,
-          }),
-        );
-      }
-    } catch (error) {
-      outcome = { status: "failed", error };
-    }
-    const ownedPrepared = prepared;
-    const ownedInputs = inputs;
-    await finishCliImport({
-      outcome,
-      temporaryPath: temporary,
-      ...(ownedPrepared === undefined
-        ? {}
-        : { closePrepared: () => ownedPrepared.close() }),
-      ...(ownedInputs === undefined
-        ? {}
-        : { closeInputs: () => ownedInputs.close() }),
-      closeDatabase: () => database.close(),
-      removeTemporary: () =>
-        temporary === undefined
-          ? Promise.resolve()
-          : rm(temporary, { recursive: true, force: true }),
-    });
-  });
+      });
+    },
+    apply
+      ? [databasePath]
+      : options.output === undefined
+        ? []
+        : [options.output],
+  );
 }
 
 export function registerDbCommands(
@@ -313,25 +322,31 @@ export function registerDbCommands(
         schema?: string;
         force?: boolean;
       }) => {
-        const schema = options.schema
-          ? parseDatabaseSchema(await readDbDocument(options.schema))
-          : undefined;
-        await planFilePublication({
-          output: options.output,
-          inputs: options.schema ? [options.schema] : [],
-          overwrite: options.force,
-        });
-        const created = await createDatabase({
-          path: options.output,
-          format: chooseFormat(options.output, options.format),
-          schema,
-          overwrite: options.force,
-        });
-        try {
-          output.result(created.result);
-        } finally {
-          await created.database.close();
-        }
+        await withDeferredDbCommandOutput(
+          output,
+          async (output) => {
+            const schema = options.schema
+              ? parseDatabaseSchema(await readDbDocument(options.schema))
+              : undefined;
+            await planFilePublication({
+              output: options.output,
+              inputs: options.schema ? [options.schema] : [],
+              overwrite: options.force,
+            });
+            const created = await createDatabase({
+              path: options.output,
+              format: chooseFormat(options.output, options.format),
+              schema,
+              overwrite: options.force,
+            });
+            try {
+              output.result(created.result);
+            } finally {
+              await created.database.close();
+            }
+          },
+          [options.output],
+        );
       },
     );
 
@@ -354,56 +369,55 @@ export function registerDbCommands(
         file: string,
         options: { limit: number; cursor?: string; database?: string },
       ) => {
-        const kind = await inspectFileKind({ path: file });
-        if (kind.kind === "unmanaged-database") {
-          if (output.json()) output.data(kind, "");
-          else {
-            process.stdout.write(
-              `${kind.format === "duckdb" ? "DuckDB" : "SQLite"} database, read-only inspection\nThis file has no ConsultChimps import history. No tables or metadata were added.\n`,
+        await withDeferredDbCommandOutput(output, async (output) => {
+          const kind = await inspectFileKind({ path: file });
+          if (kind.kind === "unmanaged-database") {
+            const tables = kind.tables
+              .map(
+                (table) =>
+                  `${withoutTerminalControlsInProse(table.name)}: ${table.columns.length} columns\n`,
+              )
+              .join("");
+            output.data(
+              kind,
+              `${kind.format === "duckdb" ? "DuckDB" : "SQLite"} database, read-only inspection\nThis file has no ConsultChimps import history. No tables or metadata were added.\n${tables}Create a separate ConsultChimps database for managed imports.\n`,
             );
-            for (const table of kind.tables)
-              process.stdout.write(
-                `${withoutTerminalControlsInProse(table.name)}: ${table.columns.length} columns\n`,
-              );
-            process.stdout.write(
-              "Create a separate ConsultChimps database for managed imports.\n",
-            );
-          }
-        } else if (kind.kind === "prepared-import") {
-          const prepared = await openPreparedImport({
-            path: file,
-            readonly: true,
-          });
-          try {
-            const database =
-              options.database === undefined
-                ? undefined
-                : await openDatabase({
-                    path: options.database,
-                    readonly: true,
-                  });
+          } else if (kind.kind === "prepared-import") {
+            const prepared = await openPreparedImport({
+              path: file,
+              readonly: true,
+            });
             try {
-              const inspection = await inspectImport({
-                database,
-                prepared,
-                page: { limit: options.limit, cursor: options.cursor },
-              });
-              output.data(inspection, formatImportInspection(inspection));
+              const database =
+                options.database === undefined
+                  ? undefined
+                  : await openDatabase({
+                      path: options.database,
+                      readonly: true,
+                    });
+              try {
+                const inspection = await inspectImport({
+                  database,
+                  prepared,
+                  page: { limit: options.limit, cursor: options.cursor },
+                });
+                output.data(inspection, formatImportInspection(inspection));
+              } finally {
+                await database?.close();
+              }
             } finally {
-              await database?.close();
+              await prepared.close();
             }
-          } finally {
-            await prepared.close();
+          } else {
+            const database = await openDatabase({ path: file, readonly: true });
+            try {
+              const inspection = await inspectDatabase({ database });
+              output.data(inspection, formatDatabaseInspection(inspection));
+            } finally {
+              await database.close();
+            }
           }
-        } else {
-          const database = await openDatabase({ path: file, readonly: true });
-          try {
-            const inspection = await inspectDatabase({ database });
-            output.data(inspection, formatDatabaseInspection(inspection));
-          } finally {
-            await database.close();
-          }
-        }
+        });
       },
     );
 
@@ -419,18 +433,26 @@ export function registerDbCommands(
         databasePath: string,
         options: { file: string; dryRun?: boolean },
       ) => {
-        const schema = parseDatabaseSchema(await readDbDocument(options.file));
-        const database = await openDatabase({
-          path: databasePath,
-          readonly: options.dryRun === true,
-        });
-        try {
-          const plan = await planSchema({ database, schema });
-          if (options.dryRun) output.data(plan, formatSchemaPlan(plan));
-          else output.result(await applySchema({ database, plan }));
-        } finally {
-          await database.close();
-        }
+        await withDeferredDbCommandOutput(
+          output,
+          async (output) => {
+            const schema = parseDatabaseSchema(
+              await readDbDocument(options.file),
+            );
+            const database = await openDatabase({
+              path: databasePath,
+              readonly: options.dryRun === true,
+            });
+            try {
+              const plan = await planSchema({ database, schema });
+              if (options.dryRun) output.data(plan, formatSchemaPlan(plan));
+              else output.result(await applySchema({ database, plan }));
+            } finally {
+              await database.close();
+            }
+          },
+          [databasePath],
+        );
       },
     );
 
@@ -474,57 +496,63 @@ export function registerDbCommands(
         databasePath: string,
         options: { plan: string; context?: string; requestId?: string },
       ) => {
-        await withControls(output, async (controls) => {
-          const delivery = options.context
-            ? parseDeliveryContext(await readDbDocument(options.context))
-            : undefined;
-          const database = await openDatabase({ path: databasePath });
-          try {
-            let prepared = await openPreparedImport({
-              path: options.plan,
-              readonly: true,
-            });
-            try {
-              let review = await inspectImport({
-                database,
-                prepared,
-                page: { limit: 1 },
-              });
-              if (review.prepared.state !== "ready") {
-                await prepared.close();
-                prepared = await openPreparedImport({ path: options.plan });
-                review = await inspectImport({
-                  database,
-                  prepared,
-                  page: { limit: 1 },
+        await withDeferredDbCommandOutput(
+          output,
+          async (output) => {
+            await withControls(output, async (controls) => {
+              const delivery = options.context
+                ? parseDeliveryContext(await readDbDocument(options.context))
+                : undefined;
+              const database = await openDatabase({ path: databasePath });
+              try {
+                let prepared = await openPreparedImport({
+                  path: options.plan,
+                  readonly: true,
                 });
-              }
-              const approved = requireReady(
-                review.prepared.state === "ready"
-                  ? review.prepared
-                  : await resolveImport({
+                try {
+                  let review = await inspectImport({
+                    database,
+                    prepared,
+                    page: { limit: 1 },
+                  });
+                  if (review.prepared.state !== "ready") {
+                    await prepared.close();
+                    prepared = await openPreparedImport({ path: options.plan });
+                    review = await inspectImport({
                       database,
                       prepared,
-                      decisions: [],
+                      page: { limit: 1 },
+                    });
+                  }
+                  const approved = requireReady(
+                    review.prepared.state === "ready"
+                      ? review.prepared
+                      : await resolveImport({
+                          database,
+                          prepared,
+                          decisions: [],
+                        }),
+                  );
+                  output.result(
+                    await applyImport({
+                      database,
+                      prepared,
+                      approved,
+                      delivery,
+                      requestId: options.requestId ?? prepared.id,
+                      ...controls,
                     }),
-              );
-              output.result(
-                await applyImport({
-                  database,
-                  prepared,
-                  approved,
-                  delivery,
-                  requestId: options.requestId ?? prepared.id,
-                  ...controls,
-                }),
-              );
-            } finally {
-              await prepared.close();
-            }
-          } finally {
-            await database.close();
-          }
-        });
+                  );
+                } finally {
+                  await prepared.close();
+                }
+              } finally {
+                await database.close();
+              }
+            });
+          },
+          [databasePath],
+        );
       },
     );
 
@@ -541,34 +569,43 @@ export function registerDbCommands(
         databasePath: string,
         options: { plan: string; recipe?: string },
       ) => {
-        const recipe = options.recipe
-          ? parseImportRecipe(await readDbDocument(options.recipe))
-          : undefined;
-        const database = await openDatabase({ path: databasePath });
-        try {
-          const prepared = await openPreparedImport({ path: options.plan });
-          try {
-            const resolved =
-              recipe === undefined
-                ? await resolveImport({
-                    database,
-                    prepared,
-                    decisions: [],
-                    rebase: true,
-                  })
-                : await replaceImportRecipe({
-                    database,
-                    prepared,
-                    recipe,
-                    rebase: true,
-                  });
-            output.data(resolved, formatImportResolution(resolved));
-          } finally {
-            await prepared.close();
-          }
-        } finally {
-          await database.close();
-        }
+        await withDeferredDbCommandOutput(
+          output,
+          async (output) => {
+            const recipe = options.recipe
+              ? parseImportRecipe(await readDbDocument(options.recipe))
+              : undefined;
+            const database = await openDatabase({ path: databasePath });
+            try {
+              const prepared = await openPreparedImport({ path: options.plan });
+              try {
+                const resolved =
+                  recipe === undefined
+                    ? await resolveImport({
+                        database,
+                        prepared,
+                        decisions: [],
+                        rebase: true,
+                      })
+                    : await replaceImportRecipe({
+                        database,
+                        prepared,
+                        recipe,
+                        rebase: true,
+                      });
+                output.completedData(
+                  resolved,
+                  formatImportResolution(resolved),
+                );
+              } finally {
+                await prepared.close();
+              }
+            } finally {
+              await database.close();
+            }
+          },
+          [options.plan],
+        );
       },
     );
 
@@ -582,16 +619,18 @@ export function registerDbCommands(
         databasePath: string,
         options: { limit: number; cursor?: string },
       ) => {
-        const database = await openDatabase({
-          path: databasePath,
-          readonly: true,
+        await withDeferredDbCommandOutput(output, async (output) => {
+          const database = await openDatabase({
+            path: databasePath,
+            readonly: true,
+          });
+          try {
+            const deliveries = await listDeliveries({ database, ...options });
+            output.data(deliveries, formatDeliveryPage(deliveries));
+          } finally {
+            await database.close();
+          }
         });
-        try {
-          const deliveries = await listDeliveries({ database, ...options });
-          output.data(deliveries, formatDeliveryPage(deliveries));
-        } finally {
-          await database.close();
-        }
       },
     );
 
@@ -615,22 +654,28 @@ export function registerDbCommands(
         databasePath: string,
         options: { capture: string[]; context: string; requestId: string },
       ) => {
-        const context = parseDeliveryContext(
-          await readDbDocument(options.context),
+        await withDeferredDbCommandOutput(
+          output,
+          async (output) => {
+            const context = parseDeliveryContext(
+              await readDbDocument(options.context),
+            );
+            const database = await openDatabase({ path: databasePath });
+            try {
+              output.result(
+                await recordDelivery({
+                  database,
+                  captureIds: options.capture,
+                  context,
+                  requestId: options.requestId,
+                }),
+              );
+            } finally {
+              await database.close();
+            }
+          },
+          [databasePath],
         );
-        const database = await openDatabase({ path: databasePath });
-        try {
-          output.result(
-            await recordDelivery({
-              database,
-              captureIds: options.capture,
-              context,
-              requestId: options.requestId,
-            }),
-          );
-        } finally {
-          await database.close();
-        }
       },
     );
 
@@ -665,41 +710,47 @@ export function registerDbCommands(
           force?: boolean;
         },
       ) => {
-        if (options.dryRun !== true) {
-          await planFilePublication({
-            output: options.output,
-            inputs: [databasePath],
-            overwrite: options.force,
-          });
-        }
-        await withControls(output, async (controls) => {
-          const database = await openDatabase({
-            path: databasePath,
-            readonly: options.dryRun === true,
-          });
-          try {
-            const format = chooseFormat(
-              options.output,
-              options.format,
-              database.format,
-            );
-            if (options.dryRun) {
-              const plan = await planConversion({ database, format });
-              output.data(plan, formatConversionPlan(plan));
-            } else
-              output.result(
-                await exportDatabase({
-                  database,
-                  output: options.output,
-                  format,
-                  overwrite: options.force,
-                  ...controls,
-                }),
-              );
-          } finally {
-            await database.close();
-          }
-        });
+        await withDeferredDbCommandOutput(
+          output,
+          async (output) => {
+            if (options.dryRun !== true) {
+              await planFilePublication({
+                output: options.output,
+                inputs: [databasePath],
+                overwrite: options.force,
+              });
+            }
+            await withControls(output, async (controls) => {
+              const database = await openDatabase({
+                path: databasePath,
+                readonly: options.dryRun === true,
+              });
+              try {
+                const format = chooseFormat(
+                  options.output,
+                  options.format,
+                  database.format,
+                );
+                if (options.dryRun) {
+                  const plan = await planConversion({ database, format });
+                  output.data(plan, formatConversionPlan(plan));
+                } else
+                  output.result(
+                    await exportDatabase({
+                      database,
+                      output: options.output,
+                      format,
+                      overwrite: options.force,
+                      ...controls,
+                    }),
+                  );
+              } finally {
+                await database.close();
+              }
+            });
+          },
+          [options.output],
+        );
       },
     );
 }

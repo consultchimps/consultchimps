@@ -6,6 +6,7 @@ const duckdb = vi.hoisted(() => ({
   openPath: "",
   registrations: [] as string[],
   checkpointFailure: undefined as Error | undefined,
+  connectFailure: undefined as Error | undefined,
   terminationFailures: [] as Error[],
   terminationStarted: undefined as (() => void) | undefined,
   terminationWait: undefined as Promise<void> | undefined,
@@ -40,6 +41,7 @@ vi.mock("@duckdb/duckdb-wasm/dist/duckdb-browser", () => ({
     }
 
     async connect() {
+      if (duckdb.connectFailure !== undefined) throw duckdb.connectFailure;
       return {
         async query(sql: string) {
           duckdb.queries.push(sql);
@@ -77,7 +79,10 @@ vi.mock("@duckdb/duckdb-wasm/dist/duckdb-browser", () => ({
   },
 }));
 
-import { BrowserDuckDbEngine } from "../src/engines/duckdb/browser.js";
+import {
+  BrowserDuckDbEngine,
+  BrowserDuckDbOpenCleanupError,
+} from "../src/engines/duckdb/browser.js";
 
 function memoryFile(): RandomAccessFile & { bytes(): Uint8Array } {
   let stored = new Uint8Array();
@@ -113,6 +118,7 @@ beforeEach(() => {
   duckdb.openPath = "";
   duckdb.registrations.length = 0;
   duckdb.checkpointFailure = undefined;
+  duckdb.connectFailure = undefined;
   duckdb.terminationFailures.length = 0;
   duckdb.terminationStarted = undefined;
   duckdb.terminationWait = undefined;
@@ -125,6 +131,48 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+test("retains retryable ownership when a failed open cannot terminate", async () => {
+  const openFailure = new Error("Injected DuckDB connect failure");
+  const cleanupFailure = new Error("Injected DuckDB termination failure");
+  duckdb.connectFailure = openFailure;
+  duckdb.terminationFailures.push(cleanupFailure);
+
+  let failure: unknown;
+  try {
+    await BrowserDuckDbEngine.open({
+      wasmUrl: "duckdb.wasm",
+      workerUrl: "duckdb.worker.js",
+      storageName: "failed-open.duckdb",
+      fileHandle: {
+        async getFile() {
+          return new Blob();
+        },
+      },
+      walHandle: {
+        async getFile() {
+          return new Blob();
+        },
+      },
+    });
+  } catch (error) {
+    failure = error;
+  }
+
+  expect(failure).toBeInstanceOf(BrowserDuckDbOpenCleanupError);
+  expect((failure as BrowserDuckDbOpenCleanupError).openCause).toBe(
+    openFailure,
+  );
+  expect((failure as BrowserDuckDbOpenCleanupError).cleanupCause).toBe(
+    cleanupFailure,
+  );
+  expect(((failure as Error).cause as AggregateError).errors).toEqual([
+    openFailure,
+    cleanupFailure,
+  ]);
+  await (failure as BrowserDuckDbOpenCleanupError).retryCleanup();
+  expect(duckdb.terminations).toBe(2);
 });
 
 test("copies and closes a read-only browser database without a write checkpoint", async () => {

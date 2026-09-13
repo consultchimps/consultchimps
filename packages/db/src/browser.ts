@@ -26,7 +26,13 @@ import {
 } from "./browser-file-copy.js";
 import { useBrowserConversionArtifact } from "./browser-conversion-cleanup.js";
 import {
+  BrowserOpenCleanupError,
+  BrowserOpenCleanupRegistry,
+  type BrowserOpenOwnerKind,
+} from "./browser-open-cleanup.js";
+import {
   BrowserDuckDbEngine,
+  BrowserDuckDbOpenCleanupError,
   type BrowserDuckDbSnapshotStorage,
 } from "./engines/duckdb/browser.js";
 import { BrowserSqliteEngine } from "./engines/sqlite/browser.js";
@@ -303,6 +309,7 @@ async function removeDuckDbFiles(
 async function copyBlobToFile(
   source: Blob,
   handle: BrowserFileHandle,
+  operation: "db.browser.create" | "db.browser.import" | "db.browser.plan",
   signal?: AbortSignal,
 ): Promise<void> {
   await copySourceToBrowserFile({
@@ -316,7 +323,7 @@ async function copyBlobToFile(
       },
     },
     destination: handle,
-    operation: "db.browser.export",
+    operation,
     signal,
   });
 }
@@ -325,6 +332,7 @@ async function copyDuckDbFiles(
   directory: BrowserDirectoryHandle,
   source: string,
   destination: string,
+  operation: "db.browser.create" | "db.browser.import" | "db.browser.plan",
   signal?: AbortSignal,
 ): Promise<void> {
   const sourceFile = await (await directory.getFileHandle(source)).getFile();
@@ -334,11 +342,13 @@ async function copyDuckDbFiles(
   await copyBlobToFile(
     sourceFile,
     await directory.getFileHandle(destination, { create: true }),
+    operation,
     signal,
   );
   await copyBlobToFile(
     sourceWal,
     await directory.getFileHandle(`${destination}.wal`, { create: true }),
+    operation,
     signal,
   );
 }
@@ -511,7 +521,49 @@ export async function configureBrowserDatabaseRuntime(
   const sqliteDirectory = await sqlitePoolDirectory(options.sqlite.directory);
   const stored = new WeakMap<Database, StoredDatabase>();
   const openedByName = new Map<string, Set<OpenedBrowserHandle>>();
+  const failedOpenCleanup = new BrowserOpenCleanupRegistry();
   const nameLocks = new Map<string, Promise<void>>();
+
+  const openCleanupError = (
+    error: BrowserOpenCleanupError,
+  ): ReturnType<typeof databaseError> =>
+    databaseError(
+      "DB_BROWSER_OPEN_CLEANUP_REQUIRED",
+      `A browser working copy at "${error.storageName}" could not finish closing after it failed to open. The runtime retains ownership so replacement remains blocked. Retry opening it to finish cleanup, or reload the page or worker context before replacing or removing it.`,
+      {
+        name: error.storageName,
+        ownerKinds: error.ownerKinds,
+        closeFailed: true,
+      },
+      error,
+    );
+
+  const retryFailedOpenCleanup = async (name: string): Promise<void> => {
+    try {
+      await failedOpenCleanup.retry(name);
+    } catch (error) {
+      if (error instanceof BrowserOpenCleanupError) {
+        throw openCleanupError(error);
+      }
+      throw error;
+    }
+  };
+
+  const failAfterOpenCleanup = async (
+    name: string,
+    kind: BrowserOpenOwnerKind,
+    close: () => Promise<void>,
+    primary: unknown,
+  ): Promise<never> => {
+    try {
+      await close();
+    } catch (closeFailure) {
+      throw openCleanupError(
+        failedOpenCleanup.retain(name, kind, close, [primary, closeFailure]),
+      );
+    }
+    throw primary;
+  };
 
   const withNameLock = async <T>(
     name: string,
@@ -570,11 +622,20 @@ export async function configureBrowserDatabaseRuntime(
   };
 
   const assertNotBusy = (name: string): void => {
-    if (openedHandles(name).size === 0) return;
+    if (!failedOpenCleanup.has(name) && openedHandles(name).size === 0) return;
     throw databaseError(
       "DB_BROWSER_DATABASE_BUSY",
       "Close the open browser working copy before replacing it.",
       { name },
+    );
+  };
+
+  const assertNoFailedOpenCleanup = (name: string): void => {
+    if (!failedOpenCleanup.has(name)) return;
+    throw databaseError(
+      "DB_BROWSER_DATABASE_BUSY",
+      "This browser working copy still has an unconfirmed handle from an earlier failed open. Retry opening it to finish cleanup, or reload the page or worker context before replacing it.",
+      { name, failedOpenCleanup: true },
     );
   };
 
@@ -593,8 +654,10 @@ export async function configureBrowserDatabaseRuntime(
     if (tracked.size > 1) return "unknown";
 
     let engine: BrowserSqliteEngine | undefined;
+    let inspectionFailure: { readonly error: unknown } | undefined;
+    let kind: SqliteStorageKind = "unknown";
     try {
-      engine = sqliteEngine(name, true);
+      engine = sqliteEngine(name, true, "inspection");
       const rows = await engine.query(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (?, ?)",
         [DATABASE_METADATA_TABLE, PREPARED_METADATA_TABLE],
@@ -604,20 +667,43 @@ export async function configureBrowserDatabaseRuntime(
         names.has(DATABASE_METADATA_TABLE) &&
         !names.has(PREPARED_METADATA_TABLE)
       ) {
-        return "database";
-      }
-      if (
+        kind = "database";
+      } else if (
         names.has(PREPARED_METADATA_TABLE) &&
         !names.has(DATABASE_METADATA_TABLE)
       ) {
-        return "prepared";
+        kind = "prepared";
       }
-      return "unknown";
-    } catch {
-      return "unknown";
-    } finally {
-      await engine?.close().catch(() => undefined);
+    } catch (error) {
+      if (
+        isConsultChimpsError(error) &&
+        error.code === "DB_BROWSER_OPEN_CLEANUP_REQUIRED"
+      ) {
+        throw error;
+      }
+      inspectionFailure = { error };
     }
+    if (engine !== undefined) {
+      const failedEngine = engine;
+      try {
+        await failedEngine.close();
+      } catch (closeFailure) {
+        throw openCleanupError(
+          failedOpenCleanup.retain(
+            name,
+            "inspection",
+            () => failedEngine.close(),
+            [
+              ...(inspectionFailure === undefined
+                ? []
+                : [inspectionFailure.error]),
+              closeFailure,
+            ],
+          ),
+        );
+      }
+    }
+    return kind;
   };
 
   const storageState = async (name: string): Promise<BrowserStorageState> => {
@@ -664,10 +750,16 @@ export async function configureBrowserDatabaseRuntime(
     }
   };
 
-  const importSqliteBlob = async (name: string, blob: Blob): Promise<void> => {
+  const importSqliteBlob = async (
+    name: string,
+    blob: Blob,
+    operation: "db.browser.create" | "db.browser.import" | "db.browser.plan",
+    signal?: AbortSignal,
+  ): Promise<void> => {
     let offset = 0;
     await pool.importDb(sqliteName(name), async () => {
       if (offset >= blob.size) return undefined;
+      throwIfAborted(signal, operation);
       const length = Math.min(COPY_CHUNK_BYTES, blob.size - offset);
       const bytes = new Uint8Array(
         await blob.slice(offset, offset + length).arrayBuffer(),
@@ -675,34 +767,61 @@ export async function configureBrowserDatabaseRuntime(
       offset += bytes.byteLength;
       return bytes;
     });
+    throwIfAborted(signal, operation);
   };
 
-  const copySqlite = async (source: string, destination: string) => {
+  const copySqlite = async (
+    source: string,
+    destination: string,
+    operation: "db.browser.create" | "db.browser.import" | "db.browser.plan",
+    signal?: AbortSignal,
+  ) => {
     const payload = await sqlitePoolPayload(
       sqliteDirectory,
       sqliteName(source),
     );
-    await importSqliteBlob(destination, payload);
+    throwIfAborted(signal, operation);
+    await importSqliteBlob(destination, payload, operation, signal);
   };
 
-  const sqliteEngine = (name: string, readonly = false): BrowserSqliteEngine =>
-    new BrowserSqliteEngine(
-      sqlite,
-      readonly
-        ? new sqlite.oo1.DB({
-            filename: sqliteName(name),
-            flags: "r",
-            vfs: pool.vfsName,
-          })
-        : new pool.OpfsSAHPoolDb(sqliteName(name)),
-      readonly,
-      { owner: pool, name: sqliteName(name) },
-    );
+  const sqliteEngine = (
+    name: string,
+    readonly = false,
+    ownerKind: BrowserOpenOwnerKind = "database",
+  ): BrowserSqliteEngine => {
+    const database = readonly
+      ? new sqlite.oo1.DB({
+          filename: sqliteName(name),
+          flags: "r",
+          vfs: pool.vfsName,
+        })
+      : new pool.OpfsSAHPoolDb(sqliteName(name));
+    try {
+      return new BrowserSqliteEngine(sqlite, database, readonly, {
+        owner: pool,
+        name: sqliteName(name),
+      });
+    } catch (error) {
+      try {
+        database.close();
+      } catch (closeFailure) {
+        const close = async (): Promise<void> => database.close();
+        throw openCleanupError(
+          failedOpenCleanup.retain(name, ownerKind, close, [
+            error,
+            closeFailure,
+          ]),
+        );
+      }
+      throw error;
+    }
+  };
 
   const discardCandidate = async (
     format: DatabaseFormat,
     candidate: string,
   ): Promise<void> => {
+    assertNoFailedOpenCleanup(candidate);
     if (format === "sqlite") {
       pool.unlink(sqliteName(candidate));
       return;
@@ -850,6 +969,26 @@ export async function configureBrowserDatabaseRuntime(
       };
     };
 
+  const openDuckEngine = async (
+    name: string,
+    ownerKind: BrowserOpenOwnerKind,
+    open: Parameters<typeof BrowserDuckDbEngine.open>[0],
+  ): Promise<BrowserDuckDbEngine> => {
+    try {
+      return await BrowserDuckDbEngine.open(open);
+    } catch (error) {
+      if (error instanceof BrowserDuckDbOpenCleanupError) {
+        throw openCleanupError(
+          failedOpenCleanup.retain(name, ownerKind, error.retryCleanup, [
+            error.openCause,
+            error.cleanupCause,
+          ]),
+        );
+      }
+      throw error;
+    }
+  };
+
   const duckEngine = async (
     name: string,
     readonly = false,
@@ -858,7 +997,7 @@ export async function configureBrowserDatabaseRuntime(
     const wal = await duckDirectory.getFileHandle(`${name}.wal`, {
       create: true,
     });
-    return BrowserDuckDbEngine.open({
+    return openDuckEngine(name, "database", {
       ...options.duckdb,
       storageName: name,
       fileHandle: file,
@@ -871,21 +1010,25 @@ export async function configureBrowserDatabaseRuntime(
   const publishCandidate = async <T extends { close(): Promise<void> }>(
     name: string,
     format: DatabaseFormat,
+    operation: "db.browser.create" | "db.browser.import" | "db.browser.plan",
     candidateKind: "database" | "prepared",
     cleanupPolicy: "warn" | "error",
     candidate: string,
     state: BrowserStorageState,
     openPublished: () => Promise<T>,
+    signal?: AbortSignal,
   ): Promise<{
     readonly value: T;
     readonly cleanupFailures: readonly unknown[];
     readonly cleanupWarning?: string | undefined;
   }> => {
+    throwIfAborted(signal, operation);
     const token = globalThis.crypto.randomUUID();
     const sqliteBackup = `.consultchimps-backup-${token}.sqlite`;
     const duckdbBackup = `.consultchimps-backup-${token}.duckdb`;
     if (state.sqlite || format === "sqlite") {
       await pool.reserveMinimumCapacity(pool.getFileCount() + 2);
+      throwIfAborted(signal, operation);
     }
     const candidateNames =
       format === "sqlite" ? [candidate] : [candidate, `${candidate}.wal`];
@@ -913,29 +1056,50 @@ export async function configureBrowserDatabaseRuntime(
     try {
       const published = await publishBrowserCandidate({
         async backup() {
-          if (state.sqlite) await copySqlite(name, sqliteBackup);
-          if (state.duckdb) {
-            await copyDuckDbFiles(duckDirectory, name, duckdbBackup);
+          throwIfAborted(signal, operation);
+          if (state.sqlite) {
+            await copySqlite(name, sqliteBackup, operation, signal);
           }
+          if (state.duckdb) {
+            await copyDuckDbFiles(
+              duckDirectory,
+              name,
+              duckdbBackup,
+              operation,
+              signal,
+            );
+          }
+          throwIfAborted(signal, operation);
         },
         async publishAndOpen() {
           if (format === "sqlite") {
-            await copySqlite(candidate, name);
+            await copySqlite(candidate, name, operation, signal);
+            throwIfAborted(signal, operation);
             if (state.duckdb) await removeDuckDbFiles(duckDirectory, name);
           } else {
-            await copyDuckDbFiles(duckDirectory, candidate, name);
+            await copyDuckDbFiles(
+              duckDirectory,
+              candidate,
+              name,
+              operation,
+              signal,
+            );
+            throwIfAborted(signal, operation);
             if (state.sqlite) pool.unlink(sqliteName(name));
           }
+          throwIfAborted(signal, operation);
           return openPublished();
         },
         async restore() {
-          if (state.sqlite) await copySqlite(sqliteBackup, name);
-          else if (pool.getFileNames().includes(sqliteName(name))) {
+          assertNotBusy(name);
+          if (state.sqlite) {
+            await copySqlite(sqliteBackup, name, operation);
+          } else if (pool.getFileNames().includes(sqliteName(name))) {
             pool.unlink(sqliteName(name));
           }
           await removeDuckDbFiles(duckDirectory, name);
           if (state.duckdb) {
-            await copyDuckDbFiles(duckDirectory, duckdbBackup, name);
+            await copyDuckDbFiles(duckDirectory, duckdbBackup, name, operation);
           }
         },
         async cleanupBackups() {
@@ -1126,8 +1290,12 @@ export async function configureBrowserDatabaseRuntime(
       }
       return database;
     } catch (error) {
-      await engine.close().catch(() => undefined);
-      throw error;
+      return failAfterOpenCleanup(
+        name,
+        "database",
+        () => engine.close(),
+        error,
+      );
     }
   };
 
@@ -1136,7 +1304,10 @@ export async function configureBrowserDatabaseRuntime(
     readonly readonly?: boolean | undefined;
   }): Promise<Database> => {
     const name = storageName(open.name);
-    return withNameLock(name, () => openDatabaseUnlocked(open));
+    return withNameLock(name, async () => {
+      await retryFailedOpenCleanup(name);
+      return openDatabaseUnlocked(open);
+    });
   };
 
   const createDatabaseUnlocked = async (
@@ -1144,6 +1315,7 @@ export async function configureBrowserDatabaseRuntime(
   ): Promise<CreateDatabaseResult> => {
     throwIfAborted(create.signal, "db.browser.create");
     const name = storageName(create.name);
+    assertNoFailedOpenCleanup(name);
     const state = await storageState(name);
     assertDatabaseStorageKind(name, state);
     if ((state.sqlite || state.duckdb) && create.overwrite !== true) {
@@ -1166,7 +1338,7 @@ export async function configureBrowserDatabaseRuntime(
           candidate,
           false,
         );
-        engine = await BrowserDuckDbEngine.open({
+        engine = await openDuckEngine(candidate, "database", {
           ...options.duckdb,
           storageName: candidate,
           fileHandle: handles.file,
@@ -1182,11 +1354,13 @@ export async function configureBrowserDatabaseRuntime(
       const published = await publishCandidate(
         name,
         create.format,
+        "db.browser.create",
         "database",
         "warn",
         candidate,
         state,
         () => openDatabaseUnlocked({ name }),
+        create.signal,
       );
       return {
         database: published.value,
@@ -1235,14 +1409,18 @@ export async function configureBrowserDatabaseRuntime(
       );
     }
     assertPreparedStorageKind(name, state);
-    const engine = sqliteEngine(name);
+    const engine = sqliteEngine(name, false, "prepared");
     try {
       const prepared = await openPreparedImportHandle(engine);
       registerOpenHandle(name, prepared, "prepared");
       return prepared;
     } catch (error) {
-      await engine.close().catch(() => undefined);
-      throw error;
+      return failAfterOpenCleanup(
+        name,
+        "prepared",
+        () => engine.close(),
+        error,
+      );
     }
   };
 
@@ -1250,7 +1428,10 @@ export async function configureBrowserDatabaseRuntime(
     readonly name: string;
   }): Promise<PreparedImport> => {
     const name = storageName(open.name);
-    return withNameLock(name, () => openPreparedImportUnlocked(open));
+    return withNameLock(name, async () => {
+      await retryFailedOpenCleanup(name);
+      return openPreparedImportUnlocked(open);
+    });
   };
 
   const createPreparedImport = (
@@ -1259,6 +1440,7 @@ export async function configureBrowserDatabaseRuntime(
     const name = storageName(create.name);
     return withNameLock(name, async () => {
       throwIfAborted(create.signal, "db.browser.plan");
+      assertNoFailedOpenCleanup(name);
       const state = await storageState(name);
       assertPreparedStorageKind(name, state);
       if (state.sqlite && create.overwrite !== true) {
@@ -1278,7 +1460,7 @@ export async function configureBrowserDatabaseRuntime(
       let prepared: PreparedImport | undefined;
       let candidateClosed = false;
       try {
-        engine = sqliteEngine(candidate);
+        engine = sqliteEngine(candidate, false, "prepared");
         prepared = await createPreparedImportHandle({
           engine,
           databaseId: create.database.id,
@@ -1294,11 +1476,13 @@ export async function configureBrowserDatabaseRuntime(
           await publishCandidate(
             name,
             "sqlite",
+            "db.browser.plan",
             "prepared",
             "error",
             candidate,
             state,
             () => openPreparedImportUnlocked({ name }),
+            create.signal,
           )
         ).value;
       } catch (error) {
@@ -1387,6 +1571,7 @@ export async function configureBrowserDatabaseRuntime(
     async importDatabase(importOptions) {
       const name = storageName(importOptions.name);
       return withNameLock(name, async () => {
+        assertNoFailedOpenCleanup(name);
         const format = await detectSourceFormat(
           importOptions.source,
           importOptions.signal,
@@ -1474,11 +1659,13 @@ export async function configureBrowserDatabaseRuntime(
             await publishCandidate(
               name,
               format,
+              "db.browser.import",
               "database",
               "error",
               candidate,
               state,
               () => openDatabaseUnlocked({ name }),
+              importOptions.signal,
             )
           ).value;
         } catch (error) {
@@ -1512,45 +1699,75 @@ export async function configureBrowserDatabaseRuntime(
       const imports: BrowserPreparedImportSummary[] = [];
       const ignored: BrowserIgnoredPreparedImport[] = [];
       for (const name of names) {
-        let engine: BrowserSqliteEngine | undefined;
-        let prepared: PreparedImport | undefined;
-        try {
-          engine = new BrowserSqliteEngine(
-            sqlite,
-            new pool.OpfsSAHPoolDb(sqliteName(name)),
-            false,
-            { owner: pool, name: sqliteName(name) },
-          );
-          prepared = await openPreparedImportHandle(engine);
-          const ref = await preparedRef(prepared);
-          const applied =
-            ref.databaseId === listOptions.database.id &&
-            (await inspectAppliedImportPlan({
-              database: listOptions.database,
-              planId: ref.id,
-              planRevision: ref.planRevision,
-            })) !== null;
-          imports.push({
-            name,
-            id: prepared.id,
-            databaseId: prepared.databaseId,
-            application: applied ? "applied" : "pending",
-          });
-        } catch (error) {
-          ignored.push(
-            isConsultChimpsError(error)
-              ? { name, code: error.code, message: error.message }
-              : {
-                  name,
-                  code: "DB_BROWSER_PREPARED_IMPORT_UNREADABLE",
-                  message:
-                    "This saved import plan could not be reopened. Reload the workspace, then prepare the original sources again or restore a verified plan copy if it remains unavailable.",
-                },
-          );
-        } finally {
-          if (prepared !== undefined) await prepared.close();
-          else await engine?.close().catch(() => undefined);
-        }
+        await withNameLock(name, async () => {
+          let engine: BrowserSqliteEngine | undefined;
+          let prepared: PreparedImport | undefined;
+          let summary: BrowserPreparedImportSummary | undefined;
+          let inspection:
+            | { readonly status: "completed" }
+            | { readonly status: "failed"; readonly error: unknown } = {
+            status: "completed",
+          };
+          try {
+            await retryFailedOpenCleanup(name);
+            engine = sqliteEngine(name, false, "inspection");
+            prepared = await openPreparedImportHandle(engine);
+            const ref = await preparedRef(prepared);
+            const applied =
+              ref.databaseId === listOptions.database.id &&
+              (await inspectAppliedImportPlan({
+                database: listOptions.database,
+                planId: ref.id,
+                planRevision: ref.planRevision,
+              })) !== null;
+            summary = {
+              name,
+              id: prepared.id,
+              databaseId: prepared.databaseId,
+              application: applied ? "applied" : "pending",
+            };
+          } catch (error) {
+            inspection = { status: "failed", error };
+          }
+          const close =
+            prepared !== undefined
+              ? () => prepared.close()
+              : engine !== undefined
+                ? () => engine.close()
+                : undefined;
+          if (close !== undefined) {
+            try {
+              await close();
+            } catch (closeFailure) {
+              const primaryCauses =
+                inspection.status === "failed" ? [inspection.error] : [];
+              inspection = {
+                status: "failed",
+                error: openCleanupError(
+                  failedOpenCleanup.retain(name, "inspection", close, [
+                    ...primaryCauses,
+                    closeFailure,
+                  ]),
+                ),
+              };
+            }
+          }
+          if (inspection.status === "failed") {
+            const error = inspection.error;
+            ignored.push(
+              isConsultChimpsError(error)
+                ? { name, code: error.code, message: error.message }
+                : {
+                    name,
+                    code: "DB_BROWSER_PREPARED_IMPORT_UNREADABLE",
+                    message:
+                      "This saved import plan could not be reopened. Reload the workspace, then prepare the original sources again or restore a verified plan copy if it remains unavailable.",
+                  },
+            );
+          } else if (summary !== undefined) {
+            imports.push(summary);
+          }
+        });
       }
       return { imports, ignored };
     },

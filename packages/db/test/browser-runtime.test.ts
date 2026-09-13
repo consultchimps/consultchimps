@@ -16,7 +16,7 @@ import type * as SqliteWasmModule from "@sqlite.org/sqlite-wasm";
 
 import type { RandomAccessFile, RandomAccessSource } from "@consultchimps/core";
 
-import { inspectDatabase } from "../src/database.js";
+import { engineOf, inspectDatabase } from "../src/database.js";
 import { PREPARED_FORMAT_VERSION } from "../src/prepared.js";
 import { applySchema, planSchema } from "../src/records.js";
 import type {
@@ -248,9 +248,15 @@ class SqlitePoolHarness {
   #nextSlot = 1;
   readonly #slots = new Map<string, string>();
   failNextImportName: string | undefined;
+  afterNextImportChunk:
+    { readonly name: string; readonly run: () => void } | undefined;
   failNextCloseName: string | undefined;
   failNextUnlinkName: string | undefined;
   failNextSqlContaining: string | undefined;
+  failNextSqlWithClose:
+    { readonly sql: string; readonly name: string } | undefined;
+  afterNextOpen:
+    { readonly name: string; readonly run: () => void } | undefined;
 
   async install(
     sqlite: Sqlite3Static,
@@ -285,6 +291,11 @@ class SqlitePoolHarness {
           const chunk = await read();
           if (chunk === undefined) break;
           chunks.push(chunk);
+          if (this.afterNextImportChunk?.name === name) {
+            const afterChunk = this.afterNextImportChunk;
+            this.afterNextImportChunk = undefined;
+            afterChunk.run();
+          }
         }
         const size = chunks.reduce((total, chunk) => total + chunk.length, 0);
         const bytes = new Uint8Array(size);
@@ -320,6 +331,11 @@ class SqlitePoolHarness {
       throw new Error("SQLite read-only database does not exist");
     }
     const database = new NativeDatabase(":memory:");
+    if (this.afterNextOpen?.name === name) {
+      const afterOpen = this.afterNextOpen;
+      this.afterNextOpen = undefined;
+      afterOpen.run();
+    }
     const existing = this.databases.get(name);
     if (existing !== undefined) {
       const databasePointer = database.pointer;
@@ -361,6 +377,14 @@ class SqlitePoolHarness {
         sql.includes(this.failNextSqlContaining)
       ) {
         this.failNextSqlContaining = undefined;
+        throw new Error("Injected SQLite metadata failure");
+      }
+      if (
+        this.failNextSqlWithClose !== undefined &&
+        sql.includes(this.failNextSqlWithClose.sql)
+      ) {
+        this.failNextCloseName = this.failNextSqlWithClose.name;
+        this.failNextSqlWithClose = undefined;
         throw new Error("Injected SQLite metadata failure");
       }
       return Reflect.apply(execute, database, arguments_);
@@ -429,13 +453,17 @@ const runtimeOptions: BrowserDatabaseRuntimeOptions = {
 };
 
 beforeAll(async () => {
-  vi.doMock("../src/engines/duckdb/browser.js", () => ({
-    BrowserDuckDbEngine: class {
-      static async open(): Promise<never> {
-        throw new Error("DuckDB is outside this SQLite runtime fixture");
-      }
-    },
-  }));
+  vi.doMock("../src/engines/duckdb/browser.js", () => {
+    class BrowserDuckDbOpenCleanupError extends Error {}
+    return {
+      BrowserDuckDbOpenCleanupError,
+      BrowserDuckDbEngine: class {
+        static async open(): Promise<never> {
+          throw new Error("DuckDB is outside this SQLite runtime fixture");
+        }
+      },
+    };
+  });
   vi.doMock("@sqlite.org/sqlite-wasm", async () => {
     const actual = await vi.importActual<typeof SqliteWasmModule>(
       "@sqlite.org/sqlite-wasm",
@@ -1721,6 +1749,65 @@ describe("browser database runtime", () => {
     await created.database.close();
   });
 
+  test("reserves each prepared-plan name while listing and closing it", async () => {
+    const runtime = await createRuntime();
+    const created = await runtime.createDatabase({
+      name: "listing-lock-workspace.sqlite",
+      format: "sqlite",
+    });
+    const inspection = await inspectDatabase({ database: created.database });
+    const planName = ".consultchimps-import-listing-lock.sqlite";
+    const prepared = await runtime.createPreparedImport({
+      name: planName,
+      database: created.database,
+      recipe: { version: 1, routes: [] },
+      baselineRevision: inspection.revision,
+    });
+    const planId = prepared.id;
+    await prepared.close();
+
+    let releaseDatabase = (): void => undefined;
+    const databaseReleased = new Promise<void>((resolve) => {
+      releaseDatabase = resolve;
+    });
+    let markDatabaseBlocked = (): void => undefined;
+    const databaseBlocked = new Promise<void>((resolve) => {
+      markDatabaseBlocked = resolve;
+    });
+    const blocking = engineOf(created.database).transaction(async () => {
+      markDatabaseBlocked();
+      await databaseReleased;
+    });
+    await databaseBlocked;
+    let markPlanOpened = (): void => undefined;
+    const planOpened = new Promise<void>((resolve) => {
+      markPlanOpened = resolve;
+    });
+    harness.afterNextOpen = { name: `/${planName}`, run: markPlanOpened };
+    const listing = runtime.listPreparedImports({ database: created.database });
+    await planOpened;
+
+    let discardSettled = false;
+    const discard = runtime
+      .discardPreparedImport({ name: planName })
+      .finally(() => {
+        discardSettled = true;
+      });
+    await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+    expect(discardSettled).toBe(false);
+
+    releaseDatabase();
+    await blocking;
+    await expect(listing).resolves.toMatchObject({
+      imports: [{ name: planName, id: planId }],
+    });
+    await discard;
+    await expect(
+      runtime.openPreparedImport({ name: planName }),
+    ).rejects.toMatchObject({ code: "DB_BROWSER_STORAGE_MISSING" });
+    await created.database.close();
+  });
+
   test("preserves a prepared import when replacement initialization fails", async () => {
     const runtime = await createRuntime();
     const created = await runtime.createDatabase({
@@ -1900,6 +1987,248 @@ describe("browser database runtime", () => {
     });
     expect(replacement.id).not.toBe(originalId);
     await replacement.close();
+    await created.database.close();
+  });
+
+  test("restores the previous database when cancellation arrives during publication copy", async () => {
+    const runtime = await createRuntime();
+    const original = await runtime.createDatabase({
+      name: "publication-cancel.sqlite",
+      format: "sqlite",
+      schema: {
+        version: 1,
+        tables: [
+          {
+            name: "Preserved",
+            columns: [{ name: "value", type: "text" }],
+            recordId: { prefix: "KEEP", padding: 3 },
+          },
+        ],
+      },
+    });
+    const originalId = original.database.id;
+    await original.database.close();
+    const originalBytes = harness.databases
+      .get("/publication-cancel.sqlite")
+      ?.slice();
+    if (originalBytes === undefined) throw new Error("Missing original bytes");
+
+    const replacement = await runtime.createDatabase({
+      name: "publication-source.sqlite",
+      format: "sqlite",
+      schema: {
+        version: 1,
+        tables: [
+          {
+            name: "Replacement",
+            columns: [{ name: "value", type: "text" }],
+            recordId: { prefix: "NEW", padding: 3 },
+          },
+        ],
+      },
+    });
+    await replacement.database.close();
+    const replacementBytes = harness.databases
+      .get("/publication-source.sqlite")
+      ?.slice();
+    if (replacementBytes === undefined)
+      throw new Error("Missing replacement bytes");
+    const controller = new AbortController();
+    harness.afterNextImportChunk = {
+      name: "/publication-cancel.sqlite",
+      run: () => controller.abort(),
+    };
+
+    await expect(
+      runtime.importDatabase({
+        name: "publication-cancel.sqlite",
+        source: new MemoryFile("replacement.sqlite", replacementBytes),
+        overwrite: true,
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ code: "OPERATION_ABORTED" });
+
+    expect(harness.databases.get("/publication-cancel.sqlite")).toEqual(
+      originalBytes,
+    );
+    expect(
+      [...harness.databases.keys()].filter((name) =>
+        name.includes(".consultchimps-"),
+      ),
+    ).toEqual([]);
+    const reopened = await runtime.openDatabase({
+      name: "publication-cancel.sqlite",
+    });
+    expect(reopened.id).toBe(originalId);
+    expect(
+      (await inspectDatabase({ database: reopened })).tables.map(
+        (table) => table.name,
+      ),
+    ).toEqual(["Preserved"]);
+    await reopened.close();
+  });
+
+  test("retains a failed-open engine until its close can be retried", async () => {
+    const runtime = await createRuntime();
+    const original = await runtime.createDatabase({
+      name: "open-cleanup.sqlite",
+      format: "sqlite",
+      schema: {
+        version: 1,
+        tables: [
+          {
+            name: "Preserved",
+            columns: [{ name: "value", type: "text" }],
+            recordId: { prefix: "KEEP", padding: 3 },
+          },
+        ],
+      },
+    });
+    const originalId = original.database.id;
+    await original.database.close();
+    const originalBytes = harness.databases
+      .get("/open-cleanup.sqlite")
+      ?.slice();
+    if (originalBytes === undefined) throw new Error("Missing original bytes");
+    harness.failNextSqlWithClose = {
+      sql: "SELECT format_version FROM _consultchimps_database",
+      name: "/open-cleanup.sqlite",
+    };
+
+    let failure: unknown;
+    try {
+      await runtime.openDatabase({ name: "open-cleanup.sqlite" });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      code: "DB_BROWSER_OPEN_CLEANUP_REQUIRED",
+      details: {
+        name: "open-cleanup.sqlite",
+        ownerKinds: ["database"],
+        closeFailed: true,
+      },
+    });
+    expect(((failure as Error).cause as Error).cause).toBeInstanceOf(
+      AggregateError,
+    );
+    expect(
+      (((failure as Error).cause as Error).cause as AggregateError).errors,
+    ).toEqual([
+      expect.objectContaining({
+        code: "DB_CORRUPT_DATABASE",
+        cause: expect.objectContaining({
+          message: "Injected SQLite metadata failure",
+        }),
+      }),
+      expect.objectContaining({ message: "Injected SQLite close failure" }),
+    ]);
+    await expect(
+      runtime.createDatabase({
+        name: "open-cleanup.sqlite",
+        format: "sqlite",
+        overwrite: true,
+      }),
+    ).rejects.toMatchObject({
+      code: "DB_BROWSER_DATABASE_BUSY",
+      details: { name: "open-cleanup.sqlite", failedOpenCleanup: true },
+    });
+    expect(harness.databases.get("/open-cleanup.sqlite")).toEqual(
+      originalBytes,
+    );
+
+    const reopened = await runtime.openDatabase({
+      name: "open-cleanup.sqlite",
+    });
+    expect(reopened.id).toBe(originalId);
+    await reopened.close();
+    const replacement = await runtime.createDatabase({
+      name: "open-cleanup.sqlite",
+      format: "sqlite",
+      overwrite: true,
+    });
+    expect(replacement.database.id).not.toBe(originalId);
+    await replacement.database.close();
+  });
+
+  test("retains SQLite ownership when engine initialization and cleanup fail", async () => {
+    const runtime = await createRuntime();
+    const original = await runtime.createDatabase({
+      name: "initialization-cleanup.sqlite",
+      format: "sqlite",
+    });
+    const originalId = original.database.id;
+    await original.database.close();
+    harness.failNextSqlWithClose = {
+      sql: "PRAGMA foreign_keys = ON",
+      name: "/initialization-cleanup.sqlite",
+    };
+
+    await expect(
+      runtime.openDatabase({ name: "initialization-cleanup.sqlite" }),
+    ).rejects.toMatchObject({
+      code: "DB_BROWSER_OPEN_CLEANUP_REQUIRED",
+      details: {
+        name: "initialization-cleanup.sqlite",
+        ownerKinds: ["inspection"],
+        closeFailed: true,
+      },
+    });
+    await expect(
+      runtime.createDatabase({
+        name: "initialization-cleanup.sqlite",
+        format: "sqlite",
+        overwrite: true,
+      }),
+    ).rejects.toMatchObject({ code: "DB_BROWSER_DATABASE_BUSY" });
+
+    const reopened = await runtime.openDatabase({
+      name: "initialization-cleanup.sqlite",
+    });
+    expect(reopened.id).toBe(originalId);
+    await reopened.close();
+  });
+
+  test("retains a failed-open prepared plan until its close can be retried", async () => {
+    const runtime = await createRuntime();
+    const created = await runtime.createDatabase({
+      name: "prepared-open-workspace.sqlite",
+      format: "sqlite",
+    });
+    const inspection = await inspectDatabase({ database: created.database });
+    const planName = ".consultchimps-import-open-cleanup.sqlite";
+    const original = await runtime.createPreparedImport({
+      name: planName,
+      database: created.database,
+      recipe: { version: 1, routes: [] },
+      baselineRevision: inspection.revision,
+    });
+    const originalId = original.id;
+    await original.close();
+    harness.failNextSqlWithClose = {
+      sql: "SELECT format_version, plan_id, database_id FROM",
+      name: `/${planName}`,
+    };
+
+    await expect(
+      runtime.openPreparedImport({ name: planName }),
+    ).rejects.toMatchObject({
+      code: "DB_BROWSER_OPEN_CLEANUP_REQUIRED",
+      details: { name: planName, ownerKinds: ["prepared"] },
+    });
+    await expect(
+      runtime.createPreparedImport({
+        name: planName,
+        database: created.database,
+        recipe: { version: 1, routes: [] },
+        baselineRevision: inspection.revision,
+        overwrite: true,
+      }),
+    ).rejects.toMatchObject({ code: "DB_BROWSER_DATABASE_BUSY" });
+
+    const reopened = await runtime.openPreparedImport({ name: planName });
+    expect(reopened.id).toBe(originalId);
+    await reopened.close();
     await created.database.close();
   });
 

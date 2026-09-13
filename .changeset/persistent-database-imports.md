@@ -48,3 +48,9 @@ cannot silently suppress imported rows or alter retry receipts.
 Revalidate schema plans before applying changes and reject undeclared reader
 cells before capture. Preserve cleanup failures and recovery paths when a native
 open or one-step CLI import fails.
+
+Validate internal table types, nullability, and key constraints when opening
+databases and saved plans. Delay CLI database results until resource cleanup
+finishes, preserving valid JSON and recovery details after a committed
+operation. Check cancellation during browser replacement copies and preserve
+failed browser open cleanup so live owners continue to block replacement.

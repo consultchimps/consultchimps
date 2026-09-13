@@ -2,6 +2,10 @@ import { isConsultChimpsError } from "@consultchimps/core";
 
 import { databaseError } from "../errors.js";
 import {
+  assertInternalTableStorage,
+  type InternalTableStorage,
+} from "./table-storage.js";
+import {
   identifierKey,
   quoteIdentifier,
   type ColumnDefinition,
@@ -34,30 +38,44 @@ import type {
 const REQUIRED_DATABASE_SCHEMA = [
   {
     table: DATABASE_METADATA_TABLE,
+    primaryKey: ["database_id"],
+    integerColumns: ["format_version", "revision"],
     columns: ["database_id", "format", "format_version", "revision"],
   },
   {
     table: TABLE_REGISTRY_TABLE,
+    primaryKey: ["table_name"],
+    integerColumns: ["schema_version", "next_record_id"],
     columns: ["table_name", "schema_json", "schema_version", "next_record_id"],
   },
   {
     table: COUNTERS_TABLE,
+    primaryKey: ["counter_name"],
+    integerColumns: ["next_value"],
     columns: ["counter_name", "next_value"],
   },
   {
     table: SOURCE_CONTENT_TABLE,
+    primaryKey: ["content_hash"],
+    integerColumns: ["byte_count"],
     columns: ["content_hash", "byte_count"],
   },
   {
     table: SOURCE_FILE_TABLE,
+    primaryKey: ["source_file_id"],
+    uniqueKeys: [["content_hash"]],
     columns: ["source_file_id", "content_hash", "display_name"],
   },
   {
     table: SOURCE_NAME_TABLE,
+    primaryKey: ["source_file_id", "display_name"],
     columns: ["source_file_id", "display_name"],
   },
   {
     table: CAPTURE_TABLE,
+    primaryKey: ["capture_id"],
+    integerColumns: ["row_count"],
+    uniqueKeys: [["source_file_id", "selection_key", "reader_version"]],
     columns: [
       "capture_id",
       "source_file_id",
@@ -72,6 +90,8 @@ const REQUIRED_DATABASE_SCHEMA = [
   },
   {
     table: PLAN_TABLE,
+    primaryKey: ["plan_id", "plan_revision"],
+    integerColumns: ["plan_revision", "baseline_revision"],
     columns: [
       "plan_id",
       "plan_revision",
@@ -85,10 +105,19 @@ const REQUIRED_DATABASE_SCHEMA = [
   },
   {
     table: CAPTURE_ROW_TABLE,
+    primaryKey: ["capture_id", "source_row"],
+    integerColumns: ["source_row"],
+    duckdbWithoutPrimaryKey: true,
     columns: ["capture_id", "source_row", "values_json"],
   },
   {
     table: APPLICATION_TABLE,
+    primaryKey: ["import_id"],
+    integerColumns: ["plan_revision", "row_count"],
+    uniqueKeys: [
+      ["application_key"],
+      ["request_id", "capture_id", "table_name"],
+    ],
     columns: [
       "import_id",
       "application_key",
@@ -102,6 +131,8 @@ const REQUIRED_DATABASE_SCHEMA = [
   },
   {
     table: IMPORT_REQUEST_TABLE,
+    primaryKey: ["request_id"],
+    integerColumns: ["plan_revision", "row_count"],
     columns: [
       "request_id",
       "plan_id",
@@ -113,13 +144,16 @@ const REQUIRED_DATABASE_SCHEMA = [
   },
   {
     table: DELIVERY_TABLE,
+    primaryKey: ["delivery_id"],
+    uniqueKeys: [["request_id"]],
     columns: ["delivery_id", "request_id", "context_json"],
   },
   {
     table: DELIVERY_MEMBERSHIP_TABLE,
+    primaryKey: ["delivery_id", "capture_id"],
     columns: ["delivery_id", "capture_id"],
   },
-] as const;
+] as const satisfies readonly InternalTableStorage[];
 
 export async function assertNoSqliteTableTriggers(
   transaction: EngineTransaction,
@@ -431,8 +465,8 @@ export async function validateDatabaseLayout(
     const rows = await queryDatabaseMetadata(
       engine,
       engine.format === "sqlite"
-        ? "SELECT name AS column_name FROM pragma_table_info(?) ORDER BY cid"
-        : "SELECT column_name FROM information_schema.columns WHERE table_schema = 'main' AND table_name = ? ORDER BY ordinal_position",
+        ? "SELECT *, name AS column_name FROM pragma_table_xinfo(?, 'main') ORDER BY cid"
+        : "SELECT *, name AS column_name FROM pragma_table_info(?) ORDER BY cid",
       [required.table],
     );
     const columns = rows.map((row) =>
@@ -465,5 +499,12 @@ export async function validateDatabaseLayout(
           : {}),
       });
     }
+    await assertInternalTableStorage({
+      query: (sql, values) => queryDatabaseMetadata(engine, sql, values),
+      format: engine.format,
+      layout: required,
+      columns: rows,
+      invalid: corruptDatabase,
+    });
   }
 }

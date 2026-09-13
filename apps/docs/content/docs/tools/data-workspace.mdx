@@ -391,8 +391,12 @@ schema changes invalidate saved schema plans.
 `db inspect` can describe table columns in an ordinary SQLite or DuckDB file
 without adding ConsultChimps metadata or reading its rows. Managed imports,
 delivery history, and conversion require a database created by ConsultChimps.
-This phase does not adopt an arbitrary application's database for managed
-writes.
+
+Managed database opening checks the layout and key constraints of its reserved
+tables. `DB_CORRUPT_DATABASE` or `DB_INVALID_PREPARED_IMPORT` can indicate an
+externally changed internal column or key. Restore a verified database or plan
+copy before continuing. This phase does not adopt an arbitrary application's
+database for managed writes.
 
 ## Browser storage and exported files
 
@@ -406,6 +410,11 @@ outcome before retrying. `published: true` means the new working copy is already
 stored under the reported public name. The error also lists private candidate or
 backup names that may remain. Resolve the storage issue and release any
 remaining handles before reopening the working copy.
+
+Cancelling browser replacement during copying attempts to restore the previous
+working copy. If an open fails with `DB_BROWSER_OPEN_CLEANUP_REQUIRED`, retry
+opening it to release the retained handles. If that cleanup still fails, reload
+the page before replacing or removing the reported copy.
 
 Browser storage belongs to the site's origin and browser profile. Clearing site
 data removes it, and private browsing or storage quotas can prevent persistence.
@@ -456,6 +465,12 @@ could not finish closing or being removed. Its details include
 `operationCompleted` and any private plan directory. Inspect a completed import
 before repeating it. `CLI_DB_INPUT_CLEANUP_REQUIRED` retains failures to close
 workbooks, input files, or scratch storage.
+
+Database commands delay their result until required cleanup finishes, so
+`--json` emits a single result or error envelope. If another database command
+commits its result but cannot close its resources,
+`CLI_DB_COMMAND_CLEANUP_REQUIRED` identifies the operation and recovery paths.
+Inspect those files before deciding whether to retry.
 
 The Node library refuses replacement with `DB_NATIVE_FILE_BUSY` while a database
 or plan remains open through the same runtime, including a filesystem alias.

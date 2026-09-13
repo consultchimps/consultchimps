@@ -13,6 +13,10 @@ import type {
 import { assertNoSqliteTableTriggers } from "./internal/database-layout.js";
 import { canonicalJson } from "./internal/json.js";
 import {
+  assertInternalTableStorage,
+  type InternalTableStorage,
+} from "./internal/table-storage.js";
+import {
   parseImportConflicts,
   parseImportDecisions,
   parseImportRecipe,
@@ -56,6 +60,8 @@ export async function assertPreparedImportWritable(
 const REQUIRED_PREPARED_SCHEMA = [
   {
     table: PREPARED_METADATA_TABLE,
+    primaryKey: ["plan_id"],
+    integerColumns: ["format_version", "baseline_revision", "plan_revision"],
     columns: [
       "format_version",
       "plan_id",
@@ -72,6 +78,9 @@ const REQUIRED_PREPARED_SCHEMA = [
   },
   {
     table: PREPARED_CAPTURE_TABLE,
+    primaryKey: ["capture_id"],
+    integerColumns: ["byte_count", "reused", "row_count"],
+    nullableColumns: ["source_file_id"],
     columns: [
       "capture_id",
       "source_file_id",
@@ -90,13 +99,16 @@ const REQUIRED_PREPARED_SCHEMA = [
   },
   {
     table: PREPARED_BINDING_TABLE,
+    primaryKey: ["source_key", "selection_key"],
     columns: ["source_key", "selection_key", "capture_id", "display_name"],
   },
   {
     table: PREPARED_ROW_TABLE,
+    primaryKey: ["capture_id", "source_row"],
+    integerColumns: ["source_row"],
     columns: ["capture_id", "source_row", "values_json"],
   },
-] as const;
+] as const satisfies readonly InternalTableStorage[];
 
 const engines = new WeakMap<PreparedImport, DatabaseEngine>();
 
@@ -252,7 +264,7 @@ async function validatePreparedSchema(engine: DatabaseEngine): Promise<void> {
   for (const required of REQUIRED_PREPARED_SCHEMA) {
     const columns = await preparedQuery(
       engine,
-      "SELECT name FROM pragma_table_info(?) ORDER BY cid",
+      "SELECT * FROM pragma_table_xinfo(?, 'main') ORDER BY cid",
       [required.table],
     );
     const actualColumns = columns.map((row) =>
@@ -268,6 +280,13 @@ async function validatePreparedSchema(engine: DatabaseEngine): Promise<void> {
         actualColumns,
       });
     }
+    await assertInternalTableStorage({
+      query: (sql, values) => preparedQuery(engine, sql, values),
+      format: engine.format,
+      layout: required,
+      columns,
+      invalid: invalidPreparedImport,
+    });
   }
 }
 

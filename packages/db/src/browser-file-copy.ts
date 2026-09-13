@@ -34,7 +34,11 @@ export interface BrowserReadableFileHandle {
   }>;
 }
 
-type BrowserCopyOperation = "db.browser.export" | "db.browser.import";
+type BrowserCopyOperation =
+  | "db.browser.create"
+  | "db.browser.export"
+  | "db.browser.import"
+  | "db.browser.plan";
 
 async function readExact(
   source: RandomAccessSource,

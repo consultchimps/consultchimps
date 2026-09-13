@@ -100,11 +100,12 @@ already-applied table applications do not rescan row contents.
 
 These are integrity checks, not digital signatures. An editor who coherently
 rewrites the artifact and its checksums can produce a different valid artifact.
-Internal metadata tables have a fixed column-name sequence. Opening a database
-with added, missing, or reordered internal columns returns
-`DB_CORRUPT_DATABASE`; a damaged prepared plan returns
+Internal metadata tables have fixed columns, storage types, nullability, and
+primary and unique keys. Opening a database with a changed internal layout
+returns `DB_CORRUPT_DATABASE`; a damaged prepared plan returns
 `DB_INVALID_PREPARED_IMPORT`. Restore a verified copy rather than altering these
-reserved tables.
+reserved tables. Validation retains the existing engine-specific layout,
+including the DuckDB capture-row table without a primary key.
 
 Version 1 and 2 spike plans are unsupported. Regenerate them from their original
 sources with this build. Existing working database files keep their format.
@@ -225,16 +226,18 @@ Browser database create and import operations, and prepared-plan creation,
 validate a temporary candidate before replacing an existing working copy. A
 replacement can temporarily require space for the existing working copy, the
 candidate, and a recovery backup. Closing the open handle is required before
-replacement. Cancellation is checked before publication begins; after that
-boundary the runtime finishes publication or restores the backup so the logical
-name does not point at a partial working copy. If publication and restoration
-both fail, the error reports the retained backup name and its kind. A library
-caller can open a database backup with `BrowserDatabaseRuntime.openDatabase` and
-export it, or open a prepared-plan backup with `openPreparedImport` to inspect
-or resume it. This recovery covers failures reported to the running operation.
-An abrupt tab, worker, or browser termination can interrupt publication. DuckDB
-stores its main file and write-ahead log as separate OPFS entries, so browser
-replacement is not crash-atomic across those entries.
+replacement. Cancellation is checked throughout backup and publication copying,
+and before reopening the published name. Cancellation during replacement
+attempts to restore the backup; recovery runs without the cancelled signal. Once
+reopening begins, the runtime finishes publication or restores the backup. If
+publication and restoration both fail, the error reports the retained backup
+name and its kind. A library caller can open a database backup with
+`BrowserDatabaseRuntime.openDatabase` and export it, or open a prepared-plan
+backup with `openPreparedImport` to inspect or resume it. This recovery covers
+failures reported to the running operation. An abrupt tab, worker, or browser
+termination can interrupt publication. DuckDB stores its main file and
+write-ahead log as separate OPFS entries, so browser replacement is not
+crash-atomic across those entries.
 
 If candidate cleanup fails after browser creation, plan creation, or import
 fails, `DB_BROWSER_CANDIDATE_CLEANUP_REQUIRED` retains the operation and cleanup
@@ -242,6 +245,13 @@ causes. Its details identify the candidate name, storage namespace, and whether
 closure or removal failed. Resolve the storage issue and release remaining
 handles before removing abandoned candidates. DuckDB locations include the main
 file and WAL; SQLite candidate names refer to the logical pool namespace.
+
+`DB_BROWSER_OPEN_CLEANUP_REQUIRED` means opening or inspecting a working copy
+failed and its engine could not close. The runtime retains the owner and blocks
+replacement. A later explicit open retries cleanup before reopening the file. If
+cleanup continues to fail, reload the page or worker context before replacing or
+removing the reported storage. Creating another runtime in the same context does
+not release those owners.
 
 `BrowserDatabaseRuntime.listPreparedImports` returns readable `imports` and
 `ignored` entries with a `name`, stable error `code`, and recovery `message`.

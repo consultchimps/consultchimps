@@ -10,7 +10,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { afterEach, expect, test } from "vitest";
@@ -89,6 +89,55 @@ async function runFailure(args: string[]): Promise<{
     throw error;
   }
   throw new Error("The command unexpectedly succeeded.");
+}
+
+async function closeFailureLoader(root: string): Promise<string> {
+  const shim = path.join(root, "database-close-failure.mjs");
+  const loader = path.join(root, "database-close-failure-loader.mjs");
+  const databaseModule = pathToFileURL(
+    fileURLToPath(new URL("../../db/dist/node.js", import.meta.url)),
+  ).href;
+  const coreModule = pathToFileURL(
+    fileURLToPath(new URL("../../core/dist/index.js", import.meta.url)),
+  ).href;
+  await writeFile(
+    shim,
+    `export * from ${JSON.stringify(databaseModule)};
+import { createDatabase as createRealDatabase } from ${JSON.stringify(databaseModule)};
+import { ConsultChimpsError } from ${JSON.stringify(coreModule)};
+export async function createDatabase(options) {
+  const created = await createRealDatabase(options);
+  return {
+    ...created,
+    database: new Proxy(created.database, {
+      get(target, property) {
+        if (property === "close") return async () => {
+          await target.close();
+          throw new ConsultChimpsError(
+            "DB_INJECTED_CLOSE_FAILURE",
+            "The injected database close failed after the database was created.",
+          );
+        };
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }),
+  };
+}
+`,
+  );
+  await writeFile(
+    loader,
+    `const shim = ${JSON.stringify(pathToFileURL(shim).href)};
+export async function resolve(specifier, context, nextResolve) {
+  if (specifier === "@consultchimps/db/node") {
+    return { shortCircuit: true, url: shim };
+  }
+  return nextResolve(specifier, context);
+}
+`,
+  );
+  return loader;
 }
 
 test.each([
@@ -171,6 +220,101 @@ test("a missing database document has an actionable human error", async () => {
   expect(failure.stderr).toContain("DB_DOCUMENT_UNREADABLE");
   expect(failure.stderr).not.toContain("private-configuration.json");
   expect(await readFile(output, "utf8")).toBe("existing output");
+});
+
+test("a close failure after db create defers JSON and human success output", async () => {
+  const root = await directory();
+  const database = path.join(root, "created.sqlite");
+  const loader = await closeFailureLoader(root);
+  let stdout: string;
+  let stderr: string;
+
+  try {
+    await execute(
+      process.execPath,
+      [
+        "--no-warnings",
+        "--experimental-loader",
+        loader,
+        cli,
+        "--json",
+        "db",
+        "create",
+        "-o",
+        database,
+      ],
+      { encoding: "utf8" },
+    );
+    throw new Error("The command unexpectedly succeeded.");
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      !("stdout" in error) ||
+      typeof error.stdout !== "string" ||
+      !("stderr" in error) ||
+      typeof error.stderr !== "string"
+    )
+      throw error;
+    stdout = error.stdout;
+    stderr = error.stderr;
+  }
+
+  expect(stdout, stderr).not.toBe("");
+  expect(stdout.trim().split("\n")).toHaveLength(1);
+  expect(JSON.parse(stdout)).toEqual({
+    ok: false,
+    error: {
+      code: "CLI_DB_COMMAND_CLEANUP_REQUIRED",
+      message: expect.stringContaining(
+        "The database operation completed, but its local resources could not finish closing.",
+      ),
+    },
+  });
+  expect(JSON.parse(stderr)).toEqual(JSON.parse(stdout));
+  expect(stdout).not.toContain('"ok":true');
+  await expect(run(["inspect", database])).resolves.toMatchObject({
+    format: "sqlite",
+  });
+
+  const humanDatabase = path.join(root, "human-created.sqlite");
+  let humanStdout: string;
+  let humanStderr: string;
+  try {
+    await execute(
+      process.execPath,
+      [
+        "--no-warnings",
+        "--experimental-loader",
+        loader,
+        cli,
+        "db",
+        "create",
+        "-o",
+        humanDatabase,
+      ],
+      { encoding: "utf8" },
+    );
+    throw new Error("The command unexpectedly succeeded.");
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      !("stdout" in error) ||
+      typeof error.stdout !== "string" ||
+      !("stderr" in error) ||
+      typeof error.stderr !== "string"
+    )
+      throw error;
+    humanStdout = error.stdout;
+    humanStderr = error.stderr;
+  }
+  expect(humanStdout).toBe("");
+  expect(humanStderr).toContain(
+    "The database operation completed, but its local resources could not finish closing.",
+  );
+  expect(humanStderr).toContain("CLI_DB_COMMAND_CLEANUP_REQUIRED");
+  await expect(run(["inspect", humanDatabase])).resolves.toMatchObject({
+    format: "sqlite",
+  });
 });
 
 test("an existing workbook path containing an equals sign remains a plain path", async () => {

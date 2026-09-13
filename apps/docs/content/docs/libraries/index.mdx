@@ -295,6 +295,12 @@ capture reuse flags must be stored as 0 or 1. Invalid prepared rows return
 random-access bytes and bounded region readers without importing CLI or browser
 code.
 
+Opening managed databases and prepared plans validates internal column order,
+storage types, nullability, and primary and unique keys. A changed internal
+layout returns `DB_CORRUPT_DATABASE` or `DB_INVALID_PREPARED_IMPORT` before the
+handle is returned. Restore a verified copy rather than rebuilding reserved
+tables.
+
 Native staging errors report `DB_NATIVE_TEMPORARY_CLEANUP_REQUIRED` if private
 files or handles cannot be cleaned up, with the owned paths and failure causes.
 These paths include SQLite WAL and shared-memory files or DuckDB WAL and spill
@@ -391,6 +397,14 @@ may remain, the `sqlitePoolDirectory`, and the `duckdbDirectory`. SQLite names
 belong to the pool's logical namespace; DuckDB names identify OPFS files. When
 restoration fails too, `DB_BROWSER_REPLACEMENT_RECOVERY_REQUIRED` retains backup
 names and the recovery causes.
+
+Browser publication checks cancellation during backup and bounded copy steps,
+and before reopening the published name. Recovery after cancellation attempts to
+restore prior storage without reusing the cancelled signal. Opening and
+inspection failures followed by failed engine closure return
+`DB_BROWSER_OPEN_CLEANUP_REQUIRED`, retaining ownership and failure causes.
+Retry an explicit open to finish cleanup. Replacement stays blocked until those
+owners close or their page or worker context is reloaded.
 
 Successful `createDatabase` results include a warning with possible retained
 locations if temporary cleanup fails. `importDatabase` and

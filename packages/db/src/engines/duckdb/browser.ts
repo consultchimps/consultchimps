@@ -68,6 +68,28 @@ export interface BrowserDuckDbSnapshotStorage extends DuckDbSnapshotStorage {
   readonly walHandle: BrowserFileHandle;
 }
 
+export class BrowserDuckDbOpenCleanupError extends Error {
+  readonly openCause: unknown;
+  readonly cleanupCause: unknown;
+  readonly retryCleanup: () => Promise<void>;
+
+  constructor(
+    openCause: unknown,
+    cleanupCause: unknown,
+    retryCleanup: () => Promise<void>,
+  ) {
+    super("DuckDB browser open cleanup failed", {
+      cause: new AggregateError(
+        [openCause, cleanupCause],
+        "DuckDB browser open and cleanup failed",
+      ),
+    });
+    this.openCause = openCause;
+    this.cleanupCause = cleanupCause;
+    this.retryCleanup = retryCleanup;
+  }
+}
+
 interface BrowserFile {
   readonly size: number;
   slice(start?: number, end?: number): Blob;
@@ -156,7 +178,13 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
         options.createReadonlySnapshot,
       );
     } catch (error) {
-      await database.terminate().catch(() => undefined);
+      try {
+        await database.terminate();
+      } catch (cleanupError) {
+        throw new BrowserDuckDbOpenCleanupError(error, cleanupError, () =>
+          database.terminate(),
+        );
+      }
       throw error;
     }
   }
