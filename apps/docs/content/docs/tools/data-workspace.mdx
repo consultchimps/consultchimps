@@ -450,6 +450,14 @@ is cancelled, reopen the working database and resume the saved review. A
 cancelled apply rolls back its transaction, so retrying the plan does not keep a
 partly written batch.
 
+If loading saved reviews reports a cleanup failure, keep the tab open and choose
+**Retry saved imports**. The tool retries retained handles before listing the
+reviews again.
+
+A saved plan containing rows from an unfinished capture is rejected when it
+reopens. Prepare the original sources again or restore a verified plan copy.
+Opening the damaged plan does not delete it.
+
 The browser saves an import request before applying it. If the database commits
 but the worker response is lost, reopen the database and choose **Finish
 recovery**. The workspace replays the same request ID and returns its saved

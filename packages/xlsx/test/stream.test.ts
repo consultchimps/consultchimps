@@ -450,6 +450,65 @@ describe("bounded workbook streaming", () => {
     },
   );
 
+  it.each([
+    [
+      "a foreign direct child",
+      "<ext:workbookPr xmlns:ext='urn:synthetic-extension' date1904='1'/>",
+    ],
+    [
+      "a nested SpreadsheetML element",
+      "<x:extLst><x:workbookPr date1904='1'/></x:extLst>",
+    ],
+    [
+      "a foreign extension element beside genuine properties",
+      "<x:workbookPr date1904='0'/><x:extLst><ext:workbookPr xmlns:ext='urn:synthetic-extension' date1904='1'/></x:extLst>",
+    ],
+    [
+      "a foreign date1904 attribute",
+      "<x:workbookPr xmlns:ext='urn:synthetic-extension' ext:date1904='1'/>",
+    ],
+  ])("ignores %s named workbookPr", async (_label, impostor) => {
+    const workbook = workbookMetadataXml({}).replace(
+      "<x:workbookPr></x:workbookPr>",
+      impostor,
+    );
+    const input = source(
+      await workbookFixtureWithParts({ "xl/workbook.xml": workbook }),
+    );
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { table: "InventoryTable" },
+      { scratch: new MemoryScratch() },
+    );
+
+    expect((await rows(reader))[0]?.cells.Date).toEqual({
+      kind: "date",
+      raw: "1",
+      iso: "1900-01-01",
+    });
+  });
+
+  it("uses the Strict SpreadsheetML date system", async () => {
+    const workbook = workbookMetadataXml({ date1904: "true" }).replaceAll(
+      "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+      "http://purl.oclc.org/ooxml/spreadsheetml/main",
+    );
+    const input = source(
+      await workbookFixtureWithParts({ "xl/workbook.xml": workbook }),
+    );
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { table: "InventoryTable" },
+      { scratch: new MemoryScratch() },
+    );
+
+    expect((await rows(reader))[0]?.cells.Date).toEqual({
+      kind: "date",
+      raw: "1",
+      iso: "1904-01-02",
+    });
+  });
+
   it.each(["", "yes", "TRUE", "2"])(
     "rejects the invalid date1904 value %j",
     async (date1904) => {

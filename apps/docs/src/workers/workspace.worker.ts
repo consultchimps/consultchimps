@@ -80,6 +80,7 @@ import {
   type CleanupFailure,
   importCleanupError,
   RetryableCleanupOwners,
+  savedPlanCleanupError,
   stagedPrivatePlanCleanup,
 } from "./workspace-import-cleanup";
 
@@ -125,6 +126,7 @@ const imports = new Map<string, HeldImport>();
 const controllers = new Map<number, AbortController>();
 const sourceCleanupOwners = new RetryableCleanupOwners();
 const privatePlanCleanupOwners = new RetryableCleanupOwners();
+const savedPlanCleanupOwners = new RetryableCleanupOwners();
 
 function runtime(): Promise<BrowserDatabaseRuntime> {
   const configured =
@@ -809,10 +811,21 @@ function heldFromInspection(
 
 async function listSavedImports(id: number): Promise<void> {
   await closeImports();
+  const retainedCleanupFailure = await cleanupFailureOf(() =>
+    savedPlanCleanupOwners.close(),
+  );
+  if (retainedCleanupFailure !== undefined) {
+    throw savedPlanCleanupError({
+      operationFailures: [],
+      cleanupFailures: [retainedCleanupFailure.error],
+    });
+  }
   const listing = await (
     await runtime()
   ).listPreparedImports({ database: current().database });
   const ignoredPlans = [...listing.ignored];
+  const operationFailures: unknown[] = [];
+  const cleanupFailures: unknown[] = [];
   for (const entry of listing.imports) {
     if (entry.databaseId !== current().database.id) continue;
     let prepared: PreparedImport | undefined;
@@ -844,18 +857,32 @@ async function listSavedImports(id: number): Promise<void> {
       imports.set(held.ref.id, held);
       prepared = undefined;
     } catch (error) {
-      ignoredPlans.push(
-        isConsultChimpsError(error)
-          ? { name: entry.name, code: error.code, message: error.message }
-          : {
-              name: entry.name,
-              code: "DB_BROWSER_PREPARED_IMPORT_UNREADABLE",
-              message:
-                "This saved import plan could not be reopened. Reload the workspace, then prepare the original sources again or restore a verified plan copy if it remains unavailable.",
-            },
-      );
-      await prepared?.close().catch(() => undefined);
+      const ignoredPlan = isConsultChimpsError(error)
+        ? { name: entry.name, code: error.code, message: error.message }
+        : {
+            name: entry.name,
+            code: "DB_BROWSER_PREPARED_IMPORT_UNREADABLE",
+            message:
+              "This saved import plan could not be reopened. Reload the workspace, then prepare the original sources again or restore a verified plan copy if it remains unavailable.",
+          };
+      if (prepared === undefined) {
+        ignoredPlans.push(ignoredPlan);
+        continue;
+      }
+      const opened = prepared;
+      const cleanupOwner = { close: () => opened.close() };
+      const cleanupFailure = await cleanupFailureOf(() => cleanupOwner.close());
+      if (cleanupFailure === undefined) {
+        ignoredPlans.push(ignoredPlan);
+        continue;
+      }
+      savedPlanCleanupOwners.retain(cleanupOwner);
+      operationFailures.push(error);
+      cleanupFailures.push(cleanupFailure.error);
     }
+  }
+  if (cleanupFailures.length > 0) {
+    throw savedPlanCleanupError({ operationFailures, cleanupFailures });
   }
   const plans = [];
   for (const held of imports.values()) plans.push(await importDto(held));
@@ -1411,17 +1438,23 @@ async function handle(id: number, command: WorkspaceCommand): Promise<void> {
         return;
       case "close": {
         const activeWorkspace = workspace;
-        const [importCleanup, retainedCleanup, databaseCleanup] =
-          await Promise.allSettled([
-            closeImports(),
-            retryImportPreparationCleanup(),
-            activeWorkspace?.database.close() ?? Promise.resolve(),
-          ]);
+        const [
+          importCleanup,
+          retainedCleanup,
+          savedPlanCleanup,
+          databaseCleanup,
+        ] = await Promise.allSettled([
+          closeImports(),
+          retryImportPreparationCleanup(),
+          savedPlanCleanupOwners.close(),
+          activeWorkspace?.database.close() ?? Promise.resolve(),
+        ]);
         schemaPlans.clear();
         if (databaseCleanup.status === "fulfilled") workspace = null;
         const failures = [
           importCleanup,
           retainedCleanup,
+          savedPlanCleanup,
           databaseCleanup,
         ].flatMap((result) =>
           result.status === "rejected" ? [result.reason] : [],

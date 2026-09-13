@@ -290,6 +290,44 @@ async function validatePreparedSchema(engine: DatabaseEngine): Promise<void> {
   }
 }
 
+async function validatePreparedRowOwners(
+  engine: Pick<DatabaseEngine, "query">,
+): Promise<void> {
+  const captureRows = await preparedQuery(
+    engine,
+    `SELECT capture_id FROM ${PREPARED_CAPTURE_TABLE}`,
+  );
+  const captureIds = new Set(
+    captureRows.map((row) =>
+      requiredPreparedString(row["capture_id"], "capture ID"),
+    ),
+  );
+  let cursor: string | undefined;
+  for (;;) {
+    const rows = await preparedQuery(
+      engine,
+      cursor === undefined
+        ? `SELECT capture_id FROM ${PREPARED_ROW_TABLE} ORDER BY capture_id LIMIT 1`
+        : `SELECT capture_id FROM ${PREPARED_ROW_TABLE} WHERE capture_id > ? ORDER BY capture_id LIMIT 1`,
+      cursor === undefined ? undefined : [cursor],
+    );
+    const row = rows[0];
+    if (row === undefined) return;
+    const captureId = requiredPreparedString(
+      row["capture_id"],
+      "row capture ID",
+    );
+    if (!captureIds.has(captureId)) {
+      throw databaseError(
+        "DB_INVALID_PREPARED_IMPORT",
+        "The import plan contains captured rows without their capture definition. Regenerate the plan from its original sources or restore a verified plan copy.",
+        { captureId },
+      );
+    }
+    cursor = captureId;
+  }
+}
+
 export async function createPreparedImportHandle(options: {
   readonly engine: DatabaseEngine;
   readonly databaseId: DatabaseId;
@@ -395,6 +433,7 @@ export async function openPreparedImportHandle(
   }
   await validatePreparedSchema(engine);
   const review = await readStoredPreparedReview(engine);
+  await validatePreparedRowOwners(engine);
   const prepared = new ManagedPreparedImport(
     review.prepared.id,
     review.prepared.databaseId,

@@ -257,6 +257,7 @@ export function WorkspaceImport({
   const [ignoredPlans, setIgnoredPlans] = useState<
     WorkspaceImportListing["ignoredPlans"]
   >([]);
+  const [savedPlanListingFailed, setSavedPlanListingFailed] = useState(false);
   const [decisions, setDecisions] = useState<readonly WorkspaceRouteDecision[]>(
     [],
   );
@@ -274,28 +275,47 @@ export function WorkspaceImport({
     return () => onReviewState(false);
   }, [onReviewState, plan, result]);
 
+  const acceptSavedPlans = useCallback(
+    (listing: WorkspaceImportListing) => {
+      setSavedPlans(
+        listing.plans.filter(
+          (saved) =>
+            saved.application === "pending" ||
+            pendingImport(summary.databaseId, saved.id) !== null,
+        ),
+      );
+      setIgnoredPlans(listing.ignoredPlans);
+      setSavedPlanListingFailed(false);
+    },
+    [summary.databaseId],
+  );
+
   useEffect(() => {
     let active = true;
     void client()
       .listImports()
       .then((listing) => {
         if (!active) return;
-        setSavedPlans(
-          listing.plans.filter(
-            (saved) =>
-              saved.application === "pending" ||
-              pendingImport(summary.databaseId, saved.id) !== null,
-          ),
-        );
-        setIgnoredPlans(listing.ignoredPlans);
+        acceptSavedPlans(listing);
       })
       .catch((error: unknown) => {
-        if (active) reportError(error);
+        if (active) {
+          setSavedPlanListingFailed(true);
+          reportError(error);
+        }
       });
     return () => {
       active = false;
     };
-  }, [client, reportError, summary.databaseId, summary.workingCopyName]);
+  }, [acceptSavedPlans, client, reportError, summary.workingCopyName]);
+
+  const retrySavedPlans = useCallback(async () => {
+    if (busy || resolving || plan !== null) return;
+    const listing = await runLong("Loading saved import reviews", () =>
+      client().listImports(),
+    );
+    if (listing !== null) acceptSavedPlans(listing);
+  }, [acceptSavedPlans, busy, client, plan, resolving, runLong]);
 
   const existingTables = useMemo(
     () => summary.tables.map((table) => table.name),
@@ -640,6 +660,18 @@ export function WorkspaceImport({
           Prepare review
         </button>
       </div>
+
+      {savedPlanListingFailed && plan === null ? (
+        <button
+          className={`${secondaryButtonClass} mt-4`}
+          data-testid="workspace-import-retry-saved"
+          disabled={busy || resolving}
+          onClick={() => void retrySavedPlans()}
+          type="button"
+        >
+          Retry saved imports
+        </button>
+      ) : null}
 
       {savedPlans.length === 0 ? null : (
         <div className="mt-4 rounded-lg border p-4">

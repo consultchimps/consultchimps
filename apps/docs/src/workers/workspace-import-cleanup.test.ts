@@ -4,6 +4,7 @@ import {
   closeAndRetainFailures,
   importCleanupError,
   RetryableCleanupOwners,
+  savedPlanCleanupError,
   stagedPrivatePlanCleanup,
 } from "./workspace-import-cleanup";
 
@@ -89,5 +90,24 @@ describe("workspace import cleanup", () => {
         errors: [sourceFailure, planFailure],
       }),
     });
+  });
+
+  it("preserves saved-plan inspection and retained cleanup causes", () => {
+    const inspectionFailure = new Error("Injected plan inspection failure");
+    const closeFailure = new Error("Injected plan close failure");
+
+    const error = savedPlanCleanupError({
+      operationFailures: [inspectionFailure],
+      cleanupFailures: [closeFailure],
+    });
+
+    expect(error).toMatchObject({
+      code: "DB_BROWSER_IMPORT_CLEANUP_REQUIRED",
+      details: { savedPlanCleanupFailed: true, affectedPlans: 1 },
+      cause: expect.objectContaining({
+        errors: [inspectionFailure, closeFailure],
+      }),
+    });
+    expect(error.message).toContain("Choose Retry saved imports");
   });
 });

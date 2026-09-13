@@ -87,6 +87,12 @@ if capture, source verification, or cancellation fails before publication. List
 filesystem-backed source, recipe, and context files in `protectedInputPaths` so
 overwrite validation can reject those destinations.
 
+Reopening a prepared plan rejects rows that have no capture definition with
+`DB_INVALID_PREPARED_IMPORT`. This can happen if preparation stops between a row
+batch and its metadata commit. Validation checks capture IDs through the index
+and leaves the plan file intact. Regenerate it from the original sources or
+restore a verified plan copy.
+
 Prepared plans use artifact format version 3. Their stored review fingerprint
 binds the plan identity, database baseline, revision, state, recipe, conflicts,
 decisions, source bindings, and capture definitions, including a checksum of

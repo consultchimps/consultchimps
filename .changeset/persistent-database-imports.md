@@ -74,3 +74,9 @@ trigger excessive regular-expression backtracking.
 Detect DuckDB view changes before applying reviewed schema or import plans.
 Validate saved import receipt totals against application metadata before
 returning a successful retry result.
+
+Read the workbook date system only from its SpreadsheetML property element so
+extension metadata cannot shift imported dates.
+
+Reject saved import plans containing rows from an unfinished capture when
+reopening them, without deleting the plan or scanning row values.

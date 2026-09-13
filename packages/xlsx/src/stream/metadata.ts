@@ -1,6 +1,6 @@
 import type { RandomAccessSource } from "@consultchimps/core";
 import type { FileEntry } from "@zip.js/zip.js";
-import type { SaxesTagPlain } from "saxes";
+import { SaxesParser, type SaxesTagNS, type SaxesTagPlain } from "saxes";
 
 import {
   attribute,
@@ -111,6 +111,55 @@ interface WorkbookDocument {
   readonly date1904: boolean;
 }
 
+const SPREADSHEETML_NAMESPACES = new Set([
+  "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+  "http://purl.oclc.org/ooxml/spreadsheetml/main",
+]);
+
+function parseWorkbookDateSystem(xml: string): boolean {
+  const parser = new SaxesParser({ xmlns: true });
+  let depth = 0;
+  let workbookNamespace: string | undefined;
+  let workbookPropertiesSeen = false;
+  let date1904 = false;
+  parser.on("opentag", (tag: SaxesTagNS) => {
+    if (depth === 0) {
+      workbookNamespace =
+        tag.local === "workbook" && SPREADSHEETML_NAMESPACES.has(tag.uri)
+          ? tag.uri
+          : undefined;
+    } else if (
+      depth === 1 &&
+      workbookNamespace !== undefined &&
+      tag.local === "workbookPr" &&
+      tag.uri === workbookNamespace
+    ) {
+      if (workbookPropertiesSeen) {
+        throw new Error("Workbook workbookPr is declared more than once.");
+      }
+      workbookPropertiesSeen = true;
+      const raw = Object.values(tag.attributes).find(
+        (candidate) =>
+          candidate.local === "date1904" && candidate.uri.length === 0,
+      )?.value;
+      if (raw === undefined || raw === "0" || raw === "false") {
+        date1904 = false;
+      } else if (raw === "1" || raw === "true") {
+        date1904 = true;
+      } else {
+        throw new Error("Workbook date1904 has an invalid Boolean value.");
+      }
+    }
+    depth += 1;
+  });
+  parser.on("closetag", () => {
+    depth -= 1;
+  });
+  parser.write(xml);
+  parser.close();
+  return date1904;
+}
+
 function parseWorkbook(xml: string): WorkbookDocument {
   const sheets: {
     name: string;
@@ -118,8 +167,7 @@ function parseWorkbook(xml: string): WorkbookDocument {
     visibility: StreamSheet["visibility"];
   }[] = [];
   const namedRanges: StreamNamedRange[] = [];
-  let date1904 = false;
-  let workbookPropertiesSeen = false;
+  const date1904 = parseWorkbookDateSystem(xml);
   let activeDefinedName:
     | { readonly name: string; readonly localSheetId?: number | undefined }
     | undefined;
@@ -128,20 +176,7 @@ function parseWorkbook(xml: string): WorkbookDocument {
   parseXml(xml, (parser) => {
     parser.on("opentag", (tag) => {
       const name = localName(tag.name);
-      if (name === "workbookPr") {
-        if (workbookPropertiesSeen) {
-          throw new Error("Workbook workbookPr is declared more than once.");
-        }
-        workbookPropertiesSeen = true;
-        const raw = attribute(tag, "date1904");
-        if (raw === undefined || raw === "0" || raw === "false") {
-          date1904 = false;
-        } else if (raw === "1" || raw === "true") {
-          date1904 = true;
-        } else {
-          throw new Error("Workbook date1904 has an invalid Boolean value.");
-        }
-      } else if (name === "sheet") {
+      if (name === "sheet") {
         const sheetName = attribute(tag, "name");
         const id = relationshipId(tag);
         if (!sheetName || !id) {

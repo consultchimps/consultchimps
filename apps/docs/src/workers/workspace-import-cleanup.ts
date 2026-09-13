@@ -109,3 +109,23 @@ export function importCleanupError(options: {
     },
   );
 }
+
+export function savedPlanCleanupError(options: {
+  readonly operationFailures: readonly unknown[];
+  readonly cleanupFailures: readonly unknown[];
+}): ConsultChimpsError {
+  return new ConsultChimpsError(
+    "DB_BROWSER_IMPORT_CLEANUP_REQUIRED",
+    "Saved import plans could not finish releasing their private resources. Choose Retry saved imports to finish cleanup before reopening those plans.",
+    {
+      details: {
+        savedPlanCleanupFailed: true,
+        affectedPlans: options.cleanupFailures.length,
+      },
+      cause: new AggregateError(
+        [...options.operationFailures, ...options.cleanupFailures],
+        "Saved import plan inspection cleanup failed",
+      ),
+    },
+  );
+}
