@@ -21,6 +21,7 @@ import {
   createPreparedImport,
   exportDatabase,
   openDatabase,
+  openPreparedImport,
 } from "../src/node.js";
 import {
   PREPARED_BINDING_TABLE,
@@ -156,6 +157,101 @@ test("date cells accept the XLSX serial and worksheet date spellings", () => {
 });
 
 for (const format of ["sqlite", "duckdb"] as const) {
+  test(`${format}: a custom reader owns its numeric date epoch across saved-plan reopening`, async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "cc-reader-epoch-"));
+    directories.push(directory);
+    const { database } = await createDatabase({
+      path: path.join(directory, `workspace.${format}`),
+      format,
+    });
+    const customRecipe: ImportRecipe = {
+      version: 1,
+      routes: [
+        {
+          source: "submission",
+          selection: "Dates",
+          destination: {
+            kind: "new-table",
+            schema: {
+              name: "Dates",
+              columns: [
+                { name: "When", type: "date" },
+                { name: "Moment", type: "text" },
+                { name: "Amount", type: "integer" },
+              ],
+              recordId: { prefix: "DAT", padding: 6 },
+            },
+          },
+          columns: [
+            { source: "When", target: "When", type: "date" },
+            { source: "Moment", target: "Moment", type: "text" },
+            { source: "Amount", target: "Amount", type: "integer" },
+          ],
+        },
+      ],
+    };
+    const planPath = path.join(directory, "review.ccplan");
+    const prepared = await createPreparedImport({
+      path: planPath,
+      database,
+      recipe: customRecipe,
+      baselineRevision: 0n,
+    });
+    const decodedDate = {
+      kind: "date",
+      raw: "946684800000",
+      iso: "2000-01-01",
+    } as const;
+    const reader = source({
+      When: decodedDate,
+      Moment: { kind: "formula", cached: decodedDate },
+      Amount: { kind: "number", raw: "1" },
+    });
+    try {
+      await prepareImport({
+        database,
+        prepared,
+        recipe: customRecipe,
+        sources: [
+          {
+            ...reader,
+            readerVersion: "synthetic-unix-milliseconds-1",
+            bytes: { ...reader.bytes, name: "events.json" },
+          },
+        ],
+      });
+      const approved = await resolveImport({
+        database,
+        prepared,
+        decisions: [],
+      });
+      if (approved.state !== "ready") throw new Error("Fixture needs review");
+      await prepared.close();
+      const reopened = await openPreparedImport({ path: planPath });
+      try {
+        const result = await applyImport({
+          database,
+          prepared: reopened,
+          approved,
+          requestId: "custom-reader-epoch",
+        });
+        expect(result.metrics.rowsImported).toBe(1);
+        expect(
+          await engineOf(database).query(
+            'SELECT CAST("When" AS VARCHAR) AS decoded_date, "Moment" AS source_token FROM "Dates"',
+          ),
+        ).toEqual([
+          { decoded_date: "2000-01-01", source_token: "946684800000" },
+        ]);
+      } finally {
+        await reopened.close();
+      }
+    } finally {
+      await prepared.close();
+      await database.close();
+    }
+  });
+
   test(`${format}: malformed source and stored scalar cells never mutate the database`, async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "cc-import-cells-"));
     directories.push(directory);

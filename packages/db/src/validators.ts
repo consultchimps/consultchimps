@@ -411,6 +411,13 @@ export function parseImportConflicts(
             "target decimal scale",
           ),
         };
+      case "conflicting-application-mapping":
+        return {
+          kind,
+          source: stringValue(conflict["source"], "source key"),
+          selection: stringValue(conflict["selection"], "selection key"),
+          table: stringValue(conflict["table"], "table name"),
+        };
       case "inferred-schema":
         return {
           kind,

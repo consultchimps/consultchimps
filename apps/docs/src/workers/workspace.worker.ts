@@ -330,6 +330,8 @@ function conflictText(conflict: ImportConflict): string {
       return `Column ${conflict.target} needs the ${conflict.expected} type`;
     case "decimal-capacity":
       return `Column ${conflict.target} needs decimal(${conflict.requiredPrecision}, ${conflict.requiredScale}), but the destination allows decimal(${conflict.targetPrecision}, ${conflict.targetScale})`;
+    case "conflicting-application-mapping":
+      return `The same captured data has a different column mapping for ${conflict.table}; use one consistent mapping or choose another table`;
     case "inferred-schema":
       return "Review the inferred columns and approve the destination";
     case "table-exists":

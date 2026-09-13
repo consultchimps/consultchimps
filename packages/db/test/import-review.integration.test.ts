@@ -802,7 +802,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
             source: "second-parent-alias",
             selection: "Parents",
             destination: { kind: "existing-table", table: "Parents" },
-            columns: [{ source: "Name", target: "Name", type: "text" }],
+            columns: [],
           },
           {
             source: "child",
@@ -865,6 +865,12 @@ for (const format of ["sqlite", "duckdb"] as const) {
         });
         expect(applied.metrics).toMatchObject({ rowsImported: 2 });
         expect(
+          await engineOf(database).query(
+            `SELECT count(*) AS count FROM ${APPLICATION_TABLE} WHERE table_name = ?`,
+            ["Parents"],
+          ),
+        ).toEqual([{ count: 1n }]);
+        expect(
           (await inspectDatabase({ database })).tables.map(
             ({ name, rowCount }) => [name, rowCount],
           ),
@@ -878,6 +884,126 @@ for (const format of ["sqlite", "duckdb"] as const) {
       }
     },
   );
+
+  test(`${format}: conflicting mappings for aliases of one capture require review`, async () => {
+    const schema = {
+      name: "Records",
+      columns: [{ name: "Value", type: "text", nullable: false }],
+      recordId: { prefix: "REC", padding: 6 },
+      foreignKeys: [],
+    } as const;
+    const recipe: ImportRecipe = {
+      version: 1,
+      routes: [
+        {
+          source: "first-alias",
+          selection: "Data",
+          destination: { kind: "new-table", schema },
+          columns: [{ source: "First", target: "Value", type: "text" }],
+        },
+        {
+          source: "second-alias",
+          selection: "Data",
+          destination: { kind: "existing-table", table: "Records" },
+          columns: [{ source: "Second", target: "Value", type: "text" }],
+        },
+      ],
+    };
+    const { database, prepared, planPath } = await fixture(format, recipe);
+    const submission = source({
+      Data: [
+        {
+          sourceRow: 2,
+          cells: {
+            First: { kind: "string", value: "A" },
+            Second: { kind: "string", value: "B" },
+          },
+        },
+      ],
+    });
+    let active = prepared;
+    try {
+      const outcome = await prepareImport({
+        database,
+        prepared,
+        recipe,
+        sources: [
+          { ...submission, key: "first-alias" },
+          { ...submission, key: "second-alias" },
+        ],
+      });
+      expect(outcome.prepared.state).toBe("needs-review");
+      expect(await inspectDatabase({ database })).toMatchObject({
+        revision: 0n,
+        tables: [],
+      });
+      expect(
+        (await inspectImport({ prepared, page: { limit: 10 } })).conflicts,
+      ).toEqual([
+        {
+          kind: "conflicting-application-mapping",
+          source: "first-alias",
+          selection: "Data",
+          table: "Records",
+        },
+        {
+          kind: "conflicting-application-mapping",
+          source: "second-alias",
+          selection: "Data",
+          table: "Records",
+        },
+      ]);
+
+      await prepared.close();
+      active = await openPreparedImport({ path: planPath });
+      expect(
+        (await inspectImport({ prepared: active, page: { limit: 10 } }))
+          .conflicts,
+      ).toHaveLength(2);
+      const approved = await resolveImport({
+        database,
+        prepared: active,
+        decisions: [
+          {
+            kind: "route",
+            source: "second-alias",
+            selection: "Data",
+            destination: {
+              kind: "new-table",
+              schema: {
+                ...schema,
+                name: "Archive",
+                recordId: { prefix: "ARC", padding: 6 },
+              },
+            },
+            columns: [{ source: "Second", target: "Value", type: "text" }],
+          },
+        ],
+      });
+      expect(approved.state).toBe("ready");
+      if (approved.state !== "ready") throw new Error("Plan not ready");
+      const applied = await applyImport({
+        database,
+        prepared: active,
+        approved,
+        requestId: `${format}-alias-mapping-resolution`,
+      });
+      expect(applied.metrics).toMatchObject({ rowsImported: 2 });
+      expect(
+        await engineOf(database).query(
+          'SELECT "Value" FROM "Records" ORDER BY "record_id"',
+        ),
+      ).toEqual([{ Value: "A" }]);
+      expect(
+        await engineOf(database).query(
+          'SELECT "Value" FROM "Archive" ORDER BY "record_id"',
+        ),
+      ).toEqual([{ Value: "B" }]);
+    } finally {
+      await active.close();
+      await database.close();
+    }
+  });
 
   test(`${format}: multiple sources can append to one table declared later`, async () => {
     const sharedSchema = {

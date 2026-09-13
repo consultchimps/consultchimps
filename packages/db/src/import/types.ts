@@ -160,6 +160,12 @@ export type ImportConflict =
       readonly targetScale: number;
     }
   | {
+      readonly kind: "conflicting-application-mapping";
+      readonly source: string;
+      readonly selection: string;
+      readonly table: string;
+    }
+  | {
       readonly kind: "inferred-schema";
       readonly source: string;
       readonly selection: string;

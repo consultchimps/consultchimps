@@ -9,10 +9,9 @@ import { canonicalJson } from "../internal/json.js";
 import { APPLICATION_TABLE, PLAN_TABLE } from "../metadata.js";
 import { identifierKey, type TableSchema } from "../schema.js";
 import { parseImportRecipe } from "../validators.js";
+import { effectiveMappingKey } from "./application-key.js";
 import { routeColumns, routeKey, type PreparedCapture } from "./planning.js";
 import type { ImportRecipe } from "./types.js";
-
-const APPLICATION_KEY_PREFIX = "mapping-v1:";
 
 function corruptHistory(message: string, cause?: unknown): never {
   throw databaseError("DB_CORRUPT_DATABASE", message, undefined, cause);
@@ -37,44 +36,12 @@ export function effectiveApplicationKey(options: {
   readonly route: ImportRecipe["routes"][number];
   readonly capture: PreparedCapture;
 }): string {
-  const targets = new Map(
-    options.schema.columns.map((column) => [
-      identifierKey(column.name),
-      column.name,
-    ]),
-  );
-  const mappings = routeColumns(options.route, options.capture)
-    .map((column) => {
-      const target = targets.get(identifierKey(column.target));
-      if (target === undefined) {
-        throw databaseError(
-          "DB_STALE_IMPORT_PLAN",
-          `The destination column "${column.target}" no longer exists in table "${options.tableName}".`,
-          { table: options.tableName, column: column.target },
-        );
-      }
-      return { source: column.source, target: identifierKey(target) };
-    })
-    .sort(
-      (left, right) =>
-        (left.target < right.target
-          ? -1
-          : left.target > right.target
-            ? 1
-            : 0) ||
-        (left.source < right.source ? -1 : left.source > right.source ? 1 : 0),
-    );
-  return `${APPLICATION_KEY_PREFIX}${bytesToHex(
-    sha256(
-      new TextEncoder().encode(
-        canonicalJson([
-          options.captureId,
-          identifierKey(options.tableName),
-          mappings,
-        ]),
-      ),
-    ),
-  )}`;
+  return effectiveMappingKey({
+    captureId: options.captureId,
+    tableName: options.tableName,
+    schema: options.schema,
+    columns: routeColumns(options.route, options.capture),
+  });
 }
 
 export type ImportApplicationState =

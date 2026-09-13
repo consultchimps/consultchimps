@@ -44,6 +44,13 @@ serials must be finite, and their reader owns epoch conversion. The same checks
 apply to cached formula values and saved plan rows. Malformed values are
 rejected instead of being coerced to zero or stored as invalid dates.
 
+Numeric date tokens are not restricted to Excel epochs. A custom reader can
+decode Unix milliseconds into `iso`, for example. Typed date mappings use that
+decoded value; text mappings retain `raw`. The XLSX adapter performs its own
+conversion using the workbook's declared date system. Captures do not retain
+structured epoch metadata, so the DB does not independently recalculate numeric
+dates or verify that an externally edited token and ISO value agree.
+
 Use `inspectImport({ database, prepared, page: { limit: 20 } })` to preview both
 newly captured rows and rows reused from the working database. Omitting
 `database` still returns plan metadata and staged rows, with
@@ -92,6 +99,12 @@ business-record reconciliation is outside these operations. Reusing a capture in
 the same destination table requires the same effective column mapping. A changed
 mapping returns `DB_IMPORT_APPLICATION_CONFLICT` before commit; choose a new
 table to retain another interpretation without replacing earlier observations.
+
+If two aliases for the same captured selection target one table with different
+effective mappings, preparation and review report
+`conflicting-application-mapping` for the affected routes. Use matching mappings
+or separate destination tables before applying. Equivalent alias routes can
+share one application.
 
 `inspectImport` reports capture reuse separately from each route's
 `applicationState`. The `already-applied` state requires a matching captured

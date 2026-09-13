@@ -1373,3 +1373,74 @@ test("a recipe naming an unavailable source fails instead of accepting an empty 
   });
   expect((await run(["inspect", database]))["tables"]).toEqual([]);
 });
+
+test("db inspect explains conflicting mappings for aliases of one capture", async () => {
+  const root = await directory();
+  const database = path.join(root, "inventory.sqlite");
+  const source = path.join(root, "inventory.xlsx");
+  const recipe = path.join(root, "recipe.json");
+  const plan = path.join(root, "review.ccplan");
+  const selection = JSON.stringify({ sheet: "Inventory", headerRow: 1 });
+  const schema = {
+    name: "Records",
+    recordId: { prefix: "REC", padding: 4 },
+    columns: [{ name: "Value", type: "text" }],
+  };
+  await writeFile(
+    source,
+    workbook([
+      ["First", "Second"],
+      ["A", "B"],
+    ]),
+  );
+  await writeFile(
+    recipe,
+    JSON.stringify({
+      version: 1,
+      routes: [
+        {
+          source: "first-alias",
+          selection,
+          destination: { kind: "new-table", schema },
+          columns: [{ source: "First", target: "Value", type: "text" }],
+        },
+        {
+          source: "second-alias",
+          selection,
+          destination: { kind: "existing-table", table: "Records" },
+          columns: [{ source: "Second", target: "Value", type: "text" }],
+        },
+      ],
+    }),
+  );
+  await run(["create", "-o", database]);
+  await run([
+    "plan",
+    database,
+    "--input",
+    `first-alias=${source}`,
+    "--input",
+    `second-alias=${source}`,
+    "--recipe",
+    recipe,
+    "-o",
+    plan,
+  ]);
+
+  const inspection = await run(["inspect", plan]);
+  expect(inspection).toMatchObject({
+    prepared: { state: "needs-review" },
+    conflicts: [
+      { kind: "conflicting-application-mapping", source: "first-alias" },
+      { kind: "conflicting-application-mapping", source: "second-alias" },
+    ],
+  });
+  const report = await runHuman(["inspect", plan]);
+  expect(report).toContain(
+    'maps the same captured data differently for table "Records"',
+  );
+  expect(report).toContain(
+    "Use one consistent mapping or choose another table",
+  );
+  expect((await run(["inspect", database]))["tables"]).toEqual([]);
+});

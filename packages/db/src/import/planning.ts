@@ -42,6 +42,7 @@ import type {
   PrepareImportOptions,
 } from "./types.js";
 import { validateColumnMappings, validateImportRecipe } from "../validators.js";
+import { effectiveMappingKey } from "./application-key.js";
 
 const REVIEW_BATCH_ROWS = 2_000;
 const REFERENCE_QUERY_VALUES = 400;
@@ -365,6 +366,71 @@ export async function evaluateConflicts(
           { kind: "table-not-found", table: foreignKey.referencesTable },
         );
       }
+    }
+  }
+  const applicationGroups = new Map<
+    string,
+    Array<{
+      readonly route: ImportRecipe["routes"][number];
+      readonly table: string;
+      readonly key: string;
+    }>
+  >();
+  for (const route of recipe.routes) {
+    if (route.destination.kind === "new-table-infer") continue;
+    const capture = captures.find(
+      (candidate) =>
+        candidate.sourceKey === route.source &&
+        candidate.selectionKey === route.selection,
+    );
+    if (capture === undefined) continue;
+    const requestedTable = destinationName(route);
+    const schema = proposedTables.get(identifierKey(requestedTable));
+    if (schema === undefined) continue;
+    const columns = routeColumns(route, capture);
+    const sourceColumns = new Set(capture.columns.map((column) => column.name));
+    if (columns.some((column) => !sourceColumns.has(column.source))) continue;
+    let applicationKey: string;
+    try {
+      applicationKey = effectiveMappingKey({
+        captureId: capture.captureId,
+        tableName: schema.name,
+        schema,
+        columns,
+      });
+    } catch (cause) {
+      if (
+        isConsultChimpsError(cause) &&
+        cause.code === "DB_STALE_IMPORT_PLAN"
+      ) {
+        continue;
+      }
+      throw cause;
+    }
+    const groupKey = JSON.stringify([
+      capture.captureId,
+      identifierKey(schema.name),
+    ]);
+    const group = applicationGroups.get(groupKey) ?? [];
+    group.push({ route, table: schema.name, key: applicationKey });
+    applicationGroups.set(groupKey, group);
+  }
+  for (const [groupKey, group] of applicationGroups) {
+    if (new Set(group.map((entry) => entry.key)).size < 2) continue;
+    for (const entry of group) {
+      addConflict(
+        JSON.stringify([
+          "application-mapping",
+          groupKey,
+          routeKey(entry.route.source, entry.route.selection),
+        ]),
+        {
+          kind: "conflicting-application-mapping",
+          source: entry.route.source,
+          selection: entry.route.selection,
+          table: entry.table,
+        },
+      );
     }
   }
   const plannedRanges = await plannedRecordRanges({

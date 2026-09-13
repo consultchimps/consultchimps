@@ -259,6 +259,11 @@ recipe cannot silently claim that earlier observations were remapped. Choose a
 new destination table to retain another interpretation of the same captured
 source.
 
+This check also covers aliases within one plan. If aliases reuse one captured
+selection but map it differently into the same table, the plan needs review.
+Correct the mappings or select separate destination tables before applying;
+matching alias routes can reuse one application.
+
 The browser's no-new-observation-rows notice requires the reviewed captures,
 destination tables, and mappings to match existing applications. Reusing source
 content alone does not meet that condition. Editing a route hides the notice

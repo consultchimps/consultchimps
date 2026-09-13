@@ -80,6 +80,8 @@ function importConflict(conflict: ImportConflict): string {
       return `Source column "${compact(conflict.column)}" in "${compact(conflict.source)}" / "${compact(conflict.selection)}" is incompatible with destination "${compact(conflict.target)}", which expects ${conflict.expected}.`;
     case "decimal-capacity":
       return `Source column "${compact(conflict.column)}" in "${compact(conflict.source)}" / "${compact(conflict.selection)}" needs decimal(${conflict.requiredPrecision}, ${conflict.requiredScale}), but destination "${compact(conflict.target)}" provides decimal(${conflict.targetPrecision}, ${conflict.targetScale}).`;
+    case "conflicting-application-mapping":
+      return `Source "${compact(conflict.source)}", selection "${compact(conflict.selection)}" maps the same captured data differently for table "${compact(conflict.table)}". Use one consistent mapping or choose another table.`;
     case "inferred-schema":
       return `Confirm the inferred schema for new table "${compact(conflict.schema.name)}" from source "${compact(conflict.source)}", selection "${compact(conflict.selection)}".`;
     case "table-exists":

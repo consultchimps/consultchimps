@@ -302,6 +302,13 @@ follow the same rules. Invalid fresh payloads return `DB_INVALID_SOURCE_NUMBER`
 or `DB_INVALID_SOURCE_DATE`; invalid saved payloads return
 `DB_INVALID_PREPARED_IMPORT`.
 
+The generic DB contract permits other numeric epochs, such as Unix milliseconds.
+It validates the decoded ISO value but does not recalculate it from the numeric
+token. Typed date mappings use `iso`; text mappings preserve `raw`. The XLSX
+adapter derives its ISO value from that same raw cell and the declared workbook
+date system. An edited numeric token and ISO value are not independently checked
+for agreement by the DB package.
+
 Call `inspectImport({ database, prepared, page: { limit: 20 } })` to preview
 staged rows and reused captures. The database must have the plan's target ID.
 Without `database`, the result includes staged examples and
