@@ -408,6 +408,52 @@ test.describe("reviewed workbook imports", () => {
     await expect(page.getByTestId("workspace-delivery")).toHaveCount(5);
   });
 
+  test("does not treat a reused capture routed to a new table as applied", async ({
+    page,
+  }) => {
+    await create(page, "sqlite");
+    const workbook = await inventoryWorkbook();
+    await prepare(page, [workbook]);
+    await resolveAndApply(page);
+
+    await prepare(page, [workbook]);
+    await expect(page.getByTestId("workspace-import-duplicate")).toBeVisible();
+    await page.getByTestId("workspace-import-route").selectOption("create");
+    await expect(page.getByTestId("workspace-import-duplicate")).toHaveCount(0);
+    await page.getByTestId("workspace-import-table").fill("Archive");
+    await page.getByTestId("workspace-import-resolve").click();
+    await expect(page.getByTestId("workspace-import-review")).toContainText(
+      "ready",
+    );
+    await expect(page.getByTestId("workspace-import-duplicate")).toHaveCount(0);
+
+    await page.reload();
+    await page.getByTestId("workspace-reopen").first().click();
+    await expect(page.getByTestId("workspace-import-resume")).toHaveCount(1);
+    await page.getByTestId("workspace-import-resume").click();
+    await expect(page.getByTestId("workspace-import-route")).toHaveValue(
+      "create",
+    );
+    await expect(page.getByTestId("workspace-import-table")).toHaveValue(
+      "Archive",
+    );
+    await expect(page.getByTestId("workspace-import-duplicate")).toHaveCount(0);
+
+    await page.getByTestId("workspace-delivery-vendor").fill("Vendor A");
+    await page.getByTestId("workspace-delivery-entity").fill("Entity North");
+    await page.getByTestId("workspace-delivery-phase").fill("Iteration 2");
+    await page.getByTestId("workspace-import-apply").click();
+    await expect(page.getByTestId("workspace-import-result")).toContainText(
+      "Added 2 rows",
+    );
+    await expect(
+      page.getByTestId("workspace-table").filter({ hasText: "Archive" }),
+    ).toContainText("2 rows");
+    await expect(
+      page.getByTestId("workspace-table").filter({ hasText: "Inventory" }),
+    ).toContainText("2 rows");
+  });
+
   test("counts fresh and reused regions in the review total", async ({
     page,
   }) => {

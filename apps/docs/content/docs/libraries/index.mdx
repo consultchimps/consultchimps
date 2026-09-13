@@ -284,6 +284,14 @@ reused database captures return `DB_CORRUPT_DATABASE`. Other adapters can supply
 an `ImportSource` with random-access bytes and bounded region readers without
 importing CLI or browser code.
 
+Each inspected route distinguishes captured content reuse (`reused`) from
+destination-specific `applicationState`. With a target database, an
+`already-applied` route matches its captured source, destination table, and
+effective column mapping to a saved application. A reused capture can still be
+`not-applied` when routed to another table. A different mapping for an existing
+application is `mapping-conflict`; unresolved routes are `unresolved`. Without a
+target database, application state is `not-checked`.
+
 Custom numeric cells require decimal or exponent tokens. Empty strings,
 whitespace, and hexadecimal text are not numeric values. Date cells require a
 valid calendar date or UTC timestamp in `iso`; textual `raw` dates must describe

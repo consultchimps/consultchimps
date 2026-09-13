@@ -259,6 +259,11 @@ recipe cannot silently claim that earlier observations were remapped. Choose a
 new destination table to retain another interpretation of the same captured
 source.
 
+The browser's no-new-observation-rows notice requires the reviewed captures,
+destination tables, and mappings to match existing applications. Reusing source
+content alone does not meet that condition. Editing a route hides the notice
+until the updated review confirms reuse.
+
 The browser distinguishes selected workbooks that share a filename. Their roles
 and revisions remain separate source details, while matching content can still
 reuse captured rows.

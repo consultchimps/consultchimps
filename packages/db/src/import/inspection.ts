@@ -1,6 +1,12 @@
-import { engineOf, valueAsBigInt, valueAsString } from "../database.js";
+import {
+  engineOf,
+  parseStoredTableSchema,
+  valueAsBigInt,
+  valueAsString,
+} from "../database.js";
 import { databaseError } from "../errors.js";
-import { CAPTURE_ROW_TABLE } from "../metadata.js";
+import { CAPTURE_ROW_TABLE, TABLE_REGISTRY_TABLE } from "../metadata.js";
+import { identifierKey } from "../schema.js";
 import {
   PREPARED_CAPTURE_TABLE,
   PREPARED_ROW_TABLE,
@@ -9,12 +15,14 @@ import {
   readPreparedRecipe,
 } from "../prepared.js";
 import { parseImportCellsJson } from "./inference.js";
+import { inspectApplicationIdentity } from "./application-identity.js";
 import { preparedCaptures, routeColumns, routeKey } from "./planning.js";
 import type {
   ImportInspection,
   ImportExample,
   PreparedImportPage,
   PrepareImportOptions,
+  ImportRouteInspection,
 } from "./types.js";
 
 interface ImportCursor {
@@ -187,26 +195,81 @@ export async function inspectImport(options: {
   );
   const examples = pageExamples.slice(0, options.page.limit);
   const last = examples.at(-1);
-  return {
-    prepared: await preparedRef(options.prepared),
-    conflicts,
-    capturedRows: valueAsBigInt(captures[0]?.["count"] ?? 0n, "captured rows"),
-    routes: preparedCaptureList.map((capture) => {
+  const registeredTables =
+    options.database === undefined
+      ? []
+      : await engineOf(options.database).query(
+          `SELECT table_name, schema_json FROM ${TABLE_REGISTRY_TABLE}`,
+        );
+  const tables = new Map(
+    registeredTables.map((row) => {
+      const name = valueAsString(row["table_name"], "table name");
+      return [
+        identifierKey(name),
+        {
+          name,
+          schema: parseStoredTableSchema(
+            valueAsString(row["schema_json"], "table schema"),
+            name,
+          ),
+        },
+      ] as const;
+    }),
+  );
+  const routes: ImportRouteInspection[] = await Promise.all(
+    preparedCaptureList.map(async (capture) => {
       const route = recipes.get(
         routeKey(capture.sourceKey, capture.selectionKey),
       );
+      let applicationState: ImportRouteInspection["applicationState"] =
+        options.database === undefined ? "not-checked" : "unresolved";
+      if (
+        options.database !== undefined &&
+        route !== undefined &&
+        route.destination.kind !== "new-table-infer"
+      ) {
+        const requestedTable =
+          route.destination.kind === "new-table"
+            ? route.destination.schema.name
+            : route.destination.table;
+        const registered = tables.get(identifierKey(requestedTable));
+        if (registered === undefined) {
+          applicationState =
+            route.destination.kind === "new-table"
+              ? "not-applied"
+              : "unresolved";
+        } else {
+          applicationState = (
+            await inspectApplicationIdentity({
+              transaction: engineOf(options.database),
+              captureId: capture.captureId,
+              tableName: registered.name,
+              schema: registered.schema,
+              route,
+              capture,
+            })
+          ).state;
+        }
+      }
       return {
         source: capture.sourceKey,
         selection: capture.selectionKey,
         label: capture.selectionLabel,
         captureId: capture.captureId,
         reused: capture.reused,
+        applicationState,
         rowCount: capture.rowCount,
         destination: route?.destination ?? null,
         columns: route === undefined ? [] : routeColumns(route, capture),
         inferredColumns: capture.columns,
       };
     }),
+  );
+  return {
+    prepared: await preparedRef(options.prepared),
+    conflicts,
+    capturedRows: valueAsBigInt(captures[0]?.["count"] ?? 0n, "captured rows"),
+    routes,
     examples,
     previewWarnings,
     ...(pageExamples.length > options.page.limit && last !== undefined

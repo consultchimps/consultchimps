@@ -51,6 +51,10 @@ import {
   workspaceSourceFileName,
   workspaceSourceKey,
 } from "@/lib/workspace-source";
+import {
+  closeTrackedResources,
+  replaceActiveWorkspace,
+} from "@/lib/workspace-replacement";
 import type {
   WorkspaceCommand,
   WorkspaceDeliveryContext,
@@ -97,7 +101,6 @@ interface HeldImport {
   ref: PreparedImportRef | ReadyImportRef;
   recipe: ImportRecipe;
   readonly regions: readonly RegionMetadata[];
-  readonly duplicate: boolean;
   application:
     | { readonly state: "pending" }
     | { readonly state: "applied"; readonly captureIds: readonly string[] };
@@ -203,17 +206,27 @@ function postError(id: number, error: unknown): void {
 }
 
 async function closeImports(): Promise<void> {
-  const held = [...imports.values()];
-  imports.clear();
-  await Promise.all(held.map(({ prepared }) => prepared.close()));
+  await closeTrackedResources({
+    resources: imports,
+    close: ({ prepared }) => prepared.close(),
+  });
 }
 
-async function replaceWorkspace(next: OpenWorkspace): Promise<void> {
-  await closeImports();
-  schemaPlans.clear();
+async function replaceWorkspace(
+  next: OpenWorkspace,
+): Promise<WorkspaceSummary> {
   const previous = workspace;
-  workspace = next;
-  await previous?.database.close();
+  return replaceActiveWorkspace({
+    previous,
+    next,
+    prepare: summaryOf,
+    closeDependencies: closeImports,
+    close: (open) => open.database.close(),
+    activate() {
+      schemaPlans.clear();
+      workspace = next;
+    },
+  });
 }
 
 function safeWorkingName(fileName: string): string {
@@ -424,11 +437,20 @@ async function importDto(held: HeldImport): Promise<WorkspacePreparedImport> {
       conflicts: regionConflicts.map(conflictText),
     };
   });
+  const includedRoutes = inspection.routes.filter(
+    (route) => route.destination !== null,
+  );
   return {
     id: held.ref.id,
     state: held.ref.state,
     application: held.application.state,
-    duplicateOf: held.duplicate ? "existing-capture" : null,
+    duplicateOf:
+      includedRoutes.length > 0 &&
+      includedRoutes.every(
+        (route) => route.applicationState === "already-applied",
+      )
+        ? "existing-application"
+        : null,
     captureIds: held.regions.map((region) => region.captureId),
     regions,
     totalRows: boundedNumber(reviewRowCount(held.regions), "review row count"),
@@ -602,8 +624,8 @@ async function handleCreate(
     database: created.database,
     workingCopyName: command.name,
   };
-  await replaceWorkspace(next);
-  scope.postMessage({ type: "ready", id, summary: await summaryOf(next) });
+  const summary = await replaceWorkspace(next);
+  scope.postMessage({ type: "ready", id, summary });
 }
 
 async function handleOpen(
@@ -627,8 +649,8 @@ async function handleOpen(
     onProgress: onProgress(id),
   });
   const next = { database, workingCopyName: name };
-  await replaceWorkspace(next);
-  scope.postMessage({ type: "ready", id, summary: await summaryOf(next) });
+  const summary = await replaceWorkspace(next);
+  scope.postMessage({ type: "ready", id, summary });
 }
 
 async function handleReopen(
@@ -642,8 +664,8 @@ async function handleReopen(
     ...(command.readonly === undefined ? {} : { readonly: command.readonly }),
   });
   const next = { database, workingCopyName: command.name };
-  await replaceWorkspace(next);
-  scope.postMessage({ type: "ready", id, summary: await summaryOf(next) });
+  const summary = await replaceWorkspace(next);
+  scope.postMessage({ type: "ready", id, summary });
 }
 
 async function handleSchema(
@@ -753,9 +775,6 @@ function heldFromInspection(
     ref: inspection.prepared,
     recipe,
     regions,
-    duplicate:
-      inspection.routes.length > 0 &&
-      inspection.routes.every((route) => route.reused),
     application,
   };
 }
@@ -924,7 +943,6 @@ async function prepareSources(
       ref: outcome.prepared,
       recipe,
       regions,
-      duplicate: firstInspection.routes.every((route) => route.reused),
       application: { state: "pending" },
     };
     const automatic = firstInspection.conflicts.flatMap(

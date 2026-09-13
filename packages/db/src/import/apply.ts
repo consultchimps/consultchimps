@@ -42,7 +42,7 @@ import { parseStoredDeliveryContext } from "../internal/stored-delivery.js";
 import { parseImportCellsJson, valueForColumn } from "./inference.js";
 import {
   effectiveApplicationKey,
-  historicalEffectiveApplicationKey,
+  inspectApplicationIdentity,
 } from "./application-identity.js";
 import {
   orderRoutesByReferences,
@@ -571,48 +571,24 @@ export async function applyImport(
         route,
         capture,
       });
-      const existingApplications = await transaction.query(
-        `SELECT import_id, application_key, plan_id, plan_revision, row_count FROM ${APPLICATION_TABLE} WHERE capture_id = ? AND table_name = ? ORDER BY import_id`,
-        [captureId, tableName],
-      );
-      if (existingApplications.length > 1) {
-        throw databaseError(
-          "DB_CORRUPT_DATABASE",
-          "The database has duplicate import applications for one capture and table. Restore a verified database copy before retrying.",
-          { captureId, table: tableName },
-        );
-      }
-      const existingApplication = existingApplications[0];
-      if (existingApplication !== undefined) {
-        const existingKey = await historicalEffectiveApplicationKey({
-          transaction,
-          storedKey: valueAsString(
-            existingApplication["application_key"],
-            "application key",
-          ),
-          planId: valueAsString(existingApplication["plan_id"], "plan ID"),
-          planRevision: valueAsBigInt(
-            existingApplication["plan_revision"],
-            "plan revision",
-          ),
-          captureId,
-          tableName,
-          schema,
-          capture,
-        });
-        if (existingKey !== applicationKey) {
+      const application = await inspectApplicationIdentity({
+        transaction,
+        captureId,
+        tableName,
+        schema,
+        route,
+        capture,
+      });
+      if (application.state !== "not-applied") {
+        if (application.state === "mapping-conflict") {
           throw databaseError(
             "DB_IMPORT_APPLICATION_CONFLICT",
             `This captured selection was already loaded into table "${tableName}" with a different column mapping. Choose another destination table to retain this interpretation.`,
             { captureId, table: tableName },
           );
         }
-        importIds.push(
-          valueAsString(existingApplication["import_id"], "import ID"),
-        );
-        rowsReused += Number(
-          valueAsBigInt(existingApplication["row_count"], "row count"),
-        );
+        importIds.push(application.importId);
+        rowsReused += Number(application.rowCount);
         continue;
       }
       const importId = await allocate(transaction, "import", "IMP");

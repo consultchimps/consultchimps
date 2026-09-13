@@ -10,6 +10,7 @@ import { engineOf, inspectDatabase } from "../src/database.js";
 import { canonicalJson } from "../src/internal/json.js";
 import {
   applyImport,
+  inspectImport,
   prepareImport,
   resolveImport,
 } from "../src/import/operations.js";
@@ -311,6 +312,15 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const beforeConflict = await inspectDatabase({ database });
       const beforeHistory = await historyCounts(database);
       try {
+        expect(
+          (
+            await inspectImport({
+              database,
+              prepared: changed.prepared,
+              page: { limit: 1 },
+            })
+          ).routes[0]?.applicationState,
+        ).toBe("mapping-conflict");
         await expect(
           applyImport({
             database,
@@ -356,6 +366,15 @@ for (const format of ["sqlite", "duckdb"] as const) {
         recipe: repeatedRecipe,
       });
       try {
+        expect(
+          (
+            await inspectImport({
+              database,
+              prepared: repeated.prepared,
+              page: { limit: 1 },
+            })
+          ).routes[0],
+        ).toMatchObject({ reused: true, applicationState: "already-applied" });
         await expect(
           applyImport({
             database,
@@ -380,6 +399,15 @@ for (const format of ["sqlite", "duckdb"] as const) {
         recipe: archiveRecipe,
       });
       try {
+        expect(
+          (
+            await inspectImport({
+              database,
+              prepared: archive.prepared,
+              page: { limit: 1 },
+            })
+          ).routes[0],
+        ).toMatchObject({ reused: true, applicationState: "not-applied" });
         await expect(
           applyImport({
             database,

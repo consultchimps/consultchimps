@@ -255,6 +255,12 @@ export interface ImportRouteInspection {
   readonly label: string;
   readonly captureId: string;
   readonly reused: boolean;
+  readonly applicationState:
+    | "not-checked"
+    | "unresolved"
+    | "not-applied"
+    | "already-applied"
+    | "mapping-conflict";
   readonly rowCount: bigint;
   readonly destination: ImportDestination | null;
   readonly columns: readonly ColumnRoute[];

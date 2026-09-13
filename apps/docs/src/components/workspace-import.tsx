@@ -740,7 +740,7 @@ export function WorkspaceImport({
               {plan.state.replace("-", " ")}
             </span>
           </div>
-          {plan.duplicateOf === null ? null : (
+          {plan.duplicateOf === null || !reviewIsCurrent ? null : (
             <p
               className="mt-3 rounded-lg border bg-fd-muted/40 p-3 text-sm"
               data-testid="workspace-import-duplicate"

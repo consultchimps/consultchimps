@@ -93,6 +93,11 @@ the same destination table requires the same effective column mapping. A changed
 mapping returns `DB_IMPORT_APPLICATION_CONFLICT` before commit; choose a new
 table to retain another interpretation without replacing earlier observations.
 
+`inspectImport` reports capture reuse separately from each route's
+`applicationState`. The `already-applied` state requires a matching captured
+source, destination table, and effective column mapping. Reusing captured Excel
+content does not imply that loading it into another table adds no rows.
+
 `listDeliveries` returns delivery pages in allocation order. Each record lists
 the capture IDs that also appeared in an earlier delivery as `reusedCaptureIds`,
 including when that earlier delivery is on another page.

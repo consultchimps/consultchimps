@@ -2,11 +2,11 @@ import { isConsultChimpsError } from "@consultchimps/core";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 
-import { valueAsString } from "../database.js";
+import { valueAsBigInt, valueAsString } from "../database.js";
 import { databaseError } from "../errors.js";
 import type { EngineTransaction } from "../internal/engine.js";
 import { canonicalJson } from "../internal/json.js";
-import { PLAN_TABLE } from "../metadata.js";
+import { APPLICATION_TABLE, PLAN_TABLE } from "../metadata.js";
 import { identifierKey, type TableSchema } from "../schema.js";
 import { parseImportRecipe } from "../validators.js";
 import { routeColumns, routeKey, type PreparedCapture } from "./planning.js";
@@ -75,6 +75,64 @@ export function effectiveApplicationKey(options: {
       ),
     ),
   )}`;
+}
+
+export type ImportApplicationState =
+  | { readonly state: "not-applied" }
+  | {
+      readonly state: "already-applied";
+      readonly importId: string;
+      readonly rowCount: bigint;
+    }
+  | { readonly state: "mapping-conflict" };
+
+export async function inspectApplicationIdentity(options: {
+  readonly transaction: EngineTransaction;
+  readonly captureId: string;
+  readonly tableName: string;
+  readonly schema: TableSchema;
+  readonly route: ImportRecipe["routes"][number];
+  readonly capture: PreparedCapture;
+}): Promise<ImportApplicationState> {
+  const applications = await options.transaction.query(
+    `SELECT import_id, application_key, plan_id, plan_revision, row_count FROM ${APPLICATION_TABLE} WHERE capture_id = ? AND table_name = ? ORDER BY import_id`,
+    [options.captureId, options.tableName],
+  );
+  if (applications.length > 1) {
+    throw databaseError(
+      "DB_CORRUPT_DATABASE",
+      "The database has duplicate import applications for one capture and table. Restore a verified database copy before retrying.",
+      { captureId: options.captureId, table: options.tableName },
+    );
+  }
+  const application = applications[0];
+  if (application === undefined) return { state: "not-applied" };
+  let currentKey: string;
+  try {
+    currentKey = effectiveApplicationKey(options);
+  } catch (cause) {
+    if (!isConsultChimpsError(cause) || cause.code !== "DB_STALE_IMPORT_PLAN") {
+      throw cause;
+    }
+    return { state: "mapping-conflict" };
+  }
+  const storedKey = await historicalEffectiveApplicationKey({
+    transaction: options.transaction,
+    storedKey: valueAsString(application["application_key"], "application key"),
+    planId: valueAsString(application["plan_id"], "plan ID"),
+    planRevision: valueAsBigInt(application["plan_revision"], "plan revision"),
+    captureId: options.captureId,
+    tableName: options.tableName,
+    schema: options.schema,
+    capture: options.capture,
+  });
+  return storedKey === currentKey
+    ? {
+        state: "already-applied",
+        importId: valueAsString(application["import_id"], "import ID"),
+        rowCount: valueAsBigInt(application["row_count"], "row count"),
+      }
+    : { state: "mapping-conflict" };
 }
 
 function legacyApplicationKey(options: {
