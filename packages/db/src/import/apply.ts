@@ -57,7 +57,11 @@ import {
 } from "./planning.js";
 import { assertCaptureRowCount, readSourceRowPage } from "./source-rows.js";
 import { createCaptureRowChecksum } from "./row-checksum.js";
-import { receiptIds, validatedReceiptRowCount } from "./receipt.js";
+import {
+  assertReceiptDeliveryMemberships,
+  receiptIds,
+  validatedReceiptRowCount,
+} from "./receipt.js";
 import type { ApplyImportOptions, ImportResult } from "./types.js";
 
 const CAPTURE_BATCH_ROWS = 2_000;
@@ -221,6 +225,11 @@ export async function applyImport(
         const storedDelivery = parseStoredDeliveryContext(
           deliveries[0]["context_json"],
         );
+        await assertReceiptDeliveryMemberships({
+          transaction,
+          deliveryId,
+          captureIds: savedCaptureIds,
+        });
         if (
           delivery === undefined ||
           canonicalJson(storedDelivery) !== canonicalJson(delivery)

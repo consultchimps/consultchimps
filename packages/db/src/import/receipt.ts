@@ -1,7 +1,12 @@
 import { valueAsNonNegativeBigInt, valueAsString } from "../database.js";
 import { databaseError } from "../errors.js";
 import type { EngineTransaction } from "../internal/engine.js";
-import { APPLICATION_TABLE, CAPTURE_TABLE, PLAN_TABLE } from "../metadata.js";
+import {
+  APPLICATION_TABLE,
+  CAPTURE_TABLE,
+  DELIVERY_MEMBERSHIP_TABLE,
+  PLAN_TABLE,
+} from "../metadata.js";
 import { identifierKey } from "../schema.js";
 import { historicalCaptureBindings } from "./application-identity.js";
 import { routeKey } from "./planning.js";
@@ -47,6 +52,32 @@ function corruptReceiptCaptures(): never {
     "DB_CORRUPT_DATABASE",
     "The saved import receipt capture identifiers do not match its source bindings. Restore a verified database copy before retrying.",
   );
+}
+
+export async function assertReceiptDeliveryMemberships(options: {
+  readonly transaction: EngineTransaction;
+  readonly deliveryId: string;
+  readonly captureIds: readonly string[];
+}): Promise<void> {
+  const rows = await options.transaction.query(
+    `SELECT capture_id FROM ${DELIVERY_MEMBERSHIP_TABLE} WHERE delivery_id = ? ORDER BY capture_id`,
+    [options.deliveryId],
+  );
+  const actualCaptureIds = rows.map((row) =>
+    valueAsString(row["capture_id"], "delivery capture ID"),
+  );
+  const expectedCaptureIds = [...new Set(options.captureIds)].sort();
+  if (
+    actualCaptureIds.length !== expectedCaptureIds.length ||
+    actualCaptureIds.some(
+      (captureId, index) => captureId !== expectedCaptureIds[index],
+    )
+  ) {
+    throw databaseError(
+      "DB_CORRUPT_DATABASE",
+      "The saved delivery capture memberships do not match its import receipt. Restore a verified database copy before retrying.",
+    );
+  }
 }
 
 function receiptApplicationIdentity(

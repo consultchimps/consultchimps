@@ -79,10 +79,12 @@ export function createElementParser(options: {
   });
   parser.on("opentag", (tag) => {
     if (elements.length === 0) {
-      namespace =
-        tag.local === options.root && accepted.has(tag.uri)
-          ? tag.uri
-          : undefined;
+      if (tag.local !== options.root || !accepted.has(tag.uri)) {
+        throw new Error(
+          `The XML document must have a ${options.root} root in a supported namespace.`,
+        );
+      }
+      namespace = tag.uri;
     }
     elements.push(tag);
     if (tag.uri !== namespace) foreignDepth += 1;
