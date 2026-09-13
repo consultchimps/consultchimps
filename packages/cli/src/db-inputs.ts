@@ -18,6 +18,11 @@ import {
 } from "@consultchimps/files";
 import type { WorkbookSelection } from "@consultchimps/xlsx/stream";
 
+import {
+  createDbInputCloser,
+  dbInputInitializationCleanupError,
+} from "./db-input-cleanup.js";
+
 export interface DbInputOptions {
   readonly input: readonly string[];
   readonly sheet?: string | undefined;
@@ -132,17 +137,6 @@ export async function openDbInputs(
   const workbooks: WorkbookImportSource[] = [];
   const paths: string[] = [];
   const keys = new Set<string>();
-  async function close(): Promise<void> {
-    try {
-      await Promise.all(workbooks.map((workbook) => workbook.close()));
-    } finally {
-      try {
-        await Promise.all(files.map((file) => file.close()));
-      } finally {
-        await scratch.close();
-      }
-    }
-  }
   try {
     for (const input of options.input) {
       const { filePath, key } = await parseInput(input);
@@ -178,9 +172,23 @@ export async function openDbInputs(
         }),
       );
     }
+    const close = createDbInputCloser({
+      workbooks: workbooks.map((workbook) => () => workbook.close()),
+      files: files.map((file) => () => file.close()),
+      scratch: () => scratch.close(),
+    });
     return { paths, workbooks, close };
   } catch (error) {
-    await close();
+    const close = createDbInputCloser({
+      workbooks: workbooks.map((workbook) => () => workbook.close()),
+      files: files.map((file) => () => file.close()),
+      scratch: () => scratch.close(),
+    });
+    try {
+      await close();
+    } catch (cleanupError) {
+      throw dbInputInitializationCleanupError(error, cleanupError);
+    }
     throw error;
   }
 }

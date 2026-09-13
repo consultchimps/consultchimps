@@ -42,6 +42,68 @@ const domain: TableSchema = {
 const schema: DatabaseSchema = { version: 1, tables: [child, parent, domain] };
 
 for (const format of ["sqlite", "duckdb"] as const) {
+  test(`${format}: mutated ready additions are revalidated before schema writes`, async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "cc-schema-test-"));
+    directories.push(directory);
+    const { database } = await createDatabase({
+      path: path.join(directory, `mutated.${format}`),
+      format,
+      schema: { version: 1, tables: [parent] },
+    });
+    try {
+      const proposed: DatabaseSchema = {
+        version: 1,
+        tables: [
+          {
+            ...parent,
+            columns: [
+              ...parent.columns,
+              { name: "planned", type: "text", nullable: true },
+            ],
+          },
+        ],
+      };
+      const plan = await planSchema({ database, schema: proposed });
+      Object.defineProperty(plan.adds[0]!.columns[0]!, "nullable", {
+        configurable: true,
+        value: false,
+      });
+      const before = await inspectDatabase({ database });
+
+      await expect(applySchema({ database, plan })).rejects.toMatchObject({
+        code: "DB_SCHEMA_NEEDS_REVIEW",
+        details: { table: parent.name, column: "planned" },
+      });
+      const after = await inspectDatabase({ database });
+      expect(after.revision).toBe(before.revision);
+      const columns = await engineOf(database).query(
+        `SELECT name FROM pragma_table_info('${parent.name}')`,
+      );
+      expect(columns.map((column) => column["name"])).not.toContain("planned");
+
+      const retry = await planSchema({
+        database,
+        schema: {
+          version: 1,
+          tables: [
+            {
+              ...parent,
+              columns: [
+                ...parent.columns,
+                { name: "planned", type: "text", nullable: true },
+              ],
+            },
+          ],
+        },
+      });
+      await expect(
+        applySchema({ database, plan: retry }),
+      ).resolves.toMatchObject({ metrics: { columnsAdded: 1 } });
+    } finally {
+      await database.close();
+    }
+  });
+
   test(`${format}: multiple declared foreign keys are enforced regardless of schema order`, async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "cc-schema-test-"));
     directories.push(directory);

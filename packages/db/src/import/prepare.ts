@@ -319,6 +319,7 @@ export async function prepareImport(
             columns: columnNames,
             recipe: options.recipe,
           });
+          const declaredColumns = new Set(columnNames);
           const profiles = new Map<string, ColumnProfile>(
             columnNames.map((column) => [column, emptyProfile()]),
           );
@@ -347,8 +348,23 @@ export async function prepareImport(
                 );
               }
               lastSourceRow = row.sourceRow;
-              for (const column in row.cells) {
-                if (!Object.hasOwn(row.cells, column)) continue;
+              const cellColumns = Object.keys(row.cells);
+              const unexpectedColumn = cellColumns.find(
+                (column) => !declaredColumns.has(column),
+              );
+              if (unexpectedColumn !== undefined) {
+                throw databaseError(
+                  "DB_INVALID_SOURCE_COLUMN",
+                  `Source "${source.key}" selection "${selection.key}" returned an undeclared column. Make the reader's column list match its row cells before importing.`,
+                  {
+                    source: source.key,
+                    selection: selection.key,
+                    sourceRow: row.sourceRow,
+                    column: unexpectedColumn,
+                  },
+                );
+              }
+              for (const column of cellColumns) {
                 const cell = row.cells[column]!;
                 try {
                   assertValidImportDateCell(cell, "source");
@@ -380,7 +396,11 @@ export async function prepareImport(
                 if (profile !== undefined) addToProfile(profile, cell);
               }
               const sourceRow = BigInt(row.sourceRow);
-              const valuesJson = JSON.stringify(row.cells);
+              const valuesJson = JSON.stringify(
+                Object.fromEntries(
+                  cellColumns.map((column) => [column, row.cells[column]]),
+                ),
+              );
               rowChecksum.update(sourceRow, valuesJson);
               rows.push([captureId, sourceRow, valuesJson]);
             }

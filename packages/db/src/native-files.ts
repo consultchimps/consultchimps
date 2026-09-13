@@ -87,6 +87,7 @@ function publishedOpenFailure(filePath: string, cause: unknown) {
 export class NativeFileRegistry {
   readonly #openHandles = new Set<OpenNativeHandle>();
   readonly #failedClosures = new Map<NativeFileHandle, string>();
+  readonly #unclosedOwners = new Map<object, string>();
   readonly #resolveIdentity: NativeFileIdentityResolver;
   #tail: Promise<void> = Promise.resolve();
 
@@ -127,11 +128,18 @@ export class NativeFileRegistry {
     for (const [handle] of this.#failedClosures) {
       if (!handle.isOpen) this.#failedClosures.delete(handle);
     }
-    if (this.#failedClosures.size > 0) {
+    if (this.#failedClosures.size > 0 || this.#unclosedOwners.size > 0) {
       throw databaseError(
         "DB_NATIVE_HANDLE_CLEANUP_REQUIRED",
         "A database or import plan could not be registered or closed. File replacement is blocked because its filesystem identity could not be confirmed. Retry closing the handle if it is available, or restart the process before replacing files.",
-        { paths: [...this.#failedClosures.values()] },
+        {
+          paths: [
+            ...new Set([
+              ...this.#failedClosures.values(),
+              ...this.#unclosedOwners.values(),
+            ]),
+          ],
+        },
       );
     }
     const identity = await this.#resolveIdentity(filePath);
@@ -186,6 +194,10 @@ export class NativeFileRegistry {
 
   async inspect<T>(work: () => Promise<T>): Promise<T> {
     return this.#exclusive(work);
+  }
+
+  retainUnclosedOwner(filePath: string, owner: object): void {
+    this.#unclosedOwners.set(owner, path.resolve(filePath));
   }
 
   async open<T extends NativeFileHandle>(

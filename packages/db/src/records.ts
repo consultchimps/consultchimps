@@ -32,6 +32,7 @@ import {
   type DatabaseSchema,
   type TableSchema,
 } from "./schema.js";
+import { parseDatabaseSchema } from "./validators.js";
 
 export type SchemaConflict =
   | {
@@ -66,6 +67,58 @@ export interface SchemaPlan {
   readonly adds: readonly AddColumnsPlan[];
   readonly conflicts: readonly SchemaConflict[];
   readonly state: "ready" | "needs-review";
+}
+
+function snapshotReadySchemaPlan(plan: SchemaPlan): SchemaPlan {
+  const creates = parseDatabaseSchema({
+    version: 1,
+    tables: plan.creates,
+  }).tables;
+  const adds = plan.adds.map((addition) => {
+    const table = parseDatabaseSchema({
+      version: 1,
+      tables: [
+        {
+          name: addition.table,
+          recordId: { prefix: "VALIDATE", padding: 0 },
+          columns: addition.columns,
+        },
+      ],
+    }).tables[0]!;
+    return { table: table.name, columns: table.columns };
+  });
+  const addNames = new Set<string>();
+  const createNames = new Set(creates.map(({ name }) => identifierKey(name)));
+  for (const addition of adds) {
+    const key = identifierKey(addition.table);
+    if (addNames.has(key) || createNames.has(key)) {
+      throw databaseError(
+        "DB_DUPLICATE_TABLE",
+        "The schema plan changes the same table more than once. Prepare the schema again before applying.",
+        { table: addition.table },
+      );
+    }
+    addNames.add(key);
+    const required = addition.columns.find(
+      (column) => column.nullable === false,
+    );
+    if (required !== undefined) {
+      throw databaseError(
+        "DB_SCHEMA_NEEDS_REVIEW",
+        "Adding a required column needs a separate migration that supplies values for existing rows. Prepare an additive schema with nullable columns.",
+        { table: addition.table, column: required.name },
+      );
+    }
+  }
+  return {
+    databaseId: plan.databaseId,
+    baselineRevision: plan.baselineRevision,
+    schemaFingerprint: plan.schemaFingerprint,
+    creates,
+    adds,
+    conflicts: [...plan.conflicts],
+    state: plan.state,
+  };
 }
 
 function sameColumnType(
@@ -422,7 +475,14 @@ export async function applySchema(
       "The schema plan still has conflicts. Resolve them before applying it.",
     );
   }
-  if (options.plan.databaseId !== options.database.id) {
+  const plan = snapshotReadySchemaPlan(options.plan);
+  if (plan.conflicts.length > 0) {
+    throw databaseError(
+      "DB_SCHEMA_NEEDS_REVIEW",
+      "The schema plan still has conflicts. Resolve them before applying it.",
+    );
+  }
+  if (plan.databaseId !== options.database.id) {
     throw databaseError(
       "DB_SCHEMA_WRONG_DATABASE",
       "The schema plan belongs to a different database.",
@@ -439,21 +499,52 @@ export async function applySchema(
       "revision",
     );
     if (
-      current !== options.plan.baselineRevision ||
+      current !== plan.baselineRevision ||
       (await readSchemaFingerprint(transaction, options.database.format)) !==
-        options.plan.schemaFingerprint
+        plan.schemaFingerprint
     ) {
       throw databaseError(
         "DB_STALE_SCHEMA_PLAN",
         "The database schema changed after this plan was prepared. Prepare it again before applying.",
       );
     }
-    await validateRegisteredTables(transaction, options.database.format);
-    for (const schema of options.plan.creates) {
-      throwIfAborted(options.signal, "db.schema.apply");
-      await createManagedTable(transaction, options.database.format, schema);
+    const existing = await validateRegisteredTables(
+      transaction,
+      options.database.format,
+    );
+    const knownNames = new Set(existing.map(({ name }) => identifierKey(name)));
+    for (const schema of plan.creates) {
+      const key = identifierKey(schema.name);
+      if (knownNames.has(key)) {
+        throw databaseError(
+          "DB_DUPLICATE_TABLE",
+          "The schema plan creates a table that already exists. Prepare the schema again before applying.",
+          { table: schema.name },
+        );
+      }
+      knownNames.add(key);
     }
-    for (const addition of options.plan.adds) {
+    for (const schema of plan.creates) {
+      for (const relationship of schema.foreignKeys ?? []) {
+        if (!knownNames.has(identifierKey(relationship.referencesTable))) {
+          throw databaseError(
+            "DB_FOREIGN_TABLE_NOT_FOUND",
+            "A relationship refers to a table that does not exist in this schema plan. Prepare the schema again after adding the referenced table.",
+            {
+              table: schema.name,
+              referencesTable: relationship.referencesTable,
+            },
+          );
+        }
+      }
+    }
+    const additions: Array<{
+      readonly table: string;
+      readonly columns: readonly ColumnDefinition[];
+      readonly updated: TableSchema;
+    }> = [];
+    for (const addition of plan.adds) {
+      throwIfAborted(options.signal, "db.schema.apply");
       const rows = await transaction.query(
         `SELECT schema_json FROM ${TABLE_REGISTRY_TABLE} WHERE table_name = ?`,
         [addition.table],
@@ -466,22 +557,31 @@ export async function applySchema(
         );
       }
       const schema = parseStoredTableSchema(stored, addition.table);
+      const updated = parseDatabaseSchema({
+        version: 1,
+        tables: [
+          { ...schema, columns: [...schema.columns, ...addition.columns] },
+        ],
+      }).tables[0]!;
+      additions.push({ ...addition, updated });
+    }
+    for (const schema of sortTablesByReferences(plan.creates)) {
+      throwIfAborted(options.signal, "db.schema.apply");
+      await createManagedTable(transaction, options.database.format, schema);
+    }
+    for (const addition of additions) {
       for (const column of addition.columns) {
         throwIfAborted(options.signal, "db.schema.apply");
         await transaction.execute(
           `ALTER TABLE ${quoteIdentifier(addition.table)} ADD COLUMN ${quoteIdentifier(column.name)} ${storageType(options.database.format, column)}`,
         );
       }
-      const updated: TableSchema = {
-        ...schema,
-        columns: [...schema.columns, ...addition.columns],
-      };
       await transaction.execute(
         `UPDATE ${TABLE_REGISTRY_TABLE} SET schema_json = ?, schema_version = schema_version + 1 WHERE table_name = ?`,
-        [JSON.stringify(updated), addition.table],
+        [JSON.stringify(addition.updated), addition.table],
       );
     }
-    if (options.plan.creates.length > 0 || options.plan.adds.length > 0) {
+    if (plan.creates.length > 0 || plan.adds.length > 0) {
       await transaction.execute(
         `UPDATE ${DATABASE_METADATA_TABLE} SET revision = revision + 1`,
       );
@@ -492,8 +592,8 @@ export async function applySchema(
     artifacts: [],
     warnings: [],
     metrics: {
-      tablesCreated: options.plan.creates.length,
-      columnsAdded: options.plan.adds.reduce(
+      tablesCreated: plan.creates.length,
+      columnsAdded: plan.adds.reduce(
         (total, addition) => total + addition.columns.length,
         0,
       ),

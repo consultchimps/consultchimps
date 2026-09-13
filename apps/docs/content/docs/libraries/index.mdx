@@ -373,6 +373,10 @@ The check also covers saved-review metadata and capture rows. Triggers on
 unrelated tables remain allowed. Read-only inspection does not run triggers;
 restore the declared schema before resuming managed writes.
 
+`applySchema` snapshots and revalidates the supplied plan before DDL, including
+effective column additions. Custom import readers must declare their cell keys
+in `columns`; undeclared keys return `DB_INVALID_SOURCE_COLUMN` before capture.
+
 Request IDs identify retryable actions. `applyImport` rejects an ID already used
 by a standalone delivery with `DB_REQUEST_ID_CONFLICT`. `recordDelivery` cannot
 create a delivery under an import-only request ID. When an import also records a

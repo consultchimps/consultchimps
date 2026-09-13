@@ -128,6 +128,11 @@ for managed writes. They can suppress rows or alter import receipts, so writes
 return `DB_SCHEMA_DRIFT` when such triggers are present. Restore the declared
 schema before retrying.
 
+`applySchema` copies and validates the supplied plan before writing. Required
+column additions must be reviewed instead of being applied as nullable storage.
+Custom import readers must declare their cell keys in `columns`; undeclared keys
+return `DB_INVALID_SOURCE_COLUMN` before capture.
+
 Native staging failures use `DB_NATIVE_TEMPORARY_CLEANUP_REQUIRED` when cleanup
 also fails. The error retains the original and cleanup causes and identifies the
 private file paths to inspect after releasing remaining handles, including
@@ -140,7 +145,9 @@ could not be removed; check its `output` before repeating creation or export.
 registration failed; its `output` path identifies the saved file. If
 registration and handle closure both fail, `DB_NATIVE_HANDLE_CLEANUP_REQUIRED`
 blocks native file replacement until that handle closes or the process restarts,
-because its filesystem identity could not be confirmed.
+because its filesystem identity could not be confirmed. Failed native opening or
+inspection also retains an unclosed engine and blocks replacement. Restart the
+process when that failed operation returned no handle that you can close.
 `DB_NATIVE_SQLITE_CLEANUP_REQUIRED` means initialization and connection closure
 both failed. Restart the process before retrying that file.
 `DB_DUCKDB_OPEN_CLEANUP_FAILED` reports the corresponding DuckDB initialization

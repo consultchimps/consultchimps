@@ -114,6 +114,49 @@ function source(
   };
 }
 
+function sourceWithUnexpectedCell(includeUnexpected: boolean): ImportSource {
+  const input = source(["Value"], { batches: 0, closes: 0 });
+  return {
+    ...input,
+    selections: [
+      {
+        key: "Inventory",
+        label: "Inventory",
+        async open() {
+          return {
+            columns: ["Value"],
+            async *batches() {
+              yield Array.from({ length: 2_000 }, (_, index) => ({
+                sourceRow: index + 2,
+                cells: {
+                  Value: { kind: "number" as const, raw: "1" },
+                },
+              }));
+              yield [
+                {
+                  sourceRow: 2_002,
+                  cells: {
+                    Value: { kind: "number" as const, raw: "2" },
+                    ...(includeUnexpected
+                      ? {
+                          PrivateNote: {
+                            kind: "string" as const,
+                            value: "synthetic confidential value",
+                          },
+                        }
+                      : {}),
+                  },
+                },
+              ];
+            },
+            async close() {},
+          };
+        },
+      },
+    ],
+  };
+}
+
 async function expectEmptyStaging(
   prepared: Parameters<typeof preparedEngineOf>[0],
 ): Promise<void> {
@@ -200,6 +243,64 @@ for (const format of ["sqlite", "duckdb"] as const) {
         `SELECT COUNT(*) AS count FROM ${PREPARED_ROW_TABLE}`,
       );
       expect(valueAsBigInt(rows[0]?.["count"], "staged count")).toBe(2_001n);
+    } finally {
+      await prepared.close();
+      await database.close();
+    }
+  });
+
+  test(`${format}: row cells must be declared by the region reader`, async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "cc-reader-cells-"));
+    directories.push(directory);
+    const { database } = await createDatabase({
+      path: path.join(directory, `workspace.${format}`),
+      format,
+    });
+    const prepared = await createPreparedImport({
+      path: path.join(directory, "review.ccplan"),
+      database,
+      recipe,
+      baselineRevision: (await inspectDatabase({ database })).revision,
+    });
+    try {
+      let failure: unknown;
+      try {
+        await prepareImport({
+          database,
+          prepared,
+          recipe,
+          sources: [sourceWithUnexpectedCell(true)],
+        });
+      } catch (cause) {
+        failure = cause;
+      }
+      expect(failure).toMatchObject({
+        code: "DB_INVALID_SOURCE_COLUMN",
+        details: {
+          source: "submission",
+          selection: "Inventory",
+          sourceRow: 2_002,
+          column: "PrivateNote",
+        },
+      });
+      expect(JSON.stringify(failure)).not.toContain(
+        "synthetic confidential value",
+      );
+      await expectEmptyStaging(prepared);
+
+      const outcome = await prepareImport({
+        database,
+        prepared,
+        recipe,
+        sources: [sourceWithUnexpectedCell(false)],
+      });
+      expect(outcome.result.metrics.rowsCaptured).toBe(2_001);
+      const rows = await preparedEngineOf(prepared).query(
+        `SELECT values_json FROM ${PREPARED_ROW_TABLE} ORDER BY source_row DESC LIMIT 1`,
+      );
+      expect(rows).toEqual([
+        { values_json: '{"Value":{"kind":"number","raw":"2"}}' },
+      ]);
     } finally {
       await prepared.close();
       await database.close();

@@ -9,7 +9,7 @@ import type {
   OperationControlOptions,
   OperationResult,
 } from "@consultchimps/core";
-import { throwIfAborted } from "@consultchimps/core";
+import { isConsultChimpsError, throwIfAborted } from "@consultchimps/core";
 
 import {
   createDatabaseHandle,
@@ -50,6 +50,41 @@ import type {
 const SQLITE_HEADER = new TextEncoder().encode("SQLite format 3\0");
 const databasePaths = new WeakMap<Database, string>();
 const nativeFiles = new NativeFileRegistry();
+
+function retainInitializationFailure(filePath: string, cause: unknown): void {
+  if (
+    isConsultChimpsError(cause) &&
+    (cause.code === "DB_NATIVE_SQLITE_CLEANUP_REQUIRED" ||
+      cause.code === "DB_DUCKDB_OPEN_CLEANUP_FAILED")
+  ) {
+    nativeFiles.retainUnclosedOwner(filePath, cause);
+    throw cause;
+  }
+}
+
+async function closeNativeReadOwner(options: {
+  readonly path: string;
+  readonly owner: { close(): Promise<void> };
+  readonly failure?: { readonly cause: unknown };
+}): Promise<void> {
+  try {
+    await options.owner.close();
+  } catch (cleanupFailure) {
+    nativeFiles.retainUnclosedOwner(options.path, options.owner);
+    throw databaseError(
+      "DB_NATIVE_HANDLE_CLEANUP_REQUIRED",
+      "The database or import plan could not be closed after opening or inspection. Restart the process before reopening or replacing the reported file. File replacement is blocked in this runtime.",
+      { path: options.path, closeFailed: true },
+      new AggregateError(
+        [
+          ...(options.failure === undefined ? [] : [options.failure.cause]),
+          cleanupFailure,
+        ],
+        "Native file access and handle cleanup failed",
+      ),
+    );
+  }
+}
 
 function nativeTemporaryPaths(
   temporary: string,
@@ -204,6 +239,7 @@ async function openEngine(
       ? NodeSqliteEngine.open(filePath, readonly)
       : await NodeDuckDbEngine.create(filePath, readonly);
   } catch (cause) {
+    retainInitializationFailure(filePath, cause);
     throw databaseError(
       "DB_OPEN_FAILED",
       "The database could not be opened. Check that it is a supported SQLite or DuckDB file and that you have access to it.",
@@ -219,10 +255,14 @@ async function inspectFileKindUnlocked(options: {
   const input = path.resolve(options.path);
   const format = await detectedFormat(input);
   let engine: DatabaseEngine | undefined;
+  let owner: { close(): Promise<void> } | undefined;
+  let failure: { readonly cause: unknown } | undefined;
   try {
     try {
       engine = await openEngine(input, format, true);
+      owner = engine;
     } catch (cause) {
+      retainInitializationFailure(input, cause);
       throw databaseError(
         "DB_UNSUPPORTED_FILE_FORMAT",
         "This file is not a supported ConsultChimps database or import plan.",
@@ -265,30 +305,31 @@ async function inspectFileKindUnlocked(options: {
         );
       }
       const prepared = await openPreparedImportHandle(engine);
-      engine = undefined;
-      try {
-        return {
-          kind: "prepared-import",
-          format: "sqlite",
-          databaseId: prepared.databaseId,
-        };
-      } finally {
-        await prepared.close();
-      }
+      owner = prepared;
+      return {
+        kind: "prepared-import",
+        format: "sqlite",
+        databaseId: prepared.databaseId,
+      };
     }
     const database = await openDatabaseHandle(engine);
-    engine = undefined;
-    try {
-      return {
-        kind: "database",
-        format: database.format,
-        databaseId: database.id,
-      };
-    } finally {
-      await database.close();
-    }
+    owner = database;
+    return {
+      kind: "database",
+      format: database.format,
+      databaseId: database.id,
+    };
+  } catch (cause) {
+    failure = { cause };
+    throw cause;
   } finally {
-    await engine?.close().catch(() => undefined);
+    if (owner !== undefined) {
+      await closeNativeReadOwner({
+        path: input,
+        owner,
+        ...(failure === undefined ? {} : { failure }),
+      });
+    }
   }
 }
 
@@ -395,7 +436,11 @@ async function openDatabaseUnlocked(options: {
     databasePaths.set(database, input);
     return database;
   } catch (error) {
-    await engine.close().catch(() => undefined);
+    await closeNativeReadOwner({
+      path: input,
+      owner: engine,
+      failure: { cause: error },
+    });
     throw error;
   }
 }
@@ -597,6 +642,7 @@ async function openPreparedImportUnlocked(options: {
   try {
     engine = NodeSqliteEngine.open(input, options.readonly);
   } catch (cause) {
+    retainInitializationFailure(input, cause);
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",
       "The import plan could not be opened. Check that the file exists, that you have access to it, and that it is a saved ConsultChimps .ccplan file. Restore a verified copy or prepare the workbook again if it is damaged.",
@@ -608,7 +654,11 @@ async function openPreparedImportUnlocked(options: {
     const prepared = await openPreparedImportHandle(engine);
     return prepared;
   } catch (error) {
-    await engine.close().catch(() => undefined);
+    await closeNativeReadOwner({
+      path: input,
+      owner: engine,
+      failure: { cause: error },
+    });
     throw error;
   }
 }

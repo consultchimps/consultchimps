@@ -44,3 +44,7 @@ successful publication when removing the staging filename fails, and retain
 private files when initialization leaves an unclosed engine connection. Reject
 SQLite triggers on managed or internal tables before managed writes so they
 cannot silently suppress imported rows or alter retry receipts.
+
+Revalidate schema plans before applying changes and reject undeclared reader
+cells before capture. Preserve cleanup failures and recovery paths when a native
+open or one-step CLI import fails.

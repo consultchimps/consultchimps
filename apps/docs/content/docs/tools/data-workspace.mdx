@@ -451,6 +451,12 @@ Cancelling a CLI export before file publication leaves the destination unchanged
 and attempts to remove the private staged copy. Cancellation is no longer
 checked once file publication begins.
 
+`CLI_DB_IMPORT_CLEANUP_REQUIRED` reports a one-step import whose local resources
+could not finish closing or being removed. Its details include
+`operationCompleted` and any private plan directory. Inspect a completed import
+before repeating it. `CLI_DB_INPUT_CLEANUP_REQUIRED` retains failures to close
+workbooks, input files, or scratch storage.
+
 The Node library refuses replacement with `DB_NATIVE_FILE_BUSY` while a database
 or plan remains open through the same runtime, including a filesystem alias.
 Close those handles first. Other processes must also release the destination

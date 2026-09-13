@@ -52,6 +52,10 @@ import {
   formatImportResolution,
   formatSchemaPlan,
 } from "../db-report.js";
+import {
+  finishCliImport,
+  type CliImportOutcome,
+} from "../db-import-cleanup.js";
 import { createCliProgress } from "../progress.js";
 import { withoutTerminalControlsInProse } from "../text.js";
 
@@ -177,48 +181,49 @@ async function prepare(
       : undefined;
     const database = await openDatabase({ path: databasePath });
     let temporary: string | undefined;
+    let inputs: Awaited<ReturnType<typeof openDbInputs>> | undefined;
+    let prepared: Awaited<ReturnType<typeof createPreparedImport>> | undefined;
+    let outcome: CliImportOutcome = { status: "completed" };
     try {
       const suppliedRecipe = options.recipe
         ? parseImportRecipe(await readDbDocument(options.recipe))
         : undefined;
-      const inputs = await openDbInputs(options, controls, suppliedRecipe);
-      try {
-        const sourceList = inputs.workbooks.map((workbook) => workbook.source);
-        const recipe =
-          suppliedRecipe ??
-          (await draftImportRecipe({
-            sources: sourceList,
-            into: options.into,
-          }));
-        const inspected = await inspectDatabase({ database });
-        if (!options.output)
-          temporary = await mkdtemp(path.join(tmpdir(), "cc-import-plan-"));
-        const planPath =
-          options.output ?? path.join(temporary ?? "", "review.ccplan");
-        const protectedInputPaths = [
-          ...inputs.paths,
-          ...(options.recipe ? [options.recipe] : []),
-          ...(options.context ? [options.context] : []),
-        ];
-        if (!apply) {
-          const outcome = await prepareImportFile({
-            path: planPath,
-            database,
-            sources: sourceList,
-            recipe,
-            baselineRevision: inspected.revision,
-            overwrite: options.force,
-            protectedInputPaths,
-            ...controls,
-          });
-          output.result(outcome.result);
-          if (!output.json())
-            process.stdout.write(
-              "Review this plan with db inspect, then apply it with db apply. The captured plan can contain source values; keep it private.\n",
-            );
-          return;
-        }
-        const prepared = await createPreparedImport({
+      inputs = await openDbInputs(options, controls, suppliedRecipe);
+      const sourceList = inputs.workbooks.map((workbook) => workbook.source);
+      const recipe =
+        suppliedRecipe ??
+        (await draftImportRecipe({
+          sources: sourceList,
+          into: options.into,
+        }));
+      const inspected = await inspectDatabase({ database });
+      if (!options.output)
+        temporary = await mkdtemp(path.join(tmpdir(), "cc-import-plan-"));
+      const planPath =
+        options.output ?? path.join(temporary ?? "", "review.ccplan");
+      const protectedInputPaths = [
+        ...inputs.paths,
+        ...(options.recipe ? [options.recipe] : []),
+        ...(options.context ? [options.context] : []),
+      ];
+      if (!apply) {
+        const preparedFile = await prepareImportFile({
+          path: planPath,
+          database,
+          sources: sourceList,
+          recipe,
+          baselineRevision: inspected.revision,
+          overwrite: options.force,
+          protectedInputPaths,
+          ...controls,
+        });
+        output.result(preparedFile.result);
+        if (!output.json())
+          process.stdout.write(
+            "Review this plan with db inspect, then apply it with db apply. The captured plan can contain source values; keep it private.\n",
+          );
+      } else {
+        prepared = await createPreparedImport({
           path: planPath,
           database,
           recipe,
@@ -226,39 +231,49 @@ async function prepare(
           overwrite: options.force,
           protectedInputPaths,
         });
-        try {
-          const outcome = await prepareImport({
+        const preparedOutcome = await prepareImport({
+          database,
+          prepared,
+          sources: sourceList,
+          recipe,
+          ...controls,
+        });
+        const approved = requireReady(
+          preparedOutcome.prepared.state === "ready"
+            ? preparedOutcome.prepared
+            : await resolveImport({ database, prepared, decisions: [] }),
+        );
+        output.result(
+          await applyImport({
             database,
             prepared,
-            sources: sourceList,
-            recipe,
+            approved,
+            requestId: options.requestId ?? prepared.id,
+            delivery,
             ...controls,
-          });
-          const approved = requireReady(
-            outcome.prepared.state === "ready"
-              ? outcome.prepared
-              : await resolveImport({ database, prepared, decisions: [] }),
-          );
-          output.result(
-            await applyImport({
-              database,
-              prepared,
-              approved,
-              requestId: options.requestId ?? prepared.id,
-              delivery,
-              ...controls,
-            }),
-          );
-        } finally {
-          await prepared.close();
-        }
-      } finally {
-        await inputs.close();
+          }),
+        );
       }
-    } finally {
-      await database.close();
-      if (temporary) await rm(temporary, { recursive: true, force: true });
+    } catch (error) {
+      outcome = { status: "failed", error };
     }
+    const ownedPrepared = prepared;
+    const ownedInputs = inputs;
+    await finishCliImport({
+      outcome,
+      temporaryPath: temporary,
+      ...(ownedPrepared === undefined
+        ? {}
+        : { closePrepared: () => ownedPrepared.close() }),
+      ...(ownedInputs === undefined
+        ? {}
+        : { closeInputs: () => ownedInputs.close() }),
+      closeDatabase: () => database.close(),
+      removeTemporary: () =>
+        temporary === undefined
+          ? Promise.resolve()
+          : rm(temporary, { recursive: true, force: true }),
+    });
   });
 }
 
