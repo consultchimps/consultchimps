@@ -62,9 +62,15 @@ const server = createServer(async (request, response) => {
     );
     response.setHeader("Content-Length", (await stat(file)).size);
     await pipeline(createReadStream(file), response);
-  } catch (error) {
+  } catch {
+    if (response.headersSent) {
+      response.destroy();
+      return;
+    }
     response.statusCode = 500;
-    response.end(String(error));
+    response.removeHeader("Content-Length");
+    response.setHeader("Content-Type", "text/plain; charset=utf-8");
+    response.end("The benchmark request failed");
   }
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));

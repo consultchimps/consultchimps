@@ -332,10 +332,20 @@ export function columnIndex(reference: string): number | undefined {
 }
 
 export function cellRow(reference: string): number | undefined {
-  const value = Number(/\$?(\d+)$/u.exec(reference)?.[1]);
-  return Number.isSafeInteger(value) && value >= 1 && value <= 1_048_576
-    ? value
-    : undefined;
+  let value = 0;
+  let place = 1;
+  let digits = 0;
+  for (let index = reference.length - 1; index >= 0; index -= 1) {
+    const code = reference.charCodeAt(index);
+    if (code < 0x30 || code > 0x39) break;
+    const digit = code - 0x30;
+    if (digit !== 0 && place > 1_048_576) return undefined;
+    value += digit * place;
+    if (value > 1_048_576) return undefined;
+    place = Math.min(place * 10, 1_048_577);
+    digits += 1;
+  }
+  return digits > 0 && value >= 1 ? value : undefined;
 }
 
 export function parseLocalRectangle(

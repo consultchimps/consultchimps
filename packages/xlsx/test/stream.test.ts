@@ -13,7 +13,7 @@ import {
   type WorkbookRegionReader,
   type WorkbookSelection,
 } from "../src/stream.js";
-import { BoundedXmlText } from "../src/stream/xml.js";
+import { BoundedXmlText, cellRow } from "../src/stream/xml.js";
 
 class MemoryFile implements RandomAccessFile {
   #bytes = new Uint8Array();
@@ -256,6 +256,28 @@ const regionSelections: readonly [WorkbookSelection][] = [
 ];
 
 describe("bounded workbook streaming", () => {
+  it.each([
+    ["A1", 1],
+    ["$A$1", 1],
+    ["A000001", 1],
+    ["XFD1048576", 1_048_576],
+    ["A0", undefined],
+    ["A1048577", undefined],
+    ["A", undefined],
+  ])("reads the bounded row suffix from %s", (reference, expected) => {
+    expect(cellRow(reference)).toBe(expected);
+  });
+
+  it("rejects a long malformed row suffix without backtracking", () => {
+    const reference = `A${"0".repeat(250_000)}x`;
+    expect(cellRow(reference)).toBeUndefined();
+  });
+
+  it("preserves long leading zeros while rejecting oversized row values", () => {
+    expect(cellRow(`A${"0".repeat(250_000)}1048576`)).toBe(1_048_576);
+    expect(cellRow(`A1${"0".repeat(250_000)}1`)).toBeUndefined();
+  });
+
   it("counts UTF-8 and CDATA delimiter candidates across input chunks", () => {
     const encoder = new TextEncoder();
     const valid = encoder.encode("<t><![CDATA[éA]B]]C]]></t>");

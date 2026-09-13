@@ -67,3 +67,6 @@ and the already-applied retry path.
 
 Reject import receipt replay when the approved plan belongs to another database,
 including a copy converted to a different format.
+
+Parse workbook row references in linear time so malformed references cannot
+trigger excessive regular-expression backtracking.
