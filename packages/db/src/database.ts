@@ -2,6 +2,7 @@ import type { OperationResult } from "@consultchimps/core";
 
 import { assertOpen, databaseError } from "./errors.js";
 import type { DatabaseEngine, EngineTransaction } from "./internal/engine.js";
+import { assertMetadataAllocationCounters } from "./internal/allocation-counters.js";
 import {
   parseStoredTableSchema,
   queryDatabaseMetadata,
@@ -321,6 +322,7 @@ export async function openDatabaseHandle(
   await validateRegisteredTables(engine, engine.format, {
     allowExtraColumns: true,
   });
+  await engine.readTransaction(assertMetadataAllocationCounters);
   return new ManagedDatabase(databaseId as DatabaseId, engine);
 }
 

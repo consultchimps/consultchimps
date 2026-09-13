@@ -8,6 +8,11 @@ import {
   valueAsString,
 } from "../database.js";
 import { databaseError } from "../errors.js";
+import {
+  assertMetadataAllocationCounters,
+  assertRecordAllocationAvailable,
+  assertRowAllocationCounters,
+} from "../internal/allocation-counters.js";
 import type { EngineTransaction, EngineValue } from "../internal/engine.js";
 import { assertNoManagedDatabaseTriggers } from "../internal/database-layout.js";
 import { canonicalJson } from "../internal/json.js";
@@ -272,6 +277,7 @@ export async function applyImport(
         "The database changed after this import was prepared. Prepare it again before applying.",
       );
     }
+    await assertMetadataAllocationCounters(transaction);
     const registeredRows = await transaction.query(
       `SELECT table_name, schema_json FROM ${TABLE_REGISTRY_TABLE}`,
     );
@@ -555,6 +561,7 @@ export async function applyImport(
       registeredNames.add(key);
       tablesCreated += 1;
     }
+    let rowCountersChecked = false;
     for (const route of orderedRoutes) {
       const capture = captures.find(
         (candidate) =>
@@ -634,6 +641,10 @@ export async function applyImport(
         rowsReused += Number(application.rowCount);
         continue;
       }
+      if (!rowCountersChecked) {
+        await assertRowAllocationCounters(transaction);
+        rowCountersChecked = true;
+      }
       const importId = await allocate(transaction, "import", "IMP");
       const sourceFileRows = await transaction.query(
         `SELECT source_file_id FROM ${CAPTURE_TABLE} WHERE capture_id = ?`,
@@ -651,6 +662,12 @@ export async function applyImport(
         recordRows[0]?.["next_record_id"],
         "Record ID counter",
       );
+      await assertRecordAllocationAvailable({
+        transaction,
+        schema,
+        nextRecord,
+        count: capture.rowCount,
+      });
       const importedRowRows = await transaction.query(
         `SELECT next_value FROM ${COUNTERS_TABLE} WHERE counter_name = ?`,
         ["imported_row"],

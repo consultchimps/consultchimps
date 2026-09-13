@@ -599,6 +599,9 @@ test("renders database review commands as labeled prose while JSON stays structu
       );
       insertMembership.run(id, captureIds[0]);
     }
+    deliveryConnection.exec(
+      "UPDATE _consultchimps_counters SET next_value = 26 WHERE counter_name = 'delivery'",
+    );
   } finally {
     deliveryConnection.close();
   }

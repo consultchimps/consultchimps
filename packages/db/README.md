@@ -117,6 +117,16 @@ returns `DB_CORRUPT_DATABASE`; a damaged prepared plan returns
 reserved tables. Validation retains the existing engine-specific layout,
 including the DuckDB capture-row table without a primary key.
 
+Opening also checks that source, capture, import, and delivery counters are
+ahead of their stored identifiers. Before a new table application, an import
+checks the latest allocated row in each table and checks its pending Record IDs
+for collisions, including records added without import provenance. These row
+checks run inside the write transaction; read-only opening and already-applied
+routes do not scan imported rows for counters. Gaps are allowed. Conflicts
+return `DB_CORRUPT_DATABASE` without resetting counters or changing saved data.
+Preserve generated Record IDs and provenance fields when editing row values
+externally.
+
 Version 1 and 2 spike plans are unsupported. Regenerate them from their original
 sources with this build. Existing working database files keep their format.
 

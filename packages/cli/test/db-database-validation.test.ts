@@ -119,6 +119,11 @@ test.each(["sqlite", "duckdb"] as const)(
       format,
       "INSERT INTO _consultchimps_delivery_events VALUES ('DEL-000001', 'synthetic-request', '{')",
     );
+    await alterFixture(
+      databasePath,
+      format,
+      "UPDATE _consultchimps_counters SET next_value = 2 WHERE counter_name = 'delivery'",
+    );
 
     const failure = await runFailure([
       "--json",

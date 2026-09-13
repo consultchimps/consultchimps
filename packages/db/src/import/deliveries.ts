@@ -6,6 +6,7 @@ import {
   type Database,
 } from "../database.js";
 import { databaseError } from "../errors.js";
+import { assertMetadataAllocationCounters } from "../internal/allocation-counters.js";
 import { assertNoManagedDatabaseTriggers } from "../internal/database-layout.js";
 import type { EngineTransaction } from "../internal/engine.js";
 import { canonicalJson } from "../internal/json.js";
@@ -51,6 +52,7 @@ async function deliveryMemberships(
 async function allocateDelivery(
   transaction: EngineTransaction,
 ): Promise<string> {
+  await assertMetadataAllocationCounters(transaction, ["delivery"]);
   const rows = await transaction.query(
     `SELECT next_value FROM ${COUNTERS_TABLE} WHERE counter_name = ?`,
     ["delivery"],

@@ -301,6 +301,17 @@ layout returns `DB_CORRUPT_DATABASE` or `DB_INVALID_PREPARED_IMPORT` before the
 handle is returned. Restore a verified copy rather than rebuilding reserved
 tables.
 
+Opening checks source, capture, import, and delivery counters against their
+stored identifiers. A new table application checks row counters against the
+latest allocated row in each table, then checks its pending Record IDs for
+collisions with existing records, including records without import provenance.
+The row checks run inside the write transaction and are skipped for
+already-applied routes and read-only opening. SQLite can use the existing
+imported-row index; DuckDB checks the numeric imported-row column. These checks
+allow gaps and return `DB_CORRUPT_DATABASE` on a conflict without repairing
+counters. Preserve generated Record IDs and provenance when editing row values
+externally. This is not a full audit of arbitrary external Record ID edits.
+
 Native staging errors report `DB_NATIVE_TEMPORARY_CLEANUP_REQUIRED` if private
 files or handles cannot be cleaned up, with the owned paths and failure causes.
 These paths include SQLite WAL and shared-memory files or DuckDB WAL and spill

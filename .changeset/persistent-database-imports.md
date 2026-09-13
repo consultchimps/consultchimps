@@ -58,3 +58,9 @@ failed browser open cleanup so live owners continue to block replacement.
 Reject repeated workbook-property declarations and duplicate import source or
 selection keys before capture. Reject stored application counts that disagree
 with their capture before reporting reuse or recording new retry receipts.
+
+Reject browser automatic imports when no workbook regions are selected. Check
+metadata allocation counters when opening a database and row allocation before
+new table applications. Report structured corruption errors for counter
+conflicts and pending Record ID collisions while preserving valid counter gaps
+and the already-applied retry path.

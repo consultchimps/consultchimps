@@ -2,6 +2,7 @@ import {
   applyImport,
   applySchema,
   createWorkbookImportSource,
+  draftImportRecipe,
   identifierKey,
   inspectAppliedImportPlan,
   inspectDatabase,
@@ -860,6 +861,7 @@ async function prepareSources(
       );
     }
     const sources = workbookSources.map((source) => source.source);
+    await draftImportRecipe({ sources });
     const recipe: ImportRecipe = {
       version: 1,
       routes: sources.flatMap((source) =>
