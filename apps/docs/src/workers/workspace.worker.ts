@@ -55,6 +55,10 @@ import {
   closeTrackedResources,
   replaceActiveWorkspace,
 } from "@/lib/workspace-replacement";
+import {
+  workspaceRecordIdPrefix,
+  workspaceWorkingCopyName,
+} from "@/lib/workspace-naming";
 import type {
   WorkspaceCommand,
   WorkspaceDeliveryContext,
@@ -227,19 +231,6 @@ async function replaceWorkspace(
       workspace = next;
     },
   });
-}
-
-function safeWorkingName(fileName: string): string {
-  const extension = fileName.toLowerCase().endsWith(".duckdb")
-    ? ".duckdb"
-    : ".sqlite";
-  const stem = fileName
-    .replace(/\.[^.]+$/u, "")
-    .normalize("NFKC")
-    .replace(/[^\p{L}\p{N}._-]+/gu, "_")
-    .replace(/^\.+/u, "")
-    .slice(0, 80);
-  return `${stem || "database"}-${globalThis.crypto.randomUUID()}${extension}`;
 }
 
 function schemaPlanDto(id: string, plan: SchemaPlan): WorkspaceSchemaPlan {
@@ -637,7 +628,7 @@ async function handleOpen(
 ): Promise<void> {
   const name =
     command.name === undefined
-      ? safeWorkingName(command.file.name)
+      ? workspaceWorkingCopyName(command.file.name)
       : command.name;
   const database = await (
     await runtime()
@@ -755,7 +746,7 @@ function heldFromInspection(
         (route.destination?.kind === "new-table-infer"
           ? route.destination.recordId
           : {
-              prefix: inferredName.slice(0, 8).toUpperCase(),
+              prefix: workspaceRecordIdPrefix(inferredName),
               padding: 6,
             }),
       columns: route.inferredColumns,
@@ -881,7 +872,7 @@ async function prepareSources(
               kind: "new-table-infer" as const,
               name,
               recordId: {
-                prefix: name.slice(0, 8).toUpperCase(),
+                prefix: workspaceRecordIdPrefix(name),
                 padding: 6,
               },
             },
