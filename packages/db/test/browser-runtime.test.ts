@@ -1251,6 +1251,155 @@ describe("browser database runtime", () => {
     await reopened.close();
   });
 
+  test("reports a retained logical backup after partial replacement backup failure", async () => {
+    const runtime = await createRuntime();
+    const original = await runtime.createDatabase({
+      name: "protected.sqlite",
+      format: "sqlite",
+      schema: {
+        version: 1,
+        tables: [
+          {
+            name: "Preserved",
+            columns: [{ name: "value", type: "text" }],
+            recordId: { prefix: "KEEP", padding: 3 },
+          },
+        ],
+      },
+    });
+    const originalId = original.database.id;
+    await original.database.close();
+
+    const candidateId = "00000000-0000-4000-8000-000000000001";
+    const databaseId = "00000000-0000-4000-8000-000000000002";
+    const backupId = "00000000-0000-4000-8000-000000000003";
+    const candidate = `.consultchimps-create-${candidateId}.sqlite`;
+    const backup = `.consultchimps-backup-${backupId}.sqlite`;
+    const randomUuid = vi.spyOn(globalThis.crypto, "randomUUID");
+    randomUuid
+      .mockReturnValueOnce(candidateId)
+      .mockReturnValueOnce(databaseId)
+      .mockReturnValueOnce(backupId);
+    harness.failNextImportName = `/${backup}`;
+    harness.failNextUnlinkName = `/${backup}`;
+
+    await expect(
+      runtime.createDatabase({
+        name: "protected.sqlite",
+        format: "sqlite",
+        overwrite: true,
+      }),
+    ).rejects.toMatchObject({
+      code: "DB_BROWSER_PUBLICATION_CLEANUP_REQUIRED",
+      details: {
+        name: "protected.sqlite",
+        phase: "backup",
+        candidateKind: "database",
+        candidateFormat: "sqlite",
+        candidateNames: [candidate],
+        privateNames: [candidate, backup],
+        sqlitePoolDirectory: "consultchimps/sqlite",
+      },
+    });
+    randomUuid.mockRestore();
+    expect(harness.databases.has(`/${backup}`)).toBe(true);
+    const reopened = await runtime.openDatabase({ name: "protected.sqlite" });
+    expect(reopened.id).toBe(originalId);
+    expect(
+      (await inspectDatabase({ database: reopened })).tables.map(
+        (table) => table.name,
+      ),
+    ).toEqual(["Preserved"]);
+    await reopened.close();
+  });
+
+  test("closes a published import handle before reporting private cleanup failure", async () => {
+    const runtime = await createRuntime();
+    const source = await runtime.createDatabase({
+      name: "source.sqlite",
+      format: "sqlite",
+      schema: {
+        version: 1,
+        tables: [
+          {
+            name: "Imported",
+            columns: [{ name: "value", type: "text" }],
+            recordId: { prefix: "ROW", padding: 3 },
+          },
+        ],
+      },
+    });
+    const sourceBytes = new MemoryFile("source.sqlite");
+    await runtime.exportDatabase({
+      database: source.database,
+      name: sourceBytes.name,
+      destination: sourceBytes,
+      format: "sqlite",
+    });
+    const sourceId = source.database.id;
+    await source.database.close();
+
+    const candidateId = "00000000-0000-4000-8000-000000000004";
+    const backupId = "00000000-0000-4000-8000-000000000005";
+    const candidate = `.consultchimps-import-${candidateId}.sqlite`;
+    const randomUuid = vi
+      .spyOn(globalThis.crypto, "randomUUID")
+      .mockReturnValueOnce(candidateId)
+      .mockReturnValueOnce(backupId);
+    harness.failNextUnlinkName = `/${candidate}`;
+
+    await expect(
+      runtime.importDatabase({ name: "imported.sqlite", source: sourceBytes }),
+    ).rejects.toMatchObject({
+      code: "DB_BROWSER_PUBLICATION_CLEANUP_REQUIRED",
+      details: {
+        name: "imported.sqlite",
+        published: true,
+        candidateKind: "database",
+        candidateFormat: "sqlite",
+        candidateNames: [candidate],
+        privateNames: [candidate],
+        handleCloseFailed: false,
+      },
+    });
+    randomUuid.mockRestore();
+    const reopened = await runtime.openDatabase({ name: "imported.sqlite" });
+    expect(reopened.id).toBe(sourceId);
+    expect(
+      (await inspectDatabase({ database: reopened })).tables.map(
+        (table) => table.name,
+      ),
+    ).toEqual(["Imported"]);
+    await reopened.close();
+  });
+
+  test("names retained private storage in a successful create warning", async () => {
+    const runtime = await createRuntime();
+    const candidateId = "00000000-0000-4000-8000-000000000006";
+    const databaseId = "00000000-0000-4000-8000-000000000007";
+    const backupId = "00000000-0000-4000-8000-000000000008";
+    const candidate = `.consultchimps-create-${candidateId}.sqlite`;
+    const randomUuid = vi
+      .spyOn(globalThis.crypto, "randomUUID")
+      .mockReturnValueOnce(candidateId)
+      .mockReturnValueOnce(databaseId)
+      .mockReturnValueOnce(backupId);
+    harness.failNextUnlinkName = `/${candidate}`;
+
+    const created = await runtime.createDatabase({
+      name: "created.sqlite",
+      format: "sqlite",
+    });
+    randomUuid.mockRestore();
+    expect(created.result.warnings).toEqual([
+      expect.stringContaining(
+        `Possible retained SQLite logical names in the "consultchimps/sqlite" SAH pool are ${candidate}.`,
+      ),
+    ]);
+    expect(harness.databases.has(`/${candidate}`)).toBe(true);
+    await created.database.close();
+  });
+
   test("lists recoverable prepared imports and ignores unrelated matching files", async () => {
     const runtime = await createRuntime();
     const created = await runtime.createDatabase({

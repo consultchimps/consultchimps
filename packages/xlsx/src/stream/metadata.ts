@@ -306,18 +306,41 @@ export async function loadWorkbookMetadata(
     const relationshipMap = new Map(
       relationships.map((relationship) => [relationship.id, relationship]),
     );
-    const sheets: LoadedSheet[] = workbook.sheets.map((sheet) => {
+    const sheets: LoadedSheet[] = [];
+    const worksheetIndexByWorkbookIndex = new Map<number, number>();
+    for (const [workbookIndex, sheet] of workbook.sheets.entries()) {
       const relationship = relationshipMap.get(sheet.relationshipId);
-      if (!relationship || !relationship.type.endsWith("/worksheet")) {
+      if (!relationship) {
         throw new Error(
-          `Worksheet "${sheet.name}" does not point to a worksheet part.`,
+          `Workbook sheet "${sheet.name}" references missing relationship "${sheet.relationshipId}".`,
+        );
+      }
+      const isWorksheet = relationship.type.endsWith("/worksheet");
+      const isChartSheet = relationship.type.endsWith("/chartsheet");
+      if (!isWorksheet && !isChartSheet) {
+        throw new Error(
+          `Workbook sheet "${sheet.name}" has unsupported relationship type "${relationship.type}".`,
         );
       }
       const part = internalTarget(workbookPart, relationship);
       if (!archive.entries.has(part)) {
-        throw new Error(`Worksheet "${sheet.name}" is missing part "${part}".`);
+        throw new Error(
+          `${isWorksheet ? "Worksheet" : "Chart sheet"} "${sheet.name}" is missing part "${part}".`,
+        );
       }
-      return { name: sheet.name, visibility: sheet.visibility, part };
+      if (isChartSheet) continue;
+      worksheetIndexByWorkbookIndex.set(workbookIndex, sheets.length);
+      sheets.push({ name: sheet.name, visibility: sheet.visibility, part });
+    }
+    const namedRanges = workbook.namedRanges.flatMap((range) => {
+      if (range.localSheetId === undefined) return [range];
+      if (workbook.sheets[range.localSheetId] === undefined) return [range];
+      const worksheetIndex = worksheetIndexByWorkbookIndex.get(
+        range.localSheetId,
+      );
+      return worksheetIndex === undefined
+        ? []
+        : [{ ...range, localSheetId: worksheetIndex }];
     });
 
     const tables: StreamTable[] = [];
@@ -409,7 +432,7 @@ export async function loadWorkbookMetadata(
       inspection: {
         sheets: sheets.map(({ name, visibility }) => ({ name, visibility })),
         tables,
-        namedRanges: workbook.namedRanges,
+        namedRanges,
       },
       sharedStringsEntry: partEntry(sharedStringsRelationship),
       stylesEntry: partEntry(stylesRelationship),

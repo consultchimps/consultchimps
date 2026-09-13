@@ -207,6 +207,17 @@ export async function applyImport(
       }
       return;
     }
+    const standaloneDelivery = await transaction.query(
+      `SELECT request_id FROM ${DELIVERY_TABLE} WHERE request_id = ? LIMIT 1`,
+      [options.requestId],
+    );
+    if (standaloneDelivery.length > 0) {
+      throw databaseError(
+        "DB_REQUEST_ID_CONFLICT",
+        "This request ID was already used for a delivery. Choose a new request ID for the import.",
+        { requestId: options.requestId },
+      );
+    }
     const revisionRows = await transaction.query(
       `SELECT revision FROM ${DATABASE_METADATA_TABLE}`,
     );

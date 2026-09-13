@@ -42,6 +42,7 @@ import {
 } from "./prepared.js";
 import {
   BrowserExportCleanupError,
+  BrowserPublicationCleanupError,
   BrowserPublicationRecoveryError,
   publishBrowserCandidate,
   publishBrowserExport,
@@ -772,15 +773,18 @@ export async function configureBrowserDatabaseRuntime(
     });
   };
 
-  const publishCandidate = async <T>(
+  const publishCandidate = async <T extends { close(): Promise<void> }>(
     name: string,
     format: DatabaseFormat,
+    candidateKind: "database" | "prepared",
+    cleanupPolicy: "warn" | "error",
     candidate: string,
     state: BrowserStorageState,
     openPublished: () => Promise<T>,
   ): Promise<{
     readonly value: T;
     readonly cleanupFailures: readonly unknown[];
+    readonly cleanupWarning?: string | undefined;
   }> => {
     const token = globalThis.crypto.randomUUID();
     const sqliteBackup = `.consultchimps-backup-${token}.sqlite`;
@@ -788,6 +792,29 @@ export async function configureBrowserDatabaseRuntime(
     if (state.sqlite || format === "sqlite") {
       await pool.reserveMinimumCapacity(pool.getFileCount() + 2);
     }
+    const candidateNames =
+      format === "sqlite" ? [candidate] : [candidate, `${candidate}.wal`];
+    const sqlitePrivateNames = [
+      ...(format === "sqlite" ? [candidate] : []),
+      ...(state.sqlite ? [sqliteBackup] : []),
+    ];
+    const duckdbPrivateNames = [
+      ...(format === "duckdb" ? [candidate, `${candidate}.wal`] : []),
+      ...(state.duckdb ? [duckdbBackup, `${duckdbBackup}.wal`] : []),
+    ];
+    const privateNames = [...sqlitePrivateNames, ...duckdbPrivateNames];
+    const retainedLocation = [
+      ...(sqlitePrivateNames.length === 0
+        ? []
+        : [
+            `Possible retained SQLite logical names in the "${sqliteDirectoryName}" SAH pool are ${sqlitePrivateNames.join(" and ")}.`,
+          ]),
+      ...(duckdbPrivateNames.length === 0
+        ? []
+        : [
+            `Possible retained DuckDB files in the "${duckDirectoryName}" origin-private directory are ${duckdbPrivateNames.join(" and ")}.`,
+          ]),
+    ].join(" ");
     try {
       const published = await publishBrowserCandidate({
         async backup() {
@@ -827,11 +854,97 @@ export async function configureBrowserDatabaseRuntime(
           else await removeDuckDbFiles(duckDirectory, candidate);
         },
       });
+      if (published.cleanupFailures.length > 0 && cleanupPolicy === "error") {
+        let closeOutcome:
+          | { readonly status: "completed" }
+          | { readonly status: "failed"; readonly error: unknown };
+        try {
+          await published.value.close();
+          closeOutcome = { status: "completed" };
+        } catch (error) {
+          closeOutcome = { status: "failed", error };
+        }
+        const publishedRecovery =
+          closeOutcome.status === "completed"
+            ? `The published copy is closed and can be reopened as "${name}".`
+            : "Closing the published copy also failed. Release browser handles or shut down the runtime before reopening it.";
+        throw databaseError(
+          "DB_BROWSER_PUBLICATION_CLEANUP_REQUIRED",
+          `The ${candidateKind} working copy was published as "${name}", but browser storage could not remove one or more private temporary artifacts. ${publishedRecovery} ${retainedLocation} Resolve the browser storage issue before continuing.`,
+          {
+            name,
+            published: true,
+            candidateKind,
+            candidateFormat: format,
+            candidateNames,
+            privateNames,
+            sqlitePoolDirectory: sqliteDirectoryName,
+            duckdbDirectory: duckDirectoryName,
+            handleCloseFailed: closeOutcome.status === "failed",
+          },
+          new AggregateError(
+            [
+              ...published.cleanupFailures,
+              ...(closeOutcome.status === "completed"
+                ? []
+                : [closeOutcome.error]),
+            ],
+            "Browser publication cleanup failed after publication",
+          ),
+        );
+      }
       return {
         value: published.value,
         cleanupFailures: published.cleanupFailures,
+        ...(published.cleanupFailures.length === 0
+          ? {}
+          : {
+              cleanupWarning: `The replacement completed, but browser storage could not remove one or more private temporary artifacts. ${retainedLocation}`,
+            }),
       };
     } catch (error) {
+      if (error instanceof BrowserPublicationCleanupError) {
+        const existingState = state.sqlite || state.duckdb;
+        const publicationOutcome =
+          error.phase === "backup"
+            ? "The replacement did not start, so the existing working copy remains unchanged."
+            : existingState
+              ? "The replacement failed, and the previous working copy was restored."
+              : "Publishing the new working copy failed, and its public name was removed.";
+        const openCandidate =
+          candidateKind === "prepared"
+            ? `Use BrowserDatabaseRuntime.openPreparedImport({ name: "${candidate}" }) to inspect or resume a recoverable candidate.`
+            : `Use BrowserDatabaseRuntime.openDatabase({ name: "${candidate}" }) to inspect or export a recoverable candidate.`;
+        const openBackups = [
+          ...(state.sqlite
+            ? [
+                state.sqliteKind === "prepared"
+                  ? `Use BrowserDatabaseRuntime.openPreparedImport({ name: "${sqliteBackup}" }) for a retained SQLite backup.`
+                  : `Use BrowserDatabaseRuntime.openDatabase({ name: "${sqliteBackup}" }) for a retained SQLite backup.`,
+              ]
+            : []),
+          ...(state.duckdb
+            ? [
+                `Use BrowserDatabaseRuntime.openDatabase({ name: "${duckdbBackup}" }) for a retained DuckDB backup.`,
+              ]
+            : []),
+        ];
+        throw databaseError(
+          "DB_BROWSER_PUBLICATION_CLEANUP_REQUIRED",
+          `${publicationOutcome} Browser storage could not remove one or more private temporary artifacts, so the names in error details may remain. ${openCandidate} ${openBackups.join(" ")} Resolve the browser storage issue before retrying.`,
+          {
+            name,
+            phase: error.phase,
+            candidateKind,
+            candidateFormat: format,
+            candidateNames,
+            privateNames,
+            sqlitePoolDirectory: sqliteDirectoryName,
+            duckdbDirectory: duckDirectoryName,
+          },
+          error,
+        );
+      }
       if (!(error instanceof BrowserPublicationRecoveryError)) throw error;
       const backups = [
         state.sqlite ? sqliteBackup : undefined,
@@ -841,7 +954,15 @@ export async function configureBrowserDatabaseRuntime(
         throw databaseError(
           "DB_BROWSER_PUBLICATION_CLEANUP_REQUIRED",
           "Browser storage failed while publishing a new working copy and could not remove the incomplete copy. Choose another name and retry. The incomplete copy remains under this name for inspection.",
-          { name, incompleteName: name },
+          {
+            name,
+            incompleteName: name,
+            candidateKind,
+            candidateFormat: format,
+            candidateNames,
+            sqlitePoolDirectory: sqliteDirectoryName,
+            duckdbDirectory: duckDirectoryName,
+          },
           error,
         );
       }
@@ -857,6 +978,11 @@ export async function configureBrowserDatabaseRuntime(
           kind: state.sqliteKind === "prepared" ? "prepared" : "database",
           sqliteBackup: state.sqlite ? sqliteBackup : undefined,
           duckdbBackup: state.duckdb ? duckdbBackup : undefined,
+          candidateKind,
+          candidateFormat: format,
+          candidateNames,
+          sqlitePoolDirectory: sqliteDirectoryName,
+          duckdbDirectory: duckDirectoryName,
         },
         error,
       );
@@ -959,6 +1085,8 @@ export async function configureBrowserDatabaseRuntime(
       const published = await publishCandidate(
         name,
         create.format,
+        "database",
+        "warn",
         candidate,
         state,
         () => openDatabaseUnlocked({ name }),
@@ -971,9 +1099,7 @@ export async function configureBrowserDatabaseRuntime(
           warnings:
             published.cleanupFailures.length === 0
               ? []
-              : [
-                  "The replacement completed, but temporary browser backup cleanup could not finish.",
-                ],
+              : [published.cleanupWarning!],
           metrics: { tablesCreated },
         },
       };
@@ -1058,8 +1184,14 @@ export async function configureBrowserDatabaseRuntime(
         await prepared.close();
         throwIfAborted(create.signal, "db.browser.plan");
         return (
-          await publishCandidate(name, "sqlite", candidate, state, () =>
-            openPreparedImportUnlocked({ name }),
+          await publishCandidate(
+            name,
+            "sqlite",
+            "prepared",
+            "error",
+            candidate,
+            state,
+            () => openPreparedImportUnlocked({ name }),
           )
         ).value;
       } catch (error) {
@@ -1218,8 +1350,14 @@ export async function configureBrowserDatabaseRuntime(
           await candidateDatabase.close();
           throwIfAborted(importOptions.signal, "db.browser.import");
           return (
-            await publishCandidate(name, format, candidate, state, () =>
-              openDatabaseUnlocked({ name }),
+            await publishCandidate(
+              name,
+              format,
+              "database",
+              "error",
+              candidate,
+              state,
+              () => openDatabaseUnlocked({ name }),
             )
           ).value;
         } catch (error) {

@@ -14,13 +14,42 @@ export interface BrowserPublicationResult<T> {
 export class BrowserPublicationRecoveryError extends Error {
   readonly publicationCause: unknown;
   readonly recoveryCause: unknown;
+  readonly cleanupFailures: readonly unknown[];
 
-  constructor(publicationCause: unknown, recoveryCause: unknown) {
+  constructor(
+    publicationCause: unknown,
+    recoveryCause: unknown,
+    cleanupFailures: readonly unknown[] = [],
+  ) {
     super("Browser database replacement recovery failed", {
-      cause: new AggregateError([publicationCause, recoveryCause]),
+      cause: new AggregateError([
+        publicationCause,
+        recoveryCause,
+        ...cleanupFailures,
+      ]),
     });
     this.publicationCause = publicationCause;
     this.recoveryCause = recoveryCause;
+    this.cleanupFailures = cleanupFailures;
+  }
+}
+
+export class BrowserPublicationCleanupError extends Error {
+  readonly phase: "backup" | "publication";
+  readonly operationCause: unknown;
+  readonly cleanupFailures: readonly unknown[];
+
+  constructor(
+    phase: "backup" | "publication",
+    operationCause: unknown,
+    cleanupFailures: readonly unknown[],
+  ) {
+    super("Browser database publication cleanup failed", {
+      cause: new AggregateError([operationCause, ...cleanupFailures]),
+    });
+    this.phase = phase;
+    this.operationCause = operationCause;
+    this.cleanupFailures = cleanupFailures;
   }
 }
 
@@ -112,7 +141,14 @@ export async function publishBrowserCandidate<T>(
   try {
     await operations.backup();
   } catch (error) {
-    await cleanup(operations);
+    const cleanupFailures = await cleanup(operations);
+    if (cleanupFailures.length > 0) {
+      throw new BrowserPublicationCleanupError(
+        "backup",
+        error,
+        cleanupFailures,
+      );
+    }
     throw error;
   }
 
@@ -123,13 +159,26 @@ export async function publishBrowserCandidate<T>(
     try {
       await operations.restore();
     } catch (recoveryCause) {
-      await operations.cleanupCandidate().catch(() => undefined);
+      const candidateCleanup = await Promise.allSettled([
+        operations.cleanupCandidate(),
+      ]);
+      const cleanupFailures = candidateCleanup.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
       throw new BrowserPublicationRecoveryError(
         publicationCause,
         recoveryCause,
+        cleanupFailures,
       );
     }
-    await cleanup(operations);
+    const cleanupFailures = await cleanup(operations);
+    if (cleanupFailures.length > 0) {
+      throw new BrowserPublicationCleanupError(
+        "publication",
+        publicationCause,
+        cleanupFailures,
+      );
+    }
     throw publicationCause;
   }
 

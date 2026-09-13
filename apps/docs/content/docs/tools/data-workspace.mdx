@@ -100,7 +100,9 @@ corrections.
 
 The default selection uses visible worksheets with the first row as the header.
 Use `--hidden` to include hidden worksheets, or `--header-row` to change the
-default header row. A single workbook can instead select one region:
+default header row. Chart sheets are not importable tables and do not prevent
+selecting an ordinary worksheet in the same workbook. A single workbook can
+instead select one region:
 
 ```bash
 consultchimps db plan inventory.duckdb --input north=north.xlsx --sheet Inventory --header-row 3 -o north.ccplan
@@ -298,11 +300,14 @@ consultchimps db delivery record inventory.duckdb --capture CAPTURE_ID --context
 ```
 
 Use a stable, nonblank request ID when retrying the same action. An intentional
-new event needs a new request ID. Reported counts remain statements supplied
-with the delivery; they are not relabeled as counts calculated from imported
-rows. Scope can be `full`, `partial` with a description, `changes` with a
-baseline, or `unknown`. A partial submission does not remove observations absent
-from it.
+new event needs a new request ID. A standalone delivery ID cannot start an
+import, and an import-only ID cannot create a separate delivery. Those uses
+return `DB_REQUEST_ID_CONFLICT` before changing the database. If an import also
+recorded a delivery, retrying that delivery with matching context and captures
+returns the existing event. Reported counts remain statements supplied with the
+delivery; they are not relabeled as counts calculated from imported rows. Scope
+can be `full`, `partial` with a description, `changes` with a baseline, or
+`unknown`. A partial submission does not remove observations absent from it.
 
 Delivery labels, partial descriptions, and change baselines must contain text.
 Reported numeric attributes must be finite. Invalid context is rejected before
@@ -377,6 +382,12 @@ The browser workspace uses persistent origin-private storage (OPFS). Opening an
 OS file creates a browser working copy. Subsequent imports and schema changes
 modify that working copy. They do not synchronize back to the selected file.
 Export a new file when another application needs the current database.
+
+If browser replacement reports a temporary-file cleanup error, inspect its
+outcome before retrying. `published: true` means the new working copy is already
+stored under the reported public name. The error also lists private candidate or
+backup names that may remain. Resolve the storage issue and release any
+remaining handles before reopening the working copy.
 
 Browser storage belongs to the site's origin and browser profile. Clearing site
 data removes it, and private browsing or storage quotas can prevent persistence.

@@ -319,6 +319,28 @@ operations return structured values; file-producing operations identify their
 artifacts. Counts which may exceed JavaScript's exact integer range use
 `bigint`.
 
+Request IDs identify retryable actions. `applyImport` rejects an ID already used
+by a standalone delivery with `DB_REQUEST_ID_CONFLICT`. `recordDelivery` cannot
+create a delivery under an import-only request ID. When an import also records a
+delivery, `recordDelivery` can return that existing event if its context and
+capture membership match. It does not add another event or change the import
+receipt.
+
+Browser working-copy replacement reports
+`DB_BROWSER_PUBLICATION_CLEANUP_REQUIRED` when temporary candidate or backup
+cleanup fails after an operation error. Its details identify `privateNames` that
+may remain, the `sqlitePoolDirectory`, and the `duckdbDirectory`. SQLite names
+belong to the pool's logical namespace; DuckDB names identify OPFS files. When
+restoration fails too, `DB_BROWSER_REPLACEMENT_RECOVERY_REQUIRED` retains backup
+names and the recovery causes.
+
+Successful `createDatabase` results include a warning with possible retained
+locations if temporary cleanup fails. `importDatabase` and
+`createPreparedImport` return handles rather than operation results, so they
+instead report `DB_BROWSER_PUBLICATION_CLEANUP_REQUIRED` with `published: true`.
+The public working copy remains stored. If `handleCloseFailed` is false, reopen
+the reported public `name` to continue; otherwise release its handles first.
+
 In the browser runtime, `openDatabase({ name, readonly: true })` opens a
 read-only working copy for inspection or export. `exportDatabase` refuses a
 nonempty `RandomAccessFile` destination unless `overwrite: true` is supplied.

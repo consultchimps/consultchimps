@@ -300,6 +300,56 @@ describe("bounded workbook streaming", () => {
     });
   });
 
+  it("imports worksheets from a workbook that also contains a chart sheet", async () => {
+    const workbook =
+      "<workbook xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main' xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships'>" +
+      "<workbookPr date1904='true'/><sheets>" +
+      "<sheet name='Dashboard' sheetId='1' r:id='chartRel'/>" +
+      "<sheet name='Data &amp; More' sheetId='2' r:id='sheetRel'/>" +
+      "<sheet name='Hidden' sheetId='3' state='veryHidden' r:id='hiddenRel'/>" +
+      "</sheets><definedNames><definedName name='LocalData' localSheetId='1'>$B$2:$E$4</definedName></definedNames>" +
+      "</workbook>";
+    const relationships =
+      "<Relationships xmlns='http://schemas.openxmlformats.org/package/2006/relationships'>" +
+      "<Relationship Id='chartRel' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet' Target='chartsheets/sheet1.xml'/>" +
+      "<Relationship Id='sheetRel' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet' Target='worksheets/sheet1.xml'/>" +
+      "<Relationship Id='hiddenRel' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet' Target='worksheets/sheet2.xml'/>" +
+      "<Relationship Id='stringsRel' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings' Target='sharedStrings.xml'/>" +
+      "<Relationship Id='stylesRel' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles' Target='styles.xml'/>" +
+      "</Relationships>";
+    const bytes = await workbookFixtureWithParts({
+      "xl/workbook.xml": workbook,
+      "xl/_rels/workbook.xml.rels": relationships,
+      "xl/chartsheets/sheet1.xml":
+        "<chartsheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'/>",
+    });
+    const inspection = await inspectWorkbookStream(source(bytes).source, {
+      scratch: new MemoryScratch(),
+    });
+    expect(inspection.sheets).toEqual([
+      { name: "Data & More", visibility: "visible" },
+      { name: "Hidden", visibility: "veryHidden" },
+    ]);
+
+    const reader = await openWorkbookRegionStream(
+      source(bytes).source,
+      { range: "LocalData" },
+      { scratch: new MemoryScratch() },
+    );
+    expect(await rows(reader)).toHaveLength(2);
+
+    await expect(
+      openWorkbookRegionStream(
+        source(bytes).source,
+        { sheet: "Dashboard", headerRow: 1 },
+        { scratch: new MemoryScratch() },
+      ),
+    ).rejects.toMatchObject({
+      code: "XLSX_WORKSHEET_NOT_FOUND",
+      message: expect.stringContaining('Worksheet "Dashboard" was not found'),
+    });
+  });
+
   it.each([
     ["omitted", undefined, "1900-01-01"],
     ["numeric false", "0", "1900-01-01"],

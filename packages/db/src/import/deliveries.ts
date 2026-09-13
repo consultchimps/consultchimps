@@ -15,6 +15,7 @@ import {
   DATABASE_METADATA_TABLE,
   DELIVERY_MEMBERSHIP_TABLE,
   DELIVERY_TABLE,
+  IMPORT_REQUEST_TABLE,
 } from "../metadata.js";
 import type { DeliveryContext, DeliveryPage, DeliveryRecord } from "./types.js";
 import { parseDeliveryContext } from "../validators.js";
@@ -89,13 +90,23 @@ export async function recordDelivery(options: {
       `SELECT delivery_id, context_json FROM ${DELIVERY_TABLE} WHERE request_id = ?`,
       [options.requestId],
     );
-    if (existing[0] !== undefined) {
-      const id = valueAsString(existing[0]["delivery_id"], "delivery ID");
+    const existingDelivery =
+      existing[0] === undefined
+        ? undefined
+        : {
+            row: existing[0],
+            context: parseStoredDeliveryContext(existing[0]["context_json"]),
+          };
+    if (existingDelivery !== undefined) {
+      const id = valueAsString(
+        existingDelivery.row["delivery_id"],
+        "delivery ID",
+      );
       const memberships = await deliveryMemberships(transaction, id);
       const delivery: DeliveryRecord = {
         id,
         requestId: options.requestId,
-        context: parseStoredDeliveryContext(existing[0]["context_json"]),
+        context: existingDelivery.context,
         captureIds: memberships.captureIds,
         reusedCaptureIds: memberships.reusedCaptureIds,
       };
@@ -119,6 +130,17 @@ export async function recordDelivery(options: {
         },
         delivery,
       };
+    }
+    const importReceipts = await transaction.query(
+      `SELECT request_id FROM ${IMPORT_REQUEST_TABLE} WHERE request_id = ? LIMIT 1`,
+      [options.requestId],
+    );
+    if (importReceipts.length > 0) {
+      throw databaseError(
+        "DB_REQUEST_ID_CONFLICT",
+        "This request ID was already used for an import. Choose a new request ID for the delivery.",
+        { requestId: options.requestId },
+      );
     }
     for (const captureId of uniqueCaptures) {
       const captures = await transaction.query(

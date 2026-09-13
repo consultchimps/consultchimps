@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 
 import {
   BrowserExportCleanupError,
+  BrowserPublicationCleanupError,
   BrowserPublicationRecoveryError,
   publishBrowserCandidate,
   publishBrowserExport,
@@ -109,6 +110,108 @@ describe("browser database publication", () => {
       "backup failed",
     );
     expect(stored.current).toEqual(["old row"]);
+    expect(stored.candidate).toBeUndefined();
+  });
+
+  test("reports cleanup failure after partial backup creation", async () => {
+    const stored: StoredRows = {
+      current: ["old row"],
+      candidate: ["replacement row"],
+    };
+    const replacement = operations(stored);
+    const backupFailure = new Error("backup write failed");
+    const cleanupFailure = new Error("backup cleanup failed");
+    replacement.backup = async () => {
+      stored.backup = ["partial old row"];
+      throw backupFailure;
+    };
+    replacement.cleanupBackups = async () => {
+      throw cleanupFailure;
+    };
+
+    let rejection: unknown;
+    try {
+      await publishBrowserCandidate(replacement);
+    } catch (error) {
+      rejection = error;
+    }
+    expect(rejection).toMatchObject({
+      phase: "backup",
+      operationCause: backupFailure,
+      cleanupFailures: [cleanupFailure],
+    });
+    expect(rejection).toBeInstanceOf(BrowserPublicationCleanupError);
+    expect((rejection as Error).cause).toBeInstanceOf(AggregateError);
+    expect(stored.current).toEqual(["old row"]);
+    expect(stored.backup).toEqual(["partial old row"]);
+    expect(stored.candidate).toBeUndefined();
+  });
+
+  test("reports cleanup failure after restoring a failed publication", async () => {
+    const stored: StoredRows = {
+      current: ["old row"],
+      candidate: ["replacement row"],
+    };
+    const replacement = operations(stored);
+    const publicationFailure = new Error("publication failed");
+    const cleanupFailure = new Error("candidate cleanup failed");
+    replacement.publishAndOpen = async () => {
+      stored.current = ["partial replacement"];
+      throw publicationFailure;
+    };
+    replacement.cleanupCandidate = async () => {
+      throw cleanupFailure;
+    };
+
+    await expect(publishBrowserCandidate(replacement)).rejects.toMatchObject({
+      phase: "publication",
+      operationCause: publicationFailure,
+      cleanupFailures: [cleanupFailure],
+    });
+    expect(stored.current).toEqual(["old row"]);
+    expect(stored.backup).toBeUndefined();
+    expect(stored.candidate).toEqual(["replacement row"]);
+  });
+
+  test("retains candidate cleanup failure without deleting a recovery backup", async () => {
+    const stored: StoredRows = {
+      current: ["old row"],
+      candidate: ["replacement row"],
+    };
+    const replacement = operations(stored);
+    const cleanupFailure = new Error("candidate cleanup failed");
+    replacement.publishAndOpen = async () => {
+      stored.current = ["partial replacement"];
+      throw new Error("publication failed");
+    };
+    replacement.restore = async () => {
+      throw new Error("restoration failed");
+    };
+    replacement.cleanupCandidate = async () => {
+      throw cleanupFailure;
+    };
+
+    await expect(publishBrowserCandidate(replacement)).rejects.toMatchObject({
+      cleanupFailures: [cleanupFailure],
+    });
+    expect(stored.backup).toEqual(["old row"]);
+    expect(stored.candidate).toEqual(["replacement row"]);
+  });
+
+  test("rethrows an abort after successful private cleanup", async () => {
+    const stored: StoredRows = {
+      current: ["old row"],
+      candidate: ["replacement row"],
+    };
+    const replacement = operations(stored);
+    const abort = new DOMException("The operation was aborted", "AbortError");
+    replacement.backup = async () => {
+      throw abort;
+    };
+
+    await expect(publishBrowserCandidate(replacement)).rejects.toBe(abort);
+    expect(stored.current).toEqual(["old row"]);
+    expect(stored.backup).toBeUndefined();
     expect(stored.candidate).toBeUndefined();
   });
 });
