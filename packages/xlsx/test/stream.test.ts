@@ -521,7 +521,7 @@ describe("bounded workbook streaming", () => {
     const worksheet =
       "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
       "<row r='1'><c r='A1' t='inlineStr'><is><t>ColoredDate</t></is></c><c r='B1' t='inlineStr'><is><t>ColoredTime</t></is></c></row>" +
-      "<row r='2'><c r='A2' s='1'><v>0</v></c><c r='B2' s='2'><v>0</v></c></row>" +
+      "<row r='2'><c r='A2' s='1'><v>1</v></c><c r='B2' s='2'><v>0</v></c></row>" +
       "</sheetData></worksheet>";
     const input = source(
       await workbookFixtureWithParts({
@@ -536,12 +536,50 @@ describe("bounded workbook streaming", () => {
     );
 
     expect((await rows(reader))[0]?.cells).toEqual({
-      ColoredDate: { kind: "date", raw: "0", iso: "1904-01-01" },
+      ColoredDate: { kind: "date", raw: "1", iso: "1904-01-02" },
       ColoredTime: {
         kind: "date",
         raw: "0",
         iso: "1904-01-01T00:00:00.000",
       },
+    });
+  });
+
+  it("classifies only the active custom number-format section as a date", async () => {
+    const styles =
+      "<styleSheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'>" +
+      "<numFmts count='4'><numFmt numFmtId='164' formatCode='0;yyyy-mm-dd;0'/><numFmt numFmtId='165' formatCode='[Red][&gt;=1]yyyy-mm-dd;0'/><numFmt numFmtId='166' formatCode='0\\;0;&quot;negative;label&quot;yyyy-mm-dd;0'/><numFmt numFmtId='167' formatCode='yyyy-mm-dd;0;yyyy-mm-dd'/></numFmts>" +
+      "<cellXfs count='5'><xf numFmtId='0'/><xf numFmtId='164'/><xf numFmtId='165'/><xf numFmtId='166'/><xf numFmtId='167'/></cellXfs>" +
+      "</styleSheet>";
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Positive</t></is></c><c r='B1' t='inlineStr'><is><t>Negative</t></is></c><c r='C1' t='inlineStr'><is><t>Zero</t></is></c><c r='D1' t='inlineStr'><is><t>ConditionMatch</t></is></c><c r='E1' t='inlineStr'><is><t>ConditionMiss</t></is></c><c r='F1' t='inlineStr'><is><t>QuotedPositive</t></is></c><c r='G1' t='inlineStr'><is><t>QuotedNegative</t></is></c><c r='H1' t='inlineStr'><is><t>QuotedZero</t></is></c><c r='I1' t='inlineStr'><is><t>PositiveDate</t></is></c><c r='J1' t='inlineStr'><is><t>NegativeNumber</t></is></c><c r='K1' t='inlineStr'><is><t>ZeroDate</t></is></c></row>" +
+      "<row r='2'><c r='A2' s='1'><v>1</v></c><c r='B2' s='1'><v>-1</v></c><c r='C2' s='1'><v>0</v></c><c r='D2' s='2'><v>1</v></c><c r='E2' s='2'><v>0</v></c><c r='F2' s='3'><v>1</v></c><c r='G2' s='3'><v>-1</v></c><c r='H2' s='3'><v>0</v></c><c r='I2' s='4'><v>1</v></c><c r='J2' s='4'><v>-1</v></c><c r='K2' s='4'><v>0</v></c></row>" +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/styles.xml": styles,
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { range: "'Data & More'!A1:K2" },
+      { scratch: new MemoryScratch(), chunkBytes: 37 },
+    );
+
+    expect((await rows(reader))[0]?.cells).toMatchObject({
+      Positive: { kind: "number", raw: "1" },
+      Negative: { kind: "number", raw: "-1" },
+      Zero: { kind: "number", raw: "0" },
+      ConditionMatch: { kind: "date", raw: "1" },
+      ConditionMiss: { kind: "number", raw: "0" },
+      QuotedPositive: { kind: "number", raw: "1" },
+      QuotedNegative: { kind: "number", raw: "-1" },
+      QuotedZero: { kind: "number", raw: "0" },
+      PositiveDate: { kind: "date", raw: "1" },
+      NegativeNumber: { kind: "number", raw: "-1" },
+      ZeroDate: { kind: "date", raw: "0" },
     });
   });
 
@@ -709,6 +747,64 @@ describe("bounded workbook streaming", () => {
       });
     },
   );
+
+  it("distinguishes valueless typed cells from explicit empty text", async () => {
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>ErrorMissing</t></is></c><c r='B1' t='inlineStr'><is><t>ErrorEmpty</t></is></c><c r='C1' t='inlineStr'><is><t>ErrorValue</t></is></c><c r='D1' t='inlineStr'><is><t>StringMissing</t></is></c><c r='E1' t='inlineStr'><is><t>StringSelfClosing</t></is></c><c r='F1' t='inlineStr'><is><t>StringEmpty</t></is></c><c r='G1' t='inlineStr'><is><t>StringValue</t></is></c><c r='H1' t='inlineStr'><is><t>InlineMissing</t></is></c><c r='I1' t='inlineStr'><is><t>InlineNoText</t></is></c><c r='J1' t='inlineStr'><is><t>InlineEmpty</t></is></c><c r='K1' t='inlineStr'><is><t>InlineValue</t></is></c><c r='L1' t='inlineStr'><is><t>ErrorCacheMissing</t></is></c><c r='M1' t='inlineStr'><is><t>ErrorCacheBlank</t></is></c><c r='N1' t='inlineStr'><is><t>StringCacheSelfClosing</t></is></c><c r='O1' t='inlineStr'><is><t>StringCachePaired</t></is></c></row>" +
+      "<row r='2'><c r='A2' t='e'/><c r='B2' t='e'><v/></c><c r='C2' t='e'><v>#N/A</v></c><c r='D2' t='str'/><c r='E2' t='str'><v/></c><c r='F2' t='str'><v></v></c><c r='G2' t='str'><v>North</v></c><c r='H2' t='inlineStr'/><c r='I2' t='inlineStr'><is></is></c><c r='J2' t='inlineStr'><is><t/></is></c><c r='K2' t='inlineStr'><is><t>South</t></is></c><c r='L2' t='e'><f>1/0</f></c><c r='M2' t='e'><f>1/0</f><v/></c><c r='N2' t='str'><f>IF(FALSE,&quot;North&quot;,&quot;&quot;)</f><v/></c><c r='O2' t='str'><f>IF(FALSE,&quot;North&quot;,&quot;&quot;)</f><v></v></c></row>" +
+      "<row r='3'><c r='A3' t='e'/><c r='D3' t='str'><v/></c><c r='H3' t='inlineStr'><is/></c></row>" +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { range: "'Data & More'!A1:O3" },
+      { scratch: new MemoryScratch(), chunkBytes: 31 },
+    );
+
+    expect(await rows(reader)).toEqual([
+      {
+        sourceRow: 2,
+        cells: {
+          ErrorMissing: { kind: "blank" },
+          ErrorEmpty: { kind: "blank" },
+          ErrorValue: { kind: "error", error: "#N/A" },
+          StringMissing: { kind: "blank" },
+          StringSelfClosing: { kind: "string", value: "" },
+          StringEmpty: { kind: "string", value: "" },
+          StringValue: { kind: "string", value: "North" },
+          InlineMissing: { kind: "blank" },
+          InlineNoText: { kind: "blank" },
+          InlineEmpty: { kind: "string", value: "" },
+          InlineValue: { kind: "string", value: "South" },
+          ErrorCacheMissing: {
+            kind: "formula",
+            formula: "1/0",
+            cached: { kind: "missing" },
+          },
+          ErrorCacheBlank: {
+            kind: "formula",
+            formula: "1/0",
+            cached: { kind: "blank" },
+          },
+          StringCacheSelfClosing: {
+            kind: "formula",
+            formula: 'IF(FALSE,"North","")',
+            cached: { kind: "string", value: "" },
+          },
+          StringCachePaired: {
+            kind: "formula",
+            formula: 'IF(FALSE,"North","")',
+            cached: { kind: "string", value: "" },
+          },
+        },
+      },
+    ]);
+  });
 
   it.each([
     ["empty", ""],

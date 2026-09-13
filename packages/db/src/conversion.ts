@@ -8,12 +8,12 @@ import {
 import {
   engineOf,
   inspectDatabase,
-  valueAsBigInt,
   valueAsString,
   type Database,
   type DatabaseId,
 } from "./database.js";
 import { databaseError } from "./errors.js";
+import { validatedConversionRows } from "./internal/conversion-values.js";
 import type { EngineTransaction, EngineValue } from "./internal/engine.js";
 import {
   APPLICATION_TABLE,
@@ -37,7 +37,11 @@ import {
   readSchemaFingerprint,
   sortTablesByReferences,
 } from "./records.js";
-import { quoteIdentifier, type DatabaseFormat } from "./schema.js";
+import {
+  quoteIdentifier,
+  type ColumnDefinition,
+  type DatabaseFormat,
+} from "./schema.js";
 
 const CONVERSION_BATCH_ROWS = 2_000;
 
@@ -283,99 +287,119 @@ export async function planConversion(options: {
 
 interface CopyTable {
   readonly name: string;
-  readonly columns: readonly string[];
+  readonly columns: readonly ColumnDefinition[];
   readonly key: readonly string[];
+}
+
+function requiredText(name: string): ColumnDefinition {
+  return { name, type: "text", nullable: false };
+}
+
+function requiredInteger(name: string): ColumnDefinition {
+  return { name, type: "integer", nullable: false };
 }
 
 const COPY_TABLES: readonly CopyTable[] = [
   {
     name: COUNTERS_TABLE,
-    columns: ["counter_name", "next_value"],
+    columns: [requiredText("counter_name"), requiredInteger("next_value")],
     key: ["counter_name"],
   },
   {
     name: SOURCE_CONTENT_TABLE,
-    columns: ["content_hash", "byte_count"],
+    columns: [requiredText("content_hash"), requiredInteger("byte_count")],
     key: ["content_hash"],
   },
   {
     name: SOURCE_FILE_TABLE,
-    columns: ["source_file_id", "content_hash", "display_name"],
+    columns: [
+      requiredText("source_file_id"),
+      requiredText("content_hash"),
+      requiredText("display_name"),
+    ],
     key: ["source_file_id"],
   },
   {
     name: SOURCE_NAME_TABLE,
-    columns: ["source_file_id", "display_name"],
+    columns: [requiredText("source_file_id"), requiredText("display_name")],
     key: ["source_file_id", "display_name"],
   },
   {
     name: CAPTURE_TABLE,
     columns: [
-      "capture_id",
-      "source_file_id",
-      "source_key",
-      "selection_key",
-      "selection_label",
-      "reader_version",
-      "state",
-      "row_count",
-      "columns_json",
+      requiredText("capture_id"),
+      requiredText("source_file_id"),
+      requiredText("source_key"),
+      requiredText("selection_key"),
+      requiredText("selection_label"),
+      requiredText("reader_version"),
+      requiredText("state"),
+      requiredInteger("row_count"),
+      requiredText("columns_json"),
     ],
     key: ["capture_id"],
   },
   {
     name: CAPTURE_ROW_TABLE,
-    columns: ["capture_id", "source_row", "values_json"],
+    columns: [
+      requiredText("capture_id"),
+      requiredInteger("source_row"),
+      requiredText("values_json"),
+    ],
     key: ["capture_id", "source_row"],
   },
   {
     name: PLAN_TABLE,
     columns: [
-      "plan_id",
-      "plan_revision",
-      "baseline_revision",
-      "state",
-      "recipe_json",
-      "conflicts_json",
-      "decisions_json",
-      "bindings_json",
+      requiredText("plan_id"),
+      requiredInteger("plan_revision"),
+      requiredInteger("baseline_revision"),
+      requiredText("state"),
+      requiredText("recipe_json"),
+      requiredText("conflicts_json"),
+      requiredText("decisions_json"),
+      requiredText("bindings_json"),
     ],
     key: ["plan_id", "plan_revision"],
   },
   {
     name: APPLICATION_TABLE,
     columns: [
-      "import_id",
-      "application_key",
-      "request_id",
-      "capture_id",
-      "table_name",
-      "plan_id",
-      "plan_revision",
-      "row_count",
+      requiredText("import_id"),
+      requiredText("application_key"),
+      requiredText("request_id"),
+      requiredText("capture_id"),
+      requiredText("table_name"),
+      requiredText("plan_id"),
+      requiredInteger("plan_revision"),
+      requiredInteger("row_count"),
     ],
     key: ["import_id"],
   },
   {
     name: IMPORT_REQUEST_TABLE,
     columns: [
-      "request_id",
-      "plan_id",
-      "plan_revision",
-      "import_ids_json",
-      "capture_ids_json",
-      "row_count",
+      requiredText("request_id"),
+      requiredText("plan_id"),
+      requiredInteger("plan_revision"),
+      requiredText("import_ids_json"),
+      requiredText("capture_ids_json"),
+      requiredInteger("row_count"),
     ],
     key: ["request_id"],
   },
   {
     name: DELIVERY_TABLE,
-    columns: ["delivery_id", "request_id", "context_json"],
+    columns: [
+      requiredText("delivery_id"),
+      requiredText("request_id"),
+      requiredText("context_json"),
+    ],
     key: ["delivery_id"],
   },
   {
     name: DELIVERY_MEMBERSHIP_TABLE,
-    columns: ["delivery_id", "capture_id"],
+    columns: [requiredText("delivery_id"), requiredText("capture_id")],
     key: ["delivery_id", "capture_id"],
   },
 ];
@@ -399,28 +423,41 @@ function keysetWhere(
 
 async function copyTable(options: {
   readonly source: EngineTransaction;
+  readonly sourceFormat: DatabaseFormat;
   readonly target: EngineTransaction;
   readonly table: CopyTable;
   readonly signal?: AbortSignal | undefined;
 }): Promise<bigint> {
   const source = options.source;
   const table = options.table;
+  const columnNames = table.columns.map((column) => column.name);
+  const selectedColumns = table.columns.map((column) => {
+    const name = quoteIdentifier(column.name);
+    return options.sourceFormat === "duckdb" &&
+      (column.type === "date" ||
+        column.type === "timestamp" ||
+        column.type === "decimal")
+      ? `CAST(${name} AS VARCHAR) AS ${name}`
+      : name;
+  });
   let cursor: readonly EngineValue[] | null = null;
   let copied = 0n;
   while (true) {
     throwIfAborted(options.signal, "db.convert");
     const where = keysetWhere(table.key, cursor);
     const rows = await source.query(
-      `SELECT ${table.columns.map(quoteIdentifier).join(", ")} FROM ${quoteIdentifier(table.name)}${where.sql} ORDER BY ${table.key.map(quoteIdentifier).join(", ")} LIMIT ?`,
+      `SELECT ${selectedColumns.join(", ")} FROM ${quoteIdentifier(table.name)}${where.sql} ORDER BY ${table.key.map(quoteIdentifier).join(", ")} LIMIT ?`,
       [...where.values, BigInt(CONVERSION_BATCH_ROWS)],
     );
     if (rows.length === 0) break;
     await options.target.bulkInsert({
       table: table.name,
-      columns: table.columns,
-      rows: rows.map((row) =>
-        table.columns.map((column) => row[column] ?? null),
-      ),
+      columns: columnNames,
+      rows: validatedConversionRows({
+        table: table.name,
+        columns: table.columns,
+        rows,
+      }),
       signal: options.signal,
     });
     const last = rows.at(-1)!;
@@ -488,9 +525,13 @@ export async function executeConversion(
     const revisionRows = await source.query(
       `SELECT revision FROM ${DATABASE_METADATA_TABLE}`,
     );
+    const revision = validatedConversionRows({
+      table: DATABASE_METADATA_TABLE,
+      columns: [requiredInteger("revision")],
+      rows: revisionRows,
+    })[0]?.[0];
     if (
-      valueAsBigInt(revisionRows[0]?.["revision"], "database revision") !==
-        options.plan.baselineRevision ||
+      revision !== options.plan.baselineRevision ||
       (await readSchemaFingerprint(source, options.source.format)) !==
         options.plan.schemaFingerprint
     ) {
@@ -531,6 +572,7 @@ export async function executeConversion(
         await transaction.execute(`DELETE FROM ${quoteIdentifier(table.name)}`);
         await copyTable({
           source,
+          sourceFormat: options.source.format,
           target: transaction,
           table,
           signal: options.signal,
@@ -539,28 +581,34 @@ export async function executeConversion(
       const registryRows = await source.query(
         `SELECT table_name, schema_version, next_record_id FROM ${TABLE_REGISTRY_TABLE} ORDER BY table_name`,
       );
-      for (const row of registryRows) {
+      const registryValues = validatedConversionRows({
+        table: TABLE_REGISTRY_TABLE,
+        columns: [
+          requiredText("table_name"),
+          requiredInteger("schema_version"),
+          requiredInteger("next_record_id"),
+        ],
+        rows: registryRows,
+      });
+      for (const row of registryValues) {
         await transaction.execute(
           `UPDATE ${TABLE_REGISTRY_TABLE} SET schema_version = ?, next_record_id = ? WHERE table_name = ?`,
-          [
-            valueAsBigInt(row["schema_version"], "schema version"),
-            valueAsBigInt(row["next_record_id"], "Record ID counter"),
-            valueAsString(row["table_name"], "table name"),
-          ],
+          [row[1]!, row[2]!, row[0]!],
         );
       }
       for (const table of tableOrder.ordered) {
-        const columns = [
-          "record_id",
-          "_imported_row_id",
-          "_import_id",
-          "_source_file_id",
-          "_source_selection",
-          "_source_row",
-          ...table.schema.columns.map((column) => column.name),
+        const columns: readonly ColumnDefinition[] = [
+          requiredText("record_id"),
+          { name: "_imported_row_id", type: "integer" },
+          { name: "_import_id", type: "text" },
+          { name: "_source_file_id", type: "text" },
+          { name: "_source_selection", type: "text" },
+          { name: "_source_row", type: "integer" },
+          ...table.schema.columns,
         ];
         rowsConverted += await copyTable({
           source,
+          sourceFormat: options.source.format,
           target: transaction,
           table: { name: table.name, columns, key: ["record_id"] },
           signal: options.signal,

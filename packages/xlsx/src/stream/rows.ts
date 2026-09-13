@@ -53,6 +53,7 @@ interface CurrentCell {
   hasValue: boolean;
   hasFormula: boolean;
   hasInlineContainer: boolean;
+  hasInlineText: boolean;
   valueBytes: number;
   formulaBytes: number;
   inlineBytes: number;
@@ -101,7 +102,11 @@ function scalarCell(
     }
     return { kind: "boolean", value: raw === "1" };
   }
-  if (current.type === "e") return { kind: "error", error: raw };
+  if (current.type === "e") {
+    return !current.hasValue || raw === ""
+      ? { kind: "blank" }
+      : { kind: "error", error: raw };
+  }
   if (current.type === "d") {
     if (!current.hasValue || raw.trim() === "") return { kind: "blank" };
     const date = worksheetDateValue(raw);
@@ -113,7 +118,13 @@ function scalarCell(
           iso: calendarIsoText(utcCalendarParts(date)),
         };
   }
-  if (current.type === "str" || current.type === "inlineStr") {
+  if (current.type === "str") {
+    return current.hasValue
+      ? { kind: "string", value: raw }
+      : { kind: "blank" };
+  }
+  if (current.type === "inlineStr") {
+    if (!current.hasInlineText) return { kind: "blank" };
     return { kind: "string", value: raw };
   }
   if (!current.hasValue || raw === "") return { kind: "blank" };
@@ -296,6 +307,7 @@ export async function* parseWorksheetBatches(
         hasValue: false,
         hasFormula: false,
         hasInlineContainer: false,
+        hasInlineText: false,
         valueBytes: 0,
         formulaBytes: 0,
         inlineBytes: 0,
@@ -365,6 +377,7 @@ export async function* parseWorksheetBatches(
         current.inlinePhoneticDepth === 0
       ) {
         current.inlineTextOpen = true;
+        current.hasInlineText = true;
       }
       cellDepth += 1;
     }

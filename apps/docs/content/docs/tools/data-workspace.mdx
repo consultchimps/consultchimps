@@ -111,6 +111,11 @@ consultchimps db plan inventory.duckdb --input north=north.xlsx --range "'Invent
 The streaming reader supports OOXML workbooks (`.xlsx` and `.xlsm`). Macros do
 not run. It reads formula caches, without calculating formulas. Missing caches
 and error cells need an explicit correction before they can become typed data.
+Custom number formats use the section selected by the cell's value when
+identifying dates. A condition only in the second section, or a condition after
+the second section, is unsupported. Preparation reports an error for those
+layouts; simplify the number format in a copy of the workbook before retrying.
+
 Styles needed to interpret Excel dates are read; workbook formatting and macros
 are not database content. Elapsed formats such as `[h]:mm` retain their numeric
 day fractions instead of becoming calendar dates. Missing declared style parts
@@ -333,6 +338,13 @@ representation changes and refuses objects without a supported mapping. Keep the
 working source and verify the output in the receiving application. SQLite stores
 exact decimals as text, while DuckDB uses its decimal type; this changes how raw
 SQL should interpret those columns.
+
+Cross-format export also checks stored values while copying rows. If another
+application has put a value outside a column's registered type, conversion stops
+before publishing the output. For example, a SQLite Boolean value of `2` or an
+integer value of `1.5` needs correction in the working database before exporting
+to DuckDB. A dry run checks schema compatibility; it does not scan rows for
+these value errors.
 
 Schema creation supports acyclic relationships to generated Record IDs. Changing
 an existing relationship, Record ID configuration, column type, or nullability

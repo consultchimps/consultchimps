@@ -90,6 +90,13 @@ table to retain another interpretation without replacing earlier observations.
 the capture IDs that also appeared in an earlier delivery as `reusedCaptureIds`,
 including when that earlier delivery is on another page.
 
+Cross-format export checks stored values against the registered logical schema
+as it copies bounded batches. External edits that violate those types stop the
+conversion before publication instead of relying on the destination engine to
+coerce them. For example, SQLite can store `2` in a Boolean column or `1.5` in
+an integer column; those values need correction before conversion to DuckDB. An
+export dry run checks schema compatibility without scanning stored rows.
+
 The former in-memory spike API and analytics grid have been retired. Browser
 storage is an OPFS working copy; it does not synchronize to a selected OS file.
 

@@ -337,13 +337,20 @@ test("renders database review commands as labeled prose while JSON stays structu
   }
   const firstPreviewText = await runHuman(["inspect", plan, "--limit", "20"]);
   expect(firstPreviewText).toContain("More preview rows are available.");
+  const shownCursor = /^Next preview cursor \(data\): (.+)$/mu.exec(
+    firstPreviewText,
+  )?.[1];
+  if (shownCursor === undefined) {
+    throw new Error("The human report did not include its preview cursor.");
+  }
+  expect(shownCursor).toContain("\\");
   const secondPreviewText = await runHuman([
     "inspect",
     plan,
     "--limit",
     "20",
     "--cursor",
-    nextCursor,
+    shownCursor,
   ]);
   expect(secondPreviewText).toContain("source row 26");
   expect(secondPreviewText).not.toContain("source row 2:");
@@ -492,6 +499,65 @@ test("renders database review commands as labeled prose while JSON stays structu
     capturedRows: "25",
     prepared: { state: "ready" },
   });
+});
+
+test("escapes controls inside database report values while JSON preserves them", async () => {
+  const root = await directory();
+  const database = path.join(root, "controls.sqlite");
+  const source = path.join(root, "controls.xlsx");
+  const plan = path.join(root, "controls.ccplan");
+  const context = path.join(root, "controls.json");
+  const sourceAlias = "inventory\nSafety: forged source\r\t\u001B[31m";
+  const label = "Synthetic delivery\nSafety: forged delivery\r\t\u001B[32m";
+  const requestId = "request\nNext: forged action\r\t\u009B";
+  await writeFile(source, workbook([["Name"], ["North"]]));
+  await writeFile(context, JSON.stringify({ label, scope: { kind: "full" } }));
+  await run(["create", "-o", database]);
+  await run([
+    "plan",
+    database,
+    "--input",
+    `${sourceAlias}=${source}`,
+    "-o",
+    plan,
+  ]);
+
+  const planText = await runHuman(["inspect", plan]);
+  expect(planText).toContain(
+    "inventory\\u000ASafety: forged source\\u000D\\u0009\\u001B[31m",
+  );
+  expect(planText.split("\n")).not.toContain("Safety: forged source");
+  expect((await run(["inspect", plan]))["routes"]).toEqual([
+    expect.objectContaining({ source: sourceAlias }),
+  ]);
+
+  await run(["resolve", database, "--plan", plan]);
+  await run([
+    "apply",
+    database,
+    "--plan",
+    plan,
+    "--context",
+    context,
+    "--request-id",
+    requestId,
+  ]);
+  const deliveriesText = await runHuman(["deliveries", database]);
+  expect(deliveriesText).toContain(
+    "Synthetic delivery\\u000ASafety: forged delivery\\u000D\\u0009\\u001B[32m",
+  );
+  expect(deliveriesText).toContain(
+    "request\\u000ANext: forged action\\u000D\\u0009\\u009B",
+  );
+  expect(deliveriesText.split("\n")).not.toContain("Safety: forged delivery");
+  expect(deliveriesText.split("\n")).not.toContain("Next: forged action");
+  const deliveryPage = await run(["deliveries", database]);
+  expect(deliveryPage["deliveries"]).toEqual([
+    expect.objectContaining({
+      requestId,
+      context: expect.objectContaining({ label }),
+    }),
+  ]);
 });
 
 for (const format of ["sqlite", "duckdb"] as const) {

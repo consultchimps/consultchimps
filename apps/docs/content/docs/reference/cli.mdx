@@ -404,6 +404,9 @@ It refuses to overwrite the working source database. `--dry-run` reports storage
 changes and unsupported objects without writing an output. A same-format export
 makes an independent file; a cross-format export converts managed tables and
 history. Unsupported objects block conversion instead of being silently omitted.
+Cross-format export validates stored values against their registered types
+during the copy. Values that require a lossy coercion stop publication. A dry
+run does not scan rows for value errors.
 
 ### Delivery options
 

@@ -14,6 +14,8 @@ import type {
   TableSchema,
 } from "@consultchimps/db";
 
+import { printable, quotedValue, withoutTerminalControls } from "./text.js";
+
 const DETAIL_LIMIT = 20;
 const VALUE_LIMIT = 80;
 
@@ -38,18 +40,22 @@ function limitedDetails(details: readonly string[]): string[] {
 function destination(destination: ImportDestination | null): string {
   if (destination === null) return "Excluded from loading";
   if (destination.kind === "existing-table") {
-    return `Existing table "${destination.table}"`;
+    return `Existing table "${compact(destination.table)}"`;
   }
   if (destination.kind === "new-table") {
-    return `New table "${destination.schema.name}"`;
+    return `New table "${compact(destination.schema.name)}"`;
   }
-  return `New inferred table "${destination.name}"`;
+  return `New inferred table "${compact(destination.name)}"`;
 }
 
-function compact(value: string): string {
+function limitedValue(value: string): string {
   return value.length <= VALUE_LIMIT
     ? value
     : `${value.slice(0, VALUE_LIMIT)} [truncated]`;
+}
+
+function compact(value: string): string {
+  return printable(limitedValue(value));
 }
 
 function importConflict(conflict: ImportConflict): string {
@@ -140,7 +146,7 @@ function routeDetails(route: ImportInspection["routes"][number]): string {
   return [
     `  ${compact(route.source)} / ${compact(route.label)}`,
     `    Selection key: ${compact(route.selection)}`,
-    `    Capture ID: ${route.captureId} (${route.reused ? "reused capture" : "captured in this plan"})`,
+    `    Capture ID: ${compact(route.captureId)} (${route.reused ? "reused capture" : "captured in this plan"})`,
     `    Rows: ${count(route.rowCount)}`,
     `    Destination: ${destination(route.destination)}`,
     `    Column mappings: ${summarizedList(mappings) || "None"}`,
@@ -152,15 +158,15 @@ function cellValue(cell: ImportCell): string {
     case "blank":
       return "(blank)";
     case "string":
-      return JSON.stringify(compact(cell.value));
+      return quotedValue(limitedValue(cell.value));
     case "number":
       return compact(cell.raw);
     case "boolean":
       return cell.value ? "true" : "false";
     case "date":
-      return cell.iso;
+      return compact(cell.iso);
     case "error":
-      return `Excel error ${cell.error}`;
+      return `Excel error ${compact(cell.error)}`;
     case "formula":
       return cell.cached.kind === "missing"
         ? "formula result unavailable"
@@ -190,7 +196,7 @@ export function formatDatabaseInspection(
       "Table rows:",
       ...limitedDetails(
         inspection.tables.map(
-          (table) => `  ${table.name}: ${count(table.rowCount)} rows`,
+          (table) => `  ${compact(table.name)}: ${count(table.rowCount)} rows`,
         ),
       ),
     );
@@ -243,13 +249,15 @@ export function formatImportInspection(inspection: ImportInspection): string {
     lines.push(
       "Preview warnings:",
       ...limitedDetails(
-        inspection.previewWarnings.map((warning) => `  ${warning.message}`),
+        inspection.previewWarnings.map(
+          (warning) => `  ${printable(warning.message)}`,
+        ),
       ),
     );
   }
   if (inspection.nextCursor !== undefined) {
     lines.push(
-      `Next preview cursor (data): ${inspection.nextCursor}`,
+      `Next preview cursor (data): ${withoutTerminalControls(inspection.nextCursor)}`,
       "More preview rows are available. The --cursor option accepts this full value; quote it using your shell's rules.",
     );
   }
@@ -339,17 +347,21 @@ export function formatDeliveryPage(page: DeliveryPage): string {
                 ? "Full"
                 : "Unknown";
         const details = [
-          `  ${delivery.id}: ${compact(delivery.context.label)}`,
+          `  ${compact(delivery.id)}: ${compact(delivery.context.label)}`,
           `    Request ID: ${compact(delivery.requestId)}`,
           `    Scope: ${scope}`,
           `    Capture IDs: ${compact(delivery.captureIds.join(", ") || "None")}`,
           `    Reused capture IDs: ${compact(delivery.reusedCaptureIds.join(", ") || "None")}`,
         ];
         if (delivery.context.effectiveDate !== undefined) {
-          details.push(`    Effective date: ${delivery.context.effectiveDate}`);
+          details.push(
+            `    Effective date: ${compact(delivery.context.effectiveDate)}`,
+          );
         }
         if (delivery.context.receivedDate !== undefined) {
-          details.push(`    Received date: ${delivery.context.receivedDate}`);
+          details.push(
+            `    Received date: ${compact(delivery.context.receivedDate)}`,
+          );
         }
         const attributes = Object.entries(delivery.context.attributes ?? {});
         if (attributes.length > 0) {
@@ -367,7 +379,7 @@ export function formatDeliveryPage(page: DeliveryPage): string {
   }
   if (page.nextCursor !== undefined) {
     lines.push(
-      `More deliveries are available. Continue with --cursor ${page.nextCursor}.`,
+      `More deliveries are available. Continue with --cursor ${withoutTerminalControls(page.nextCursor)}.`,
     );
   }
   lines.push(
@@ -395,7 +407,7 @@ export function formatConversionPlan(plan: ConversionPlan): string {
       ...limitedDetails(
         plan.changes.map(
           (change) =>
-            `  ${change.table}.${change.column}: ${change.logicalType}`,
+            `  ${compact(change.table)}.${compact(change.column)}: ${change.logicalType}`,
         ),
       ),
     );
@@ -403,7 +415,9 @@ export function formatConversionPlan(plan: ConversionPlan): string {
   if (plan.issues.length > 0) {
     lines.push(
       "Issues:",
-      ...limitedDetails(plan.issues.map((issue) => `  ${issue.message}`)),
+      ...limitedDetails(
+        plan.issues.map((issue) => `  ${printable(issue.message)}`),
+      ),
     );
   }
   lines.push(

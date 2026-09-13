@@ -2,6 +2,11 @@ import { attribute, localName, parseXml } from "./xml.js";
 import { readMetadataText, type ZipPackage } from "./zip.js";
 import type { FileEntry } from "@zip.js/zip.js";
 import { calendarIsoText, serialCalendarParts } from "../model/calendar.js";
+import {
+  activeNumberFormatSection,
+  parseNumberFormatSections,
+  type NumberFormatSection,
+} from "./number-format-sections.js";
 
 export interface WorkbookStyles {
   readonly date1904: boolean;
@@ -18,6 +23,12 @@ const BUILT_IN_DATE_FORMATS = new Set([
 const LOCALE_INDEPENDENT_BUILT_IN_TIME_FORMATS = new Set([
   18, 19, 20, 21, 22, 45, 46, 47,
 ]);
+
+interface NumberFormat {
+  readonly id: number;
+  readonly code?: string | undefined;
+  readonly sections?: readonly NumberFormatSection[] | undefined;
+}
 
 function cleanedFormat(format: string): string {
   return format
@@ -38,19 +49,13 @@ function hasTime(format: string | undefined): boolean {
   return /[hs]/u.test(cleaned) || /\[[hms]+\]/u.test(cleaned);
 }
 
-function formatHasTime(format: {
-  readonly id: number;
-  readonly code?: string | undefined;
-}): boolean {
+function formatHasTime(format: NumberFormat): boolean {
   return format.code === undefined
     ? LOCALE_INDEPENDENT_BUILT_IN_TIME_FORMATS.has(format.id)
     : hasTime(format.code);
 }
 
-function isElapsedFormat(format: {
-  readonly id: number;
-  readonly code?: string | undefined;
-}): boolean {
+function isElapsedFormat(format: NumberFormat): boolean {
   if (format.code === undefined) return format.id === 46;
   const cleaned = cleanedFormat(format.code);
   return /\[(?:h{1,2}|m{1,2}|s{1,2})\]/iu.test(cleaned);
@@ -83,10 +88,7 @@ export async function loadWorkbookStyles(
   signal: AbortSignal | undefined,
 ): Promise<WorkbookStyles> {
   const customFormats = new Map<number, string>();
-  const cellFormats: {
-    readonly id: number;
-    readonly code?: string | undefined;
-  }[] = [];
+  const cellFormats: NumberFormat[] = [];
   if (entry) {
     const xml = await readMetadataText(entry, archive.limits, signal);
     let insideCellFormats = false;
@@ -106,7 +108,12 @@ export async function loadWorkbookStyles(
           if (!Number.isSafeInteger(id) || id < 0) {
             throw new Error("A cell style has an invalid number format ID.");
           }
-          cellFormats.push({ id, code: customFormats.get(id) });
+          const code = customFormats.get(id);
+          cellFormats.push(
+            code === undefined
+              ? { id }
+              : { id, code, sections: parseNumberFormatSections(code) },
+          );
         }
       });
       parser.on("closetag", (tag) => {
@@ -117,9 +124,17 @@ export async function loadWorkbookStyles(
   const dateStyles = new Set<number>();
   for (const [index, format] of cellFormats.entries()) {
     if (
-      !isElapsedFormat(format) &&
-      ((format.code === undefined && BUILT_IN_DATE_FORMATS.has(format.id)) ||
-        (format.code !== undefined && customDateFormat(format.code)))
+      (format.code === undefined &&
+        !isElapsedFormat(format) &&
+        BUILT_IN_DATE_FORMATS.has(format.id)) ||
+      (format.sections !== undefined &&
+        format.sections
+          .slice(0, 3)
+          .some(
+            (section) =>
+              !isElapsedFormat({ id: format.id, code: section.code }) &&
+              customDateFormat(section.code),
+          ))
     ) {
       dateStyles.add(index);
     }
@@ -136,12 +151,26 @@ export async function loadWorkbookStyles(
     },
     dateValue(raw, styleIndex) {
       const format = cellFormats[styleIndex];
-      if (!dateStyles.has(styleIndex)) return undefined;
-      return serialDate(
-        raw,
-        date1904,
-        format !== undefined && formatHasTime(format),
-      );
+      if (!dateStyles.has(styleIndex) || format === undefined) return undefined;
+      const section =
+        format.sections === undefined
+          ? undefined
+          : activeNumberFormatSection(format.sections, Number(raw));
+      const activeFormat =
+        format.sections === undefined
+          ? format
+          : section === undefined
+            ? undefined
+            : { id: format.id, code: section.code };
+      if (
+        activeFormat === undefined ||
+        isElapsedFormat(activeFormat) ||
+        (activeFormat.code !== undefined &&
+          !customDateFormat(activeFormat.code))
+      ) {
+        return undefined;
+      }
+      return serialDate(raw, date1904, formatHasTime(activeFormat));
     },
   };
 }
