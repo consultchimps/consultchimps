@@ -324,6 +324,19 @@ failures produce a warning after successful export or
 `DB_BROWSER_EXPORT_CLEANUP_REQUIRED` after a failed export with preserved prior
 contents. Abrupt browser termination can interrupt these recovery steps.
 
+Read-only DuckDB exports use `COPY FROM DATABASE` to copy the open database into
+a temporary OPFS database. DuckDB checkpoints the temporary database before
+exporting its main file. This includes committed changes visible to the source
+connection while leaving the source files unchanged, and requires additional
+browser storage. `DB_BROWSER_DUCKDB_SNAPSHOT_CLEANUP_REQUIRED` identifies an
+abandoned snapshot through `directory` and `snapshotName`. Release its open
+handles before inspecting or removing remaining temporary files through OPFS,
+then retry from the original working copy.
+
+Export does not repair an incomplete recovery log. Committed writes in the
+browser engine are not guaranteed to survive abrupt worker or browser
+termination.
+
 Call `discardPreparedImport({ name })` to remove a closed private plan that the
 caller created and no longer needs. It rejects an open plan, database, or
 unrecognized artifact, and it does not remove database working copies.

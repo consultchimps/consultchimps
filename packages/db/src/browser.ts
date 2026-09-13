@@ -19,11 +19,15 @@ import {
 } from "./database.js";
 import { executeConversion, planConversion } from "./conversion.js";
 import {
+  copyBrowserFileToDestination,
   copySourceToBrowserFile,
   restoreBrowserFile,
   type BrowserFileHandle,
 } from "./browser-file-copy.js";
-import { BrowserDuckDbEngine } from "./engines/duckdb/browser.js";
+import {
+  BrowserDuckDbEngine,
+  type BrowserDuckDbSnapshotStorage,
+} from "./engines/duckdb/browser.js";
 import { BrowserSqliteEngine } from "./engines/sqlite/browser.js";
 import { databaseError } from "./errors.js";
 import { inspectAppliedImportPlan } from "./import/history.js";
@@ -213,12 +217,21 @@ function sqliteName(name: string): string {
 
 async function opfsDirectory(name: string): Promise<BrowserDirectoryHandle> {
   let directory = await browserStorage().getDirectory();
-  for (const segment of name.split("/").filter((part) => part.length > 0)) {
+  for (const segment of opfsDirectoryName(name).split("/")) {
+    if (segment.length === 0) continue;
     directory = await directory.getDirectoryHandle(storageName(segment), {
       create: true,
     });
   }
   return directory;
+}
+
+function opfsDirectoryName(name: string): string {
+  return name
+    .split("/")
+    .filter((part) => part.length > 0)
+    .map(storageName)
+    .join("/");
 }
 
 async function fileExists(
@@ -241,22 +254,32 @@ async function replaceDuckDbFiles(
   name: string,
   overwrite: boolean,
 ): Promise<{ file: BrowserFileHandle; wal: BrowserFileHandle }> {
-  const exists = await fileExists(directory, name);
-  if (exists && !overwrite) {
+  const mainExists = await fileExists(directory, name);
+  const walExists = await fileExists(directory, `${name}.wal`);
+  if ((mainExists || walExists) && !overwrite) {
     throw databaseError(
       "DB_OUTPUT_EXISTS",
       "A browser database with this name already exists. Choose another name or allow replacement.",
       { name },
     );
   }
-  if (exists) await directory.removeEntry(name);
-  if (await fileExists(directory, `${name}.wal`)) {
+  if (mainExists) await directory.removeEntry(name);
+  if (walExists) {
     await directory.removeEntry(`${name}.wal`);
   }
-  return {
-    file: await directory.getFileHandle(name, { create: true }),
-    wal: await directory.getFileHandle(`${name}.wal`, { create: true }),
-  };
+  const created: string[] = [];
+  try {
+    const file = await directory.getFileHandle(name, { create: true });
+    if (!mainExists) created.push(name);
+    const wal = await directory.getFileHandle(`${name}.wal`, { create: true });
+    if (!walExists) created.push(`${name}.wal`);
+    return { file, wal };
+  } catch (error) {
+    for (const createdName of created.reverse()) {
+      await directory.removeEntry(createdName).catch(() => undefined);
+    }
+    throw error;
+  }
 }
 
 async function removeDuckDbFiles(
@@ -272,32 +295,29 @@ async function removeDuckDbFiles(
 async function copyBlobToFile(
   source: Blob,
   handle: BrowserFileHandle,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const writable = await handle.createWritable();
-  let closed = false;
-  try {
-    for (let offset = 0; offset < source.size; offset += COPY_CHUNK_BYTES) {
-      const length = Math.min(COPY_CHUNK_BYTES, source.size - offset);
-      const bytes = new Uint8Array(
-        await source.slice(offset, offset + length).arrayBuffer(),
-      );
-      await writable.write({ type: "write", position: offset, data: bytes });
-    }
-    await writable.truncate(source.size);
-    await writable.close();
-    closed = true;
-  } catch (error) {
-    if (!closed && writable.abort !== undefined) {
-      await writable.abort(error).catch(() => undefined);
-    }
-    throw error;
-  }
+  await copySourceToBrowserFile({
+    source: {
+      name: handle.name,
+      size: source.size,
+      async readAt(offset, length) {
+        return new Uint8Array(
+          await source.slice(offset, offset + length).arrayBuffer(),
+        );
+      },
+    },
+    destination: handle,
+    operation: "db.browser.export",
+    signal,
+  });
 }
 
 async function copyDuckDbFiles(
   directory: BrowserDirectoryHandle,
   source: string,
   destination: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const sourceFile = await (await directory.getFileHandle(source)).getFile();
   const sourceWal = await (
@@ -306,10 +326,12 @@ async function copyDuckDbFiles(
   await copyBlobToFile(
     sourceFile,
     await directory.getFileHandle(destination, { create: true }),
+    signal,
   );
   await copyBlobToFile(
     sourceWal,
     await directory.getFileHandle(`${destination}.wal`, { create: true }),
+    signal,
   );
 }
 
@@ -473,7 +495,9 @@ export async function configureBrowserDatabaseRuntime(
   if (options.sqlite.initialCapacity !== undefined) {
     await pool.reserveMinimumCapacity(options.sqlite.initialCapacity);
   }
-  const duckDirectoryName = options.opfsDirectory ?? "consultchimps-databases";
+  const duckDirectoryName = opfsDirectoryName(
+    options.opfsDirectory ?? "consultchimps-databases",
+  );
   const duckDirectory = await opfsDirectory(duckDirectoryName);
   const sqliteDirectory = await sqlitePoolDirectory(options.sqlite.directory);
   const stored = new WeakMap<Database, StoredDatabase>();
@@ -681,6 +705,53 @@ export async function configureBrowserDatabaseRuntime(
     await removeDuckDbFiles(duckDirectory, candidate).catch(() => undefined);
   };
 
+  const createReadonlyDuckDbSnapshot =
+    async (): Promise<BrowserDuckDbSnapshotStorage> => {
+      let snapshotName: string;
+      do {
+        snapshotName = `.consultchimps-export-snapshot-${globalThis.crypto.randomUUID()}.duckdb`;
+      } while (
+        (await fileExists(duckDirectory, snapshotName)) ||
+        (await fileExists(duckDirectory, `${snapshotName}.wal`))
+      );
+      let handles: { file: BrowserFileHandle; wal: BrowserFileHandle };
+      try {
+        handles = await replaceDuckDbFiles(duckDirectory, snapshotName, false);
+      } catch (error) {
+        if (isConsultChimpsError(error) && error.code === "DB_OUTPUT_EXISTS") {
+          throw error;
+        }
+        try {
+          await removeDuckDbFiles(duckDirectory, snapshotName);
+        } catch (cleanupError) {
+          throw databaseError(
+            "DB_BROWSER_DUCKDB_SNAPSHOT_CLEANUP_REQUIRED",
+            `Browser export could not finish allocating or remove its temporary DuckDB snapshot. Close other tabs using this site. Partial files may remain in the ${duckDirectoryName} origin-private directory as ${snapshotName} and ${snapshotName}.wal. Remove the abandoned files before retrying.`,
+            { directory: duckDirectoryName, snapshotName },
+            new AggregateError(
+              [error, cleanupError],
+              "DuckDB browser snapshot allocation cleanup failed",
+            ),
+          );
+        }
+        throw error;
+      }
+      return {
+        name: snapshotName,
+        path: snapshotName,
+        directory: duckDirectoryName,
+        fileHandle: handles.file,
+        walHandle: handles.wal,
+        copyTo: (destination, copySignal) =>
+          copyBrowserFileToDestination({
+            source: handles.file,
+            destination,
+            signal: copySignal,
+          }),
+        remove: () => removeDuckDbFiles(duckDirectory, snapshotName),
+      };
+    };
+
   const duckEngine = async (
     name: string,
     readonly = false,
@@ -695,6 +766,7 @@ export async function configureBrowserDatabaseRuntime(
       fileHandle: file,
       walHandle: wal,
       readonly,
+      createReadonlySnapshot: createReadonlyDuckDbSnapshot,
     });
   };
 

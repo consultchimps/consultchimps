@@ -9,6 +9,11 @@ import {
 import { throwIfAborted } from "@consultchimps/core";
 import type { RandomAccessFile } from "@consultchimps/core";
 
+import { copyBrowserFileToDestination } from "../../browser-file-copy.js";
+import {
+  exportReadonlyDuckDbSnapshot,
+  type DuckDbSnapshotStorage,
+} from "../../browser-duckdb-snapshot.js";
 import type {
   DatabaseEngine,
   EngineRow,
@@ -54,6 +59,13 @@ export interface BrowserDuckDbEngineOptions {
   readonly fileHandle: BrowserFileHandle;
   readonly walHandle: BrowserFileHandle;
   readonly readonly?: boolean | undefined;
+  readonly createReadonlySnapshot?:
+    (() => Promise<BrowserDuckDbSnapshotStorage>) | undefined;
+}
+
+export interface BrowserDuckDbSnapshotStorage extends DuckDbSnapshotStorage {
+  readonly fileHandle: BrowserFileHandle;
+  readonly walHandle: BrowserFileHandle;
 }
 
 interface BrowserFile {
@@ -72,6 +84,8 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
   readonly #connection: AsyncDuckDBConnection;
   readonly #fileHandle: BrowserFileHandle;
   readonly #readonly: boolean;
+  readonly #createReadonlySnapshot:
+    (() => Promise<BrowserDuckDbSnapshotStorage>) | undefined;
   #tail: Promise<void> = Promise.resolve();
   #closed = false;
 
@@ -80,11 +94,14 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
     connection: AsyncDuckDBConnection,
     fileHandle: BrowserFileHandle,
     readonly: boolean,
+    createReadonlySnapshot:
+      (() => Promise<BrowserDuckDbSnapshotStorage>) | undefined,
   ) {
     this.#database = database;
     this.#connection = connection;
     this.#fileHandle = fileHandle;
     this.#readonly = readonly;
+    this.#createReadonlySnapshot = createReadonlySnapshot;
   }
 
   static async open(
@@ -131,6 +148,7 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
         await database.connect(),
         options.fileHandle,
         options.readonly === true,
+        options.createReadonlySnapshot,
       );
     } catch (error) {
       await database.terminate().catch(() => undefined);
@@ -277,20 +295,90 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
     signal?: AbortSignal,
   ): Promise<number> {
     return this.#exclusive(async () => {
-      if (!this.#readonly) await this.#execute("CHECKPOINT");
-      await this.#database.flushFiles();
-      const file = await this.#fileHandle.getFile();
-      const chunkSize = 1024 * 1024;
-      await destination.truncate(0);
-      for (let offset = 0; offset < file.size; offset += chunkSize) {
+      if (this.#readonly) {
+        if (this.#createReadonlySnapshot === undefined) {
+          throw new Error(
+            "A read-only DuckDB browser engine requires snapshot storage to export.",
+          );
+        }
+        await this.#database.flushFiles();
         throwIfAborted(signal, "db.export");
-        const bytes = new Uint8Array(
-          await file.slice(offset, offset + chunkSize).arrayBuffer(),
-        );
-        await destination.writeAt(offset, bytes);
+        return exportReadonlyDuckDbSnapshot({
+          destination,
+          signal,
+          allocate: this.#createReadonlySnapshot,
+          prepare: async (storage) => {
+            const rows = await this.#query(
+              "SELECT current_database() AS database_name",
+            );
+            const sourceName = rows[0]?.["database_name"];
+            if (typeof sourceName !== "string") {
+              throw new Error("DuckDB returned an invalid database name");
+            }
+            const targetName = `cc_snapshot_${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
+            const quotedTarget = quoteIdentifier(targetName);
+            await this.#database.registerFileHandle(
+              storage.path,
+              storage.fileHandle,
+              DuckDBDataProtocol.BROWSER_FSACCESS,
+              true,
+            );
+            await this.#database.registerFileHandle(
+              `${storage.path}.wal`,
+              storage.walHandle,
+              DuckDBDataProtocol.BROWSER_FSACCESS,
+              true,
+            );
+            let attached = false;
+            try {
+              await this.#execute(
+                `ATTACH '${storage.path.replaceAll("'", "''")}' AS ${quotedTarget} (READ_WRITE)`,
+              );
+              attached = true;
+              throwIfAborted(signal, "db.export");
+              await this.#execute(
+                `COPY FROM DATABASE ${quoteIdentifier(sourceName)} TO ${quotedTarget}`,
+              );
+              throwIfAborted(signal, "db.export");
+              await this.#execute(`CHECKPOINT ${quotedTarget}`);
+              await this.#execute(`DETACH ${quotedTarget}`);
+              attached = false;
+              await this.#database.flushFiles();
+            } catch (error) {
+              if (attached) {
+                await this.#execute(`DETACH ${quotedTarget}`).catch(
+                  () => undefined,
+                );
+              }
+              throw error;
+            }
+          },
+          release: async (storage) => {
+            const failures: unknown[] = [];
+            for (const name of [storage.path, `${storage.path}.wal`]) {
+              try {
+                await this.#database.dropFile(name);
+              } catch (error) {
+                failures.push(error);
+              }
+            }
+            if (failures.length === 1) throw failures[0];
+            if (failures.length > 1) {
+              throw new AggregateError(
+                failures,
+                "DuckDB failed to release browser snapshot files",
+              );
+            }
+          },
+        });
       }
-      await destination.truncate(file.size);
-      return file.size;
+      await this.#execute("CHECKPOINT");
+      await this.#database.flushFiles();
+      return copyBrowserFileToDestination({
+        source: this.#fileHandle,
+        destination,
+        signal,
+      });
     });
   }
 

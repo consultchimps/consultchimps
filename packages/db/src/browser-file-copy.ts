@@ -27,6 +27,13 @@ export interface BrowserFileHandle {
   createWritable(): Promise<BrowserWritable>;
 }
 
+export interface BrowserReadableFileHandle {
+  getFile(): Promise<{
+    readonly size: number;
+    slice(start?: number, end?: number): Blob;
+  }>;
+}
+
 type BrowserCopyOperation = "db.browser.export" | "db.browser.import";
 
 async function readExact(
@@ -122,4 +129,32 @@ export async function restoreBrowserFile(options: {
     await options.destination.writeAt(offset, bytes);
   }
   await options.destination.truncate(options.expectedSize);
+}
+
+export async function copyBrowserFileToDestination(options: {
+  readonly source: BrowserReadableFileHandle;
+  readonly destination: RandomAccessFile;
+  readonly signal?: AbortSignal | undefined;
+}): Promise<number> {
+  const source = await options.source.getFile();
+  throwIfAborted(options.signal, "db.browser.export");
+  await options.destination.truncate(0);
+  for (let offset = 0; offset < source.size; offset += COPY_CHUNK_BYTES) {
+    throwIfAborted(options.signal, "db.browser.export");
+    const length = Math.min(COPY_CHUNK_BYTES, source.size - offset);
+    const bytes = new Uint8Array(
+      await source.slice(offset, offset + length).arrayBuffer(),
+    );
+    if (bytes.length !== length) {
+      throw databaseError(
+        "DB_SOURCE_SHORT_READ",
+        "The browser database returned a different number of bytes than requested.",
+        { offset, expected: length, actual: bytes.length },
+      );
+    }
+    await options.destination.writeAt(offset, bytes);
+  }
+  throwIfAborted(options.signal, "db.browser.export");
+  await options.destination.truncate(source.size);
+  return source.size;
 }

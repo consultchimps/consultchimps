@@ -126,6 +126,20 @@ without permitting database writes. Browser exports require an empty
 owns the destination and must keep its backing storage separate from the working
 database.
 
+A read-only DuckDB export copies the open database into a temporary OPFS
+database using DuckDB's `COPY FROM DATABASE` operation. It checkpoints the
+temporary database so the exported file includes committed changes visible to
+the source connection without checkpointing the source. This requires additional
+browser storage for the temporary copy. If cleanup fails,
+`DB_BROWSER_DUCKDB_SNAPSHOT_CLEANUP_REQUIRED` reports its `directory` and
+`snapshotName`. Release open handles before inspecting or removing the remaining
+temporary main file and optional `.wal` file through OPFS. The original working
+copy remains the source for a retry.
+
+Export does not repair an incomplete recovery log. Committed writes in the
+browser engine are not guaranteed to survive abrupt worker or browser
+termination.
+
 Replacing a nonempty export destination creates a temporary OPFS backup using
 bounded reads. This requires additional browser storage for the prior output.
 The runtime attempts to restore prior bytes and length after cancellation or a

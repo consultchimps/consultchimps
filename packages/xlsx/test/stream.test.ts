@@ -173,6 +173,19 @@ async function workbookFixtureWithoutPart(part: string): Promise<Uint8Array> {
   return zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
 }
 
+function workbookMetadataXml(options: {
+  readonly date1904?: string | undefined;
+  readonly sheetState?: string | undefined;
+}): string {
+  const workbookProperties =
+    options.date1904 === undefined
+      ? "<x:workbookPr></x:workbookPr>"
+      : `<x:workbookPr date1904='${options.date1904}'></x:workbookPr>`;
+  const sheetState =
+    options.sheetState === undefined ? "" : ` state='${options.sheetState}'`;
+  return `<?xml version='1.0'?><x:workbook xmlns:x='http://schemas.openxmlformats.org/spreadsheetml/2006/main' xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships'>${workbookProperties}<x:sheets><x:sheet r:id='sheetRel'${sheetState} name='Data &amp; More'></x:sheet><x:sheet name='Hidden' state='veryHidden' r:id='hiddenRel'></x:sheet></x:sheets></x:workbook>`;
+}
+
 async function rows(
   reader: WorkbookRegionReader,
 ): Promise<readonly StreamRow[]> {
@@ -284,6 +297,124 @@ describe("bounded workbook streaming", () => {
     expect(inspection.namedRanges).toContainEqual({
       name: "DataRange",
       reference: "'Data & More'!$B$2:$E$4",
+    });
+  });
+
+  it.each([
+    ["omitted", undefined, "1900-01-01"],
+    ["numeric false", "0", "1900-01-01"],
+    ["text false", "false", "1900-01-01"],
+    ["numeric true", "1", "1904-01-02"],
+    ["text true", "true", "1904-01-02"],
+  ] as const)(
+    "accepts the %s date1904 form",
+    async (_label, date1904, expectedDate) => {
+      const input = source(
+        await workbookFixtureWithParts({
+          "xl/workbook.xml": workbookMetadataXml({ date1904 }),
+        }),
+      );
+      const reader = await openWorkbookRegionStream(
+        input.source,
+        { table: "InventoryTable" },
+        { scratch: new MemoryScratch() },
+      );
+
+      expect((await rows(reader))[0]?.cells.Date).toEqual({
+        kind: "date",
+        raw: "1",
+        iso: expectedDate,
+      });
+    },
+  );
+
+  it.each(["", "yes", "TRUE", "2"])(
+    "rejects the invalid date1904 value %j",
+    async (date1904) => {
+      const input = source(
+        await workbookFixtureWithParts({
+          "xl/workbook.xml": workbookMetadataXml({ date1904 }),
+        }),
+      );
+
+      await expect(
+        inspectWorkbookStream(input.source, { scratch: new MemoryScratch() }),
+      ).rejects.toMatchObject({
+        code: "XLSX_READ_FAILED",
+        cause: expect.objectContaining({
+          message: expect.stringMatching(/date1904.*Boolean/),
+        }),
+      });
+    },
+  );
+
+  it.each([
+    ["omitted", undefined, "visible"],
+    ["visible", "visible", "visible"],
+    ["hidden", "hidden", "hidden"],
+    ["very hidden", "veryHidden", "veryHidden"],
+  ] as const)(
+    "accepts the %s worksheet visibility form",
+    async (_label, sheetState, expectedVisibility) => {
+      const input = source(
+        await workbookFixtureWithParts({
+          "xl/workbook.xml": workbookMetadataXml({ sheetState }),
+        }),
+      );
+      const inspection = await inspectWorkbookStream(input.source, {
+        scratch: new MemoryScratch(),
+      });
+
+      expect(inspection.sheets[0]).toMatchObject({
+        name: "Data & More",
+        visibility: expectedVisibility,
+      });
+      expect(
+        inspection.sheets
+          .filter((sheet) => sheet.visibility === "visible")
+          .map((sheet) => sheet.name),
+      ).toEqual(expectedVisibility === "visible" ? ["Data & More"] : []);
+    },
+  );
+
+  it.each(["", "Visible", "yes"])(
+    "rejects the invalid worksheet visibility %j",
+    async (sheetState) => {
+      const input = source(
+        await workbookFixtureWithParts({
+          "xl/workbook.xml": workbookMetadataXml({ sheetState }),
+        }),
+      );
+
+      await expect(
+        inspectWorkbookStream(input.source, { scratch: new MemoryScratch() }),
+      ).rejects.toMatchObject({
+        code: "XLSX_READ_FAILED",
+        cause: expect.objectContaining({
+          message: expect.stringContaining("invalid visibility state"),
+        }),
+      });
+    },
+  );
+
+  it("rejects an unknown relationship target mode", async () => {
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/_rels/workbook.xml.rels":
+          "<Relationships xmlns='http://schemas.openxmlformats.org/package/2006/relationships'>" +
+          "<Relationship Id='sheetRel' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet' Target='worksheets/sheet1.xml' TargetMode='Elsewhere'/>" +
+          "<Relationship Id='hiddenRel' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet' Target='worksheets/sheet2.xml'/>" +
+          "</Relationships>",
+      }),
+    );
+
+    await expect(
+      inspectWorkbookStream(input.source, { scratch: new MemoryScratch() }),
+    ).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+      cause: expect.objectContaining({
+        message: expect.stringContaining("invalid TargetMode"),
+      }),
     });
   });
 

@@ -120,6 +120,8 @@ Styles needed to interpret Excel dates are read; workbook formatting and macros
 are not database content. Elapsed formats such as `[h]:mm` retain their numeric
 day fractions instead of becoming calendar dates. Missing declared style parts
 and invalid style references fail before those values can be interpreted.
+Invalid date-system flags and unknown worksheet visibility states also stop
+preparation instead of selecting a default interpretation.
 
 Each column in an explicit or named range needs a header. Worksheet selections
 use the span from the first populated header to the last, and reject blank

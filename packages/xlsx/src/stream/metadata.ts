@@ -71,11 +71,21 @@ function parseRelationships(xml: string): readonly Relationship[] {
         throw new Error(`Relationship ID "${id}" is declared more than once.`);
       }
       relationshipIds.add(id);
+      const targetMode = attribute(tag, "TargetMode");
+      if (
+        targetMode !== undefined &&
+        targetMode !== "Internal" &&
+        targetMode !== "External"
+      ) {
+        throw new Error(
+          `Relationship "${id}" has an invalid TargetMode value.`,
+        );
+      }
       relationships.push({
         id,
         type,
         target,
-        external: attribute(tag, "TargetMode")?.toLowerCase() === "external",
+        external: targetMode === "External",
       });
     });
   });
@@ -119,7 +129,13 @@ function parseWorkbook(xml: string): WorkbookDocument {
       const name = localName(tag.name);
       if (name === "workbookPr") {
         const raw = attribute(tag, "date1904");
-        date1904 = raw === "1" || raw?.toLowerCase() === "true";
+        if (raw === undefined || raw === "0" || raw === "false") {
+          date1904 = false;
+        } else if (raw === "1" || raw === "true") {
+          date1904 = true;
+        } else {
+          throw new Error("Workbook date1904 has an invalid Boolean value.");
+        }
       } else if (name === "sheet") {
         const sheetName = attribute(tag, "name");
         const id = relationshipId(tag);
@@ -129,11 +145,20 @@ function parseWorkbook(xml: string): WorkbookDocument {
           );
         }
         const state = attribute(tag, "state");
+        if (
+          state !== undefined &&
+          state !== "visible" &&
+          state !== "hidden" &&
+          state !== "veryHidden"
+        ) {
+          throw new Error(
+            `Worksheet "${sheetName}" has an invalid visibility state.`,
+          );
+        }
         sheets.push({
           name: sheetName,
           relationshipId: id,
-          visibility:
-            state === "hidden" || state === "veryHidden" ? state : "visible",
+          visibility: state ?? "visible",
         });
       } else if (name === "definedName") {
         const rangeName = attribute(tag, "name");

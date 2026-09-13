@@ -3,6 +3,8 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const duckdb = vi.hoisted(() => ({
   accessMode: "",
+  openPath: "",
+  registrations: [] as string[],
   checkpointFailure: undefined as Error | undefined,
   queries: [] as string[],
   connectionCloses: 0,
@@ -20,10 +22,18 @@ vi.mock("@duckdb/duckdb-wasm/dist/duckdb-browser", () => ({
   AsyncDuckDB: class {
     async instantiate(): Promise<void> {}
 
-    async registerFileHandle(): Promise<void> {}
+    async registerFileHandle(name: string): Promise<void> {
+      duckdb.registrations.push(name);
+    }
 
-    async open(options: { readonly accessMode: string }): Promise<void> {
+    async dropFile(): Promise<void> {}
+
+    async open(options: {
+      readonly accessMode: string;
+      readonly path: string;
+    }): Promise<void> {
       duckdb.accessMode = options.accessMode;
+      duckdb.openPath = options.path;
     }
 
     async connect() {
@@ -33,7 +43,12 @@ vi.mock("@duckdb/duckdb-wasm/dist/duckdb-browser", () => ({
           if (sql === "CHECKPOINT" && duckdb.checkpointFailure !== undefined) {
             throw duckdb.checkpointFailure;
           }
-          return { toArray: () => [] };
+          return {
+            toArray: () =>
+              sql.includes("current_database()")
+                ? [{ toJSON: () => ({ database_name: "source" }) }]
+                : [],
+          };
         },
         async prepare(): Promise<never> {
           throw new Error("Unexpected prepared statement");
@@ -88,6 +103,8 @@ function memoryFile(): RandomAccessFile & { bytes(): Uint8Array } {
 
 beforeEach(() => {
   duckdb.accessMode = "";
+  duckdb.openPath = "";
+  duckdb.registrations.length = 0;
   duckdb.checkpointFailure = undefined;
   duckdb.queries.length = 0;
   duckdb.connectionCloses = 0;
@@ -119,6 +136,30 @@ test("copies and closes a read-only browser database without a write checkpoint"
       },
     },
     readonly: true,
+    async createReadonlySnapshot() {
+      return {
+        name: "snapshot.duckdb",
+        path: "/snapshot.duckdb",
+        directory: "test",
+        fileHandle: {
+          async getFile() {
+            return new Blob();
+          },
+        },
+        walHandle: {
+          async getFile() {
+            return new Blob();
+          },
+        },
+        async copyTo(destination) {
+          await destination.truncate(0);
+          await destination.writeAt(0, sourceBytes);
+          await destination.truncate(sourceBytes.byteLength);
+          return sourceBytes.byteLength;
+        },
+        async remove() {},
+      };
+    },
   });
   const destination = memoryFile();
 
@@ -129,11 +170,80 @@ test("copies and closes a read-only browser database without a write checkpoint"
   await engine.close();
 
   expect(duckdb.accessMode).toBe("read-only");
+  expect(duckdb.openPath).toBe("readonly.duckdb");
   expect(duckdb.queries).not.toContain("CHECKPOINT");
   expect(destination.bytes()).toEqual(sourceBytes);
   expect(duckdb.connectionCloses).toBe(1);
-  expect(duckdb.flushes).toBe(2);
+  expect(duckdb.flushes).toBe(3);
   expect(duckdb.terminations).toBe(1);
+});
+
+test("holds read-only engine work until snapshot copying finishes", async () => {
+  let releaseCopy = (): void => undefined;
+  const copyReleased = new Promise<void>((resolve) => {
+    releaseCopy = resolve;
+  });
+  let copyStarted = (): void => undefined;
+  const copyObserved = new Promise<void>((resolve) => {
+    copyStarted = resolve;
+  });
+  const engine = await BrowserDuckDbEngine.open({
+    wasmUrl: "duckdb.wasm",
+    workerUrl: "duckdb.worker.js",
+    storageName: "readonly-concurrent.duckdb",
+    fileHandle: {
+      async getFile() {
+        return new Blob();
+      },
+    },
+    walHandle: {
+      async getFile() {
+        return new Blob();
+      },
+    },
+    readonly: true,
+    async createReadonlySnapshot() {
+      return {
+        name: "snapshot-concurrent.duckdb",
+        path: "/snapshot-concurrent.duckdb",
+        directory: "test",
+        fileHandle: {
+          async getFile() {
+            return new Blob();
+          },
+        },
+        walHandle: {
+          async getFile() {
+            return new Blob();
+          },
+        },
+        async copyTo() {
+          copyStarted();
+          await copyReleased;
+          return 0;
+        },
+        async remove() {},
+      };
+    },
+  });
+
+  const copying = engine.copyTo(memoryFile());
+  await copyObserved;
+  const querying = engine.query("SELECT 1");
+  await expect(
+    Promise.race([
+      querying.then(() => "queried"),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve("waiting"), 20);
+      }),
+    ]),
+  ).resolves.toBe("waiting");
+  releaseCopy();
+  await copying;
+  await querying;
+  await engine.close();
+
+  expect(duckdb.queries).toContain("SELECT 1");
 });
 
 test("releases browser DuckDB resources when a writable close checkpoint fails", async () => {
