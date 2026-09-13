@@ -17,6 +17,7 @@ import type * as SqliteWasmModule from "@sqlite.org/sqlite-wasm";
 import type { RandomAccessFile, RandomAccessSource } from "@consultchimps/core";
 
 import { inspectDatabase } from "../src/database.js";
+import { PREPARED_FORMAT_VERSION } from "../src/prepared.js";
 import { applySchema, planSchema } from "../src/records.js";
 import type {
   BrowserDatabaseRuntime,
@@ -1424,22 +1425,45 @@ describe("browser database runtime", () => {
       }),
     ).rejects.toMatchObject({ code: "DB_BROWSER_DATABASE_BUSY" });
     await prepared.close();
-    const legacy = await runtime.createPreparedImport({
-      name: ".consultchimps-import-legacy.sqlite",
+    const legacyVersionOne = await runtime.createPreparedImport({
+      name: ".consultchimps-import-legacy-v1.sqlite",
       database: created.database,
       recipe: { version: 1, routes: [] },
       baselineRevision: inspection.revision,
     });
-    await legacy.close();
-    const legacyStorage = harness.openDatabase(
-      "/.consultchimps-import-legacy.sqlite",
+    await legacyVersionOne.close();
+    const legacyVersionOneStorage = harness.openDatabase(
+      "/.consultchimps-import-legacy-v1.sqlite",
       "w",
     );
-    legacyStorage.exec("UPDATE _consultchimps_prepared SET format_version = 1");
-    legacyStorage.exec(
+    legacyVersionOneStorage.exec(
+      "UPDATE _consultchimps_prepared SET format_version = 1",
+    );
+    legacyVersionOneStorage.exec(
       "ALTER TABLE _consultchimps_prepared DROP COLUMN review_fingerprint",
     );
-    legacyStorage.close();
+    legacyVersionOneStorage.exec(
+      "ALTER TABLE _consultchimps_prepared_captures DROP COLUMN row_checksum",
+    );
+    legacyVersionOneStorage.close();
+    const legacyVersionTwo = await runtime.createPreparedImport({
+      name: ".consultchimps-import-legacy-v2.sqlite",
+      database: created.database,
+      recipe: { version: 1, routes: [] },
+      baselineRevision: inspection.revision,
+    });
+    await legacyVersionTwo.close();
+    const legacyVersionTwoStorage = harness.openDatabase(
+      "/.consultchimps-import-legacy-v2.sqlite",
+      "w",
+    );
+    legacyVersionTwoStorage.exec(
+      "UPDATE _consultchimps_prepared SET format_version = 2",
+    );
+    legacyVersionTwoStorage.exec(
+      "ALTER TABLE _consultchimps_prepared_captures DROP COLUMN row_checksum",
+    );
+    legacyVersionTwoStorage.close();
     const unrelated = await runtime.createDatabase({
       name: ".consultchimps-import-unrelated.sqlite",
       format: "sqlite",
@@ -1476,10 +1500,23 @@ describe("browser database runtime", () => {
       ],
       ignored: [
         {
-          name: ".consultchimps-import-legacy.sqlite",
+          name: ".consultchimps-import-legacy-v1.sqlite",
           code: "DB_UNSUPPORTED_PREPARED_IMPORT_VERSION",
           message: expect.stringMatching(
-            /format version 1.*supports version 2.*original sources/iu,
+            new RegExp(
+              `format version 1.*supports version ${String(PREPARED_FORMAT_VERSION)}.*original sources`,
+              "iu",
+            ),
+          ),
+        },
+        {
+          name: ".consultchimps-import-legacy-v2.sqlite",
+          code: "DB_UNSUPPORTED_PREPARED_IMPORT_VERSION",
+          message: expect.stringMatching(
+            new RegExp(
+              `format version 2.*supports version ${String(PREPARED_FORMAT_VERSION)}.*original sources`,
+              "iu",
+            ),
           ),
         },
         {

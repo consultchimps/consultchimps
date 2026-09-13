@@ -232,7 +232,7 @@ async function reviewedCaptureMetadata(
   engine: ReturnType<typeof preparedEngineOf>,
 ): Promise<readonly [string, string]> {
   const captureRows = await engine.query(
-    `SELECT capture_id, source_file_id, source_key, display_name, selection_key, selection_label, reader_version, content_hash, byte_count, reused, row_count, columns_json FROM ${PREPARED_CAPTURE_TABLE}`,
+    `SELECT capture_id, source_file_id, source_key, display_name, selection_key, selection_label, reader_version, content_hash, byte_count, reused, row_count, columns_json, row_checksum FROM ${PREPARED_CAPTURE_TABLE}`,
   );
   const captures = captureRows.map(
     (row) =>
@@ -251,6 +251,7 @@ async function reviewedCaptureMetadata(
         requiredBigInt(row["reused"], "reuse marker").toString(),
         requiredBigInt(row["row_count"], "row count").toString(),
         requiredString(row["columns_json"], "captured columns"),
+        requiredString(row["row_checksum"], "row checksum"),
       ] satisfies readonly (string | null)[],
   );
   const bindingRows = await engine.query(

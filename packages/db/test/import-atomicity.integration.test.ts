@@ -16,12 +16,15 @@ import type {
   ImportRecipe,
   ImportSource,
 } from "../src/import/types.js";
+import { createCaptureRowChecksum } from "../src/import/row-checksum.js";
 import { createDatabase, createPreparedImport } from "../src/node.js";
 import {
   PREPARED_BINDING_TABLE,
   PREPARED_CAPTURE_TABLE,
   PREPARED_ROW_TABLE,
   preparedEngineOf,
+  updatePreparedCaptureMetadata,
+  updatePreparedPlan,
 } from "../src/prepared.js";
 
 const directories: string[] = [];
@@ -159,18 +162,35 @@ for (const format of ["sqlite", "duckdb"] as const) {
       });
       expect(approved.state).toBe("ready");
       if (approved.state !== "ready") throw new Error("Plan failed review");
-      await preparedEngineOf(prepared).execute(
-        `UPDATE ${PREPARED_ROW_TABLE} SET values_json = ? WHERE values_json LIKE ?`,
-        [
-          JSON.stringify({ Value: { kind: "error", error: "#VALUE!" } }),
-          "%valid during review%",
-        ],
-      );
+      const errorValuesJson = JSON.stringify({
+        Value: { kind: "error", error: "#VALUE!" },
+      });
+      const errorChecksum = createCaptureRowChecksum();
+      errorChecksum.update(2n, errorValuesJson);
+      await updatePreparedCaptureMetadata(prepared, async (transaction) => {
+        await transaction.execute(
+          `UPDATE ${PREPARED_ROW_TABLE} SET values_json = ? WHERE values_json LIKE ?`,
+          [errorValuesJson, "%valid during review%"],
+        );
+        await transaction.execute(
+          `UPDATE ${PREPARED_CAPTURE_TABLE} SET row_checksum = ? WHERE selection_key = ?`,
+          [errorChecksum.digest(), "Bad"],
+        );
+      });
+      const alteredApproval = await updatePreparedPlan({
+        prepared,
+        recipe,
+        conflicts: [],
+        ready: true,
+      });
+      if (alteredApproval.state !== "ready") {
+        throw new Error("Altered plan failed review");
+      }
       await expect(
         applyImport({
           database,
           prepared,
-          approved,
+          approved: alteredApproval,
           requestId: "atomic-apply",
         }),
       ).rejects.toMatchObject({ code: "DB_IMPORT_ERROR_CELL" });

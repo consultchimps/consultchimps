@@ -7,6 +7,7 @@ import { afterEach, expect, test } from "vitest";
 import { engineOf, inspectDatabase } from "../src/database.js";
 import { CAPTURE_ROW_TABLE } from "../src/metadata.js";
 import { inspectImport } from "../src/import/operations.js";
+import { createCaptureRowChecksum } from "../src/import/row-checksum.js";
 import {
   PREPARED_BINDING_TABLE,
   PREPARED_CAPTURE_TABLE,
@@ -47,9 +48,22 @@ for (const format of ["sqlite", "duckdb"] as const) {
         ["CAPTURE-A", "A"],
         ["CAPTURE-B", "B"],
       ] as const) {
+        const rows = [1n, 2n].map(
+          (sourceRow) =>
+            [
+              sourceRow,
+              JSON.stringify({
+                Value: { kind: "string", value: `${source}${sourceRow}` },
+              }),
+            ] as const,
+        );
+        const checksum = createCaptureRowChecksum();
+        for (const [sourceRow, valuesJson] of rows) {
+          checksum.update(sourceRow, valuesJson);
+        }
         await updatePreparedCaptureMetadata(prepared, async (transaction) => {
           await transaction.execute(
-            `INSERT INTO ${PREPARED_CAPTURE_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO ${PREPARED_CAPTURE_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               capture,
               null,
@@ -63,6 +77,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
               source === "B" ? 1n : 0n,
               2n,
               '[{"name":"Value","type":"text"}]',
+              checksum.digest(),
             ],
           );
           await transaction.execute(
@@ -70,16 +85,10 @@ for (const format of ["sqlite", "duckdb"] as const) {
             [source, "Sheet1", capture, `${source}.xlsx`],
           );
         });
-        for (const sourceRow of [1n, 2n]) {
+        for (const [sourceRow, valuesJson] of rows) {
           await (source === "B" ? engineOf(database) : engine).execute(
             `INSERT INTO ${source === "B" ? CAPTURE_ROW_TABLE : PREPARED_ROW_TABLE} VALUES (?, ?, ?)`,
-            [
-              capture,
-              sourceRow,
-              JSON.stringify({
-                Value: { kind: "string", value: `${source}${sourceRow}` },
-              }),
-            ],
+            [capture, sourceRow, valuesJson],
           );
         }
       }

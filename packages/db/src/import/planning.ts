@@ -61,6 +61,7 @@ export interface PreparedCapture {
   readonly byteCount: bigint;
   readonly reused: boolean;
   readonly rowCount: bigint;
+  readonly rowChecksum: string;
   readonly columns: readonly InferredColumn[];
 }
 
@@ -101,7 +102,7 @@ export async function preparedCaptures(
   prepared: PrepareImportOptions["prepared"],
 ): Promise<PreparedCapture[]> {
   const rows = await preparedEngineOf(prepared).query(
-    `SELECT c.capture_id, c.source_file_id, b.source_key, b.display_name, b.selection_key, c.selection_label, c.reader_version, c.content_hash, c.byte_count, c.reused, c.row_count, c.columns_json FROM ${PREPARED_CAPTURE_TABLE} c JOIN ${PREPARED_BINDING_TABLE} b ON b.capture_id = c.capture_id ORDER BY b.source_key, b.selection_key`,
+    `SELECT c.capture_id, c.source_file_id, b.source_key, b.display_name, b.selection_key, c.selection_label, c.reader_version, c.content_hash, c.byte_count, c.reused, c.row_count, c.columns_json, c.row_checksum FROM ${PREPARED_CAPTURE_TABLE} c JOIN ${PREPARED_BINDING_TABLE} b ON b.capture_id = c.capture_id ORDER BY b.source_key, b.selection_key`,
   );
   return rows.map((row) => ({
     captureId: valueAsString(row["capture_id"], "capture ID"),
@@ -118,6 +119,15 @@ export async function preparedCaptures(
     byteCount: preparedCaptureCount(row["byte_count"], "byte count"),
     reused: preparedCaptureReuse(row["reused"]),
     rowCount: preparedCaptureCount(row["row_count"], "row count"),
+    rowChecksum: (() => {
+      const checksum = valueAsString(row["row_checksum"], "row checksum");
+      if (/^[0-9a-f]{64}$/u.test(checksum)) return checksum;
+      throw databaseError(
+        "DB_INVALID_PREPARED_IMPORT",
+        "The import plan has an invalid captured row checksum. Prepare the source again or restore a verified plan copy.",
+        { captureId: valueAsString(row["capture_id"], "capture ID") },
+      );
+    })(),
     columns: parseInferredColumnsJson(
       valueAsString(row["columns_json"], "captured columns"),
     ),

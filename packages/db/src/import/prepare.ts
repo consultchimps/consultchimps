@@ -3,9 +3,10 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 
 import { isConsultChimpsError, throwIfAborted } from "@consultchimps/core";
 
-import { valueAsString } from "../database.js";
+import { engineOf, valueAsString } from "../database.js";
 import { databaseError } from "../errors.js";
 import type { EngineValue } from "../internal/engine.js";
+import { CAPTURE_ROW_TABLE } from "../metadata.js";
 import { validateTableSchema } from "../schema.js";
 import {
   PREPARED_BINDING_TABLE,
@@ -34,9 +35,52 @@ import type {
 import { validateColumnMappings, validateImportRecipe } from "../validators.js";
 import { assertValidImportDateCell } from "./date-cell.js";
 import { assertValidImportNumberCell } from "./number-cell.js";
+import { createCaptureRowChecksum } from "./row-checksum.js";
+import { assertCaptureRowCount, readSourceRowPage } from "./source-rows.js";
 
 const HASH_CHUNK_BYTES = 1024 * 1024;
 const CAPTURE_BATCH_ROWS = 2_000;
+
+async function checksumDatabaseCapture(options: {
+  readonly database: PrepareImportOptions["database"];
+  readonly captureId: string;
+  readonly rowCount: bigint;
+  readonly signal?: AbortSignal | undefined;
+}): Promise<string> {
+  return engineOf(options.database).readTransaction(async (transaction) => {
+    const checksum = createCaptureRowChecksum();
+    let cursor: bigint | undefined;
+    let rowsRead = 0n;
+    while (true) {
+      throwIfAborted(options.signal, "db.prepare");
+      const page = await readSourceRowPage({
+        engine: transaction,
+        table: CAPTURE_ROW_TABLE,
+        captureId: options.captureId,
+        cursor,
+        limit: CAPTURE_BATCH_ROWS,
+        owner: "database",
+      });
+      throwIfAborted(options.signal, "db.prepare");
+      if (page.rows.length === 0) break;
+      for (const { row, sourceRow } of page.rows) {
+        checksum.update(
+          sourceRow,
+          valueAsString(row["values_json"], "captured values"),
+        );
+      }
+      rowsRead += BigInt(page.rows.length);
+      cursor = page.cursor;
+    }
+    assertCaptureRowCount({
+      owner: "database",
+      captureId: options.captureId,
+      expected: options.rowCount,
+      actual: rowsRead,
+    });
+    return checksum.digest();
+  });
+}
 
 function validateReaderColumns(options: {
   readonly source: string;
@@ -215,11 +259,17 @@ export async function prepareImport(
         readerVersion: source.readerVersion,
       });
       if (reusable !== null) {
+        const rowChecksum = await checksumDatabaseCapture({
+          database: options.database,
+          captureId: reusable.captureId,
+          rowCount: reusable.rowCount,
+          signal: options.signal,
+        });
         await updatePreparedCaptureMetadata(
           options.prepared,
           async (transaction) => {
             await transaction.execute(
-              `INSERT INTO ${PREPARED_CAPTURE_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              `INSERT INTO ${PREPARED_CAPTURE_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [
                 reusable.captureId,
                 reusable.sourceFileId,
@@ -233,6 +283,7 @@ export async function prepareImport(
                 1n,
                 reusable.rowCount,
                 reusable.columns,
+                rowChecksum,
               ],
             );
             await transaction.execute(
@@ -256,6 +307,7 @@ export async function prepareImport(
       });
       let rowCount = 0;
       let lastSourceRow = 0;
+      const rowChecksum = createCaptureRowChecksum();
       try {
         const columns = await readAndClose(reader, async () => {
           const columnNames = [...reader.columns];
@@ -325,11 +377,10 @@ export async function prepareImport(
                 const profile = profiles.get(column);
                 if (profile !== undefined) addToProfile(profile, cell);
               }
-              rows.push([
-                captureId,
-                BigInt(row.sourceRow),
-                JSON.stringify(row.cells),
-              ]);
+              const sourceRow = BigInt(row.sourceRow);
+              const valuesJson = JSON.stringify(row.cells);
+              rowChecksum.update(sourceRow, valuesJson);
+              rows.push([captureId, sourceRow, valuesJson]);
             }
             await preparedEngine.transaction(async (transaction) => {
               await transaction.bulkInsert({
@@ -349,7 +400,7 @@ export async function prepareImport(
           options.prepared,
           async (transaction) => {
             await transaction.execute(
-              `INSERT INTO ${PREPARED_CAPTURE_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              `INSERT INTO ${PREPARED_CAPTURE_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [
                 captureId,
                 null,
@@ -363,6 +414,7 @@ export async function prepareImport(
                 0n,
                 BigInt(rowCount),
                 JSON.stringify(columns),
+                rowChecksum.digest(),
               ],
             );
             await transaction.execute(

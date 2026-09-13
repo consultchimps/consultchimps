@@ -74,16 +74,23 @@ if capture, source verification, or cancellation fails before publication. List
 filesystem-backed source, recipe, and context files in `protectedInputPaths` so
 overwrite validation can reject those destinations.
 
-Prepared plans use artifact format version 2. Their stored review fingerprint
+Prepared plans use artifact format version 3. Their stored review fingerprint
 binds the plan identity, database baseline, revision, state, recipe, conflicts,
-decisions, source bindings, and capture definitions. Reading a plan checks that
-fingerprint, and applying requires the same `reviewFingerprint` as the approved
-reference. Inconsistent edits are rejected before applying changed mappings.
-This is an integrity check, not a signature or authentication of the artifact or
-captured row contents. An editor who rewrites both metadata and its fingerprint
-can produce a different valid artifact.
+decisions, source bindings, and capture definitions, including a checksum of
+each capture's row coordinates and serialized values. Reading a plan checks its
+metadata fingerprint, and applying requires the same `reviewFingerprint` as the
+approved reference.
 
-Version 1 spike plans are unsupported. Regenerate them from their original
+Fresh capture checksums are computed during capture and verified during the
+existing copy into the working database, including excluded selections. Reusing
+a capture requires one bounded read of its stored rows during preparation. Apply
+verifies reused rows when consuming them for a new table application. Checksum
+mismatches roll back the transaction before commit. Receipt-only retries and
+already-applied table applications do not rescan row contents.
+
+These are integrity checks, not digital signatures. An editor who coherently
+rewrites the artifact and its checksums can produce a different valid artifact.
+Version 1 and 2 spike plans are unsupported. Regenerate them from their original
 sources with this build. Existing working database files keep their format.
 
 Use `openPreparedImport({ path, readonly: true })` for inspection. This opens

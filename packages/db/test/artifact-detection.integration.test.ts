@@ -180,7 +180,7 @@ test("rejects unsupported prepared versions", async () => {
   }
   const corrupt = NodeSqliteEngine.open(planPath);
   await corrupt.execute(
-    `UPDATE ${PREPARED_METADATA_TABLE} SET format_version = 3`,
+    `UPDATE ${PREPARED_METADATA_TABLE} SET format_version = 4`,
   );
   await corrupt.close();
   await expect(openPreparedImport({ path: planPath })).rejects.toMatchObject({
@@ -189,7 +189,7 @@ test("rejects unsupported prepared versions", async () => {
 
   const invalidState = NodeSqliteEngine.open(planPath);
   await invalidState.execute(
-    `UPDATE ${PREPARED_METADATA_TABLE} SET format_version = 2, state = 'unknown'`,
+    `UPDATE ${PREPARED_METADATA_TABLE} SET format_version = 3, state = 'unknown'`,
   );
   await invalidState.close();
   await expect(openPreparedImport({ path: planPath })).rejects.toMatchObject({

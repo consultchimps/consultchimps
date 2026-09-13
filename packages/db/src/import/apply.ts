@@ -50,6 +50,7 @@ import {
   routeKey,
 } from "./planning.js";
 import { assertCaptureRowCount, readSourceRowPage } from "./source-rows.js";
+import { createCaptureRowChecksum } from "./row-checksum.js";
 import type { ApplyImportOptions, ImportResult } from "./types.js";
 
 const CAPTURE_BATCH_ROWS = 2_000;
@@ -106,6 +107,24 @@ async function registeredSchema(
   return typeof stored === "string"
     ? parseStoredTableSchema(stored, table)
     : null;
+}
+
+function assertCaptureRowChecksum(options: {
+  readonly owner: "prepared-import" | "database";
+  readonly captureId: string;
+  readonly expected: string;
+  readonly actual: string;
+}): void {
+  if (options.actual === options.expected) return;
+  throw databaseError(
+    options.owner === "prepared-import"
+      ? "DB_INVALID_PREPARED_IMPORT"
+      : "DB_CORRUPT_DATABASE",
+    options.owner === "prepared-import"
+      ? "The import plan's captured rows do not match the reviewed row checksum. Regenerate the plan from its original sources or restore a verified plan copy."
+      : "A saved capture's rows do not match the reviewed row checksum. Restore a verified database copy or regenerate the import plan from its original sources.",
+    { captureId: options.captureId },
+  );
 }
 
 export async function applyImport(
@@ -292,6 +311,7 @@ export async function applyImport(
       }),
     };
     const captureIdByBinding = new Map<string, string>();
+    const verifiedCaptureIds = new Set<string>();
     const publishedCaptures = new Map<
       string,
       { readonly targetCaptureId: string; readonly sourceFileId: string }
@@ -362,6 +382,7 @@ export async function applyImport(
           );
           let sourceRowCursor: bigint | undefined;
           let copiedRows = 0n;
+          const rowChecksum = createCaptureRowChecksum();
           while (true) {
             const page = await readSourceRowPage({
               engine: preparedEngine,
@@ -371,15 +392,16 @@ export async function applyImport(
               limit: CAPTURE_BATCH_ROWS,
               owner: "prepared-import",
             });
+            throwIfAborted(options.signal, "db.apply");
             if (page.rows.length === 0) break;
-            const rows = page.rows.map(
-              ({ row, sourceRow }) =>
-                [
-                  targetCaptureId,
-                  sourceRow,
-                  valueAsString(row["values_json"], "captured values"),
-                ] as const,
-            );
+            const rows = page.rows.map(({ row, sourceRow }) => {
+              const valuesJson = valueAsString(
+                row["values_json"],
+                "captured values",
+              );
+              rowChecksum.update(sourceRow, valuesJson);
+              return [targetCaptureId, sourceRow, valuesJson] as const;
+            });
             await transaction.bulkInsert({
               table: CAPTURE_ROW_TABLE,
               columns: ["capture_id", "source_row", "values_json"],
@@ -395,6 +417,13 @@ export async function applyImport(
             expected: capture.rowCount,
             actual: copiedRows,
           });
+          assertCaptureRowChecksum({
+            owner: "prepared-import",
+            captureId: capture.captureId,
+            expected: capture.rowChecksum,
+            actual: rowChecksum.digest(),
+          });
+          verifiedCaptureIds.add(targetCaptureId);
         }
       }
       if (targetCaptureId === null || sourceFileId === null) {
@@ -623,6 +652,9 @@ export async function applyImport(
       );
       let sourceRowCursor: bigint | undefined;
       let loadedRows = 0n;
+      const rowChecksum = verifiedCaptureIds.has(captureId)
+        ? undefined
+        : createCaptureRowChecksum();
       while (true) {
         throwIfAborted(options.signal, "db.apply");
         const page = await readSourceRowPage({
@@ -633,13 +665,17 @@ export async function applyImport(
           limit: CAPTURE_BATCH_ROWS,
           owner: "database",
         });
+        throwIfAborted(options.signal, "db.apply");
         if (page.rows.length === 0) break;
         const output: Array<readonly EngineValue[]> = [];
         for (const { row, sourceRow } of page.rows) {
           const importedRowId = nextImportedRow++;
-          const values = parseImportCellsJson(
-            valueAsString(row["values_json"], "captured values"),
+          const valuesJson = valueAsString(
+            row["values_json"],
+            "captured values",
           );
+          rowChecksum?.update(sourceRow, valuesJson);
+          const values = parseImportCellsJson(valuesJson);
           output.push([
             formatRecordId(schema.recordId, nextRecord++),
             importedRowId,
@@ -682,6 +718,15 @@ export async function applyImport(
         expected: capture.rowCount,
         actual: loadedRows,
       });
+      if (rowChecksum !== undefined) {
+        assertCaptureRowChecksum({
+          owner: "database",
+          captureId,
+          expected: capture.rowChecksum,
+          actual: rowChecksum.digest(),
+        });
+        verifiedCaptureIds.add(captureId);
+      }
       await transaction.execute(
         `UPDATE ${COUNTERS_TABLE} SET next_value = ? WHERE counter_name = ?`,
         [nextImportedRow, "imported_row"],
@@ -733,6 +778,7 @@ export async function applyImport(
     await transaction.execute(
       `UPDATE ${DATABASE_METADATA_TABLE} SET revision = revision + 1`,
     );
+    throwIfAborted(options.signal, "db.apply");
   });
   return {
     operation: "db.apply",

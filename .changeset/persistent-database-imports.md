@@ -19,6 +19,7 @@ Add the `consultchimps db` command group. Portable CLI distribution now includes
 native engine assets in an archive for its operating system, architecture, and
 Node major, rather than a single JavaScript file.
 
-Bind prepared artifact format 2 reviews to their metadata fingerprint. Earlier
-version 1 spike plans must be regenerated from their source files; existing
-working database files keep their format.
+Bind prepared artifact format 3 reviews to their metadata fingerprint and
+capture row checksums. Verify consumed row values before committing an import.
+Version 1 and 2 spike plans must be regenerated from their source files;
+existing working database files keep their format.

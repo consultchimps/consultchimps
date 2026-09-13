@@ -62,18 +62,31 @@ staging artifact. Applying rechecks the destination identity and relevant live
 schema, then commits a connected group of tables and its receipt together.
 Cancellation and retry must not expose partially accepted observations.
 
-Prepared artifact format 2 stores a fingerprint over reviewed metadata,
-including source bindings and capture definitions. Approval references carry
-that fingerprint. Inspection returns the reference and reviewed metadata from
-one snapshot, and apply compares the approval with the same metadata snapshot
-used for its recipe and decisions. This prevents an inconsistent external
-metadata edit from borrowing a prior ready state or approval. It avoids a second
-scan of captured rows. Preparation updates capture metadata and invalidates
-prior approval in the same transaction; row batches remain outside the
-fingerprint. The fingerprint is not an authentication mechanism and does not
-protect against an editor who coherently rewrites the artifact and fingerprint.
-Version 1 spike plans require regeneration from their original sources; the
-working database format does not change.
+Prepared artifact format 3 stores a fingerprint over reviewed metadata,
+including source bindings and capture definitions. Each capture definition
+contains a checksum of its ordered row coordinates and serialized values.
+Approval references carry the metadata fingerprint. Inspection returns the
+reference and reviewed metadata from one snapshot, and apply compares the
+approval with the same metadata snapshot used for its recipe and decisions.
+Preparation updates capture metadata and invalidates prior approval in the same
+transaction.
+
+Fresh capture checksums are computed during capture. Apply verifies them during
+its existing copy, including excluded selections, before committing the target
+transaction. Reused captures need one bounded database read during preparation
+to establish their checksum, without parsing the workbook again. Apply verifies
+their rows on the first new table application, then shares that verification
+across routes in the same transaction. A fresh capture already present in the
+target follows this stored-capture path. Receipt-only retries, already-applied
+applications, and delivery-only memberships do not consume row values and keep
+their fast paths.
+
+One checksum per capture avoids storing a hash for each row. Verification during
+existing writes avoids a second full scan of fresh prepared rows; a mismatch
+rolls back uncommitted writes. These checks do not authenticate an artifact's
+origin or protect against an editor who coherently rewrites the artifact and its
+checksums. Version 1 and 2 spike plans require regeneration from their original
+sources; the working database format does not change.
 
 ## Conversion and external analysis
 

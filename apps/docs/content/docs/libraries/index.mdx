@@ -270,10 +270,14 @@ Import operations compose as `prepareImport`, `inspectImport`, `resolveImport`,
 and `applyImport`. A prepared import owns a separate durable staging database;
 approval refers to its revision, target database, and `reviewFingerprint`. The
 fingerprint binds reviewed metadata, including the recipe, decisions, source
-bindings, and capture definitions, so a changed mapping cannot reuse an earlier
-approval. It does not authenticate the artifact or its captured rows. Prepared
-artifact format 2 rejects version 1 spike plans; regenerate those plans from
-their original sources. Use
+bindings, and capture definitions with row checksums, so changed mappings or
+captured rows cannot reuse an earlier approval unchanged. Apply verifies row
+coordinates and serialized values while copying fresh captures or consuming
+stored captures for new table applications. A mismatch rolls back the
+transaction before commit. Receipt-only retries do not rescan row contents.
+These integrity checks do not authenticate an artifact's origin. Prepared
+artifact format 3 rejects version 1 and 2 spike plans; regenerate those plans
+from their original sources. Use
 `resolveImport({ database, prepared, decisions, rebase: true })` to explicitly
 re-review a saved capture against a newer database baseline. Use
 `replaceImportRecipe({ database, prepared, recipe, rebase: true })` when the new

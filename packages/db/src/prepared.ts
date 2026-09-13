@@ -30,7 +30,7 @@ export const PREPARED_METADATA_TABLE = "_consultchimps_prepared";
 export const PREPARED_CAPTURE_TABLE = "_consultchimps_prepared_captures";
 export const PREPARED_BINDING_TABLE = "_consultchimps_prepared_bindings";
 export const PREPARED_ROW_TABLE = "_consultchimps_prepared_rows";
-export const PREPARED_FORMAT_VERSION = 2;
+export const PREPARED_FORMAT_VERSION = 3;
 
 const REQUIRED_PREPARED_SCHEMA = [
   {
@@ -64,6 +64,7 @@ const REQUIRED_PREPARED_SCHEMA = [
       "reused",
       "row_count",
       "columns_json",
+      "row_checksum",
     ],
   },
   {
@@ -291,7 +292,7 @@ export async function createPreparedImportHandle(options: {
       ],
     );
     await transaction.execute(
-      `CREATE TABLE ${PREPARED_CAPTURE_TABLE} (capture_id VARCHAR PRIMARY KEY, source_file_id VARCHAR, source_key VARCHAR NOT NULL, display_name VARCHAR NOT NULL, selection_key VARCHAR NOT NULL, selection_label VARCHAR NOT NULL, reader_version VARCHAR NOT NULL, content_hash VARCHAR NOT NULL, byte_count BIGINT NOT NULL, reused BIGINT NOT NULL, row_count BIGINT NOT NULL, columns_json VARCHAR NOT NULL)`,
+      `CREATE TABLE ${PREPARED_CAPTURE_TABLE} (capture_id VARCHAR PRIMARY KEY, source_file_id VARCHAR, source_key VARCHAR NOT NULL, display_name VARCHAR NOT NULL, selection_key VARCHAR NOT NULL, selection_label VARCHAR NOT NULL, reader_version VARCHAR NOT NULL, content_hash VARCHAR NOT NULL, byte_count BIGINT NOT NULL, reused BIGINT NOT NULL, row_count BIGINT NOT NULL, columns_json VARCHAR NOT NULL, row_checksum VARCHAR NOT NULL)`,
     );
     await transaction.execute(
       `CREATE TABLE ${PREPARED_BINDING_TABLE} (source_key VARCHAR NOT NULL, selection_key VARCHAR NOT NULL, capture_id VARCHAR NOT NULL, display_name VARCHAR NOT NULL, PRIMARY KEY(source_key, selection_key))`,
@@ -427,7 +428,7 @@ async function readPreparedCaptureMetadata(
 }> {
   const captureRows = await preparedQuery(
     engine,
-    `SELECT capture_id, source_file_id, source_key, display_name, selection_key, selection_label, reader_version, content_hash, byte_count, reused, row_count, columns_json FROM ${PREPARED_CAPTURE_TABLE}`,
+    `SELECT capture_id, source_file_id, source_key, display_name, selection_key, selection_label, reader_version, content_hash, byte_count, reused, row_count, columns_json, row_checksum FROM ${PREPARED_CAPTURE_TABLE}`,
   );
   const captures = captureRows.map(
     (row) =>
@@ -446,6 +447,7 @@ async function readPreparedCaptureMetadata(
         nonNegativePreparedBigInt(row["reused"], "reuse marker").toString(),
         nonNegativePreparedBigInt(row["row_count"], "row count").toString(),
         preparedString(row["columns_json"], "captured columns"),
+        requiredPreparedString(row["row_checksum"], "captured row checksum"),
       ] satisfies readonly (string | null)[],
   );
   const bindingRows = await preparedQuery(
