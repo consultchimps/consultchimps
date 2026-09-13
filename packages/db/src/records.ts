@@ -16,6 +16,7 @@ import {
 import { databaseError } from "./errors.js";
 import type { EngineTransaction } from "./internal/engine.js";
 import {
+  assertNoManagedDatabaseTriggers,
   assertRegisteredStorage,
   parseStoredTableSchema,
   readRegisteredTables,
@@ -429,6 +430,7 @@ export async function applySchema(
   }
   const engine = engineOf(options.database);
   await engine.transaction(async (transaction) => {
+    await assertNoManagedDatabaseTriggers(transaction, options.database.format);
     const revisionRows = await transaction.query(
       `SELECT revision FROM ${DATABASE_METADATA_TABLE}`,
     );

@@ -121,6 +121,58 @@ const REQUIRED_DATABASE_SCHEMA = [
   },
 ] as const;
 
+export async function assertNoSqliteTableTriggers(
+  transaction: EngineTransaction,
+  format: DatabaseFormat,
+  tables: readonly string[],
+  error: {
+    readonly code: string;
+    readonly message: string;
+  },
+): Promise<void> {
+  if (format !== "sqlite") return;
+  const protectedTables = new Set(tables.map(identifierKey));
+  const rows = await transaction.query(
+    "SELECT name, tbl_name FROM sqlite_schema WHERE type = 'trigger' UNION ALL SELECT name, tbl_name FROM sqlite_temp_schema WHERE type = 'trigger' ORDER BY name",
+  );
+  const trigger = rows.find(
+    (row) =>
+      typeof row["tbl_name"] === "string" &&
+      protectedTables.has(identifierKey(row["tbl_name"])),
+  );
+  if (trigger === undefined) return;
+  throw databaseError(error.code, error.message, {
+    table:
+      typeof trigger["tbl_name"] === "string" ? trigger["tbl_name"] : undefined,
+    trigger: typeof trigger["name"] === "string" ? trigger["name"] : undefined,
+  });
+}
+
+export async function assertNoManagedDatabaseTriggers(
+  transaction: EngineTransaction,
+  format: DatabaseFormat,
+): Promise<void> {
+  if (format !== "sqlite") return;
+  const registered = await transaction.query(
+    `SELECT table_name FROM ${TABLE_REGISTRY_TABLE}`,
+  );
+  await assertNoSqliteTableTriggers(
+    transaction,
+    format,
+    [
+      ...REQUIRED_DATABASE_SCHEMA.map(({ table }) => table),
+      ...registered.flatMap((row) =>
+        typeof row["table_name"] === "string" ? [row["table_name"]] : [],
+      ),
+    ],
+    {
+      code: "DB_SCHEMA_DRIFT",
+      message:
+        "A trigger was added to a managed database table outside the database operations. Remove the trigger or restore a verified database copy before writing.",
+    },
+  );
+}
+
 function corruptDatabase(details?: Record<string, unknown>, cause?: unknown) {
   return databaseError(
     "DB_CORRUPT_DATABASE",

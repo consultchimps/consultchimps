@@ -12,6 +12,7 @@ import {
   PREPARED_BINDING_TABLE,
   PREPARED_CAPTURE_TABLE,
   PREPARED_ROW_TABLE,
+  assertPreparedImportWritable,
   preparedEngineOf,
   readPreparedReviewSnapshot,
   updatePreparedCaptureMetadata,
@@ -384,6 +385,7 @@ export async function prepareImport(
               rows.push([captureId, sourceRow, valuesJson]);
             }
             await preparedEngine.transaction(async (transaction) => {
+              await assertPreparedImportWritable(transaction);
               await transaction.bulkInsert({
                 table: PREPARED_ROW_TABLE,
                 columns: ["capture_id", "source_row", "values_json"],
@@ -425,11 +427,15 @@ export async function prepareImport(
           },
         );
       } catch (error) {
+        if (rowCount === 0) throw error;
         try {
-          await preparedEngine.execute(
-            `DELETE FROM ${PREPARED_ROW_TABLE} WHERE capture_id = ?`,
-            [captureId],
-          );
+          await preparedEngine.transaction(async (transaction) => {
+            await assertPreparedImportWritable(transaction);
+            await transaction.execute(
+              `DELETE FROM ${PREPARED_ROW_TABLE} WHERE capture_id = ?`,
+              [captureId],
+            );
+          });
         } catch (cleanupError) {
           throw new AggregateError(
             [error, cleanupError],

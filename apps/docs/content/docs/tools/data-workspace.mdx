@@ -40,6 +40,10 @@ file stays unchanged. Leave replacement unchecked to keep an existing copy.
 Generated working-copy names and inferred Record ID prefixes keep Unicode
 characters intact when shortened.
 
+SQLite triggers on managed tables or internal bookkeeping tables can change
+imported rows and receipts. Managed writes reject these triggers with
+`DB_SCHEMA_DRIFT`. Restore the declared schema before retrying.
+
 A file created by ConsultChimps includes ordinary data tables and reserved
 `_consultchimps` metadata tables. Keep the metadata when working in another
 application: it carries schema definitions, generated ID counters, source

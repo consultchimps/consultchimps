@@ -41,4 +41,6 @@ import. Report retained native staging files and outputs published before a
 reopen failure. Keep scratch cleanup retryable and block native replacement
 after failed registration cleanup until the unresolved handle closes. Report
 successful publication when removing the staging filename fails, and retain
-private files when initialization leaves an unclosed engine connection.
+private files when initialization leaves an unclosed engine connection. Reject
+SQLite triggers on managed or internal tables before managed writes so they
+cannot silently suppress imported rows or alter retry receipts.

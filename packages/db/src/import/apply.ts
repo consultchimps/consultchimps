@@ -9,6 +9,7 @@ import {
 } from "../database.js";
 import { databaseError } from "../errors.js";
 import type { EngineTransaction, EngineValue } from "../internal/engine.js";
+import { assertNoManagedDatabaseTriggers } from "../internal/database-layout.js";
 import { canonicalJson } from "../internal/json.js";
 import {
   APPLICATION_TABLE,
@@ -249,6 +250,7 @@ export async function applyImport(
         { requestId: options.requestId },
       );
     }
+    await assertNoManagedDatabaseTriggers(transaction, options.database.format);
     const revisionRows = await transaction.query(
       `SELECT revision FROM ${DATABASE_METADATA_TABLE}`,
     );

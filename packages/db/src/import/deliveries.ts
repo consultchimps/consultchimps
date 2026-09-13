@@ -6,6 +6,7 @@ import {
   type Database,
 } from "../database.js";
 import { databaseError } from "../errors.js";
+import { assertNoManagedDatabaseTriggers } from "../internal/database-layout.js";
 import type { EngineTransaction } from "../internal/engine.js";
 import { canonicalJson } from "../internal/json.js";
 import { parseStoredDeliveryContext } from "../internal/stored-delivery.js";
@@ -142,6 +143,7 @@ export async function recordDelivery(options: {
         { requestId: options.requestId },
       );
     }
+    await assertNoManagedDatabaseTriggers(transaction, options.database.format);
     for (const captureId of uniqueCaptures) {
       const captures = await transaction.query(
         `SELECT capture_id FROM ${CAPTURE_TABLE} WHERE capture_id = ? AND state = 'completed'`,

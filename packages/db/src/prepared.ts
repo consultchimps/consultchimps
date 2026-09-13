@@ -10,6 +10,7 @@ import type {
   EngineTransaction,
   EngineValue,
 } from "./internal/engine.js";
+import { assertNoSqliteTableTriggers } from "./internal/database-layout.js";
 import { canonicalJson } from "./internal/json.js";
 import {
   parseImportConflicts,
@@ -31,6 +32,26 @@ export const PREPARED_CAPTURE_TABLE = "_consultchimps_prepared_captures";
 export const PREPARED_BINDING_TABLE = "_consultchimps_prepared_bindings";
 export const PREPARED_ROW_TABLE = "_consultchimps_prepared_rows";
 export const PREPARED_FORMAT_VERSION = 3;
+
+export async function assertPreparedImportWritable(
+  transaction: EngineTransaction,
+): Promise<void> {
+  await assertNoSqliteTableTriggers(
+    transaction,
+    "sqlite",
+    [
+      PREPARED_METADATA_TABLE,
+      PREPARED_CAPTURE_TABLE,
+      PREPARED_BINDING_TABLE,
+      PREPARED_ROW_TABLE,
+    ],
+    {
+      code: "DB_SCHEMA_DRIFT",
+      message:
+        "A trigger was added to a prepared import table outside the import operations. Remove the trigger or restore a verified plan copy before writing.",
+    },
+  );
+}
 
 const REQUIRED_PREPARED_SCHEMA = [
   {
@@ -693,6 +714,7 @@ export async function updatePreparedPlan(options: {
     ) {
       return current.prepared;
     }
+    await assertPreparedImportWritable(transaction);
     const planRevision = current.prepared.planRevision + 1n;
     const fingerprint = reviewFingerprint({
       formatVersion: BigInt(PREPARED_FORMAT_VERSION),
@@ -742,6 +764,7 @@ export async function updatePreparedCaptureMetadata(
   const engine = preparedEngineOf(prepared);
   return engine.transaction(async (transaction) => {
     const current = await readStoredPreparedReview(transaction);
+    await assertPreparedImportWritable(transaction);
     await mutate(transaction);
     const { captureDefinitionsJson, bindingsJson } =
       await readPreparedCaptureMetadata(transaction);

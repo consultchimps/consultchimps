@@ -123,6 +123,11 @@ A failed database or prepared-plan close keeps runtime replacement protection
 active. Retry `close()` before replacing the file. Concurrent close calls share
 the pending close attempt; a later call can retry failed cleanup.
 
+SQLite triggers on managed data or internal bookkeeping tables are unsupported
+for managed writes. They can suppress rows or alter import receipts, so writes
+return `DB_SCHEMA_DRIFT` when such triggers are present. Restore the declared
+schema before retrying.
+
 Native staging failures use `DB_NATIVE_TEMPORARY_CLEANUP_REQUIRED` when cleanup
 also fails. The error retains the original and cleanup causes and identifies the
 private file paths to inspect after releasing remaining handles, including
