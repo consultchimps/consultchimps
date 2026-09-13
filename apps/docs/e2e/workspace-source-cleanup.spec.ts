@@ -218,7 +218,7 @@ test("retries retained workbook cleanup before preparing another import", async 
   expect(result.created).toMatchObject({ type: "ready" });
   expect(result.seedPrepared).toMatchObject({
     type: "importPrepared",
-    plan: { state: "ready" },
+    plan: { id: expect.any(String), state: "ready" },
   });
   expect(result.applied).toMatchObject({
     type: "importApplied",
@@ -239,15 +239,33 @@ test("retries retained workbook cleanup before preparing another import", async 
   expect(result.scratchAfterFailure.length).toBeGreaterThan(0);
   expect(result.retried).toMatchObject({
     type: "importPrepared",
-    plan: { application: "pending" },
+    plan: { id: expect.any(String), application: "pending" },
   });
-  expect(result.listedAfterRetry).toMatchObject({
-    type: "importsListed",
-    plans: [
-      { id: expect.any(String), application: "applied" },
-      { id: expect.any(String), application: "pending" },
-    ],
-    ignoredPlans: [],
+  const seedPlan = Reflect.get(result.seedPrepared, "plan") as {
+    readonly id: string;
+  };
+  const retriedPlan = Reflect.get(result.retried, "plan") as {
+    readonly id: string;
+  };
+  expect(seedPlan.id).not.toBe(retriedPlan.id);
+  const listedAfterRetry = result.listedAfterRetry as {
+    readonly type: string;
+    readonly plans: readonly {
+      readonly id: string;
+      readonly application: string;
+    }[];
+    readonly ignoredPlans: readonly unknown[];
+  };
+  expect(listedAfterRetry.type).toBe("importsListed");
+  expect(listedAfterRetry.plans).toHaveLength(2);
+  expect(listedAfterRetry.ignoredPlans).toEqual([]);
+  expect(
+    Object.fromEntries(
+      listedAfterRetry.plans.map((plan) => [plan.id, plan.application]),
+    ),
+  ).toEqual({
+    [seedPlan.id]: "applied",
+    [retriedPlan.id]: "pending",
   });
   expect(result.scratchAfterRetry).toEqual([]);
   expect(result.reopened).toMatchObject({
