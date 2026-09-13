@@ -200,7 +200,7 @@ export async function readSchemaFingerprint(
   const rows = await transaction.query(
     format === "sqlite"
       ? "SELECT type, name, COALESCE(sql, '') AS definition FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
-      : "SELECT 'table' AS type, schema_name || '.' || table_name AS name, sql AS definition FROM duckdb_tables() WHERE NOT internal AND NOT temporary AND database_name = current_database() UNION ALL SELECT 'index' AS type, schema_name || '.' || index_name AS name, sql AS definition FROM duckdb_indexes() WHERE NOT is_primary AND database_name = current_database() ORDER BY type, name",
+      : "SELECT 'table' AS type, schema_name || '.' || table_name AS name, sql AS definition FROM duckdb_tables() WHERE NOT internal AND NOT temporary AND database_name = current_database() UNION ALL SELECT 'view' AS type, schema_name || '.' || view_name AS name, sql AS definition FROM duckdb_views() WHERE NOT internal AND NOT temporary AND database_name = current_database() UNION ALL SELECT 'index' AS type, schema_name || '.' || index_name AS name, sql AS definition FROM duckdb_indexes() WHERE NOT is_primary AND database_name = current_database() ORDER BY type, name",
   );
   const registered = await readRegisteredTables(transaction);
   const serialized = JSON.stringify({

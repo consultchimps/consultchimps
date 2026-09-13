@@ -11,7 +11,7 @@ import {
   resolveImport,
 } from "../src/import/operations.js";
 import type { ImportRecipe, ImportSource } from "../src/import/types.js";
-import { IMPORT_REQUEST_TABLE } from "../src/metadata.js";
+import { APPLICATION_TABLE, IMPORT_REQUEST_TABLE } from "../src/metadata.js";
 import { createDatabase, createPreparedImport } from "../src/node.js";
 
 const directories: string[] = [];
@@ -82,7 +82,7 @@ function importSource(): ImportSource {
 }
 
 for (const format of ["sqlite", "duckdb"] as const) {
-  test(`${format}: blank import request IDs cannot mutate the database`, async () => {
+  test(`${format}: request IDs and stored receipts are validated without duplicate writes`, async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "cc-request-id-"));
     directories.push(directory);
     const { database } = await createDatabase({
@@ -163,6 +163,8 @@ for (const format of ["sqlite", "duckdb"] as const) {
         rowsReused: 1,
         deliveriesRecorded: 0,
       });
+      const importId = applied.importIds[0];
+      if (importId === undefined) throw new Error("Import ID was not returned");
       expect(await inspectDatabase({ database })).toMatchObject({
         revision: 1n,
         tables: [{ name: "Inventory", rowCount: 1n }],
@@ -175,6 +177,66 @@ for (const format of ["sqlite", "duckdb"] as const) {
           `SELECT count(*) AS count FROM ${IMPORT_REQUEST_TABLE}`,
         ),
       ).resolves.toEqual([{ count: 1n }]);
+
+      for (const corruption of [
+        { name: "negative receipt", receipt: -1n, application: 1n },
+        { name: "receipt mismatch", receipt: 2n, application: 1n },
+        { name: "application mismatch", receipt: 2n, application: 2n },
+      ] as const) {
+        await engineOf(database).execute(
+          `UPDATE ${IMPORT_REQUEST_TABLE} SET row_count = ? WHERE request_id = ?`,
+          [corruption.receipt, `valid-${format}`],
+        );
+        await engineOf(database).execute(
+          `UPDATE ${APPLICATION_TABLE} SET row_count = ? WHERE import_id = ?`,
+          [corruption.application, importId],
+        );
+        const beforeCorruptRetry = await inspectDatabase({ database });
+
+        await expect(
+          applyImport({
+            database,
+            prepared,
+            approved,
+            requestId: `valid-${format}`,
+            delivery: {
+              label: "Synthetic delivery",
+              scope: { kind: "full" },
+            },
+          }),
+          corruption.name,
+        ).rejects.toMatchObject({ code: "DB_CORRUPT_DATABASE" });
+        expect(await inspectDatabase({ database })).toEqual(beforeCorruptRetry);
+        await expect(
+          engineOf(database).query(
+            `SELECT count(*) AS count FROM ${IMPORT_REQUEST_TABLE}`,
+          ),
+        ).resolves.toEqual([{ count: 1n }]);
+      }
+      await engineOf(database).execute(
+        `UPDATE ${APPLICATION_TABLE} SET row_count = 1 WHERE import_id = ?`,
+        [importId],
+      );
+      await engineOf(database).execute(
+        `UPDATE ${IMPORT_REQUEST_TABLE} SET import_ids_json = ?, row_count = 1 WHERE request_id = ?`,
+        [JSON.stringify(["IMP-missing"]), `valid-${format}`],
+      );
+      const beforeMissingApplication = await inspectDatabase({ database });
+      await expect(
+        applyImport({
+          database,
+          prepared,
+          approved,
+          requestId: `valid-${format}`,
+          delivery: {
+            label: "Synthetic delivery",
+            scope: { kind: "full" },
+          },
+        }),
+      ).rejects.toMatchObject({ code: "DB_CORRUPT_DATABASE" });
+      expect(await inspectDatabase({ database })).toEqual(
+        beforeMissingApplication,
+      );
     } finally {
       await prepared.close();
       await database.close();

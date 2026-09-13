@@ -108,6 +108,11 @@ Reusing a table application validates that its stored row count is nonnegative
 and matches the capture. A mismatch returns `DB_CORRUPT_DATABASE` before reuse
 metrics or a new request receipt are recorded.
 
+Receipt-only retries validate the saved total against their application metadata
+without scanning imported rows. Negative or inconsistent totals return
+`DB_CORRUPT_DATABASE`. DuckDB catalog fingerprints include views, so a view
+created after review invalidates the schema or import plan before table writes.
+
 These are integrity checks, not digital signatures. An editor who coherently
 rewrites the artifact and its checksums can produce a different valid artifact.
 Internal metadata tables have fixed columns, storage types, nullability, and

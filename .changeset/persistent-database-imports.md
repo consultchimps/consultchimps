@@ -70,3 +70,7 @@ including a copy converted to a different format.
 
 Parse workbook row references in linear time so malformed references cannot
 trigger excessive regular-expression backtracking.
+
+Detect DuckDB view changes before applying reviewed schema or import plans.
+Validate saved import receipt totals against application metadata before
+returning a successful retry result.

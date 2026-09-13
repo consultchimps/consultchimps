@@ -375,6 +375,15 @@ for (const format of ["sqlite", "duckdb"] as const) {
             })
           ).routes[0],
         ).toMatchObject({ reused: true, applicationState: "already-applied" });
+        const reused = await applyImport({
+          database,
+          prepared: repeated.prepared,
+          approved: repeated.approved,
+          requestId: `${format}-repeated`,
+        });
+        expect(reused).toMatchObject({
+          metrics: { rowsImported: 0, rowsReused: 1, tablesCreated: 0 },
+        });
         await expect(
           applyImport({
             database,
@@ -383,6 +392,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
             requestId: `${format}-repeated`,
           }),
         ).resolves.toMatchObject({
+          importIds: reused.importIds,
           metrics: { rowsImported: 0, rowsReused: 1, tablesCreated: 0 },
         });
       } finally {

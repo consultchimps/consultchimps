@@ -4,6 +4,7 @@ import {
   engineOf,
   parseStoredTableSchema,
   valueAsBigInt,
+  valueAsNonNegativeBigInt,
   valueAsPositiveBigInt,
   valueAsString,
 } from "../database.js";
@@ -60,6 +61,7 @@ import { createCaptureRowChecksum } from "./row-checksum.js";
 import type { ApplyImportOptions, ImportResult } from "./types.js";
 
 const CAPTURE_BATCH_ROWS = 2_000;
+const RECEIPT_APPLICATION_QUERY_VALUES = 400;
 
 function receiptIds(value: unknown): string[] {
   let parsed: unknown;
@@ -78,6 +80,61 @@ function receiptIds(value: unknown): string[] {
     );
   }
   return parsed;
+}
+
+function corruptReceiptRowCount(): never {
+  throw databaseError(
+    "DB_CORRUPT_DATABASE",
+    "The saved import receipt row count does not match its captured applications. Restore a verified database copy before retrying.",
+  );
+}
+
+async function validatedReceiptRowCount(
+  transaction: EngineTransaction,
+  importIds: readonly string[],
+  storedRowCount: unknown,
+): Promise<bigint> {
+  const receiptRowCount = valueAsNonNegativeBigInt(
+    storedRowCount,
+    "receipt row count",
+  );
+  const applicationCounts = new Map<string, bigint>();
+  const uniqueImportIds = [...new Set(importIds)];
+  for (
+    let offset = 0;
+    offset < uniqueImportIds.length;
+    offset += RECEIPT_APPLICATION_QUERY_VALUES
+  ) {
+    const ids = uniqueImportIds.slice(
+      offset,
+      offset + RECEIPT_APPLICATION_QUERY_VALUES,
+    );
+    const rows = await transaction.query(
+      `SELECT application.import_id, application.row_count AS application_row_count, capture.row_count AS capture_row_count FROM ${APPLICATION_TABLE} AS application LEFT JOIN ${CAPTURE_TABLE} AS capture ON capture.capture_id = application.capture_id WHERE application.import_id IN (${ids.map(() => "?").join(", ")})`,
+      ids,
+    );
+    for (const row of rows) {
+      const importId = valueAsString(row["import_id"], "import ID");
+      const applicationRowCount = valueAsNonNegativeBigInt(
+        row["application_row_count"],
+        "import application row count",
+      );
+      const captureRowCount = valueAsNonNegativeBigInt(
+        row["capture_row_count"],
+        "capture row count",
+      );
+      if (applicationRowCount !== captureRowCount) corruptReceiptRowCount();
+      applicationCounts.set(importId, applicationRowCount);
+    }
+  }
+  let applicationRowCount = 0n;
+  for (const importId of importIds) {
+    const count = applicationCounts.get(importId);
+    if (count === undefined) corruptReceiptRowCount();
+    applicationRowCount += count;
+  }
+  if (receiptRowCount !== applicationRowCount) corruptReceiptRowCount();
+  return receiptRowCount;
 }
 
 async function allocate(
@@ -214,14 +271,18 @@ export async function applyImport(
           { requestId: options.requestId },
         );
       }
-      importIds.push(...receiptIds(existingRequest[0]["import_ids_json"]));
+      const savedImportIds = receiptIds(existingRequest[0]["import_ids_json"]);
+      const receiptRowCount = await validatedReceiptRowCount(
+        transaction,
+        savedImportIds,
+        existingRequest[0]["row_count"],
+      );
+      importIds.push(...savedImportIds);
       for (const captureId of receiptIds(
         existingRequest[0]["capture_ids_json"],
       ))
         appliedCaptureIds.add(captureId);
-      rowsReused = Number(
-        valueAsBigInt(existingRequest[0]["row_count"], "receipt row count"),
-      );
+      rowsReused = Number(receiptRowCount);
       const deliveries = await transaction.query(
         `SELECT delivery_id, context_json FROM ${DELIVERY_TABLE} WHERE request_id = ?`,
         [options.requestId],

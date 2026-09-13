@@ -864,6 +864,17 @@ for (const format of ["sqlite", "duckdb"] as const) {
           requestId: `${format}-duplicate-parent-aliases`,
         });
         expect(applied.metrics).toMatchObject({ rowsImported: 2 });
+        await expect(
+          applyImport({
+            database,
+            prepared,
+            approved: outcome.prepared,
+            requestId: `${format}-duplicate-parent-aliases`,
+          }),
+        ).resolves.toMatchObject({
+          importIds: applied.importIds,
+          metrics: { rowsImported: 0, rowsReused: 3 },
+        });
         expect(
           await engineOf(database).query(
             `SELECT count(*) AS count FROM ${APPLICATION_TABLE} WHERE table_name = ?`,

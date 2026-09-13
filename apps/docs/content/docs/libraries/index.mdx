@@ -414,6 +414,11 @@ before returning a saved request receipt. Cross-format conversion copies the
 history but assigns a new database ID, so replaying the source plan returns
 `DB_STALE_IMPORT_PLAN`. Prepare and review it for the converted database.
 
+Receipt-only retries compare their saved row total with application metadata.
+Negative or inconsistent totals return `DB_CORRUPT_DATABASE` without rescanning
+imported rows. DuckDB catalog fingerprints include views, so creating a view
+after review invalidates the schema or import plan before table writes.
+
 Browser working-copy replacement reports
 `DB_BROWSER_PUBLICATION_CLEANUP_REQUIRED` when temporary candidate or backup
 cleanup fails after an operation error. Its details identify `privateNames` that
