@@ -419,6 +419,11 @@ Negative or inconsistent totals return `DB_CORRUPT_DATABASE` without rescanning
 imported rows. DuckDB catalog fingerprints include views, so creating a view
 after review invalidates the schema or import plan before table writes.
 
+The applications in a retry receipt must match the reviewed capture and
+destination routes, including repeated routes. Their original request and plan
+IDs can differ from the current receipt because later requests can reuse earlier
+applications. The returned capture IDs must match the saved source bindings.
+
 Browser working-copy replacement reports
 `DB_BROWSER_PUBLICATION_CLEANUP_REQUIRED` when temporary candidate or backup
 cleanup fails after an operation error. Its details identify `privateNames` that

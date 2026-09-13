@@ -148,14 +148,17 @@ function parseHistoryJson(value: unknown, field: string): unknown {
   }
 }
 
-function historicalBindingKeys(value: unknown, captureId: string): Set<string> {
-  if (!Array.isArray(value)) {
+export function historicalCaptureBindings(
+  value: unknown,
+): ReadonlyMap<string, string> {
+  const parsed = parseHistoryJson(value, "source bindings");
+  if (!Array.isArray(parsed)) {
     return corruptHistory(
       "The saved import application has invalid source bindings. Restore a verified database copy before retrying.",
     );
   }
-  const keys = new Set<string>();
-  for (const binding of value) {
+  const bindings = new Map<string, string>();
+  for (const binding of parsed) {
     if (
       typeof binding !== "object" ||
       binding === null ||
@@ -175,9 +178,22 @@ function historicalBindingKeys(value: unknown, captureId: string): Set<string> {
         "The saved import application has invalid source bindings. Restore a verified database copy before retrying.",
       );
     }
-    if (fields["captureId"] === captureId) {
-      keys.add(routeKey(fields["source"], fields["selection"]));
+    const key = routeKey(fields["source"], fields["selection"]);
+    const existing = bindings.get(key);
+    if (existing !== undefined && existing !== fields["captureId"]) {
+      return corruptHistory(
+        "The saved import application has conflicting source bindings. Restore a verified database copy before retrying.",
+      );
     }
+    bindings.set(key, fields["captureId"]);
+  }
+  return bindings;
+}
+
+function historicalBindingKeys(value: unknown, captureId: string): Set<string> {
+  const keys = new Set<string>();
+  for (const [key, boundCaptureId] of historicalCaptureBindings(value)) {
+    if (boundCaptureId === captureId) keys.add(key);
   }
   if (keys.size === 0) {
     return corruptHistory(
@@ -229,7 +245,7 @@ export async function historicalEffectiveApplicationKey(options: {
     );
   }
   const bindings = historicalBindingKeys(
-    parseHistoryJson(rows[0]?.["bindings_json"], "source bindings"),
+    rows[0]?.["bindings_json"],
     options.captureId,
   );
   const routes = recipe.routes.filter(

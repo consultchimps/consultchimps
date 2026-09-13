@@ -100,6 +100,11 @@ remain in the working database instead of being copied into the plan again.
 Without `--database`, inspection reports preview warnings for reused selections.
 The original Excel files are not needed for either preview.
 
+New preparations also compare the workbook reader version. This release reads a
+file again if its only saved capture came from the older reader, then presents
+the new capture for review. Earlier imported rows and history are retained; they
+are not automatically corrected or replaced.
+
 Use `db inspect --limit <number>` to choose the preview page size. When more
 rows are available, pass the reported next preview cursor to `--cursor`, quoted
 for your shell. The cursor continues the saved preview without reading Excel.

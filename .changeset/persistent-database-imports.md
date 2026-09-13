@@ -80,3 +80,12 @@ extension metadata cannot shift imported dates.
 
 Reject saved import plans containing rows from an unfinished capture when
 reopening them, without deleting the plan or scanning row values.
+
+Ignore foreign or misplaced workbook sheet and named-range declarations. Reject
+retry receipts that substitute applications from unrelated captures or tables
+while retaining reuse of applications from earlier requests.
+
+Apply namespace and ancestry checks to worksheet values, shared strings, styles,
+and table references. Advance the workbook reader version so new preparations
+read files again when only an older reader capture exists. Existing imported
+rows and capture history are not rewritten automatically.

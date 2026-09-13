@@ -1,4 +1,4 @@
-import { attribute, localName, parseXml } from "./xml.js";
+import { createElementParser, unqualifiedAttribute } from "./xml-elements.js";
 import { readMetadataText, type ZipPackage } from "./zip.js";
 import type { FileEntry } from "@zip.js/zip.js";
 import { calendarIsoText, serialCalendarParts } from "../model/calendar.js";
@@ -111,13 +111,12 @@ export async function loadWorkbookStyles(
   const cellFormatIds: number[] = [];
   if (entry) {
     const xml = await readMetadataText(entry, archive.limits, signal);
-    let insideCellFormats = false;
-    parseXml(xml, (parser) => {
-      parser.on("opentag", (tag) => {
-        const name = localName(tag.name);
-        if (name === "numFmt") {
-          const rawId = attribute(tag, "numFmtId");
-          const code = attribute(tag, "formatCode");
+    const parser = createElementParser({
+      root: "styleSheet",
+      open(tag, path) {
+        if (path.is("styleSheet", "numFmts", "numFmt")) {
+          const rawId = unqualifiedAttribute(tag, "numFmtId");
+          const code = unqualifiedAttribute(tag, "formatCode");
           if (rawId === undefined) {
             throw new Error(
               "A custom number format has an invalid number format ID.",
@@ -133,20 +132,17 @@ export async function loadWorkbookStyles(
             );
           }
           customFormats.set(id, code);
-        } else if (name === "cellXfs") {
-          insideCellFormats = true;
-        } else if (insideCellFormats && name === "xf") {
+        } else if (path.is("styleSheet", "cellXfs", "xf")) {
           const id = numberFormatId(
-            attribute(tag, "numFmtId") ?? "0",
+            unqualifiedAttribute(tag, "numFmtId") ?? "0",
             "cell style",
           );
           cellFormatIds.push(id);
         }
-      });
-      parser.on("closetag", (tag) => {
-        if (localName(tag.name) === "cellXfs") insideCellFormats = false;
-      });
+      },
     });
+    parser.write(xml);
+    parser.close();
   }
   const cellFormats = cellFormatIds.map((id): NumberFormat => {
     const code = customFormats.get(id);

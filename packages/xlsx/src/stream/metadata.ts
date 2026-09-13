@@ -1,15 +1,13 @@
 import type { RandomAccessSource } from "@consultchimps/core";
 import type { FileEntry } from "@zip.js/zip.js";
-import { SaxesParser, type SaxesTagNS, type SaxesTagPlain } from "saxes";
 
+import { parseLocalRectangle, resolvePart } from "./xml.js";
 import {
-  attribute,
-  localName,
-  parseLocalRectangle,
-  parseXml,
-  relationshipId,
-  resolvePart,
-} from "./xml.js";
+  createElementParser,
+  PACKAGE_RELATIONSHIP_NAMESPACES,
+  relationshipAttribute,
+  unqualifiedAttribute,
+} from "./xml-elements.js";
 import { activeTableRelationshipIds } from "./table-parts.js";
 import type {
   StreamNamedRange,
@@ -56,12 +54,14 @@ function relationshipPart(ownerPart: string): string {
 function parseRelationships(xml: string): readonly Relationship[] {
   const relationships: Relationship[] = [];
   const relationshipIds = new Set<string>();
-  parseXml(xml, (parser) => {
-    parser.on("opentag", (tag) => {
-      if (localName(tag.name) !== "Relationship") return;
-      const id = attribute(tag, "Id");
-      const type = attribute(tag, "Type");
-      const target = attribute(tag, "Target");
+  const parser = createElementParser({
+    root: "Relationships",
+    namespaces: PACKAGE_RELATIONSHIP_NAMESPACES,
+    open(tag, path) {
+      if (!path.is("Relationships", "Relationship")) return;
+      const id = unqualifiedAttribute(tag, "Id");
+      const type = unqualifiedAttribute(tag, "Type");
+      const target = unqualifiedAttribute(tag, "Target");
       if (!id || !type || !target) {
         throw new Error(
           "A workbook relationship is missing Id, Type, or Target.",
@@ -71,7 +71,7 @@ function parseRelationships(xml: string): readonly Relationship[] {
         throw new Error(`Relationship ID "${id}" is declared more than once.`);
       }
       relationshipIds.add(id);
-      const targetMode = attribute(tag, "TargetMode");
+      const targetMode = unqualifiedAttribute(tag, "TargetMode");
       if (
         targetMode !== undefined &&
         targetMode !== "Internal" &&
@@ -87,8 +87,10 @@ function parseRelationships(xml: string): readonly Relationship[] {
         target,
         external: targetMode === "External",
       });
-    });
+    },
   });
+  parser.write(xml);
+  parser.close();
   return relationships;
 }
 
@@ -111,55 +113,6 @@ interface WorkbookDocument {
   readonly date1904: boolean;
 }
 
-const SPREADSHEETML_NAMESPACES = new Set([
-  "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
-  "http://purl.oclc.org/ooxml/spreadsheetml/main",
-]);
-
-function parseWorkbookDateSystem(xml: string): boolean {
-  const parser = new SaxesParser({ xmlns: true });
-  let depth = 0;
-  let workbookNamespace: string | undefined;
-  let workbookPropertiesSeen = false;
-  let date1904 = false;
-  parser.on("opentag", (tag: SaxesTagNS) => {
-    if (depth === 0) {
-      workbookNamespace =
-        tag.local === "workbook" && SPREADSHEETML_NAMESPACES.has(tag.uri)
-          ? tag.uri
-          : undefined;
-    } else if (
-      depth === 1 &&
-      workbookNamespace !== undefined &&
-      tag.local === "workbookPr" &&
-      tag.uri === workbookNamespace
-    ) {
-      if (workbookPropertiesSeen) {
-        throw new Error("Workbook workbookPr is declared more than once.");
-      }
-      workbookPropertiesSeen = true;
-      const raw = Object.values(tag.attributes).find(
-        (candidate) =>
-          candidate.local === "date1904" && candidate.uri.length === 0,
-      )?.value;
-      if (raw === undefined || raw === "0" || raw === "false") {
-        date1904 = false;
-      } else if (raw === "1" || raw === "true") {
-        date1904 = true;
-      } else {
-        throw new Error("Workbook date1904 has an invalid Boolean value.");
-      }
-    }
-    depth += 1;
-  });
-  parser.on("closetag", () => {
-    depth -= 1;
-  });
-  parser.write(xml);
-  parser.close();
-  return date1904;
-}
-
 function parseWorkbook(xml: string): WorkbookDocument {
   const sheets: {
     name: string;
@@ -167,24 +120,41 @@ function parseWorkbook(xml: string): WorkbookDocument {
     visibility: StreamSheet["visibility"];
   }[] = [];
   const namedRanges: StreamNamedRange[] = [];
-  const date1904 = parseWorkbookDateSystem(xml);
+  let workbookPropertiesSeen = false;
+  let date1904 = false;
   let activeDefinedName:
-    | { readonly name: string; readonly localSheetId?: number | undefined }
+    | {
+        readonly name: string;
+        readonly localSheetId?: number | undefined;
+      }
     | undefined;
   let definedNameText = "";
 
-  parseXml(xml, (parser) => {
-    parser.on("opentag", (tag) => {
-      const name = localName(tag.name);
-      if (name === "sheet") {
-        const sheetName = attribute(tag, "name");
-        const id = relationshipId(tag);
+  const parser = createElementParser({
+    root: "workbook",
+    open(tag, path) {
+      if (path.is("workbook", "workbookPr")) {
+        if (workbookPropertiesSeen) {
+          throw new Error("Workbook workbookPr is declared more than once.");
+        }
+        workbookPropertiesSeen = true;
+        const raw = unqualifiedAttribute(tag, "date1904");
+        if (raw === undefined || raw === "0" || raw === "false") {
+          date1904 = false;
+        } else if (raw === "1" || raw === "true") {
+          date1904 = true;
+        } else {
+          throw new Error("Workbook date1904 has an invalid Boolean value.");
+        }
+      } else if (path.is("workbook", "sheets", "sheet")) {
+        const sheetName = unqualifiedAttribute(tag, "name");
+        const id = relationshipAttribute(tag, path);
         if (!sheetName || !id) {
           throw new Error(
             "A worksheet is missing its name or relationship ID.",
           );
         }
-        const state = attribute(tag, "state");
+        const state = unqualifiedAttribute(tag, "state");
         if (
           state !== undefined &&
           state !== "visible" &&
@@ -200,11 +170,11 @@ function parseWorkbook(xml: string): WorkbookDocument {
           relationshipId: id,
           visibility: state ?? "visible",
         });
-      } else if (name === "definedName") {
-        const rangeName = attribute(tag, "name");
+      } else if (path.is("workbook", "definedNames", "definedName")) {
+        const rangeName = unqualifiedAttribute(tag, "name");
         if (!rangeName)
           throw new Error("A defined name has no name attribute.");
-        const local = attribute(tag, "localSheetId");
+        const local = unqualifiedAttribute(tag, "localSheetId");
         const localSheetId = local === undefined ? undefined : Number(local);
         if (
           localSheetId !== undefined &&
@@ -220,47 +190,66 @@ function parseWorkbook(xml: string): WorkbookDocument {
         };
         definedNameText = "";
       }
-    });
-    const appendDefinedName = (text: string) => {
-      if (activeDefinedName) definedNameText += text;
-    };
-    parser.on("text", appendDefinedName);
-    parser.on("cdata", appendDefinedName);
-    parser.on("closetag", (tag) => {
-      if (localName(tag.name) !== "definedName" || !activeDefinedName) return;
-      namedRanges.push({
-        ...activeDefinedName,
-        reference: definedNameText.trim(),
-      });
-      activeDefinedName = undefined;
-    });
+    },
+    text(text, path) {
+      if (
+        activeDefinedName &&
+        path.is("workbook", "definedNames", "definedName")
+      ) {
+        definedNameText += text;
+      }
+    },
+    close(_tag, path) {
+      if (
+        activeDefinedName &&
+        path.is("workbook", "definedNames", "definedName")
+      ) {
+        namedRanges.push({
+          name: activeDefinedName.name,
+          ...(activeDefinedName.localSheetId === undefined
+            ? {}
+            : { localSheetId: activeDefinedName.localSheetId }),
+          reference: definedNameText.trim(),
+        });
+        activeDefinedName = undefined;
+      }
+    },
   });
+  parser.write(xml);
+  parser.close();
   return { sheets, namedRanges, date1904 };
 }
 
 function parseTable(xml: string, sheet: string): StreamTable {
-  let tableTag: SaxesTagPlain | undefined;
+  let tableTag: Parameters<typeof unqualifiedAttribute>[0] | undefined;
   const columns: string[] = [];
-  parseXml(xml, (parser) => {
-    parser.on("opentag", (tag) => {
-      const name = localName(tag.name);
-      if (name === "table" && tableTag === undefined) tableTag = tag;
-      if (name === "tableColumn") {
-        const columnName = attribute(tag, "name");
+  const parser = createElementParser({
+    root: "table",
+    open(tag, path) {
+      if (path.is("table") && tableTag === undefined) tableTag = tag;
+      if (path.is("table", "tableColumns", "tableColumn")) {
+        const columnName = unqualifiedAttribute(tag, "name");
         if (columnName === undefined) {
           throw new Error("An Excel Table column has no name.");
         }
         columns.push(columnName);
       }
-    });
+    },
   });
+  parser.write(xml);
+  parser.close();
   if (!tableTag) throw new Error("An Excel Table part has no table element.");
   const name =
-    attribute(tableTag, "name") ?? attribute(tableTag, "displayName");
-  const reference = attribute(tableTag, "ref");
+    unqualifiedAttribute(tableTag, "name") ??
+    unqualifiedAttribute(tableTag, "displayName");
+  const reference = unqualifiedAttribute(tableTag, "ref");
   const rectangle = reference ? parseLocalRectangle(reference) : undefined;
-  const headerRowCount = Number(attribute(tableTag, "headerRowCount") ?? "1");
-  const totalsRowCount = Number(attribute(tableTag, "totalsRowCount") ?? "0");
+  const headerRowCount = Number(
+    unqualifiedAttribute(tableTag, "headerRowCount") ?? "1",
+  );
+  const totalsRowCount = Number(
+    unqualifiedAttribute(tableTag, "totalsRowCount") ?? "0",
+  );
   if (
     !name ||
     !reference ||

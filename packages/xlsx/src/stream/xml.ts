@@ -1,5 +1,3 @@
-import { SaxesParser, type SaxesTagPlain } from "saxes";
-
 const MAXIMUM_XML_MARKUP_BYTES = 64 * 1024;
 
 function entityBytes(entity: readonly number[]): number {
@@ -241,34 +239,8 @@ export class BoundedXmlText {
   }
 }
 
-export function localName(name: string): string {
+function localName(name: string): string {
   return name.slice(name.lastIndexOf(":") + 1);
-}
-
-export function attribute(
-  tag: SaxesTagPlain,
-  name: string,
-): string | undefined {
-  for (const [key, value] of Object.entries(tag.attributes)) {
-    if (localName(key) === name) return String(value);
-  }
-  return undefined;
-}
-
-export function relationshipId(tag: SaxesTagPlain): string | undefined {
-  const exact = tag.attributes["r:id"];
-  if (exact !== undefined) return String(exact);
-  return attribute(tag, "id");
-}
-
-export function parseXml(
-  xml: string,
-  configure: (parser: SaxesParser) => void,
-): void {
-  const parser = new SaxesParser();
-  configure(parser);
-  parser.write(xml);
-  parser.close();
 }
 
 export function resolvePart(ownerPart: string, target: string): string {

@@ -1,8 +1,8 @@
 import type { RandomAccessFile } from "@consultchimps/core";
 import type { FileEntry } from "@zip.js/zip.js";
-import { SaxesParser } from "saxes";
 
-import { BoundedXmlText, localName } from "./xml.js";
+import { BoundedXmlText } from "./xml.js";
+import { createElementParser } from "./xml-elements.js";
 import type { ScratchFactory, WorkbookStreamOptions } from "./types.js";
 import {
   forEachEntryChunk,
@@ -201,14 +201,10 @@ export async function loadSharedStrings(
     options.signal,
   );
   if (!entry) return store;
-  const parser = new SaxesParser();
   const decoder = new TextDecoder("utf-8", { fatal: true });
   const pending: string[] = [];
   let inItem = false;
   let inText = false;
-  let depth = 0;
-  let rootName: string | undefined;
-  let phoneticDepth = 0;
   let value = "";
   let valueBytes = 0;
   const encoder = new TextEncoder();
@@ -218,48 +214,49 @@ export async function loadSharedStrings(
     () =>
       `A shared string exceeds the configured ${limits.maximumCellBytes}-byte cell limit.`,
   );
-  parser.on("opentag", (tag) => {
-    const name = localName(tag.name);
-    if (depth === 0) rootName = name;
-    if (name === "si") {
-      if (inItem || depth !== 1 || rootName !== "sst") {
+  const parser = createElementParser({
+    root: "sst",
+    open(tag, path) {
+      if (path.inDocument && tag.local === "si") {
+        if (inItem || !path.is("sst", "si")) {
+          throw new Error(
+            "A shared-string item must be a direct child of the shared-string table and cannot contain another item.",
+          );
+        }
+        inItem = true;
+        inText = false;
+        value = "";
+        valueBytes = 0;
+      } else if (
+        inItem &&
+        (path.is("sst", "si", "t") || path.is("sst", "si", "r", "t"))
+      ) {
+        inText = true;
+      }
+    },
+    text(text, path) {
+      if (
+        !inText ||
+        (!path.is("sst", "si", "t") && !path.is("sst", "si", "r", "t"))
+      ) {
+        return;
+      }
+      valueBytes += encoder.encode(text).byteLength;
+      if (valueBytes > limits.maximumCellBytes) {
         throw new Error(
-          "A shared-string item must be a direct child of the shared-string table and cannot contain another item.",
+          `A shared string exceeds the configured ${limits.maximumCellBytes}-byte cell limit.`,
         );
       }
-      inItem = true;
-      inText = false;
-      phoneticDepth = 0;
-      value = "";
-      valueBytes = 0;
-    } else if (inItem && name === "rPh") {
-      phoneticDepth += 1;
-    } else if (inItem && name === "t" && phoneticDepth === 0) {
-      inText = true;
-    }
-    depth += 1;
-  });
-  const appendText = (text: string) => {
-    if (!inText) return;
-    valueBytes += encoder.encode(text).byteLength;
-    if (valueBytes > limits.maximumCellBytes) {
-      throw new Error(
-        `A shared string exceeds the configured ${limits.maximumCellBytes}-byte cell limit.`,
-      );
-    }
-    value += text;
-  };
-  parser.on("text", appendText);
-  parser.on("cdata", appendText);
-  parser.on("closetag", (tag) => {
-    const name = localName(tag.name);
-    if (name === "t") inText = false;
-    else if (name === "rPh") phoneticDepth -= 1;
-    else if (name === "si") {
-      inItem = false;
-      pending.push(value);
-    }
-    depth -= 1;
+      value += text;
+    },
+    close(_tag, path) {
+      if (path.is("sst", "si", "t") || path.is("sst", "si", "r", "t")) {
+        inText = false;
+      } else if (path.is("sst", "si")) {
+        inItem = false;
+        pending.push(value);
+      }
+    },
   });
   try {
     await forEachEntryChunk(entry, {

@@ -178,6 +178,29 @@ for (const format of ["sqlite", "duckdb"] as const) {
         ),
       ).resolves.toEqual([{ count: 1n }]);
 
+      await engineOf(database).execute(
+        `UPDATE ${IMPORT_REQUEST_TABLE} SET capture_ids_json = ? WHERE request_id = ?`,
+        [JSON.stringify(["CAP-wrong"]), `valid-${format}`],
+      );
+      const beforeWrongCapture = await inspectDatabase({ database });
+      await expect(
+        applyImport({
+          database,
+          prepared,
+          approved,
+          requestId: `valid-${format}`,
+          delivery: {
+            label: "Synthetic delivery",
+            scope: { kind: "full" },
+          },
+        }),
+      ).rejects.toMatchObject({ code: "DB_CORRUPT_DATABASE" });
+      expect(await inspectDatabase({ database })).toEqual(beforeWrongCapture);
+      await engineOf(database).execute(
+        `UPDATE ${IMPORT_REQUEST_TABLE} SET capture_ids_json = ? WHERE request_id = ?`,
+        [JSON.stringify(applied.captureIds), `valid-${format}`],
+      );
+
       for (const corruption of [
         { name: "negative receipt", receipt: -1n, application: 1n },
         { name: "receipt mismatch", receipt: 2n, application: 1n },
@@ -237,6 +260,104 @@ for (const format of ["sqlite", "duckdb"] as const) {
       expect(await inspectDatabase({ database })).toEqual(
         beforeMissingApplication,
       );
+
+      const originalRoute = recipe.routes[0];
+      if (
+        originalRoute === undefined ||
+        originalRoute.destination.kind !== "new-table"
+      ) {
+        throw new Error("Expected a new table route");
+      }
+      const archiveRecipe: ImportRecipe = {
+        version: 1,
+        routes: [
+          {
+            ...originalRoute,
+            destination: {
+              kind: "new-table",
+              schema: {
+                ...originalRoute.destination.schema,
+                name: "Archive",
+                recordId: { prefix: "ARCHIVE", padding: 4 },
+              },
+            },
+          },
+        ],
+      };
+      const archivePlan = await createPreparedImport({
+        path: path.join(directory, "archive.ccplan"),
+        database,
+        recipe: archiveRecipe,
+        baselineRevision: (await inspectDatabase({ database })).revision,
+      });
+      try {
+        const archivePrepared = await prepareImport({
+          database,
+          prepared: archivePlan,
+          sources: [importSource()],
+          recipe: archiveRecipe,
+        });
+        expect(archivePrepared.prepared.state).toBe("ready");
+        const archiveApproved = await resolveImport({
+          database,
+          prepared: archivePlan,
+          decisions: [],
+        });
+        if (archiveApproved.state !== "ready") {
+          throw new Error("Archive plan failed review");
+        }
+        const archiveApplied = await applyImport({
+          database,
+          prepared: archivePlan,
+          approved: archiveApproved,
+          requestId: `archive-${format}`,
+        });
+        const archiveImportId = archiveApplied.importIds[0];
+        if (archiveImportId === undefined) {
+          throw new Error("Archive import ID was not returned");
+        }
+        const applicationRows = await engineOf(database).query(
+          `SELECT import_id, capture_id, table_name, row_count FROM ${APPLICATION_TABLE} WHERE import_id IN (?, ?) ORDER BY table_name`,
+          [importId, archiveImportId],
+        );
+        expect(applicationRows).toEqual([
+          {
+            import_id: archiveImportId,
+            capture_id: applied.captureIds[0],
+            table_name: "Archive",
+            row_count: 1n,
+          },
+          {
+            import_id: importId,
+            capture_id: applied.captureIds[0],
+            table_name: "Inventory",
+            row_count: 1n,
+          },
+        ]);
+        await engineOf(database).execute(
+          `UPDATE ${IMPORT_REQUEST_TABLE} SET import_ids_json = ?, row_count = 1 WHERE request_id = ?`,
+          [JSON.stringify([archiveImportId]), `valid-${format}`],
+        );
+        const beforeSwappedApplication = await inspectDatabase({ database });
+
+        await expect(
+          applyImport({
+            database,
+            prepared,
+            approved,
+            requestId: `valid-${format}`,
+            delivery: {
+              label: "Synthetic delivery",
+              scope: { kind: "full" },
+            },
+          }),
+        ).rejects.toMatchObject({ code: "DB_CORRUPT_DATABASE" });
+        expect(await inspectDatabase({ database })).toEqual(
+          beforeSwappedApplication,
+        );
+      } finally {
+        await archivePlan.close();
+      }
     } finally {
       await prepared.close();
       await database.close();

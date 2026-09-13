@@ -1,14 +1,10 @@
 import type { FileEntry } from "@zip.js/zip.js";
 
 import type { WorkbookStreamOptions } from "./types.js";
-import { parseXml, relationshipId } from "./xml.js";
+import { createElementParser, relationshipAttribute } from "./xml-elements.js";
 import { entryChunks } from "./zip.js";
 
 const MAXIMUM_WORKSHEET_TAG_BYTES = 64 * 1024;
-
-function xmlSpace(byte: number): boolean {
-  return byte === 0x20 || byte === 0x09 || byte === 0x0a || byte === 0x0d;
-}
 
 function asciiEquals(
   bytes: readonly number[],
@@ -23,46 +19,43 @@ function asciiEquals(
   return true;
 }
 
-function worksheetTableTag(bytes: readonly number[]): {
-  readonly name: "tablePart" | "tableParts";
-  readonly closing: boolean;
-  readonly selfClosing: boolean;
-} | null {
-  let index = 1;
-  while (xmlSpace(bytes[index] ?? 0)) index += 1;
-  const closing = bytes[index] === 0x2f;
-  if (closing) index += 1;
-  while (xmlSpace(bytes[index] ?? 0)) index += 1;
-  let localStart = index;
-  while (index < bytes.length) {
-    const byte = bytes[index] ?? 0;
-    if (xmlSpace(byte) || byte === 0x2f || byte === 0x3e) break;
-    if (byte === 0x3a) localStart = index + 1;
-    index += 1;
-  }
-  const name = asciiEquals(bytes, localStart, index, "tablePart")
-    ? "tablePart"
-    : asciiEquals(bytes, localStart, index, "tableParts")
-      ? "tableParts"
-      : undefined;
-  if (name === undefined) return null;
-  let ending = bytes.length - 2;
-  while (ending >= 0 && xmlSpace(bytes[ending] ?? 0)) ending -= 1;
-  return { name, closing, selfClosing: bytes[ending] === 0x2f };
-}
-
 class TablePartScanner {
   #mode: "text" | "tag" | "comment" | "cdata" | "instruction" = "text";
   #tag: number[] = [];
   #quote: number | undefined;
   #previousByte = 0;
   #penultimateByte = 0;
-  #insideTableParts = 0;
   readonly #activeRelationshipIds: string[] = [];
   readonly #seenRelationshipIds = new Set<string>();
   readonly #decoder = new TextDecoder("utf-8", { fatal: true });
+  readonly #parser;
 
-  constructor(private readonly relationshipIds: ReadonlySet<string>) {}
+  constructor(private readonly relationshipIds: ReadonlySet<string>) {
+    this.#parser = createElementParser({
+      root: "worksheet",
+      open: (tag, path) => {
+        if (!path.is("worksheet", "tableParts", "tablePart")) return;
+        const id = relationshipAttribute(tag, path);
+        if (!id) {
+          throw new Error(
+            "A worksheet tablePart is missing its relationship ID.",
+          );
+        }
+        if (!this.relationshipIds.has(id)) {
+          throw new Error(
+            `A worksheet tablePart references missing relationship "${id}".`,
+          );
+        }
+        if (this.#seenRelationshipIds.has(id)) {
+          throw new Error(
+            `Worksheet table relationship "${id}" is referenced more than once.`,
+          );
+        }
+        this.#seenRelationshipIds.add(id);
+        this.#activeRelationshipIds.push(id);
+      },
+    });
+  }
 
   consume(chunk: Uint8Array): void {
     for (const byte of chunk) this.#consumeByte(byte);
@@ -74,6 +67,7 @@ class TablePartScanner {
         "A worksheet ended inside XML markup while reading its table references.",
       );
     }
+    // Row reading validates worksheet completeness; this scan discovers references.
     return this.#activeRelationshipIds;
   }
 
@@ -163,40 +157,7 @@ class TablePartScanner {
   }
 
   #readTag(bytes: readonly number[]): void {
-    const tag = worksheetTableTag(bytes);
-    if (tag === null) return;
-    if (tag.name === "tableParts") {
-      if (tag.closing) {
-        this.#insideTableParts = Math.max(0, this.#insideTableParts - 1);
-      } else if (!tag.selfClosing) {
-        this.#insideTableParts += 1;
-      }
-      return;
-    }
-    if (tag.closing || this.#insideTableParts === 0) return;
-    const markup = this.#decoder.decode(new Uint8Array(bytes));
-    let id: string | undefined;
-    const standalone = tag.selfClosing ? markup : `${markup.slice(0, -1)}/>`;
-    parseXml(standalone, (parser) => {
-      parser.on("opentag", (element) => {
-        id = relationshipId(element);
-      });
-    });
-    if (!id) {
-      throw new Error("A worksheet tablePart is missing its relationship ID.");
-    }
-    if (!this.relationshipIds.has(id)) {
-      throw new Error(
-        `A worksheet tablePart references missing relationship "${id}".`,
-      );
-    }
-    if (this.#seenRelationshipIds.has(id)) {
-      throw new Error(
-        `Worksheet table relationship "${id}" is referenced more than once.`,
-      );
-    }
-    this.#seenRelationshipIds.add(id);
-    this.#activeRelationshipIds.push(id);
+    this.#parser.write(this.#decoder.decode(new Uint8Array(bytes)));
   }
 }
 

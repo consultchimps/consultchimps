@@ -192,7 +192,7 @@ async function workbookFixture(
     `<?xml version='1.0'?><x:styleSheet xmlns:x='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><x:numFmts count='1'><x:numFmt formatCode='yyyy-mm-dd' numFmtId='164'></x:numFmt></x:numFmts><x:cellXfs count='3'><x:xf numFmtId='0'></x:xf><x:xf applyNumberFormat='1' numFmtId='164'></x:xf><x:xf numFmtId='14'></x:xf></x:cellXfs></x:styleSheet>`,
   );
   const worksheet = options.malformedWorksheet
-    ? "<worksheet><sheetData><row r='2'><c r='B2'><v>0</v></c></row><tableParts count='1'><tablePart r:id='tableRel'/></tableParts>"
+    ? "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main' xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships'><sheetData><row r='2'><c r='B2'><v>0</v></c></row></sheetData><tableParts count='1'><tablePart r:id='tableRel'/></tableParts>"
     : `<?xml version='1.0'?><x:worksheet xmlns:x='http://schemas.openxmlformats.org/spreadsheetml/2006/main' xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships'><x:sheetData><x:row r='2'><x:c t='s' r='B2'><x:v>0</x:v></x:c><x:c r='C2' t='s'><x:v>1</x:v></x:c><x:c r='D2' t='s'><x:v>2</x:v></x:c><x:c r='E2' t='s'><x:v>3</x:v></x:c></x:row><x:row r='3'><x:c r='B3' t='s'><x:v>${count > 6 ? count - 1 : 4}</x:v></x:c><x:c r='C3'><x:v>12345678901234567890.123456789</x:v></x:c><x:c s='1' r='D3'><x:v>1</x:v></x:c><x:c r='E3'><x:f>1+1</x:f><x:v>2</x:v></x:c></x:row><x:row r='4'><x:c t='inlineStr' r='B4'><x:is><x:r><x:t>${options.inlineValue ?? "Rich "}</x:t></x:r><x:r><x:t>inline</x:t></x:r></x:is></x:c><x:c r='C4'><x:f>NOW()</x:f></x:c><x:c s='2' r='D4'><x:v>0</x:v></x:c><x:c t='e' r='E4'><x:f>1/0</x:f><x:v>#DIV/0!</x:v></x:c></x:row><x:row r='5'><x:c t='inlineStr' r='B5'><x:is><x:t>Total</x:t></x:is></x:c></x:row></x:sheetData><x:tableParts count='1'><x:tablePart r:id='tableRel'></x:tablePart></x:tableParts></x:worksheet>`;
   zip.file("xl/worksheets/sheet1.xml", worksheet);
   zip.file(
@@ -422,6 +422,46 @@ describe("bounded workbook streaming", () => {
     });
   });
 
+  it("ignores extension and nested workbook discovery elements", async () => {
+    const workbook =
+      "<x:workbook xmlns:x='http://schemas.openxmlformats.org/spreadsheetml/2006/main' xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships' xmlns:ext='urn:synthetic-extension'>" +
+      "<x:workbookPr date1904='false'/><x:sheets>" +
+      "<x:sheet name='Data &amp; More' r:id='sheetRel'/>" +
+      "<x:sheet name='Hidden' state='veryHidden' r:id='hiddenRel'/>" +
+      "</x:sheets><x:definedNames>" +
+      "<x:definedName name='DataRange'>'Data &amp; More'!$B$2:$E$4</x:definedName>" +
+      "</x:definedNames><x:extLst><ext:sheet name='Foreign' r:id='sheetRel'/>" +
+      "<x:sheet name='Nested' r:id='sheetRel'/>" +
+      "<ext:definedName name='DataRange'>'Hidden'!$A$1</ext:definedName>" +
+      "<x:definedName name='DataRange'>'Hidden'!$A$1</x:definedName>" +
+      "</x:extLst></x:workbook>";
+    const bytes = await workbookFixtureWithParts({
+      "xl/workbook.xml": workbook,
+    });
+    const inspection = await inspectWorkbookStream(source(bytes).source, {
+      scratch: new MemoryScratch(),
+    });
+
+    expect(inspection.sheets).toEqual([
+      { name: "Data & More", visibility: "visible" },
+      { name: "Hidden", visibility: "veryHidden" },
+    ]);
+    expect(inspection.namedRanges).toEqual([
+      {
+        name: "DataRange",
+        reference: "'Data & More'!$B$2:$E$4",
+      },
+    ]);
+
+    const reader = await openWorkbookRegionStream(
+      source(bytes).source,
+      { range: "DataRange" },
+      { scratch: new MemoryScratch() },
+    );
+    expect(reader.region.sheet).toBe("Data & More");
+    expect(await rows(reader)).toHaveLength(2);
+  });
+
   it.each([
     ["omitted", undefined, "1900-01-01"],
     ["numeric false", "0", "1900-01-01"],
@@ -489,10 +529,15 @@ describe("bounded workbook streaming", () => {
   });
 
   it("uses the Strict SpreadsheetML date system", async () => {
-    const workbook = workbookMetadataXml({ date1904: "true" }).replaceAll(
-      "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
-      "http://purl.oclc.org/ooxml/spreadsheetml/main",
-    );
+    const workbook = workbookMetadataXml({ date1904: "true" })
+      .replaceAll(
+        "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+        "http://purl.oclc.org/ooxml/spreadsheetml/main",
+      )
+      .replaceAll(
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+        "http://purl.oclc.org/ooxml/officeDocument/relationships",
+      );
     const input = source(
       await workbookFixtureWithParts({ "xl/workbook.xml": workbook }),
     );
@@ -1658,8 +1703,14 @@ describe("bounded workbook streaming", () => {
   });
 
   it.each([
-    ["nested", "<sst><si><t>Outer</t><si><t>Inner</t></si></si></sst>"],
-    ["misplaced", "<sst><ext><si><t>Inner</t></si></ext></sst>"],
+    [
+      "nested",
+      "<sst xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><si><t>Outer</t><si><t>Inner</t></si></si></sst>",
+    ],
+    [
+      "misplaced",
+      "<sst xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><ext><si><t>Inner</t></si></ext></sst>",
+    ],
   ])("rejects a %s shared-string item", async (_case, sharedStrings) => {
     const input = source(
       await workbookFixtureWithParts({

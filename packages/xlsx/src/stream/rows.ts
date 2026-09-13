@@ -1,5 +1,4 @@
 import type { FileEntry } from "@zip.js/zip.js";
-import { SaxesParser } from "saxes";
 import { throwIfAborted } from "@consultchimps/core";
 
 import type { SharedStrings } from "./strings.js";
@@ -16,7 +15,8 @@ import {
   worksheetDateValue,
 } from "../model/calendar.js";
 import { decodeCell, encodeCell } from "../model/references.js";
-import { attribute, BoundedXmlText, localName } from "./xml.js";
+import { BoundedXmlText } from "./xml.js";
+import { createElementParser, unqualifiedAttribute } from "./xml-elements.js";
 import { entryChunks, type StreamLimits } from "./zip.js";
 
 type PendingScalarCell =
@@ -49,7 +49,6 @@ interface CurrentCell {
   formulaOpen: boolean;
   inlineTextOpen: boolean;
   inlineContainerOpen: boolean;
-  inlinePhoneticDepth: number;
   hasValue: boolean;
   hasFormula: boolean;
   hasInlineContainer: boolean;
@@ -206,9 +205,7 @@ export async function* parseWorksheetBatches(
   let cells = cellRecord<PendingCell>();
   let seenColumns = new Set<number>();
   let current: CurrentCell | undefined;
-  let cellDepth = 0;
   let passedLastRow = false;
-  const parser = new SaxesParser();
   const decoder = new TextDecoder("utf-8", { fatal: true });
   const encoder = new TextEncoder();
   const textLimit = new BoundedXmlText(
@@ -218,117 +215,132 @@ export async function* parseWorksheetBatches(
       `A worksheet ${element} text node exceeds the configured ${options.limits.maximumCellBytes}-byte cell limit.`,
   );
 
-  parser.on("opentag", (tag) => {
-    const name = localName(tag.name);
-    if (name === "row") {
-      if (rowOpen) {
-        throw new Error("A worksheet row cannot contain another row.");
+  const parser = createElementParser({
+    root: "worksheet",
+    open(tag, path) {
+      if (path.inDocument && tag.local === "row") {
+        if (!path.is("worksheet", "sheetData", "row")) {
+          throw new Error("A worksheet row cannot contain another row.");
+        }
+        if (rowOpen) {
+          throw new Error("A worksheet row cannot contain another row.");
+        }
+        const rawRow = unqualifiedAttribute(tag, "r");
+        if (
+          rawRow !== undefined &&
+          (rawRow.length === 0 || /\D/u.test(rawRow))
+        ) {
+          throw new Error("A worksheet row has an invalid row number.");
+        }
+        activeRow = rawRow === undefined ? nextImplicitRow : Number(rawRow);
+        if (
+          !Number.isSafeInteger(activeRow) ||
+          activeRow < 1 ||
+          activeRow > 1_048_576 ||
+          activeRow <= previousRow
+        ) {
+          throw new Error("A worksheet row has an invalid row number.");
+        }
+        rowOpen = true;
+        previousRow = activeRow;
+        nextImplicitRow = activeRow + 1;
+        nextImplicitColumn = 0;
+        cells = cellRecord<PendingCell>();
+        seenColumns = new Set<number>();
+        if (activeRow > options.lastRow) passedLastRow = true;
+        return;
       }
-      const rawRow = attribute(tag, "r");
-      if (rawRow !== undefined && (rawRow.length === 0 || /\D/u.test(rawRow))) {
-        throw new Error("A worksheet row has an invalid row number.");
+      if (path.inDocument && tag.local === "c") {
+        if (!path.is("worksheet", "sheetData", "row", "c")) {
+          throw new Error(
+            current === undefined
+              ? "A worksheet cell must be inside a row."
+              : "A worksheet cell cannot contain another cell.",
+          );
+        }
+        if (!rowOpen) {
+          throw new Error("A worksheet cell must be inside a row.");
+        }
+        if (current !== undefined) {
+          throw new Error("A worksheet cell cannot contain another cell.");
+        }
+        const type = cellType(unqualifiedAttribute(tag, "t"));
+        const explicitReference = unqualifiedAttribute(tag, "r");
+        const parsedReference =
+          explicitReference === undefined
+            ? { column: nextImplicitColumn, row: activeRow }
+            : decodeCell(explicitReference);
+        if (
+          parsedReference === undefined ||
+          parsedReference.column < 0 ||
+          parsedReference.column >= 16_384 ||
+          !Number.isSafeInteger(parsedReference.row) ||
+          parsedReference.row < 1 ||
+          parsedReference.row > 1_048_576 ||
+          parsedReference.row !== activeRow ||
+          (explicitReference !== undefined &&
+            encodeCell(parsedReference.column, parsedReference.row) !==
+              explicitReference.toUpperCase())
+        ) {
+          throw new Error("A worksheet cell has an invalid reference.");
+        }
+        const parsedColumn = parsedReference.column;
+        if (seenColumns.has(parsedColumn)) {
+          throw new Error(
+            `Worksheet row ${activeRow} contains column ${parsedColumn + 1} more than once.`,
+          );
+        }
+        seenColumns.add(parsedColumn);
+        nextImplicitColumn = parsedColumn + 1;
+        const explicitStyle = unqualifiedAttribute(tag, "s");
+        const style = Number(explicitStyle ?? "0");
+        if (!Number.isSafeInteger(style) || style < 0) {
+          throw new Error(
+            `Cell ${explicitReference ?? "(implicit)"} has an invalid style.`,
+          );
+        }
+        if (explicitStyle !== undefined && !options.styles.hasStyle(style)) {
+          throw new Error(
+            `Cell ${explicitReference ?? "(implicit)"} has a style outside the workbook cell formats.`,
+          );
+        }
+        current = {
+          reference: explicitReference ?? encodeCell(parsedColumn, activeRow),
+          column: parsedColumn,
+          type,
+          style,
+          value: "",
+          formula: "",
+          inline: "",
+          valueOpen: false,
+          formulaOpen: false,
+          inlineTextOpen: false,
+          inlineContainerOpen: false,
+          hasValue: false,
+          hasFormula: false,
+          hasInlineContainer: false,
+          hasInlineText: false,
+          valueBytes: 0,
+          formulaBytes: 0,
+          inlineBytes: 0,
+        };
+        return;
       }
-      activeRow = rawRow === undefined ? nextImplicitRow : Number(rawRow);
-      if (
-        !Number.isSafeInteger(activeRow) ||
-        activeRow < 1 ||
-        activeRow > 1_048_576 ||
-        activeRow <= previousRow
-      ) {
-        throw new Error("A worksheet row has an invalid row number.");
-      }
-      rowOpen = true;
-      previousRow = activeRow;
-      nextImplicitRow = activeRow + 1;
-      nextImplicitColumn = 0;
-      cells = cellRecord<PendingCell>();
-      seenColumns = new Set<number>();
-      if (activeRow > options.lastRow) passedLastRow = true;
-    } else if (name === "c") {
-      if (!rowOpen) {
-        throw new Error("A worksheet cell must be inside a row.");
-      }
-      if (current !== undefined) {
-        throw new Error("A worksheet cell cannot contain another cell.");
-      }
-      const type = cellType(attribute(tag, "t"));
-      const explicitReference = attribute(tag, "r");
-      const parsedReference =
-        explicitReference === undefined
-          ? { column: nextImplicitColumn, row: activeRow }
-          : decodeCell(explicitReference);
-      if (
-        parsedReference === undefined ||
-        parsedReference.column < 0 ||
-        parsedReference.column >= 16_384 ||
-        !Number.isSafeInteger(parsedReference.row) ||
-        parsedReference.row < 1 ||
-        parsedReference.row > 1_048_576 ||
-        parsedReference.row !== activeRow ||
-        (explicitReference !== undefined &&
-          encodeCell(parsedReference.column, parsedReference.row) !==
-            explicitReference.toUpperCase())
-      ) {
-        throw new Error("A worksheet cell has an invalid reference.");
-      }
-      const parsedColumn = parsedReference.column;
-      if (seenColumns.has(parsedColumn)) {
-        throw new Error(
-          `Worksheet row ${activeRow} contains column ${parsedColumn + 1} more than once.`,
-        );
-      }
-      seenColumns.add(parsedColumn);
-      nextImplicitColumn = parsedColumn + 1;
-      const explicitStyle = attribute(tag, "s");
-      const style = Number(explicitStyle ?? "0");
-      if (!Number.isSafeInteger(style) || style < 0) {
-        throw new Error(
-          `Cell ${explicitReference ?? "(implicit)"} has an invalid style.`,
-        );
-      }
-      if (explicitStyle !== undefined && !options.styles.hasStyle(style)) {
-        throw new Error(
-          `Cell ${explicitReference ?? "(implicit)"} has a style outside the workbook cell formats.`,
-        );
-      }
-      current = {
-        reference: explicitReference ?? encodeCell(parsedColumn, activeRow),
-        column: parsedColumn,
-        type,
-        style,
-        value: "",
-        formula: "",
-        inline: "",
-        valueOpen: false,
-        formulaOpen: false,
-        inlineTextOpen: false,
-        inlineContainerOpen: false,
-        inlinePhoneticDepth: 0,
-        hasValue: false,
-        hasFormula: false,
-        hasInlineContainer: false,
-        hasInlineText: false,
-        valueBytes: 0,
-        formulaBytes: 0,
-        inlineBytes: 0,
-      };
-      cellDepth = 0;
-    } else if (current) {
-      const directChild = cellDepth === 0;
+      if (!current || !path.inDocument) return;
       if (current.valueOpen || current.formulaOpen) {
         throw new Error(
           `Cell ${current.reference} has nested markup inside its value or formula.`,
         );
       }
-      if (name === "v") {
+      if (tag.local === "v") {
+        if (!path.is("worksheet", "sheetData", "row", "c", "v")) {
+          throw new Error(
+            `Cell ${current.reference} value must be a direct child of the cell.`,
+          );
+        }
         if (current.type === "inlineStr") {
           throw new Error(
             `An inline string cannot use a value element in cell ${current.reference}.`,
-          );
-        }
-        if (!directChild) {
-          throw new Error(
-            `Cell ${current.reference} value must be a direct child of the cell.`,
           );
         }
         if (current.hasValue) {
@@ -338,8 +350,8 @@ export async function* parseWorksheetBatches(
         }
         current.valueOpen = true;
         current.hasValue = true;
-      } else if (name === "f") {
-        if (!directChild) {
+      } else if (tag.local === "f") {
+        if (!path.is("worksheet", "sheetData", "row", "c", "f")) {
           throw new Error(
             `Cell ${current.reference} formula must be a direct child of the cell.`,
           );
@@ -351,8 +363,11 @@ export async function* parseWorksheetBatches(
         }
         current.formulaOpen = true;
         current.hasFormula = true;
-      } else if (name === "is") {
-        if (!directChild || current.type !== "inlineStr") {
+      } else if (tag.local === "is") {
+        if (
+          !path.is("worksheet", "sheetData", "row", "c", "is") ||
+          current.type !== "inlineStr"
+        ) {
           throw new Error(
             `Cell ${current.reference} inline string must be a direct child of an inline-string cell.`,
           );
@@ -364,103 +379,114 @@ export async function* parseWorksheetBatches(
         }
         current.inlineContainerOpen = true;
         current.hasInlineContainer = true;
-      } else if (
-        name === "rPh" &&
-        current.type === "inlineStr" &&
-        current.inlineContainerOpen
-      ) {
-        current.inlinePhoneticDepth += 1;
-      } else if (
-        name === "t" &&
-        current.type === "inlineStr" &&
-        current.inlineContainerOpen &&
-        current.inlinePhoneticDepth === 0
-      ) {
-        current.inlineTextOpen = true;
-        current.hasInlineText = true;
-      }
-      cellDepth += 1;
-    }
-  });
-  const appendText = (text: string) => {
-    if (!current) return;
-    const bytes = encoder.encode(text).byteLength;
-    if (current.valueOpen) {
-      current.valueBytes += bytes;
-      if (current.valueBytes > options.limits.maximumCellBytes)
-        throw new Error(
-          `Cell ${current.reference} value exceeds the configured ${options.limits.maximumCellBytes}-byte limit.`,
-        );
-      current.value += text;
-    }
-    if (current.formulaOpen) {
-      current.formulaBytes += bytes;
-      if (current.formulaBytes > options.limits.maximumCellBytes)
-        throw new Error(
-          `Cell ${current.reference} formula exceeds the configured ${options.limits.maximumCellBytes}-byte limit.`,
-        );
-      current.formula += text;
-    }
-    if (current.inlineTextOpen) {
-      current.inlineBytes += bytes;
-      if (current.inlineBytes > options.limits.maximumCellBytes)
-        throw new Error(
-          `Cell ${current.reference} inline string exceeds the configured ${options.limits.maximumCellBytes}-byte limit.`,
-        );
-      current.inline += text;
-    }
-  };
-  parser.on("text", appendText);
-  parser.on("cdata", appendText);
-  parser.on("closetag", (tag) => {
-    const name = localName(tag.name);
-    if (current && name !== "c") {
-      cellDepth -= 1;
-      if (cellDepth < 0) {
-        throw new Error(`Cell ${current.reference} has invalid structure.`);
-      }
-      if (name === "v") current.valueOpen = false;
-      else if (name === "f") current.formulaOpen = false;
-      else if (name === "t") current.inlineTextOpen = false;
-      else if (name === "rPh" && current.inlineContainerOpen) {
-        current.inlinePhoneticDepth -= 1;
-      } else if (name === "is") current.inlineContainerOpen = false;
-    } else if (current && name === "c") {
-      if (cellDepth !== 0) {
-        throw new Error(`Cell ${current.reference} has invalid structure.`);
-      }
-      const selectedName = options.columns?.get(current.column);
-      if (
-        activeRow >= options.firstRow &&
-        activeRow <= options.lastRow &&
-        (options.columns === undefined || selectedName !== undefined)
-      ) {
-        const key = selectedName ?? current.reference;
-        if (current.hasFormula) {
-          cells[key] = {
-            kind: "formula",
-            ...(current.formula === "" ? {} : { formula: current.formula }),
-            cached: current.hasValue
-              ? scalarCell(current, options.styles)
-              : { kind: "missing" },
-          };
-        } else {
-          cells[key] = scalarCell(current, options.styles);
+      } else if (tag.local === "t") {
+        const inlineText =
+          path.is("worksheet", "sheetData", "row", "c", "is", "t") ||
+          path.is("worksheet", "sheetData", "row", "c", "is", "r", "t");
+        if (inlineText) {
+          if (current.type !== "inlineStr" || !current.inlineContainerOpen) {
+            throw new Error(
+              `Cell ${current.reference} has invalid inline-string text.`,
+            );
+          }
+          current.inlineTextOpen = true;
+          current.hasInlineText = true;
+        } else if (
+          !path.within("worksheet", "sheetData", "row", "c", "is", "rPh")
+        ) {
+          throw new Error(
+            `Cell ${current.reference} has invalid inline-string text.`,
+          );
         }
       }
-      current = undefined;
-    } else if (name === "row") {
-      if (!rowOpen || current !== undefined) {
-        throw new Error("A worksheet row has invalid cell structure.");
+    },
+    text(text, path) {
+      if (!current) return;
+      const valueText = path.is("worksheet", "sheetData", "row", "c", "v");
+      const formulaText = path.is("worksheet", "sheetData", "row", "c", "f");
+      const inlineText =
+        path.is("worksheet", "sheetData", "row", "c", "is", "t") ||
+        path.is("worksheet", "sheetData", "row", "c", "is", "r", "t");
+      if (!valueText && !formulaText && !inlineText) return;
+      const bytes = encoder.encode(text).byteLength;
+      if (valueText && current.valueOpen) {
+        current.valueBytes += bytes;
+        if (current.valueBytes > options.limits.maximumCellBytes)
+          throw new Error(
+            `Cell ${current.reference} value exceeds the configured ${options.limits.maximumCellBytes}-byte limit.`,
+          );
+        current.value += text;
       }
-      if (activeRow >= options.firstRow && activeRow <= options.lastRow) {
-        ready.push({ sourceRow: activeRow, cells });
+      if (formulaText && current.formulaOpen) {
+        current.formulaBytes += bytes;
+        if (current.formulaBytes > options.limits.maximumCellBytes)
+          throw new Error(
+            `Cell ${current.reference} formula exceeds the configured ${options.limits.maximumCellBytes}-byte limit.`,
+          );
+        current.formula += text;
       }
-      rowOpen = false;
-      activeRow = 0;
-      cells = cellRecord<PendingCell>();
-      seenColumns = new Set<number>();
-    }
+      if (inlineText && current.inlineTextOpen) {
+        current.inlineBytes += bytes;
+        if (current.inlineBytes > options.limits.maximumCellBytes)
+          throw new Error(
+            `Cell ${current.reference} inline string exceeds the configured ${options.limits.maximumCellBytes}-byte limit.`,
+          );
+        current.inline += text;
+      }
+    },
+    close(_tag, path) {
+      if (current && path.is("worksheet", "sheetData", "row", "c", "v")) {
+        current.valueOpen = false;
+      } else if (
+        current &&
+        path.is("worksheet", "sheetData", "row", "c", "f")
+      ) {
+        current.formulaOpen = false;
+      } else if (
+        current &&
+        (path.is("worksheet", "sheetData", "row", "c", "is", "t") ||
+          path.is("worksheet", "sheetData", "row", "c", "is", "r", "t"))
+      ) {
+        current.inlineTextOpen = false;
+      } else if (
+        current &&
+        path.is("worksheet", "sheetData", "row", "c", "is")
+      ) {
+        current.inlineContainerOpen = false;
+      } else if (current && path.is("worksheet", "sheetData", "row", "c")) {
+        const selectedName = options.columns?.get(current.column);
+        if (
+          activeRow >= options.firstRow &&
+          activeRow <= options.lastRow &&
+          (options.columns === undefined || selectedName !== undefined)
+        ) {
+          const key = selectedName ?? current.reference;
+          if (current.hasFormula) {
+            cells[key] = {
+              kind: "formula",
+              ...(current.formula === "" ? {} : { formula: current.formula }),
+              cached: current.hasValue
+                ? scalarCell(current, options.styles)
+                : { kind: "missing" },
+            };
+          } else {
+            cells[key] = scalarCell(current, options.styles);
+          }
+        }
+        current = undefined;
+      } else if (path.is("worksheet", "sheetData", "row")) {
+        if (!rowOpen || current !== undefined) {
+          throw new Error("A worksheet row has invalid cell structure.");
+        }
+        if (activeRow >= options.firstRow && activeRow <= options.lastRow) {
+          ready.push({ sourceRow: activeRow, cells });
+        }
+        rowOpen = false;
+        activeRow = 0;
+        cells = cellRecord<PendingCell>();
+        seenColumns = new Set<number>();
+      }
+    },
   });
 
   for await (const chunk of entryChunks(entry, {

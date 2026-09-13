@@ -48,6 +48,12 @@ must be unique within each source. Duplicate keys return
 sources or writing captures. Different source aliases can still reuse matching
 file content and selections.
 
+The workbook adapter now identifies its parser as `consultchimps-xlsx-stream-2`.
+Preparing a file previously captured by version 1 reads it again for a new
+review. Existing rows and capture history stay unchanged until you apply that
+review; this does not automatically correct earlier imports. Subsequent
+preparations can reuse a version 2 capture.
+
 Custom `ImportSource` readers must provide valid decimal or exponent numeric
 tokens and valid date payloads. Integer tokens accept an optional `+` or `-`
 sign; integer mappings retain signed 64-bit bounds. Date `iso` values must name
@@ -118,6 +124,11 @@ Receipt-only retries validate the saved total against their application metadata
 without scanning imported rows. Negative or inconsistent totals return
 `DB_CORRUPT_DATABASE`. DuckDB catalog fingerprints include views, so a view
 created after review invalidates the schema or import plan before table writes.
+
+Retry receipts must reference applications for the reviewed captures and
+destination tables, including repeated route contributions. An application's
+original request or plan can differ because later requests can reuse earlier
+applications. Returned capture IDs must match the saved source bindings.
 
 These are integrity checks, not digital signatures. An editor who coherently
 rewrites the artifact and its checksums can produce a different valid artifact.

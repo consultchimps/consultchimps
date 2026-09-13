@@ -15,6 +15,8 @@ import {
 
 import type { ImportSelectionSource, ImportSource } from "./import/types.js";
 
+const WORKBOOK_READER_VERSION = "consultchimps-xlsx-stream-2";
+
 export interface WorkbookImportSourceOptions extends OperationControlOptions {
   readonly key: string;
   readonly bytes: RandomAccessSource;
@@ -144,7 +146,7 @@ export async function createWorkbookImportSource(
     source: {
       key: options.key,
       bytes: options.bytes,
-      readerVersion: "consultchimps-xlsx-stream-1",
+      readerVersion: WORKBOOK_READER_VERSION,
       selections: sources,
       verifyUnchanged: options.verifyUnchanged,
     },

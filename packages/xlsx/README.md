@@ -9,6 +9,10 @@ numeric tokens and distinguishes formula caches, missing caches, and errors. It
 reads date styles and both workbook date systems without loading the entire
 worksheet into JavaScript arrays.
 
+The reader uses namespace-aware paths for worksheet values, shared strings,
+styles, workbook declarations, and table references. Foreign extension elements
+do not become spreadsheet data merely because they use the same element names.
+
 Repeated workbook-property declarations are rejected with `XLSX_READ_FAILED`,
 including declarations with matching values, so a later declaration cannot
 silently replace the date system.
