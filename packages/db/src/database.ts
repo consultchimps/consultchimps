@@ -76,6 +76,7 @@ class ManagedDatabase implements Database {
   readonly format: DatabaseFormat;
   readonly capabilities: DatabaseCapabilities;
   #open = true;
+  #closing: Promise<void> | undefined;
 
   constructor(id: DatabaseId, engine: DatabaseEngine) {
     this.id = id;
@@ -98,15 +99,20 @@ class ManagedDatabase implements Database {
     await engineOf(this).checkpoint();
   }
 
-  async close(): Promise<void> {
-    if (!this.#open) return;
-    const engine = engineOf(this);
-    try {
-      await engine.close();
-    } finally {
-      this.#open = false;
-      engines.delete(this);
-    }
+  close(): Promise<void> {
+    if (this.#closing !== undefined) return this.#closing;
+    if (!this.#open) return Promise.resolve();
+    const closing = Promise.resolve()
+      .then(() => engineOf(this).close())
+      .then(() => {
+        this.#open = false;
+        engines.delete(this);
+      })
+      .finally(() => {
+        if (this.#closing === closing) this.#closing = undefined;
+      });
+    this.#closing = closing;
+    return closing;
   }
 
   async [Symbol.asyncDispose](): Promise<void> {

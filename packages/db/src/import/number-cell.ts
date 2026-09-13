@@ -2,6 +2,11 @@ import { databaseError } from "../errors.js";
 import type { ImportCell } from "./types.js";
 
 const NUMBER_TEXT = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?$/u;
+const INTEGER_TEXT = /^[+-]?\d+$/u;
+
+export function isImportIntegerText(value: string): boolean {
+  return INTEGER_TEXT.test(value);
+}
 
 export function assertValidImportNumberCell(
   input: ImportCell,

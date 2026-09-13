@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { afterEach, expect, test } from "vitest";
 
-import { inspectDatabase } from "../src/database.js";
+import { engineOf, inspectDatabase } from "../src/database.js";
 import { inspectImport } from "../src/import/inspection.js";
 import type { ImportRecipe } from "../src/import/types.js";
 import {
@@ -40,6 +40,66 @@ function schema(...tables: readonly string[]): DatabaseSchema {
 }
 
 const emptyRecipe: ImportRecipe = { version: 1, routes: [] };
+
+for (const format of ["sqlite", "duckdb"] as const) {
+  test(`${format}: failed close retains native replacement protection until retry succeeds`, async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "cc-close-busy-"));
+    directories.push(directory);
+    const databasePath = path.join(directory, `workspace.${format}`);
+    let database = (
+      await createDatabase({
+        path: databasePath,
+        format,
+        schema: schema("original"),
+      })
+    ).database;
+    const engine = engineOf(database);
+    const originalClose = engine.close.bind(engine);
+    const failure = new Error("Synthetic close failure before release");
+    let attempts = 0;
+    let released = false;
+    engine.close = async () => {
+      attempts += 1;
+      if (attempts === 1) throw failure;
+      await originalClose();
+      released = true;
+    };
+    try {
+      await expect(database.close()).rejects.toBe(failure);
+      expect(database.isOpen).toBe(true);
+      await expect(
+        createDatabase({
+          path: databasePath,
+          format,
+          schema: schema("replacement"),
+          overwrite: true,
+        }),
+      ).rejects.toMatchObject({ code: "DB_NATIVE_FILE_BUSY" });
+      expect(
+        (await inspectDatabase({ database })).tables.map((table) => table.name),
+      ).toEqual(["original"]);
+
+      await database.close();
+      expect(database.isOpen).toBe(false);
+      expect(attempts).toBe(2);
+      database = (
+        await createDatabase({
+          path: databasePath,
+          format,
+          schema: schema("replacement"),
+          overwrite: true,
+        })
+      ).database;
+      expect(
+        (await inspectDatabase({ database })).tables.map((table) => table.name),
+      ).toEqual(["replacement"]);
+    } finally {
+      engine.close = originalClose;
+      if (!released && !database.isOpen) await originalClose();
+      await database.close();
+    }
+  });
+}
 
 test("refuses database replacement through a live path or hard-link alias", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "cc-native-busy-"));

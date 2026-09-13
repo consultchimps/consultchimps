@@ -23,3 +23,7 @@ Bind prepared artifact format 3 reviews to their metadata fingerprint and
 capture row checksums. Verify consumed row values before committing an import.
 Version 1 and 2 spike plans must be regenerated from their source files;
 existing working database files keep their format.
+
+Accept leading-plus integer tokens consistently during inference and import.
+Keep database and import-plan replacement blocked after failed closure until a
+close retry succeeds.

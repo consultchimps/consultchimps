@@ -243,6 +243,7 @@ class SqlitePoolHarness {
   #nextSlot = 1;
   readonly #slots = new Map<string, string>();
   failNextImportName: string | undefined;
+  failNextCloseName: string | undefined;
   failNextUnlinkName: string | undefined;
   failNextSqlContaining: string | undefined;
 
@@ -361,6 +362,10 @@ class SqlitePoolHarness {
     };
     const close = database.close.bind(database);
     database.close = () => {
+      if (this.failNextCloseName === name) {
+        this.failNextCloseName = undefined;
+        throw new Error("Injected SQLite close failure");
+      }
       if (!readonly && database.pointer !== undefined) {
         this.persist(name, sqlite.capi.sqlite3_js_db_export(database.pointer));
       }
@@ -1221,6 +1226,54 @@ describe("browser database runtime", () => {
     await reopened.close();
   });
 
+  test("keeps a failed-close database busy until close succeeds", async () => {
+    const runtime = await createRuntime();
+    const original = await runtime.createDatabase({
+      name: "close-protected.sqlite",
+      format: "sqlite",
+      schema: {
+        version: 1,
+        tables: [
+          {
+            name: "ProtectedRows",
+            columns: [{ name: "value", type: "text" }],
+            recordId: { prefix: "PROTECTED", padding: 2 },
+          },
+        ],
+      },
+    });
+    const originalId = original.database.id;
+    harness.failNextCloseName = "/close-protected.sqlite";
+
+    await expect(original.database.close()).rejects.toThrow(
+      "Injected SQLite close failure",
+    );
+    expect(original.database.isOpen).toBe(true);
+    expect(
+      (await inspectDatabase({ database: original.database })).tables,
+    ).toMatchObject([{ name: "ProtectedRows", rowCount: 0n }]);
+    await expect(
+      runtime.createDatabase({
+        name: "close-protected.sqlite",
+        format: "sqlite",
+        overwrite: true,
+      }),
+    ).rejects.toMatchObject({ code: "DB_BROWSER_DATABASE_BUSY" });
+    expect(original.database.id).toBe(originalId);
+
+    await original.database.close();
+    const replacement = await runtime.createDatabase({
+      name: "close-protected.sqlite",
+      format: "sqlite",
+      overwrite: true,
+    });
+    expect(replacement.database.id).not.toBe(originalId);
+    expect(
+      (await inspectDatabase({ database: replacement.database })).tables,
+    ).toEqual([]);
+    await replacement.database.close();
+  });
+
   test("reports cleanup of a partially published new database without inventing a backup", async () => {
     const runtime = await createRuntime();
     const unrelated = await runtime.createDatabase({
@@ -1572,6 +1625,54 @@ describe("browser database runtime", () => {
       ),
     ).toEqual([]);
     await reopened.close();
+    await created.database.close();
+  });
+
+  test("keeps a failed-close prepared import busy until close succeeds", async () => {
+    const runtime = await createRuntime();
+    const created = await runtime.createDatabase({
+      name: "prepared-close-workspace.sqlite",
+      format: "sqlite",
+    });
+    const inspection = await inspectDatabase({ database: created.database });
+    const planName = ".consultchimps-import-close-protected.sqlite";
+    const original = await runtime.createPreparedImport({
+      name: planName,
+      database: created.database,
+      recipe: { version: 1, routes: [] },
+      baselineRevision: inspection.revision,
+    });
+    const originalId = original.id;
+    harness.failNextCloseName = `/${planName}`;
+
+    await expect(original.close()).rejects.toThrow(
+      "Injected SQLite close failure",
+    );
+    expect(original.isOpen).toBe(true);
+    await expect(
+      runtime.createPreparedImport({
+        name: planName,
+        database: created.database,
+        recipe: { version: 1, routes: [] },
+        baselineRevision: inspection.revision,
+        overwrite: true,
+      }),
+    ).rejects.toMatchObject({ code: "DB_BROWSER_DATABASE_BUSY" });
+    expect(original.id).toBe(originalId);
+
+    await original.close();
+    const reopened = await runtime.openPreparedImport({ name: planName });
+    expect(reopened.id).toBe(originalId);
+    await reopened.close();
+    const replacement = await runtime.createPreparedImport({
+      name: planName,
+      database: created.database,
+      recipe: { version: 1, routes: [] },
+      baselineRevision: inspection.revision,
+      overwrite: true,
+    });
+    expect(replacement.id).not.toBe(originalId);
+    await replacement.close();
     await created.database.close();
   });
 

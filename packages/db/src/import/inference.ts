@@ -11,7 +11,10 @@ import {
   assertValidImportDateCell,
   validatedImportDateIso,
 } from "./date-cell.js";
-import { assertValidImportNumberCell } from "./number-cell.js";
+import {
+  assertValidImportNumberCell,
+  isImportIntegerText,
+} from "./number-cell.js";
 
 const SIGNED_BIGINT_MIN = -(2n ** 63n);
 const SIGNED_BIGINT_MAX = 2n ** 63n - 1n;
@@ -255,7 +258,7 @@ export function addToProfile(profile: ColumnProfile, input: ImportCell): void {
     profile.finiteNumber = false;
     return;
   }
-  if (!/^-?\d+$/u.test(cell.raw)) {
+  if (!isImportIntegerText(cell.raw)) {
     profile.integerInRange = false;
   } else {
     const integer = BigInt(cell.raw);
@@ -348,7 +351,7 @@ export function valueForColumn(
   if (
     type === "integer" &&
     value.kind === "number" &&
-    /^-?\d+$/u.test(value.raw)
+    isImportIntegerText(value.raw)
   ) {
     const parsed = BigInt(value.raw);
     if (parsed >= SIGNED_BIGINT_MIN && parsed <= SIGNED_BIGINT_MAX) {

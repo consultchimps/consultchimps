@@ -6,6 +6,9 @@ const duckdb = vi.hoisted(() => ({
   openPath: "",
   registrations: [] as string[],
   checkpointFailure: undefined as Error | undefined,
+  terminationFailures: [] as Error[],
+  terminationStarted: undefined as (() => void) | undefined,
+  terminationWait: undefined as Promise<void> | undefined,
   queries: [] as string[],
   connectionCloses: 0,
   flushes: 0,
@@ -66,6 +69,10 @@ vi.mock("@duckdb/duckdb-wasm/dist/duckdb-browser", () => ({
 
     async terminate(): Promise<void> {
       duckdb.terminations += 1;
+      duckdb.terminationStarted?.();
+      await duckdb.terminationWait;
+      const failure = duckdb.terminationFailures.shift();
+      if (failure !== undefined) throw failure;
     }
   },
 }));
@@ -106,6 +113,9 @@ beforeEach(() => {
   duckdb.openPath = "";
   duckdb.registrations.length = 0;
   duckdb.checkpointFailure = undefined;
+  duckdb.terminationFailures.length = 0;
+  duckdb.terminationStarted = undefined;
+  duckdb.terminationWait = undefined;
   duckdb.queries.length = 0;
   duckdb.connectionCloses = 0;
   duckdb.flushes = 0;
@@ -270,4 +280,106 @@ test("releases browser DuckDB resources when a writable close checkpoint fails",
   expect(duckdb.connectionCloses).toBe(1);
   expect(duckdb.flushes).toBe(1);
   expect(duckdb.terminations).toBe(1);
+  await expect(engine.close()).resolves.toBeUndefined();
+  await expect(engine.query("SELECT 1")).rejects.toThrow(
+    "DuckDB engine is closed",
+  );
+  expect(duckdb.connectionCloses).toBe(1);
+  expect(duckdb.flushes).toBe(1);
+  expect(duckdb.terminations).toBe(1);
 });
+
+test("retries only unfinished browser DuckDB cleanup after termination fails", async () => {
+  const terminationFailure = new Error("Injected termination failure");
+  duckdb.terminationFailures.push(terminationFailure);
+  const engine = await BrowserDuckDbEngine.open({
+    wasmUrl: "duckdb.wasm",
+    workerUrl: "duckdb.worker.js",
+    storageName: "termination-retry.duckdb",
+    fileHandle: {
+      async getFile() {
+        return new Blob();
+      },
+    },
+    walHandle: {
+      async getFile() {
+        return new Blob();
+      },
+    },
+  });
+
+  await expect(engine.close()).rejects.toBe(terminationFailure);
+  await expect(engine.query("SELECT 1")).rejects.toThrow(
+    "DuckDB engine is closed",
+  );
+  expect(duckdb.queries.filter((sql) => sql === "CHECKPOINT")).toHaveLength(1);
+  expect(duckdb.connectionCloses).toBe(1);
+  expect(duckdb.flushes).toBe(1);
+  expect(duckdb.terminations).toBe(1);
+
+  await expect(engine.close()).resolves.toBeUndefined();
+  await expect(engine.close()).resolves.toBeUndefined();
+  expect(duckdb.queries.filter((sql) => sql === "CHECKPOINT")).toHaveLength(1);
+  expect(duckdb.connectionCloses).toBe(1);
+  expect(duckdb.flushes).toBe(1);
+  expect(duckdb.terminations).toBe(2);
+});
+
+test.each([
+  { label: "success", checkpointFailure: undefined },
+  {
+    label: "checkpoint failure",
+    checkpointFailure: new Error("Injected concurrent checkpoint failure"),
+  },
+])(
+  "shares one in-flight browser DuckDB close attempt after $label",
+  async ({ checkpointFailure }) => {
+    duckdb.checkpointFailure = checkpointFailure;
+    let releaseTermination = (): void => undefined;
+    duckdb.terminationWait = new Promise<void>((resolve) => {
+      releaseTermination = resolve;
+    });
+    let observeTermination = (): void => undefined;
+    const terminationStarted = new Promise<void>((resolve) => {
+      observeTermination = resolve;
+    });
+    duckdb.terminationStarted = observeTermination;
+    const engine = await BrowserDuckDbEngine.open({
+      wasmUrl: "duckdb.wasm",
+      workerUrl: "duckdb.worker.js",
+      storageName: "concurrent-close.duckdb",
+      fileHandle: {
+        async getFile() {
+          return new Blob();
+        },
+      },
+      walHandle: {
+        async getFile() {
+          return new Blob();
+        },
+      },
+    });
+
+    const first = engine.close();
+    await terminationStarted;
+    const second = engine.close();
+    expect(duckdb.terminations).toBe(1);
+    releaseTermination();
+    const results = await Promise.allSettled([first, second]);
+    expect(results).toEqual(
+      checkpointFailure === undefined
+        ? [
+            { status: "fulfilled", value: undefined },
+            { status: "fulfilled", value: undefined },
+          ]
+        : [
+            { status: "rejected", reason: checkpointFailure },
+            { status: "rejected", reason: checkpointFailure },
+          ],
+    );
+    await expect(engine.close()).resolves.toBeUndefined();
+    expect(duckdb.connectionCloses).toBe(1);
+    expect(duckdb.flushes).toBe(1);
+    expect(duckdb.terminations).toBe(1);
+  },
+);

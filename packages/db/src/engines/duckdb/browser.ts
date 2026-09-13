@@ -88,6 +88,11 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
     (() => Promise<BrowserDuckDbSnapshotStorage>) | undefined;
   #tail: Promise<void> = Promise.resolve();
   #closed = false;
+  #closeRequested = false;
+  #closeAttempt: Promise<void> | undefined;
+  #checkpointAttempted = false;
+  #connectionClosed = false;
+  #filesFlushed = false;
 
   private constructor(
     database: AsyncDuckDB,
@@ -156,7 +161,7 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
     }
   }
 
-  async #exclusive<T>(work: () => Promise<T>): Promise<T> {
+  async #exclusive<T>(work: () => Promise<T>, allowClose = false): Promise<T> {
     const previous = this.#tail;
     let release: () => void = () => undefined;
     this.#tail = new Promise<void>((resolve) => {
@@ -164,7 +169,9 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
     });
     await previous;
     try {
-      if (this.#closed) throw new Error("DuckDB engine is closed");
+      if (this.#closed || (this.#closeRequested && !allowClose)) {
+        throw new Error("DuckDB engine is closed");
+      }
       return await work();
     } finally {
       release();
@@ -383,22 +390,48 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
   }
 
   async close(): Promise<void> {
-    await this.#exclusive(async () => {
+    if (this.#closeAttempt !== undefined) return this.#closeAttempt;
+    if (this.#closed) return;
+    this.#closeRequested = true;
+    const closeAttempt = this.#exclusive(async () => {
       const failures: unknown[] = [];
-      const attempt = async (work: () => Promise<unknown>): Promise<void> => {
+      const attempt = async (
+        work: () => Promise<unknown>,
+        completed?: (() => void) | undefined,
+      ): Promise<void> => {
         try {
           await work();
+          completed?.();
         } catch (error) {
           failures.push(error);
         }
       };
-      if (!this.#readonly) {
+      if (!this.#readonly && !this.#checkpointAttempted) {
+        this.#checkpointAttempted = true;
         await attempt(() => this.#execute("CHECKPOINT"));
       }
-      await attempt(() => this.#connection.close());
-      await attempt(() => this.#database.flushFiles());
-      await attempt(() => this.#database.terminate());
-      this.#closed = true;
+      if (!this.#connectionClosed) {
+        await attempt(
+          () => this.#connection.close(),
+          () => {
+            this.#connectionClosed = true;
+          },
+        );
+      }
+      if (!this.#filesFlushed) {
+        await attempt(
+          () => this.#database.flushFiles(),
+          () => {
+            this.#filesFlushed = true;
+          },
+        );
+      }
+      await attempt(
+        () => this.#database.terminate(),
+        () => {
+          this.#closed = true;
+        },
+      );
       if (failures.length === 1) throw failures[0];
       if (failures.length > 1) {
         throw new AggregateError(
@@ -406,6 +439,12 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
           "DuckDB failed while closing the browser database.",
         );
       }
-    });
+    }, true);
+    this.#closeAttempt = closeAttempt;
+    try {
+      await closeAttempt;
+    } finally {
+      if (this.#closeAttempt === closeAttempt) this.#closeAttempt = undefined;
+    }
   }
 }

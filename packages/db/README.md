@@ -38,11 +38,13 @@ Import composition:
 6. Close handles and release scratch files.
 
 Custom `ImportSource` readers must provide valid decimal or exponent numeric
-tokens and valid date payloads. Date `iso` values must name real calendar dates
-or UTC timestamps; textual `raw` values must agree with them. Numeric date
-serials must be finite, and their reader owns epoch conversion. The same checks
-apply to cached formula values and saved plan rows. Malformed values are
-rejected instead of being coerced to zero or stored as invalid dates.
+tokens and valid date payloads. Integer tokens accept an optional `+` or `-`
+sign; integer mappings retain signed 64-bit bounds. Date `iso` values must name
+real calendar dates or UTC timestamps; textual `raw` values must agree with
+them. Numeric date serials must be finite, and their reader owns epoch
+conversion. The same checks apply to cached formula values and saved plan rows.
+Malformed values are rejected instead of being coerced to zero or stored as
+invalid dates.
 
 Numeric date tokens are not restricted to Excel epochs. A custom reader can
 decode Unix milliseconds into `iso`, for example. Typed date mappings use that
@@ -105,6 +107,10 @@ The Node runtime refuses to replace a database or plan held open through the
 same runtime, including filesystem aliases, with `DB_NATIVE_FILE_BUSY`. Close
 those handles before replacement. Callers must also prevent other processes from
 opening or writing the destination during replacement.
+
+A failed database or prepared-plan close keeps runtime replacement protection
+active. Retry `close()` before replacing the file. Concurrent close calls share
+the pending close attempt; a later call can retry failed cleanup.
 
 Native exports check cancellation after copying and validation, and again before
 entering file publication. Cancellation before that boundary leaves the

@@ -141,6 +141,7 @@ class ManagedPreparedImport implements PreparedImport {
   readonly id: PreparedImportId;
   readonly databaseId: DatabaseId;
   #open = true;
+  #closing: Promise<void> | undefined;
 
   constructor(id: PreparedImportId, databaseId: DatabaseId) {
     this.id = id;
@@ -151,15 +152,20 @@ class ManagedPreparedImport implements PreparedImport {
     return this.#open;
   }
 
-  async close(): Promise<void> {
-    if (!this.#open) return;
-    const engine = preparedEngineOf(this);
-    try {
-      await engine.close();
-    } finally {
-      this.#open = false;
-      engines.delete(this);
-    }
+  close(): Promise<void> {
+    if (this.#closing !== undefined) return this.#closing;
+    if (!this.#open) return Promise.resolve();
+    const closing = Promise.resolve()
+      .then(() => preparedEngineOf(this).close())
+      .then(() => {
+        this.#open = false;
+        engines.delete(this);
+      })
+      .finally(() => {
+        if (this.#closing === closing) this.#closing = undefined;
+      });
+    this.#closing = closing;
+    return closing;
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
