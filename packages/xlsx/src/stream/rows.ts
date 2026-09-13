@@ -93,6 +93,7 @@ function scalarCell(
     return { kind: "shared", index: Number(raw) };
   }
   if (current.type === "b") {
+    if (!current.hasValue || raw === "") return { kind: "blank" };
     if (raw !== "0" && raw !== "1") {
       throw new Error(
         `Cell ${current.reference} has an invalid Boolean value.`,

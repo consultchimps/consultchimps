@@ -3,6 +3,7 @@ import {
   applySchema,
   createWorkbookImportSource,
   identifierKey,
+  inspectAppliedImportPlan,
   inspectDatabase,
   inspectImport,
   listDeliveries,
@@ -97,7 +98,9 @@ interface HeldImport {
   recipe: ImportRecipe;
   readonly regions: readonly RegionMetadata[];
   readonly duplicate: boolean;
-  readonly application: "applied" | "pending";
+  application:
+    | { readonly state: "pending" }
+    | { readonly state: "applied"; readonly captureIds: readonly string[] };
 }
 
 let browserRuntime: Promise<BrowserDatabaseRuntime> | null = null;
@@ -424,7 +427,7 @@ async function importDto(held: HeldImport): Promise<WorkspacePreparedImport> {
   return {
     id: held.ref.id,
     state: held.ref.state,
-    application: held.application,
+    application: held.application.state,
     duplicateOf: held.duplicate ? "existing-capture" : null,
     captureIds: held.regions.map((region) => region.captureId),
     regions,
@@ -694,7 +697,7 @@ function suggestedTable(label: string): string {
 function heldFromInspection(
   prepared: PreparedImport,
   inspection: ImportInspection,
-  application: "applied" | "pending" = "pending",
+  application: HeldImport["application"] = { state: "pending" },
 ): HeldImport {
   const recipe: ImportRecipe = {
     version: 1,
@@ -775,7 +778,22 @@ async function listSavedImports(id: number): Promise<void> {
         prepared,
         page: { limit: 1 },
       });
-      const held = heldFromInspection(prepared, inspection, entry.application);
+      let application: HeldImport["application"] = { state: "pending" };
+      if (entry.application === "applied") {
+        const applied = await inspectAppliedImportPlan({
+          database: current().database,
+          planId: inspection.prepared.id,
+          planRevision: inspection.prepared.planRevision,
+        });
+        if (applied === null) {
+          throw new Error("The applied import history is unavailable");
+        }
+        application = {
+          state: "applied",
+          captureIds: applied.bindings.map((binding) => binding.captureId),
+        };
+      }
+      const held = heldFromInspection(prepared, inspection, application);
       imports.set(held.ref.id, held);
       prepared = undefined;
     } catch {
@@ -907,7 +925,7 @@ async function prepareSources(
       recipe,
       regions,
       duplicate: firstInspection.routes.every((route) => route.reused),
-      application: "pending",
+      application: { state: "pending" },
     };
     const automatic = firstInspection.conflicts.flatMap(
       (conflict): ImportDecision[] => {
@@ -1095,6 +1113,7 @@ async function applyPreparedImport(
     signal,
     onProgress: onProgress(id),
   });
+  held.application = { state: "applied", captureIds: result.captureIds };
   await current().database.checkpoint();
   scope.postMessage({
     type: "importApplied",
@@ -1127,12 +1146,22 @@ async function recordPreparedDelivery(
     throw new Error("Resolve the import review before recording its delivery");
   }
   signal.throwIfAborted();
+  const captureIds =
+    held.application.state === "applied"
+      ? held.application.captureIds
+      : held.regions.map((region) => region.captureId);
   const record = await recordDelivery({
     database: current().database,
-    captureIds: [...new Set(held.regions.map((region) => region.captureId))],
+    captureIds: [...new Set(captureIds)],
     context: deliveryContext(command.delivery),
     requestId: command.delivery.requestId,
   });
+  if (held.application.state === "applied") {
+    held.application = {
+      state: "applied",
+      captureIds: record.delivery.captureIds,
+    };
+  }
   await current().database.checkpoint();
   scope.postMessage({
     type: "importApplied",

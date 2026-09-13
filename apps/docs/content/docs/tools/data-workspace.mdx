@@ -242,6 +242,12 @@ This avoids extracting and inserting the same captured observations again. A
 changed file is a new source capture; it is not assumed to be a full snapshot or
 a list of changes.
 
+Reusing rows in the same table requires the same effective column mapping. A
+changed mapping returns `DB_IMPORT_APPLICATION_CONFLICT` before commit, so a new
+recipe cannot silently claim that earlier observations were remapped. Choose a
+new destination table to retain another interpretation of the same captured
+source.
+
 The browser distinguishes selected workbooks that share a filename. Their roles
 and revisions remain separate source details, while matching content can still
 reuse captured rows.

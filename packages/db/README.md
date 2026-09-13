@@ -81,7 +81,10 @@ selection.
 Captured source values and generated observation IDs remain distinct from vendor
 identifiers and delivery events. Identical content can be reused while another
 delivery records a new touch point. Changed files append observations; automatic
-business-record reconciliation is outside these operations.
+business-record reconciliation is outside these operations. Reusing a capture in
+the same destination table requires the same effective column mapping. A changed
+mapping returns `DB_IMPORT_APPLICATION_CONFLICT` before commit; choose a new
+table to retain another interpretation without replacing earlier observations.
 
 `listDeliveries` returns delivery pages in allocation order. Each record lists
 the capture IDs that also appeared in an earlier delivery as `reusedCaptureIds`,

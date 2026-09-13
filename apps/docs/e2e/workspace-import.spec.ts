@@ -1,5 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { listDeliveries } from "@consultchimps/db";
+import { openDatabase as openNativeDatabase } from "@consultchimps/db/node";
+
 import { createWorkbookUpload, type UploadFile } from "./fixtures";
 
 function inventoryWorkbook(
@@ -219,7 +222,7 @@ test.describe("reviewed workbook imports", () => {
 
   test("recovers a committed import when its worker reply is lost", async ({
     page,
-  }) => {
+  }, testInfo) => {
     await installLostImportReplyWorker(page);
 
     await create(page, "sqlite");
@@ -253,6 +256,35 @@ test.describe("reviewed workbook imports", () => {
     await expect(page.getByTestId("workspace-table")).toContainText("2 rows");
     await page.getByTestId("workspace-deliveries-refresh").click();
     await expect(page.getByTestId("workspace-delivery")).toHaveCount(1);
+
+    await page.getByTestId("workspace-delivery-record-reuse").click();
+    await expect(page.getByTestId("workspace-import-result")).toContainText(
+      "Recorded a separate delivery event",
+    );
+    await expect(page.getByTestId("workspace-delivery-count")).toHaveText("2");
+    await page.getByTestId("workspace-deliveries-refresh").click();
+    await expect(page.getByTestId("workspace-delivery")).toHaveCount(2);
+    await expect(page.getByTestId("workspace-table")).toContainText("2 rows");
+
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByTestId("workspace-export-same").click();
+    const download = await downloadPromise;
+    const exportedPath = testInfo.outputPath("recovered-deliveries.sqlite");
+    await download.saveAs(exportedPath);
+    const database = await openNativeDatabase({
+      path: exportedPath,
+      readonly: true,
+    });
+    try {
+      const history = await listDeliveries({ database, limit: 10 });
+      expect(history.deliveries).toHaveLength(2);
+      expect(history.deliveries[0]?.captureIds).toHaveLength(1);
+      expect(history.deliveries[1]?.captureIds).toEqual(
+        history.deliveries[0]?.captureIds,
+      );
+    } finally {
+      await database.close();
+    }
   });
 
   test("skips a repeat capture and can record another delivery", async ({

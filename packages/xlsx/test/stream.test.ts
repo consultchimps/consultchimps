@@ -637,6 +637,79 @@ describe("bounded workbook streaming", () => {
     ]);
   });
 
+  it("treats valueless Boolean cells as blank without changing formula caches", async () => {
+    const worksheet =
+      "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+      "<row r='1'><c r='A1' t='inlineStr'><is><t>Missing</t></is></c><c r='B1' t='inlineStr'><is><t>Empty</t></is></c><c r='C1' t='inlineStr'><is><t>False</t></is></c><c r='D1' t='inlineStr'><is><t>True</t></is></c><c r='E1' t='inlineStr'><is><t>MissingCache</t></is></c><c r='F1' t='inlineStr'><is><t>BlankCache</t></is></c></row>" +
+      "<row r='2'><c r='A2' t='b'/><c r='B2' t='b'><v/></c><c r='C2' t='b'><v>0</v></c><c r='D2' t='b'><v>1</v></c><c r='E2' t='b'><f>1=1</f></c><c r='F2' t='b'><f>1=1</f><v/></c></row>" +
+      "<row r='3'><c r='A3' t='b'/></row>" +
+      "</sheetData></worksheet>";
+    const input = source(
+      await workbookFixtureWithParts({
+        "xl/worksheets/sheet1.xml": worksheet,
+      }),
+    );
+    const reader = await openWorkbookRegionStream(
+      input.source,
+      { range: "'Data & More'!A1:F3" },
+      { scratch: new MemoryScratch(), chunkBytes: 23 },
+    );
+
+    expect(await rows(reader)).toEqual([
+      {
+        sourceRow: 2,
+        cells: {
+          Missing: { kind: "blank" },
+          Empty: { kind: "blank" },
+          False: { kind: "boolean", value: false },
+          True: { kind: "boolean", value: true },
+          MissingCache: {
+            kind: "formula",
+            formula: "1=1",
+            cached: { kind: "missing" },
+          },
+          BlankCache: {
+            kind: "formula",
+            formula: "1=1",
+            cached: { kind: "blank" },
+          },
+        },
+      },
+    ]);
+  });
+
+  it.each(["2", "true", " "])(
+    "rejects a nonempty invalid Boolean value %j",
+    async (value) => {
+      const worksheet =
+        "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData>" +
+        "<row r='1'><c r='A1' t='inlineStr'><is><t>Value</t></is></c></row>" +
+        `<row r='2'><c r='A2' t='b'><v>${value}</v></c></row>` +
+        "</sheetData></worksheet>";
+      const input = source(
+        await workbookFixtureWithParts({
+          "xl/worksheets/sheet1.xml": worksheet,
+        }),
+      );
+
+      await expect(
+        (async () => {
+          const reader = await openWorkbookRegionStream(
+            input.source,
+            { range: "'Data & More'!A1:A2" },
+            { scratch: new MemoryScratch() },
+          );
+          return rows(reader);
+        })(),
+      ).rejects.toMatchObject({
+        code: "XLSX_READ_FAILED",
+        cause: expect.objectContaining({
+          message: expect.stringMatching(/invalid Boolean/iu),
+        }),
+      });
+    },
+  );
+
   it.each([
     ["empty", ""],
     ["non-integer", "1.5"],

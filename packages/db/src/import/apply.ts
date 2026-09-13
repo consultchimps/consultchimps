@@ -1,6 +1,3 @@
-import { sha256 } from "@noble/hashes/sha2.js";
-import { bytesToHex } from "@noble/hashes/utils.js";
-
 import { throwIfAborted } from "@consultchimps/core";
 
 import {
@@ -43,6 +40,10 @@ import { formatRecordId, identifierKey, type TableSchema } from "../schema.js";
 import { parseDeliveryContext } from "../validators.js";
 import { parseStoredDeliveryContext } from "../internal/stored-delivery.js";
 import { parseImportCellsJson, valueForColumn } from "./inference.js";
+import {
+  effectiveApplicationKey,
+  historicalEffectiveApplicationKey,
+} from "./application-identity.js";
 import {
   orderRoutesByReferences,
   preparedCaptures,
@@ -531,37 +532,77 @@ export async function applyImport(
         route.destination.kind === "new-table"
           ? route.destination.schema.name
           : route.destination.table;
-      const applicationKey = bytesToHex(
-        sha256(
-          new TextEncoder().encode(
-            canonicalJson([
-              captureId,
-              tableName,
-              route.destination,
-              routeColumns(route, capture),
-            ]),
-          ),
-        ),
-      );
-      const existingApplication = await transaction.query(
-        `SELECT import_id, row_count FROM ${APPLICATION_TABLE} WHERE application_key = ? OR (capture_id = ? AND table_name = ?) ORDER BY import_id LIMIT 1`,
-        [applicationKey, captureId, tableName],
-      );
-      if (existingApplication[0] !== undefined) {
-        importIds.push(
-          valueAsString(existingApplication[0]["import_id"], "import ID"),
-        );
-        rowsReused += Number(
-          valueAsBigInt(existingApplication[0]["row_count"], "row count"),
-        );
-        continue;
-      }
       const schema = await registeredSchema(transaction, tableName);
       if (schema === null) {
         throw databaseError(
           "DB_STALE_IMPORT_PLAN",
           `The destination table "${tableName}" no longer exists.`,
         );
+      }
+      const targetColumns = new Map(
+        schema.columns.map((column) => [identifierKey(column.name), column]),
+      );
+      const columns = routeColumns(route, capture).map((column) => {
+        const target = targetColumns.get(identifierKey(column.target));
+        if (target === undefined) {
+          throw databaseError(
+            "DB_STALE_IMPORT_PLAN",
+            `The destination column "${column.target}" no longer exists in table "${tableName}".`,
+            { table: tableName, column: column.target },
+          );
+        }
+        return { ...column, target: target.name };
+      });
+      const applicationKey = effectiveApplicationKey({
+        captureId,
+        tableName,
+        schema,
+        route,
+        capture,
+      });
+      const existingApplications = await transaction.query(
+        `SELECT import_id, application_key, plan_id, plan_revision, row_count FROM ${APPLICATION_TABLE} WHERE capture_id = ? AND table_name = ? ORDER BY import_id`,
+        [captureId, tableName],
+      );
+      if (existingApplications.length > 1) {
+        throw databaseError(
+          "DB_CORRUPT_DATABASE",
+          "The database has duplicate import applications for one capture and table. Restore a verified database copy before retrying.",
+          { captureId, table: tableName },
+        );
+      }
+      const existingApplication = existingApplications[0];
+      if (existingApplication !== undefined) {
+        const existingKey = await historicalEffectiveApplicationKey({
+          transaction,
+          storedKey: valueAsString(
+            existingApplication["application_key"],
+            "application key",
+          ),
+          planId: valueAsString(existingApplication["plan_id"], "plan ID"),
+          planRevision: valueAsBigInt(
+            existingApplication["plan_revision"],
+            "plan revision",
+          ),
+          captureId,
+          tableName,
+          schema,
+          capture,
+        });
+        if (existingKey !== applicationKey) {
+          throw databaseError(
+            "DB_IMPORT_APPLICATION_CONFLICT",
+            `This captured selection was already loaded into table "${tableName}" with a different column mapping. Choose another destination table to retain this interpretation.`,
+            { captureId, table: tableName },
+          );
+        }
+        importIds.push(
+          valueAsString(existingApplication["import_id"], "import ID"),
+        );
+        rowsReused += Number(
+          valueAsBigInt(existingApplication["row_count"], "row count"),
+        );
+        continue;
       }
       const importId = await allocate(transaction, "import", "IMP");
       const sourceFileRows = await transaction.query(
@@ -579,10 +620,6 @@ export async function applyImport(
       let nextRecord = valueAsPositiveBigInt(
         recordRows[0]?.["next_record_id"],
         "Record ID counter",
-      );
-      const columns = routeColumns(route, capture);
-      const targetColumns = new Map(
-        schema.columns.map((column) => [identifierKey(column.name), column]),
       );
       const importedRowRows = await transaction.query(
         `SELECT next_value FROM ${COUNTERS_TABLE} WHERE counter_name = ?`,
