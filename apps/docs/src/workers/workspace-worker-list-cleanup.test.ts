@@ -1,28 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  candidateClose: vi.fn(async () => undefined),
+  checkpointDatabaseWrite: vi.fn(),
   databaseClose: vi.fn(async () => undefined),
   firstClose: vi.fn<() => Promise<void>>(),
   inspectAppliedImportBatch: vi.fn(async () => null),
+  inspectDatabase: vi.fn(),
   inspectImport: vi.fn(),
   listImportBatches: vi.fn(),
+  openDatabase: vi.fn(),
   openImportBatch: vi.fn(),
+  recordBatch: vi.fn(),
   secondClose: vi.fn<() => Promise<void>>(),
 }));
 
 vi.mock("@consultchimps/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@consultchimps/db")>()),
+  checkpointDatabaseWrite: mocks.checkpointDatabaseWrite,
   inspectAppliedImportBatch: mocks.inspectAppliedImportBatch,
-  inspectDatabase: vi.fn(async () => ({
-    completedImports: 0n,
-    recordedBatches: 0n,
-    format: "sqlite",
-    formatVersion: 1,
-    id: "database-1",
-    revision: 0n,
-    tables: [],
-  })),
+  inspectDatabase: mocks.inspectDatabase,
   inspectImport: mocks.inspectImport,
+  recordBatch: mocks.recordBatch,
 }));
 
 vi.mock("@consultchimps/db/browser", () => ({
@@ -35,6 +34,7 @@ vi.mock("@consultchimps/db/browser", () => ({
       },
     })),
     listImportBatches: mocks.listImportBatches,
+    openDatabase: mocks.openDatabase,
     openImportBatch: mocks.openImportBatch,
   })),
 }));
@@ -90,6 +90,18 @@ function inspection(planId: string) {
   };
 }
 
+function databaseInspection() {
+  return {
+    completedImports: 0n,
+    recordedBatches: 0n,
+    format: "sqlite",
+    formatVersion: 1,
+    id: "database-1",
+    revision: 0n,
+    tables: [],
+  };
+}
+
 async function workerHarness() {
   let receive!: (event: MessageEvent<Record<string, unknown>>) => void;
   const waiters = new Map<number, (message: WorkerMessage) => void>();
@@ -122,17 +134,171 @@ describe("workspace worker saved-plan cleanup", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    mocks.candidateClose.mockReset().mockResolvedValue(undefined);
+    mocks.checkpointDatabaseWrite.mockReset().mockResolvedValue({
+      checkpoint: { state: "checkpoint-completed" },
+    });
+    mocks.databaseClose.mockReset().mockResolvedValue(undefined);
     mocks.firstClose
+      .mockReset()
       .mockRejectedValueOnce(new Error("Injected first plan close failure"))
       .mockResolvedValue(undefined);
+    mocks.inspectAppliedImportBatch.mockReset().mockResolvedValue(null);
+    mocks.inspectDatabase.mockReset().mockResolvedValue(databaseInspection());
+    mocks.inspectImport.mockReset();
+    mocks.listImportBatches.mockReset();
+    mocks.openDatabase.mockReset();
+    mocks.recordBatch.mockReset();
     mocks.secondClose
+      .mockReset()
       .mockRejectedValueOnce(new Error("Injected second plan close failure"))
       .mockResolvedValue(undefined);
-    mocks.openImportBatch.mockImplementation(async ({ name }) =>
-      name === "first.ccplan"
-        ? { id: "first-plan", close: mocks.firstClose }
-        : { id: "second-plan", close: mocks.secondClose },
+    mocks.openImportBatch
+      .mockReset()
+      .mockImplementation(async ({ name }) =>
+        name === "first.ccplan"
+          ? { id: "first-plan", close: mocks.firstClose }
+          : { id: "second-plan", close: mocks.secondClose },
+      );
+  });
+
+  it("closes a reopened candidate and retains the previous workspace when cancelled", async () => {
+    let finishOpen!: (value: object) => void;
+    mocks.openDatabase.mockReturnValue(
+      new Promise((resolve) => {
+        finishOpen = resolve;
+      }),
     );
+    const { request } = await workerHarness();
+    await request({
+      id: 1,
+      type: "create",
+      name: "current.sqlite",
+      format: "sqlite",
+    });
+
+    const reopening = request({ id: 2, type: "reopen", name: "next.sqlite" });
+    await expect(
+      request({ id: 3, type: "cancel", targetId: 2 }),
+    ).resolves.toMatchObject({ type: "closed" });
+    finishOpen({
+      close: mocks.candidateClose,
+      format: "sqlite",
+      id: "database-2",
+    });
+
+    await expect(reopening).resolves.toMatchObject({
+      type: "error",
+      code: "OPERATION_ABORTED",
+    });
+    expect(mocks.candidateClose).toHaveBeenCalledOnce();
+    expect(mocks.databaseClose).not.toHaveBeenCalled();
+    await request({ id: 4, type: "close" });
+    expect(mocks.databaseClose).toHaveBeenCalledOnce();
+  });
+
+  it("closes a reopened candidate when cancellation arrives during its summary", async () => {
+    let finishSummary!: (value: ReturnType<typeof databaseInspection>) => void;
+    mocks.openDatabase.mockResolvedValue({
+      close: mocks.candidateClose,
+      format: "sqlite",
+      id: "database-2",
+    });
+    mocks.inspectDatabase
+      .mockResolvedValueOnce(databaseInspection())
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishSummary = resolve;
+        }),
+      );
+    const { request } = await workerHarness();
+    await request({
+      id: 1,
+      type: "create",
+      name: "current.sqlite",
+      format: "sqlite",
+    });
+
+    const reopening = request({ id: 2, type: "reopen", name: "next.sqlite" });
+    await vi.waitFor(() =>
+      expect(mocks.inspectDatabase).toHaveBeenCalledTimes(2),
+    );
+    await request({ id: 3, type: "cancel", targetId: 2 });
+    finishSummary(databaseInspection());
+
+    await expect(reopening).resolves.toMatchObject({
+      type: "error",
+      code: "OPERATION_ABORTED",
+    });
+    expect(mocks.candidateClose).toHaveBeenCalledOnce();
+    expect(mocks.databaseClose).not.toHaveBeenCalled();
+  });
+
+  it("checks cancellation after inspection before recording a batch", async () => {
+    mocks.firstClose.mockReset().mockResolvedValue(undefined);
+    mocks.listImportBatches.mockResolvedValue({
+      imports: [
+        {
+          name: "first.ccplan",
+          databaseId: "database-1",
+          application: "applied",
+        },
+      ],
+      ignored: [],
+    });
+    mocks.openImportBatch.mockResolvedValue({
+      id: "first-plan",
+      close: mocks.firstClose,
+    });
+    let finishInspection!: (value: ReturnType<typeof inspection>) => void;
+    mocks.inspectImport
+      .mockResolvedValueOnce(inspection("first-plan"))
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishInspection = resolve;
+        }),
+      );
+    mocks.recordBatch.mockResolvedValue({
+      operation: "db.import.record",
+      databaseWrite: "committed",
+      batch: { id: "batch-1", captureIds: [] },
+      metrics: { batchesRecorded: 1 },
+    });
+    const { request } = await workerHarness();
+    await request({
+      id: 1,
+      type: "create",
+      name: "current.sqlite",
+      format: "sqlite",
+    });
+    await request({ id: 2, type: "listImports" });
+
+    const recording = request({
+      id: 3,
+      type: "recordDelivery",
+      planId: "first-plan",
+      reviewFingerprint: "fingerprint-first-plan",
+      delivery: {
+        requestId: "request-1",
+        vendor: "Vendor",
+        entity: "Entity",
+        phase: "Phase",
+        coverage: "full",
+        effectiveDate: null,
+        receivedDate: null,
+        note: "",
+      },
+    });
+    await expect(
+      request({ id: 4, type: "cancel", targetId: 3 }),
+    ).resolves.toMatchObject({ type: "closed" });
+    finishInspection(inspection("first-plan"));
+
+    await expect(recording).resolves.toMatchObject({
+      type: "error",
+      code: "OPERATION_ABORTED",
+    });
+    expect(mocks.recordBatch).not.toHaveBeenCalled();
   });
 
   it("withholds a successful listing and retries every retained plan close", async () => {

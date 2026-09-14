@@ -237,12 +237,18 @@ async function retryImportPreparationCleanup(): Promise<void> {
 
 async function replaceWorkspace(
   next: OpenWorkspace,
+  signal: AbortSignal,
 ): Promise<WorkspaceSummary> {
   const previous = workspace;
   return replaceActiveWorkspace({
     previous,
     next,
-    prepare: summaryOf,
+    async prepare(open) {
+      signal.throwIfAborted();
+      const summary = await summaryOf(open);
+      signal.throwIfAborted();
+      return summary;
+    },
     closeDependencies: closeImports,
     close: (open) => open.database.close(),
     activate() {
@@ -611,7 +617,7 @@ async function handleCreate(
     database: created.database,
     workingCopyName: command.name,
   };
-  const summary = await replaceWorkspace(next);
+  const summary = await replaceWorkspace(next, signal);
   scope.postMessage({ type: "ready", id, summary });
 }
 
@@ -636,14 +642,16 @@ async function handleOpen(
     onProgress: onProgress(id),
   });
   const next = { database, workingCopyName: name };
-  const summary = await replaceWorkspace(next);
+  const summary = await replaceWorkspace(next, signal);
   scope.postMessage({ type: "ready", id, summary });
 }
 
 async function handleReopen(
   id: number,
   command: Extract<WorkspaceCommand, { readonly type: "reopen" }>,
+  signal: AbortSignal,
 ): Promise<void> {
+  signal.throwIfAborted();
   const database = await (
     await runtime()
   ).openDatabase({
@@ -651,7 +659,7 @@ async function handleReopen(
     ...(command.readonly === undefined ? {} : { readonly: command.readonly }),
   });
   const next = { database, workingCopyName: command.name };
-  const summary = await replaceWorkspace(next);
+  const summary = await replaceWorkspace(next, signal);
   scope.postMessage({ type: "ready", id, summary });
 }
 
@@ -1165,6 +1173,7 @@ async function recordPreparedDelivery(
     inspection.application.state === "applied"
       ? inspection.application.captureIds
       : inspection.captureIds;
+  signal.throwIfAborted();
   const record = await recordBatch({
     database: current().database,
     captureIds: [...new Set(captureIds)],
@@ -1317,7 +1326,7 @@ async function handle(id: number, command: WorkspaceCommand): Promise<void> {
         await handleOpen(id, command, controller.signal);
         return;
       case "reopen":
-        await handleReopen(id, command);
+        await handleReopen(id, command, controller.signal);
         return;
       case "planSchema":
       case "applySchema":

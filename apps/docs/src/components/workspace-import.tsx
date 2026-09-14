@@ -166,6 +166,7 @@ async function executePendingImport<T>(
         "DB_INVALID_DELIVERY_CONTEXT",
         "DB_DELIVERY_REQUEST_ID_REQUIRED",
         "DB_IMPORT_REQUEST_ID_REQUIRED",
+        "DB_STALE_IMPORT_PLAN",
       ].includes(error.code)
     ) {
       clearPendingImport(request.databaseId, request.planId);

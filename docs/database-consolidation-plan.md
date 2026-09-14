@@ -2,8 +2,8 @@
 
 Status: slices 1 through 4 implemented and locally verified. The operation is
 import, the saved unit of work is a batch, and reusable settings are a profile.
-`pnpm check` passed with 1,665 tests and coverage thresholds; the production
-browser suite passed 118 tests. Independent standards and specification reviews
+`pnpm check` passed with 1,668 tests and coverage thresholds; the production
+browser suite passed 119 tests. Independent standards and specification reviews
 reported no actionable findings. Pull request CI and Codex review remain the
 external gates. Legacy identity removal is deferred until retained-file
 compatibility is known.

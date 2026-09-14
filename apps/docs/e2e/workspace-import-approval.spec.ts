@@ -36,10 +36,18 @@ async function installDelayedResolveWorker(page: Page): Promise<void> {
         message: unknown,
         options?: StructuredSerializeOptions | Transferable[],
       ): void {
+        const forwarded =
+          typeof message === "object" &&
+          message !== null &&
+          "type" in message &&
+          message.type === "applyImport" &&
+          window.localStorage.getItem("force-stale-batch-review") === "yes"
+            ? { ...message, reviewFingerprint: "stale-review-fingerprint" }
+            : message;
         if (Array.isArray(options)) {
-          this.worker.postMessage(message, options);
+          this.worker.postMessage(forwarded, options);
         } else {
-          this.worker.postMessage(message, options);
+          this.worker.postMessage(forwarded, options);
         }
       }
 
@@ -146,4 +154,50 @@ test("requires a new review after route edits before applying", async ({
   await expect(page.getByTestId("workspace-table")).toContainText(
     "Renamed (text)",
   );
+});
+
+test("clears a terminal stale batch request so the review can be updated", async ({
+  page,
+}) => {
+  await installDelayedResolveWorker(page);
+  await prepareReadyImport(page);
+  await page.evaluate(() => {
+    window.localStorage.setItem("force-stale-batch-review", "yes");
+  });
+
+  await page.getByTestId("workspace-import-apply").click();
+  await expect(page.getByTestId("workspace-error")).toContainText(
+    "saved batch review changed",
+  );
+  await expect(page.getByTestId("workspace-import-table")).toBeEnabled();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        JSON.parse(
+          window.localStorage.getItem(
+            "consultchimps.workspace.pending-imports.v1",
+          ) ?? "[]",
+        ),
+      ),
+    )
+    .toEqual([]);
+
+  await page.evaluate(() => {
+    window.localStorage.removeItem("force-stale-batch-review");
+  });
+  await page.getByTestId("workspace-import-table").fill("RecoveredRecords");
+  await page.getByTestId("workspace-import-resolve").click();
+  await expect(page.getByTestId("workspace-import-resolve")).toBeDisabled();
+  await expect(page.getByTestId("workspace-import-resolve")).toBeEnabled();
+  await page.getByTestId("workspace-delivery-vendor").fill("Vendor A");
+  await page.getByTestId("workspace-delivery-entity").fill("Entity North");
+  await page.getByTestId("workspace-delivery-phase").fill("Iteration 1");
+  await page.getByTestId("workspace-import-apply").click();
+  await expect(page.getByTestId("workspace-import-result")).toContainText(
+    "Added 1 row",
+  );
+  await expect(page.getByTestId("workspace-table")).toContainText(
+    "RecoveredRecords",
+  );
+  await expect(page.getByTestId("workspace-table")).toContainText("1 row");
 });

@@ -486,7 +486,10 @@ Opening the damaged batch does not delete it.
 The browser saves an import request before applying it. If the database commits
 but the worker response is lost, reopen the database and choose **Finish
 recovery**. The workspace replays the same request ID and returns its saved
-receipt instead of adding the rows or batch again.
+receipt instead of adding the rows or batch again. If that request returns
+`DB_STALE_IMPORT_PLAN`, the tool clears the pending request and unlocks the
+review controls. Load the current saved review, update its mapping if needed,
+and review it again before applying.
 
 The CLI works directly with the named database file. Use one writer at a time,
 close a database in other applications before modifying it, and retain the
