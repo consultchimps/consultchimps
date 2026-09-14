@@ -119,3 +119,7 @@ Report committed batch updates when preparation checkpointing fails. Distinguish
 caller-owned batches from private staging discarded before publication. Preserve
 DuckDB appender operation and cleanup failures together, and retry only the
 remaining native resources after a partially failed database close.
+
+Preserve the original workbook initialization error when lazy opening fails.
+Closing a source with no acquired stream no longer creates a false cleanup
+failure or blocks later preparations.

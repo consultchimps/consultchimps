@@ -14,6 +14,7 @@ import {
 } from "@consultchimps/xlsx/stream";
 
 import type { ImportSelectionSource, ImportSource } from "./import/types.js";
+import { RetryableClose } from "./internal/retryable-close.js";
 
 const WORKBOOK_READER_VERSION = "consultchimps-xlsx-stream-2";
 
@@ -115,7 +116,14 @@ export async function createWorkbookImportSource(
           )
           .map((sheet) => ({ sheet: sheet.name, headerRow }));
   let session: Promise<WorkbookStream> | undefined;
+  let acquiredSession: WorkbookStream | undefined;
   let closed = false;
+  const lifecycle = new RetryableClose(async () => {
+    if (session !== undefined && acquiredSession === undefined) {
+      await session.catch(() => undefined);
+    }
+    if (acquiredSession !== undefined) await acquiredSession.close();
+  });
   const sources: ImportSelectionSource[] = selections.map(
     (selection, index) => ({
       key: options.selectionKeys?.[index] ?? JSON.stringify(selection),
@@ -131,8 +139,24 @@ export async function createWorkbookImportSource(
           scratch: options.scratch,
           signal: controls.signal,
           onProgress: controls.onProgress,
+        }).then((opened) => {
+          acquiredSession = opened;
+          return opened;
         });
-        const reader = await (await session).openRegion(selection);
+        const opened = await session;
+        if (closed)
+          throw new ConsultChimpsError(
+            "DB_SOURCE_CLOSED",
+            "The workbook source is closed. Select it again before preparing another import.",
+          );
+        const reader = await opened.openRegion(selection);
+        if (closed) {
+          await reader.close();
+          throw new ConsultChimpsError(
+            "DB_SOURCE_CLOSED",
+            "The workbook source is closed. Select it again before preparing another import.",
+          );
+        }
         return {
           columns: reader.region.columns.map((column) => column.name),
           batches: (batchOptions) => reader.batches(batchOptions),
@@ -152,7 +176,7 @@ export async function createWorkbookImportSource(
     },
     async close() {
       closed = true;
-      if (session) await (await session).close();
+      await lifecycle.close();
     },
   };
 }
