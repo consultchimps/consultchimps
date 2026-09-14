@@ -268,6 +268,12 @@ name, not an OPFS filename.
 The former in-memory spike API and analytics grid have been retired. Browser
 storage is an OPFS working copy; it does not synchronize to a selected OS file.
 
+If a DuckDB write-ahead log remains without its main database file,
+`DB_BROWSER_INCOMPLETE_STORAGE` blocks opening or publishing at that name,
+including replacement with `overwrite: true`. The retained log is left
+unchanged. Recover the missing database file or choose another name before
+retrying. A main database file without a write-ahead log remains supported.
+
 Browser database create and import operations, and prepared-plan creation,
 validate a temporary candidate before replacing an existing working copy. A
 replacement can temporarily require space for the existing working copy, the

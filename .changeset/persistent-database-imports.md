@@ -95,3 +95,7 @@ before publishing database or prepared-plan outputs.
 
 Reject unsupported XML document roots instead of reporting an empty workbook.
 Verify delivery capture memberships before returning an import retry receipt.
+
+Reject worksheet aliases and require supported OOXML relationship role URIs.
+Preserve orphaned browser DuckDB recovery files by refusing publication over
+incomplete storage.

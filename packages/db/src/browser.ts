@@ -707,11 +707,28 @@ export async function configureBrowserDatabaseRuntime(
   };
 
   const storageState = async (name: string): Promise<BrowserStorageState> => {
+    const [duckdb, duckdbWal] = await Promise.all([
+      fileExists(duckDirectory, name),
+      fileExists(duckDirectory, `${name}.wal`),
+    ]);
+    if (!duckdb && duckdbWal) {
+      throw databaseError(
+        "DB_BROWSER_INCOMPLETE_STORAGE",
+        "Browser storage contains a DuckDB WAL file without its main database. Recover or remove the retained WAL file before retrying. Replacement is refused to preserve the recovery data.",
+        {
+          name,
+          format: "duckdb",
+          missing: [name],
+          retained: [`${name}.wal`],
+          duckdbDirectory: duckDirectoryName,
+        },
+      );
+    }
     const sqliteStored = pool.getFileNames().includes(sqliteName(name));
     return {
       sqlite: sqliteStored,
       ...(sqliteStored ? { sqliteKind: await sqliteStorageKind(name) } : {}),
-      duckdb: await fileExists(duckDirectory, name),
+      duckdb,
     };
   };
 

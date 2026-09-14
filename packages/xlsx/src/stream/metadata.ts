@@ -30,6 +30,28 @@ interface Relationship {
   readonly external: boolean;
 }
 
+type ReaderRelationshipRole =
+  | "officeDocument"
+  | "worksheet"
+  | "chartsheet"
+  | "table"
+  | "sharedStrings"
+  | "styles";
+
+const OFFICE_DOCUMENT_RELATIONSHIP_NAMESPACES = [
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+  "http://purl.oclc.org/ooxml/officeDocument/relationships",
+] as const;
+
+function hasRelationshipRole(
+  relationship: Relationship,
+  role: ReaderRelationshipRole,
+): boolean {
+  return OFFICE_DOCUMENT_RELATIONSHIP_NAMESPACES.some(
+    (namespace) => relationship.type === `${namespace}/${role}`,
+  );
+}
+
 export interface LoadedSheet extends StreamSheet {
   readonly part: string;
 }
@@ -274,16 +296,16 @@ function parseTable(xml: string, sheet: string): StreamTable {
   };
 }
 
-function relationshipBySuffix(
+function relationshipByRole(
   relationships: readonly Relationship[],
-  suffix: string,
+  role: ReaderRelationshipRole,
 ): Relationship | undefined {
   let match: Relationship | undefined;
   for (const relationship of relationships) {
-    if (!relationship.type.endsWith(suffix)) continue;
+    if (!hasRelationshipRole(relationship, role)) continue;
     if (match !== undefined) {
       throw new Error(
-        `Relationship role "${suffix.slice(1)}" is declared more than once.`,
+        `Relationship role "${role}" is declared more than once.`,
       );
     }
     match = relationship;
@@ -307,9 +329,9 @@ export async function loadWorkbookMetadata(
           options.signal,
         ),
       );
-      const officeDocument = relationshipBySuffix(
+      const officeDocument = relationshipByRole(
         packageRelationships,
-        "/officeDocument",
+        "officeDocument",
       );
       if (officeDocument) workbookPart = internalTarget("", officeDocument);
     }
@@ -336,6 +358,7 @@ export async function loadWorkbookMetadata(
       relationships.map((relationship) => [relationship.id, relationship]),
     );
     const sheets: LoadedSheet[] = [];
+    const worksheetParts = new Set<string>();
     const worksheetIndexByWorkbookIndex = new Map<number, number>();
     for (const [workbookIndex, sheet] of workbook.sheets.entries()) {
       const relationship = relationshipMap.get(sheet.relationshipId);
@@ -344,20 +367,26 @@ export async function loadWorkbookMetadata(
           `Workbook sheet "${sheet.name}" references missing relationship "${sheet.relationshipId}".`,
         );
       }
-      const isWorksheet = relationship.type.endsWith("/worksheet");
-      const isChartSheet = relationship.type.endsWith("/chartsheet");
+      const isWorksheet = hasRelationshipRole(relationship, "worksheet");
+      const isChartSheet = hasRelationshipRole(relationship, "chartsheet");
       if (!isWorksheet && !isChartSheet) {
         throw new Error(
           `Workbook sheet "${sheet.name}" has unsupported relationship type "${relationship.type}".`,
         );
       }
       const part = internalTarget(workbookPart, relationship);
+      if (isWorksheet && worksheetParts.has(part)) {
+        throw new Error(
+          `Worksheet part "${part}" is referenced by more than one workbook sheet.`,
+        );
+      }
       if (!archive.entries.has(part)) {
         throw new Error(
           `${isWorksheet ? "Worksheet" : "Chart sheet"} "${sheet.name}" is missing part "${part}".`,
         );
       }
       if (isChartSheet) continue;
+      worksheetParts.add(part);
       worksheetIndexByWorkbookIndex.set(workbookIndex, sheets.length);
       sheets.push({ name: sheet.name, visibility: sheet.visibility, part });
     }
@@ -387,7 +416,7 @@ export async function loadWorkbookMetadata(
       );
       if (
         !sheetRelationships.some((relationship) =>
-          relationship.type.endsWith("/table"),
+          hasRelationshipRole(relationship, "table"),
         )
       ) {
         continue;
@@ -416,7 +445,7 @@ export async function loadWorkbookMetadata(
             `Worksheet "${sheet.name}" references missing table relationship "${id}".`,
           );
         }
-        if (!relationship.type.endsWith("/table")) {
+        if (!hasRelationshipRole(relationship, "table")) {
           throw new Error(
             `Worksheet "${sheet.name}" relationship "${id}" does not point to an Excel Table.`,
           );
@@ -436,11 +465,11 @@ export async function loadWorkbookMetadata(
         );
       }
     }
-    const sharedStringsRelationship = relationshipBySuffix(
+    const sharedStringsRelationship = relationshipByRole(
       relationships,
-      "/sharedStrings",
+      "sharedStrings",
     );
-    const stylesRelationship = relationshipBySuffix(relationships, "/styles");
+    const stylesRelationship = relationshipByRole(relationships, "styles");
     const partEntry = (
       relationship: Relationship | undefined,
     ): FileEntry | undefined => {

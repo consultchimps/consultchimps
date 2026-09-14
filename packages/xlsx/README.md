@@ -13,6 +13,9 @@ The reader uses namespace-aware paths for worksheet values, shared strings,
 styles, workbook declarations, and table references. Foreign extension elements
 do not become spreadsheet data merely because they use the same element names.
 Unsupported document roots and namespaces return `XLSX_READ_FAILED`.
+Relationship roles must use supported Transitional or Strict OOXML URIs.
+Workbook sheets that reference the same worksheet part are rejected before
+selection, so aliases cannot import the same physical rows twice.
 
 Repeated workbook-property declarations are rejected with `XLSX_READ_FAILED`,
 including declarations with matching values, so a later declaration cannot

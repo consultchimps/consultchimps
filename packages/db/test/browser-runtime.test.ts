@@ -543,7 +543,70 @@ async function createRuntime(): Promise<BrowserDatabaseRuntime> {
   return configureBrowserDatabaseRuntime(runtimeOptions);
 }
 
+async function seedDuckDbWal(
+  name: string,
+  bytes: Uint8Array,
+): Promise<MemoryDirectoryHandle> {
+  const directory = await harness.directory("consultchimps", "databases");
+  const wal = await directory.getFileHandle(`${name}.wal`, { create: true });
+  wal.replace(bytes);
+  return directory;
+}
+
 describe("browser database runtime", () => {
+  test("preserves an orphaned DuckDB WAL across create and import attempts", async () => {
+    const runtime = await createRuntime();
+    const walBytes = new Uint8Array([11, 22, 33, 44, 55]);
+    const sqliteBytes = new Uint8Array(64);
+    sqliteBytes.set(SQLITE_HEADER);
+    const sources = [
+      new MemoryFile("source.sqlite", sqliteBytes),
+      new MemoryFile("source.duckdb", new Uint8Array([1, 2, 3, 4])),
+    ];
+    const attempts: Array<{
+      readonly label: string;
+      readonly run: (name: string) => Promise<unknown>;
+    }> = [];
+    for (const overwrite of [false, true]) {
+      for (const format of ["sqlite", "duckdb"] as const) {
+        attempts.push({
+          label: `create ${format} overwrite ${overwrite}`,
+          run: (name) => runtime.createDatabase({ name, format, overwrite }),
+        });
+      }
+      for (const source of sources) {
+        attempts.push({
+          label: `import ${source.name} overwrite ${overwrite}`,
+          run: (name) => runtime.importDatabase({ name, source, overwrite }),
+        });
+      }
+    }
+
+    for (const [index, attempt] of attempts.entries()) {
+      const name = `orphan-${index}.duckdb`;
+      const directory = await seedDuckDbWal(name, walBytes);
+
+      await expect(attempt.run(name), attempt.label).rejects.toMatchObject({
+        code: "DB_BROWSER_INCOMPLETE_STORAGE",
+        details: {
+          name,
+          format: "duckdb",
+          missing: [name],
+          retained: [`${name}.wal`],
+          duckdbDirectory: "consultchimps/databases",
+        },
+      });
+
+      expect(directory.files.has(name), attempt.label).toBe(false);
+      const retained = await directory.getFileHandle(`${name}.wal`);
+      expect(
+        new Uint8Array(await (await retained.getFile()).arrayBuffer()),
+        attempt.label,
+      ).toEqual(walBytes);
+      expect(harness.databases.has(`/${name}`), attempt.label).toBe(false);
+    }
+  });
+
   test("publishes SQLite contents, reopens them, and isolates normalized names", async () => {
     const runtime = await createRuntime();
     const created = await runtime.createDatabase({
