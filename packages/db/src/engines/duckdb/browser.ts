@@ -6,7 +6,7 @@ import {
   type AsyncDuckDBConnection,
 } from "@duckdb/duckdb-wasm/dist/duckdb-browser";
 
-import { throwIfAborted } from "@consultchimps/core";
+import { throwIfAborted, type ConsultChimpsError } from "@consultchimps/core";
 import type { RandomAccessFile } from "@consultchimps/core";
 
 import { copyBrowserFileToDestination } from "../../browser-file-copy.js";
@@ -20,6 +20,7 @@ import type {
   EngineTransaction,
   EngineValue,
 } from "../../internal/engine.js";
+import { rollbackAfterFailure } from "../../internal/transaction-cleanup.js";
 import { quoteIdentifier } from "../../schema.js";
 
 function normalizeValue(value: unknown): EngineValue {
@@ -115,6 +116,7 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
   #checkpointAttempted = false;
   #connectionClosed = false;
   #filesFlushed = false;
+  #transactionFailure: ConsultChimpsError | undefined;
 
   private constructor(
     database: AsyncDuckDB,
@@ -200,10 +202,25 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
       if (this.#closed || (this.#closeRequested && !allowClose)) {
         throw new Error("DuckDB engine is closed");
       }
+      if (this.#transactionFailure !== undefined && !allowClose) {
+        throw this.#transactionFailure;
+      }
       return await work();
     } finally {
       release();
     }
+  }
+
+  async #rollbackAfterFailure(cause: unknown): Promise<never> {
+    const outcome = await rollbackAfterFailure({
+      cause,
+      format: this.format,
+      rollback: () => this.#execute("ROLLBACK"),
+    });
+    if (outcome.state === "unresolved") {
+      this.#transactionFailure = outcome.error;
+    }
+    throw outcome.error;
   }
 
   async #run(
@@ -303,8 +320,7 @@ export class BrowserDuckDbEngine implements DatabaseEngine {
         await this.#execute("COMMIT");
         return result;
       } catch (error) {
-        await this.#execute("ROLLBACK");
-        throw error;
+        return this.#rollbackAfterFailure(error);
       }
     });
   }

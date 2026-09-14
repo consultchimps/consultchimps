@@ -1,6 +1,6 @@
 import BetterSqlite3 from "better-sqlite3";
 
-import { throwIfAborted } from "@consultchimps/core";
+import { throwIfAborted, type ConsultChimpsError } from "@consultchimps/core";
 
 import { databaseError } from "../../errors.js";
 import type {
@@ -10,6 +10,7 @@ import type {
   EngineValue,
 } from "../../internal/engine.js";
 import { quoteIdentifier } from "../../schema.js";
+import { rollbackAfterFailure } from "../../internal/transaction-cleanup.js";
 
 function sqliteValue(
   value: EngineValue,
@@ -44,6 +45,7 @@ export class NodeSqliteEngine implements DatabaseEngine {
   readonly #database: BetterSqlite3.Database;
   #tail: Promise<void> = Promise.resolve();
   #closed = false;
+  #transactionFailure: ConsultChimpsError | undefined;
 
   private constructor(database: BetterSqlite3.Database, readonly: boolean) {
     this.#database = database;
@@ -80,7 +82,10 @@ export class NodeSqliteEngine implements DatabaseEngine {
     );
   }
 
-  async #exclusive<T>(work: () => Promise<T>): Promise<T> {
+  async #exclusive<T>(
+    work: () => Promise<T>,
+    allowRecovery = false,
+  ): Promise<T> {
     const previous = this.#tail;
     let release: () => void = () => undefined;
     this.#tail = new Promise<void>((resolve) => {
@@ -89,6 +94,9 @@ export class NodeSqliteEngine implements DatabaseEngine {
     await previous;
     try {
       if (this.#closed) throw new Error("SQLite engine is closed");
+      if (this.#transactionFailure !== undefined && !allowRecovery) {
+        throw this.#transactionFailure;
+      }
       return await work();
     } finally {
       release();
@@ -162,8 +170,16 @@ export class NodeSqliteEngine implements DatabaseEngine {
         this.#database.exec("COMMIT");
         return result;
       } catch (error) {
-        if (this.#database.inTransaction) this.#database.exec("ROLLBACK");
-        throw error;
+        const rollback = await rollbackAfterFailure({
+          cause: error,
+          format: this.format,
+          rollback: () => {
+            if (this.#database.inTransaction) this.#database.exec("ROLLBACK");
+          },
+        });
+        if (rollback.state === "unresolved")
+          this.#transactionFailure = rollback.error;
+        throw rollback.error;
       }
     });
   }
@@ -183,8 +199,16 @@ export class NodeSqliteEngine implements DatabaseEngine {
         this.#database.exec("COMMIT");
         return result;
       } catch (error) {
-        if (this.#database.inTransaction) this.#database.exec("ROLLBACK");
-        throw error;
+        const rollback = await rollbackAfterFailure({
+          cause: error,
+          format: this.format,
+          rollback: () => {
+            if (this.#database.inTransaction) this.#database.exec("ROLLBACK");
+          },
+        });
+        if (rollback.state === "unresolved")
+          this.#transactionFailure = rollback.error;
+        throw rollback.error;
       }
     });
   }
@@ -219,6 +243,6 @@ export class NodeSqliteEngine implements DatabaseEngine {
     await this.#exclusive(async () => {
       this.#database.close();
       this.#closed = true;
-    });
+    }, true);
   }
 }

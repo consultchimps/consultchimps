@@ -214,6 +214,104 @@ test("DuckDB close does not repeat a successful connection close", async () => {
   expect(fakes.duckInstanceClose).toHaveBeenCalledTimes(2);
 });
 
+test("DuckDB preserves work and rollback failures and quarantines the engine", async () => {
+  const workFailure = new Error("transaction work failed");
+  const rollbackFailure = new Error("rollback failed");
+  fakes.duckRun.mockImplementation(async (sql: string) => {
+    if (sql === "ROLLBACK") throw rollbackFailure;
+  });
+  const engine = await NodeDuckDbEngine.create("source.duckdb");
+  const failure = await engine
+    .transaction(async () => {
+      throw workFailure;
+    })
+    .catch((error: unknown) => error);
+
+  expect(failure).toMatchObject({
+    code: "DB_TRANSACTION_ROLLBACK_FAILED",
+    details: {
+      format: "duckdb",
+      rollbackFailed: true,
+      transactionState: "unknown",
+    },
+  });
+  expect(((failure as Error).cause as AggregateError).errors).toEqual([
+    workFailure,
+    rollbackFailure,
+  ]);
+  await expect(engine.execute("SELECT 1")).rejects.toBe(failure);
+
+  const closeFailure = new Error("connection close failed");
+  fakes.duckConnectionClose.mockImplementationOnce(() => {
+    throw closeFailure;
+  });
+  await expect(engine.close()).rejects.toMatchObject({
+    code: "DB_DUCKDB_CLOSE_CLEANUP_FAILED",
+  });
+  await expect(engine.close()).resolves.toBeUndefined();
+});
+
+test("DuckDB preserves commit and rollback failures", async () => {
+  const commitFailure = new Error("commit failed");
+  const rollbackFailure = new Error("rollback failed");
+  fakes.duckRun.mockImplementation(async (sql: string) => {
+    if (sql === "COMMIT") throw commitFailure;
+    if (sql === "ROLLBACK") throw rollbackFailure;
+  });
+  const engine = await NodeDuckDbEngine.create("source.duckdb");
+  try {
+    const failure = await engine
+      .transaction(async () => "result")
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: "DB_TRANSACTION_ROLLBACK_FAILED" });
+    expect(((failure as Error).cause as AggregateError).errors).toEqual([
+      commitFailure,
+      rollbackFailure,
+    ]);
+  } finally {
+    await engine.close();
+  }
+});
+
+test("DuckDB preserves the original work error after a successful rollback", async () => {
+  const workFailure = new Error("transaction work failed");
+  fakes.duckRun.mockResolvedValue(undefined);
+  const engine = await NodeDuckDbEngine.create("source.duckdb");
+  try {
+    await expect(
+      engine.transaction(async () => {
+        throw workFailure;
+      }),
+    ).rejects.toBe(workFailure);
+    await expect(engine.execute("SELECT 1")).resolves.toBeUndefined();
+  } finally {
+    await engine.close();
+  }
+});
+
+test("DuckDB does not roll back or quarantine when beginning fails", async () => {
+  const beginFailure = new Error("begin failed");
+  let failBegin = true;
+  fakes.duckRun.mockImplementation(async (sql: string) => {
+    if (sql === "BEGIN TRANSACTION" && failBegin) {
+      failBegin = false;
+      throw beginFailure;
+    }
+  });
+  const engine = await NodeDuckDbEngine.create("source.duckdb");
+  try {
+    await expect(engine.transaction(async () => undefined)).rejects.toBe(
+      beginFailure,
+    );
+    expect(
+      fakes.duckRun.mock.calls.filter(([sql]) => sql === "ROLLBACK"),
+    ).toHaveLength(0);
+    await expect(engine.execute("SELECT 1")).resolves.toBeUndefined();
+  } finally {
+    await engine.close();
+  }
+});
+
 test("SQLite backup stops from its progress boundary", async () => {
   const controller = new AbortController();
   fakes.sqliteBackup.mockImplementation(

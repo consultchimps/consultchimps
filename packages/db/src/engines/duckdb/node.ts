@@ -15,6 +15,7 @@ import type {
   EngineValue,
 } from "../../internal/engine.js";
 import { databaseError } from "../../errors.js";
+import { rollbackAfterFailure } from "../../internal/transaction-cleanup.js";
 import { quoteIdentifier } from "../../schema.js";
 
 const APPENDER_FLUSH_ROWS = 2_048;
@@ -153,6 +154,7 @@ export class NodeDuckDbEngine implements DatabaseEngine {
   #closeStarted = false;
   #connectionClosed = false;
   #instanceClosed = false;
+  #transactionFailure: ConsultChimpsError | undefined;
 
   private constructor(
     instance: DuckDBInstance,
@@ -215,6 +217,9 @@ export class NodeDuckDbEngine implements DatabaseEngine {
     try {
       if ((this.#closed || this.#closeStarted) && !allowCloseRetry) {
         throw new Error("DuckDB engine is closed");
+      }
+      if (this.#transactionFailure !== undefined && !allowCloseRetry) {
+        throw this.#transactionFailure;
       }
       return await work();
     } finally {
@@ -384,8 +389,15 @@ export class NodeDuckDbEngine implements DatabaseEngine {
         await this.#execute("COMMIT");
         return result;
       } catch (error) {
-        await this.#execute("ROLLBACK");
-        throw error;
+        const rollback = await rollbackAfterFailure({
+          cause: error,
+          rollback: () => this.#execute("ROLLBACK"),
+          format: this.format,
+        });
+        if (rollback.state === "unresolved") {
+          this.#transactionFailure = rollback.error;
+        }
+        throw rollback.error;
       }
     });
   }

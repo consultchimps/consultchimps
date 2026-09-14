@@ -13,6 +13,42 @@ function createEngine(): BrowserSqliteEngine {
   return new BrowserSqliteEngine(sqlite, new sqlite.oo1.DB(":memory:"));
 }
 
+function createControlledEngine(options: {
+  readonly failStatements: ReadonlyMap<string, readonly unknown[]>;
+  readonly statements: string[];
+}): BrowserSqliteEngine {
+  const database = new sqlite.oo1.DB(":memory:");
+  const failures = new Map(
+    [...options.failStatements].map(([sql, values]) => [sql, [...values]]),
+  );
+  const exec = database.exec.bind(database);
+  Object.defineProperty(database, "exec", {
+    value(argument: unknown) {
+      const sql =
+        typeof argument === "string"
+          ? argument
+          : typeof argument === "object" &&
+              argument !== null &&
+              "sql" in argument &&
+              typeof argument.sql === "string"
+            ? argument.sql
+            : undefined;
+      if (sql !== undefined) {
+        options.statements.push(sql);
+        const statementFailures = failures.get(sql);
+        if (statementFailures !== undefined && statementFailures.length > 0) {
+          throw statementFailures.shift();
+        }
+      }
+      if (typeof argument === "string") return exec(argument);
+      if (sql === "SELECT 1") return [{ "1": 1 }];
+      if (sql !== undefined) return [];
+      throw new Error("Unexpected SQLite exec argument");
+    },
+  });
+  return new BrowserSqliteEngine(sqlite, database);
+}
+
 function createStoredEngine(owner: object, name: string): BrowserSqliteEngine {
   return new BrowserSqliteEngine(sqlite, new sqlite.oo1.DB(":memory:"), false, {
     owner,
@@ -58,6 +94,7 @@ describe("browser SQLite engine", () => {
 
   test("rolls back a failed transaction", async () => {
     const engine = createEngine();
+    const failure = new Error("stop");
     try {
       await engine.execute("CREATE TABLE events (value TEXT NOT NULL)");
       await expect(
@@ -65,15 +102,98 @@ describe("browser SQLite engine", () => {
           await transaction.execute("INSERT INTO events (value) VALUES (?)", [
             "temporary",
           ]);
-          throw new Error("stop");
+          throw failure;
         }),
-      ).rejects.toThrow("stop");
+      ).rejects.toBe(failure);
       expect(
         await engine.query("SELECT count(*) AS count FROM events"),
       ).toEqual([{ count: 0 }]);
     } finally {
       await engine.close();
     }
+  });
+
+  test.each([
+    {
+      label: "transaction work",
+      begin: "BEGIN IMMEDIATE",
+      execute: async (engine: BrowserSqliteEngine, failure: Error) =>
+        engine.transaction(async () => {
+          throw failure;
+        }),
+    },
+    {
+      label: "transaction commit",
+      begin: "BEGIN IMMEDIATE",
+      execute: async (engine: BrowserSqliteEngine) =>
+        engine.transaction(async () => 1),
+    },
+    {
+      label: "read transaction work",
+      begin: "BEGIN",
+      execute: async (engine: BrowserSqliteEngine, failure: Error) =>
+        engine.readTransaction(async () => {
+          throw failure;
+        }),
+    },
+    {
+      label: "snapshot commit",
+      begin: "BEGIN",
+      execute: async (engine: BrowserSqliteEngine) =>
+        engine.copySnapshot(async () => 1),
+    },
+  ])(
+    "quarantines SQLite after failed rollback following $label failure",
+    async ({ label, begin, execute }) => {
+      const primaryFailure = new Error(`Injected ${label} failure`);
+      const rollbackFailure = new Error("Injected rollback failure");
+      const statements: string[] = [];
+      const failStatements = new Map<string, readonly unknown[]>([
+        ["ROLLBACK", [rollbackFailure]],
+      ]);
+      if (label.endsWith("commit")) {
+        failStatements.set("COMMIT", [primaryFailure]);
+      }
+      const engine = createControlledEngine({ failStatements, statements });
+
+      let failure: unknown;
+      try {
+        await execute(engine, primaryFailure);
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(statements).toContain(begin);
+      expect(failure).toMatchObject({
+        code: "DB_TRANSACTION_ROLLBACK_FAILED",
+        details: {
+          format: "sqlite",
+          rollbackFailed: true,
+          transactionState: "unknown",
+        },
+      });
+      expect(((failure as Error).cause as AggregateError).errors).toEqual([
+        primaryFailure,
+        rollbackFailure,
+      ]);
+      await expect(engine.query("SELECT 2")).rejects.toBe(failure);
+      await expect(engine.close()).resolves.toBeUndefined();
+    },
+  );
+
+  test("does not roll back or quarantine SQLite when beginning fails", async () => {
+    const beginFailure = new Error("Injected begin failure");
+    const statements: string[] = [];
+    const engine = createControlledEngine({
+      failStatements: new Map([["BEGIN IMMEDIATE", [beginFailure]]]),
+      statements,
+    });
+
+    await expect(engine.transaction(async () => 1)).rejects.toBe(beginFailure);
+    await expect(engine.query("SELECT 1")).resolves.toEqual([{ "1": 1 }]);
+    await engine.close();
+
+    expect(statements).not.toContain("ROLLBACK");
   });
 
   test("yields to cancellation and rolls back a bounded batch", async () => {

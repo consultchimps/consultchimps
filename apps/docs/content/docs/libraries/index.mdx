@@ -320,6 +320,11 @@ each alias and its per-route row count. `targetRevision` is the working database
 revision observed during inspection. When `application.state` is `"applied"`,
 its `captureIds` identify the captures in that applied batch.
 
+If rollback fails after a transaction error, `DB_TRANSACTION_ROLLBACK_FAILED`
+retains both causes and marks the transaction state as unknown. The handle
+blocks further operations while leaving close available. Close and reopen the
+database, then inspect its state before retrying.
+
 Schema application, import application, and batch recording results include
 `databaseWrite: "unchanged" | "committed"`. A successful write can commit only
 metadata, such as a zero-row receipt. To request persistence confirmation, call

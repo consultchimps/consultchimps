@@ -129,6 +129,12 @@ checkpoint and returns the original `result` plus either
 It does not retry the transaction. Call it for an unchanged replay too, because
 an earlier invocation may have committed before its checkpoint failed.
 
+If a transaction operation or commit fails and rollback also fails,
+`DB_TRANSACTION_ROLLBACK_FAILED` retains both causes and marks the transaction
+state as unknown. That handle rejects further operations until it is closed.
+Close and reopen the database, then inspect its state before retrying. A
+successful rollback preserves the original operation error.
+
 Preparation metrics count input sources, not worksheet selections. `sourcesRead`
 counts sources with a newly captured selection; `sourcesReused` counts sources
 with a reused capture. A source with both kinds contributes once to each count.

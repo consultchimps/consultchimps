@@ -6,6 +6,7 @@ const duckdb = vi.hoisted(() => ({
   openPath: "",
   registrations: [] as string[],
   checkpointFailure: undefined as Error | undefined,
+  queryFailures: new Map<string, unknown[]>(),
   connectFailure: undefined as Error | undefined,
   terminationFailures: [] as Error[],
   terminationStarted: undefined as (() => void) | undefined,
@@ -45,6 +46,10 @@ vi.mock("@duckdb/duckdb-wasm/dist/duckdb-browser", () => ({
       return {
         async query(sql: string) {
           duckdb.queries.push(sql);
+          const failures = duckdb.queryFailures.get(sql);
+          if (failures !== undefined && failures.length > 0) {
+            throw failures.shift();
+          }
           if (sql === "CHECKPOINT" && duckdb.checkpointFailure !== undefined) {
             throw duckdb.checkpointFailure;
           }
@@ -118,6 +123,7 @@ beforeEach(() => {
   duckdb.openPath = "";
   duckdb.registrations.length = 0;
   duckdb.checkpointFailure = undefined;
+  duckdb.queryFailures.clear();
   duckdb.connectFailure = undefined;
   duckdb.terminationFailures.length = 0;
   duckdb.terminationStarted = undefined;
@@ -131,6 +137,108 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+async function createEngine(
+  storageName = "transaction.duckdb",
+): Promise<BrowserDuckDbEngine> {
+  return BrowserDuckDbEngine.open({
+    wasmUrl: "duckdb.wasm",
+    workerUrl: "duckdb.worker.js",
+    storageName,
+    fileHandle: {
+      async getFile() {
+        return new Blob();
+      },
+    },
+    walHandle: {
+      async getFile() {
+        return new Blob();
+      },
+    },
+  });
+}
+
+test("preserves the original DuckDB transaction failure after rollback", async () => {
+  const engine = await createEngine();
+  const workFailure = new Error("Injected transaction failure");
+
+  await expect(
+    engine.transaction(async () => {
+      throw workFailure;
+    }),
+  ).rejects.toBe(workFailure);
+  await expect(engine.query("SELECT 1")).resolves.toEqual([]);
+  await engine.close();
+
+  expect(duckdb.queries).toContain("ROLLBACK");
+});
+
+test.each([
+  {
+    label: "transaction work",
+    execute: async (engine: BrowserDuckDbEngine, failure: Error) =>
+      engine.transaction(async () => {
+        throw failure;
+      }),
+  },
+  {
+    label: "transaction commit",
+    execute: async (engine: BrowserDuckDbEngine) =>
+      engine.transaction(async () => 1),
+  },
+  {
+    label: "read transaction work",
+    execute: async (engine: BrowserDuckDbEngine, failure: Error) =>
+      engine.readTransaction(async () => {
+        throw failure;
+      }),
+  },
+])(
+  "quarantines DuckDB after failed rollback following $label failure",
+  async ({ label, execute }) => {
+    const engine = await createEngine(`${label.replaceAll(" ", "-")}.duckdb`);
+    const primaryFailure = new Error(`Injected ${label} failure`);
+    const rollbackFailure = new Error("Injected rollback failure");
+    if (label === "transaction commit") {
+      duckdb.queryFailures.set("COMMIT", [primaryFailure]);
+    }
+    duckdb.queryFailures.set("ROLLBACK", [rollbackFailure]);
+
+    let failure: unknown;
+    try {
+      await execute(engine, primaryFailure);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      code: "DB_TRANSACTION_ROLLBACK_FAILED",
+      details: {
+        format: "duckdb",
+        rollbackFailed: true,
+        transactionState: "unknown",
+      },
+    });
+    expect(((failure as Error).cause as AggregateError).errors).toEqual([
+      primaryFailure,
+      rollbackFailure,
+    ]);
+    await expect(engine.query("SELECT 2")).rejects.toBe(failure);
+    await expect(engine.close()).resolves.toBeUndefined();
+  },
+);
+
+test("does not roll back or quarantine DuckDB when beginning fails", async () => {
+  const engine = await createEngine("begin-failure.duckdb");
+  const beginFailure = new Error("Injected begin failure");
+  duckdb.queryFailures.set("BEGIN TRANSACTION", [beginFailure]);
+
+  await expect(engine.transaction(async () => 1)).rejects.toBe(beginFailure);
+  await expect(engine.query("SELECT 1")).resolves.toEqual([]);
+  await engine.close();
+
+  expect(duckdb.queries).not.toContain("ROLLBACK");
 });
 
 test("retains retryable ownership when a failed open cannot terminate", async () => {

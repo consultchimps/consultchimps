@@ -123,3 +123,8 @@ remaining native resources after a partially failed database close.
 Preserve the original workbook initialization error when lazy opening fails.
 Closing a source with no acquired stream no longer creates a false cleanup
 failure or blocks later preparations.
+
+Preserve transaction and rollback failures together in SQLite and DuckDB, across
+native and browser runtimes. Block further operations on an unresolved
+connection while leaving cleanup available, and retain the original error when
+rollback succeeds.

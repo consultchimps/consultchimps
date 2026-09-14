@@ -5,7 +5,7 @@ import type {
   Sqlite3Static,
 } from "@sqlite.org/sqlite-wasm";
 
-import { throwIfAborted } from "@consultchimps/core";
+import { throwIfAborted, type ConsultChimpsError } from "@consultchimps/core";
 
 import type {
   DatabaseEngine,
@@ -13,6 +13,7 @@ import type {
   EngineTransaction,
   EngineValue,
 } from "../../internal/engine.js";
+import { rollbackAfterFailure } from "../../internal/transaction-cleanup.js";
 import { quoteIdentifier } from "../../schema.js";
 import {
   acquireBrowserSqliteOperationLease,
@@ -41,6 +42,7 @@ export class BrowserSqliteEngine implements DatabaseEngine {
   readonly #sharedOperations?: BrowserSqliteOperationLease | undefined;
   #tail: Promise<void> = Promise.resolve();
   #closed = false;
+  #transactionFailure: ConsultChimpsError | undefined;
 
   constructor(
     sqlite: Sqlite3Static,
@@ -59,7 +61,10 @@ export class BrowserSqliteEngine implements DatabaseEngine {
         : acquireBrowserSqliteOperationLease(storage);
   }
 
-  async #exclusive<T>(work: () => Promise<T>): Promise<T> {
+  async #exclusive<T>(
+    work: () => Promise<T>,
+    allowCleanup = false,
+  ): Promise<T> {
     const previous = this.#tail;
     let release: () => void = () => undefined;
     this.#tail = new Promise<void>((resolve) => {
@@ -68,12 +73,35 @@ export class BrowserSqliteEngine implements DatabaseEngine {
     await previous;
     try {
       if (this.#closed) throw new Error("SQLite engine is closed");
+      if (this.#transactionFailure !== undefined && !allowCleanup) {
+        throw this.#transactionFailure;
+      }
       return this.#sharedOperations === undefined
         ? await work()
         : await this.#sharedOperations.run(work);
     } finally {
       release();
     }
+  }
+
+  async #rollbackAfterFailure(cause: unknown): Promise<never> {
+    const outcome = await rollbackAfterFailure({
+      cause,
+      format: this.format,
+      rollback: () => {
+        const pointer = this.#database.pointer;
+        if (pointer === undefined) {
+          throw new Error("SQLite database closed before transaction rollback");
+        }
+        if (this.#sqlite.capi.sqlite3_get_autocommit(pointer) === 0) {
+          this.#database.exec("ROLLBACK");
+        }
+      },
+    });
+    if (outcome.state === "unresolved") {
+      this.#transactionFailure = outcome.error;
+    }
+    throw outcome.error;
   }
 
   #execute(sql: string, values: readonly EngineValue[] = []): void {
@@ -163,8 +191,7 @@ export class BrowserSqliteEngine implements DatabaseEngine {
         this.#database.exec("COMMIT");
         return result;
       } catch (error) {
-        this.#database.exec("ROLLBACK");
-        throw error;
+        return this.#rollbackAfterFailure(error);
       }
     });
   }
@@ -184,8 +211,7 @@ export class BrowserSqliteEngine implements DatabaseEngine {
         this.#database.exec("COMMIT");
         return result;
       } catch (error) {
-        this.#database.exec("ROLLBACK");
-        throw error;
+        return this.#rollbackAfterFailure(error);
       }
     });
   }
@@ -206,8 +232,7 @@ export class BrowserSqliteEngine implements DatabaseEngine {
         this.#database.exec("COMMIT");
         return result;
       } catch (error) {
-        this.#database.exec("ROLLBACK");
-        throw error;
+        return this.#rollbackAfterFailure(error);
       }
     });
   }
@@ -221,7 +246,7 @@ export class BrowserSqliteEngine implements DatabaseEngine {
     await this.#exclusive(async () => {
       this.#database.close();
       this.#closed = true;
-    });
+    }, true);
     this.#sharedOperations?.release();
   }
 }
