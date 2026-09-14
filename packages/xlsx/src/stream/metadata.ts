@@ -1,0 +1,508 @@
+import type { RandomAccessSource } from "@consultchimps/core";
+import type { FileEntry } from "@zip.js/zip.js";
+
+import { parseLocalRectangle, resolvePart } from "./xml.js";
+import {
+  createElementParser,
+  PACKAGE_RELATIONSHIP_NAMESPACES,
+  relationshipAttribute,
+  unqualifiedAttribute,
+} from "./xml-elements.js";
+import { activeTableRelationshipIds } from "./table-parts.js";
+import type {
+  StreamNamedRange,
+  StreamSheet,
+  StreamTable,
+  WorkbookStreamInspection,
+  WorkbookStreamOptions,
+} from "./types.js";
+import {
+  openZipPackage,
+  readMetadataText,
+  workbookFailure,
+  type ZipPackage,
+} from "./zip.js";
+
+interface Relationship {
+  readonly id: string;
+  readonly type: string;
+  readonly target: string;
+  readonly external: boolean;
+}
+
+type ReaderRelationshipRole =
+  | "officeDocument"
+  | "worksheet"
+  | "chartsheet"
+  | "table"
+  | "sharedStrings"
+  | "styles";
+
+const OFFICE_DOCUMENT_RELATIONSHIP_NAMESPACES = [
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+  "http://purl.oclc.org/ooxml/officeDocument/relationships",
+] as const;
+
+function hasRelationshipRole(
+  relationship: Relationship,
+  role: ReaderRelationshipRole,
+): boolean {
+  return OFFICE_DOCUMENT_RELATIONSHIP_NAMESPACES.some(
+    (namespace) => relationship.type === `${namespace}/${role}`,
+  );
+}
+
+export interface LoadedSheet extends StreamSheet {
+  readonly part: string;
+}
+
+export interface WorkbookMetadata {
+  readonly source: RandomAccessSource;
+  readonly archive: ZipPackage;
+  readonly sheets: readonly LoadedSheet[];
+  readonly inspection: WorkbookStreamInspection;
+  readonly sharedStringsEntry: FileEntry | undefined;
+  readonly stylesEntry: FileEntry | undefined;
+  readonly date1904: boolean;
+}
+
+function relationshipPart(ownerPart: string): string {
+  const slash = ownerPart.lastIndexOf("/");
+  const directory = slash < 0 ? "" : ownerPart.slice(0, slash + 1);
+  const filename = ownerPart.slice(slash + 1);
+  return `${directory}_rels/${filename}.rels`;
+}
+
+function parseRelationships(xml: string): readonly Relationship[] {
+  const relationships: Relationship[] = [];
+  const relationshipIds = new Set<string>();
+  const parser = createElementParser({
+    root: "Relationships",
+    namespaces: PACKAGE_RELATIONSHIP_NAMESPACES,
+    open(tag, path) {
+      if (!path.is("Relationships", "Relationship")) return;
+      const id = unqualifiedAttribute(tag, "Id");
+      const type = unqualifiedAttribute(tag, "Type");
+      const target = unqualifiedAttribute(tag, "Target");
+      if (!id || !type || !target) {
+        throw new Error(
+          "A workbook relationship is missing Id, Type, or Target.",
+        );
+      }
+      if (relationshipIds.has(id)) {
+        throw new Error(`Relationship ID "${id}" is declared more than once.`);
+      }
+      relationshipIds.add(id);
+      const targetMode = unqualifiedAttribute(tag, "TargetMode");
+      if (
+        targetMode !== undefined &&
+        targetMode !== "Internal" &&
+        targetMode !== "External"
+      ) {
+        throw new Error(
+          `Relationship "${id}" has an invalid TargetMode value.`,
+        );
+      }
+      relationships.push({
+        id,
+        type,
+        target,
+        external: targetMode === "External",
+      });
+    },
+  });
+  parser.write(xml);
+  parser.close();
+  return relationships;
+}
+
+function internalTarget(ownerPart: string, relationship: Relationship): string {
+  if (relationship.external) {
+    throw new Error(
+      `Relationship "${relationship.id}" uses an external target, which workbook streaming does not read.`,
+    );
+  }
+  return resolvePart(ownerPart, relationship.target);
+}
+
+interface WorkbookDocument {
+  readonly sheets: readonly {
+    readonly name: string;
+    readonly relationshipId: string;
+    readonly visibility: StreamSheet["visibility"];
+  }[];
+  readonly namedRanges: readonly StreamNamedRange[];
+  readonly date1904: boolean;
+}
+
+function parseWorkbook(xml: string): WorkbookDocument {
+  const sheets: {
+    name: string;
+    relationshipId: string;
+    visibility: StreamSheet["visibility"];
+  }[] = [];
+  const namedRanges: StreamNamedRange[] = [];
+  let workbookPropertiesSeen = false;
+  let date1904 = false;
+  let activeDefinedName:
+    | {
+        readonly name: string;
+        readonly localSheetId?: number | undefined;
+      }
+    | undefined;
+  let definedNameText = "";
+
+  const parser = createElementParser({
+    root: "workbook",
+    open(tag, path) {
+      if (path.is("workbook", "workbookPr")) {
+        if (workbookPropertiesSeen) {
+          throw new Error("Workbook workbookPr is declared more than once.");
+        }
+        workbookPropertiesSeen = true;
+        const raw = unqualifiedAttribute(tag, "date1904");
+        if (raw === undefined || raw === "0" || raw === "false") {
+          date1904 = false;
+        } else if (raw === "1" || raw === "true") {
+          date1904 = true;
+        } else {
+          throw new Error("Workbook date1904 has an invalid Boolean value.");
+        }
+      } else if (path.is("workbook", "sheets", "sheet")) {
+        const sheetName = unqualifiedAttribute(tag, "name");
+        const id = relationshipAttribute(tag, path);
+        if (!sheetName || !id) {
+          throw new Error(
+            "A worksheet is missing its name or relationship ID.",
+          );
+        }
+        const state = unqualifiedAttribute(tag, "state");
+        if (
+          state !== undefined &&
+          state !== "visible" &&
+          state !== "hidden" &&
+          state !== "veryHidden"
+        ) {
+          throw new Error(
+            `Worksheet "${sheetName}" has an invalid visibility state.`,
+          );
+        }
+        sheets.push({
+          name: sheetName,
+          relationshipId: id,
+          visibility: state ?? "visible",
+        });
+      } else if (path.is("workbook", "definedNames", "definedName")) {
+        const rangeName = unqualifiedAttribute(tag, "name");
+        if (!rangeName)
+          throw new Error("A defined name has no name attribute.");
+        const local = unqualifiedAttribute(tag, "localSheetId");
+        const localSheetId = local === undefined ? undefined : Number(local);
+        if (
+          localSheetId !== undefined &&
+          (!Number.isSafeInteger(localSheetId) || localSheetId < 0)
+        ) {
+          throw new Error(
+            `Defined name "${rangeName}" has an invalid sheet ID.`,
+          );
+        }
+        activeDefinedName = {
+          name: rangeName,
+          ...(localSheetId === undefined ? {} : { localSheetId }),
+        };
+        definedNameText = "";
+      }
+    },
+    text(text, path) {
+      if (
+        activeDefinedName &&
+        path.is("workbook", "definedNames", "definedName")
+      ) {
+        definedNameText += text;
+      }
+    },
+    close(_tag, path) {
+      if (
+        activeDefinedName &&
+        path.is("workbook", "definedNames", "definedName")
+      ) {
+        namedRanges.push({
+          name: activeDefinedName.name,
+          ...(activeDefinedName.localSheetId === undefined
+            ? {}
+            : { localSheetId: activeDefinedName.localSheetId }),
+          reference: definedNameText.trim(),
+        });
+        activeDefinedName = undefined;
+      }
+    },
+  });
+  parser.write(xml);
+  parser.close();
+  return { sheets, namedRanges, date1904 };
+}
+
+function parseTable(xml: string, sheet: string): StreamTable {
+  let tableTag: Parameters<typeof unqualifiedAttribute>[0] | undefined;
+  const columns: string[] = [];
+  const parser = createElementParser({
+    root: "table",
+    open(tag, path) {
+      if (path.is("table") && tableTag === undefined) tableTag = tag;
+      if (path.is("table", "tableColumns", "tableColumn")) {
+        const columnName = unqualifiedAttribute(tag, "name");
+        if (columnName === undefined) {
+          throw new Error("An Excel Table column has no name.");
+        }
+        columns.push(columnName);
+      }
+    },
+  });
+  parser.write(xml);
+  parser.close();
+  if (!tableTag) throw new Error("An Excel Table part has no table element.");
+  const name =
+    unqualifiedAttribute(tableTag, "name") ??
+    unqualifiedAttribute(tableTag, "displayName");
+  const reference = unqualifiedAttribute(tableTag, "ref");
+  const rectangle = reference ? parseLocalRectangle(reference) : undefined;
+  const headerRowCount = Number(
+    unqualifiedAttribute(tableTag, "headerRowCount") ?? "1",
+  );
+  const totalsRowCount = Number(
+    unqualifiedAttribute(tableTag, "totalsRowCount") ?? "0",
+  );
+  if (
+    !name ||
+    !reference ||
+    !rectangle ||
+    headerRowCount !== 1 ||
+    !Number.isSafeInteger(totalsRowCount) ||
+    totalsRowCount < 0 ||
+    totalsRowCount > 1 ||
+    columns.length !== rectangle.endColumn - rectangle.startColumn + 1
+  ) {
+    throw new Error(
+      `Excel Table "${name ?? "(unnamed)"}" does not have one header row and one declared column per worksheet column.`,
+    );
+  }
+  return {
+    name,
+    sheet,
+    reference,
+    headerRow: rectangle.firstRow,
+    totalsRow: totalsRowCount === 1,
+    columns,
+  };
+}
+
+function relationshipByRole(
+  relationships: readonly Relationship[],
+  role: ReaderRelationshipRole,
+): Relationship | undefined {
+  let match: Relationship | undefined;
+  for (const relationship of relationships) {
+    if (!hasRelationshipRole(relationship, role)) continue;
+    if (match !== undefined) {
+      throw new Error(
+        `Relationship role "${role}" is declared more than once.`,
+      );
+    }
+    match = relationship;
+  }
+  return match;
+}
+
+export async function loadWorkbookMetadata(
+  source: RandomAccessSource,
+  options: WorkbookStreamOptions,
+): Promise<WorkbookMetadata> {
+  const archive = await openZipPackage(source, options);
+  try {
+    let workbookPart = "xl/workbook.xml";
+    const packageRelationshipsEntry = archive.entries.get("_rels/.rels");
+    if (packageRelationshipsEntry) {
+      const packageRelationships = parseRelationships(
+        await readMetadataText(
+          packageRelationshipsEntry,
+          archive.limits,
+          options.signal,
+        ),
+      );
+      const officeDocument = relationshipByRole(
+        packageRelationships,
+        "officeDocument",
+      );
+      if (officeDocument) workbookPart = internalTarget("", officeDocument);
+    }
+    const workbookEntry = archive.entries.get(workbookPart);
+    const workbookRelationshipsEntry = archive.entries.get(
+      relationshipPart(workbookPart),
+    );
+    if (!workbookEntry || !workbookRelationshipsEntry) {
+      throw new Error(
+        "The ZIP package does not contain workbook.xml and its relationships.",
+      );
+    }
+    const [workbookXml, relationshipXml] = await Promise.all([
+      readMetadataText(workbookEntry, archive.limits, options.signal),
+      readMetadataText(
+        workbookRelationshipsEntry,
+        archive.limits,
+        options.signal,
+      ),
+    ]);
+    const workbook = parseWorkbook(workbookXml);
+    const relationships = parseRelationships(relationshipXml);
+    const relationshipMap = new Map(
+      relationships.map((relationship) => [relationship.id, relationship]),
+    );
+    const sheets: LoadedSheet[] = [];
+    const worksheetParts = new Set<string>();
+    const worksheetIndexByWorkbookIndex = new Map<number, number>();
+    for (const [workbookIndex, sheet] of workbook.sheets.entries()) {
+      const relationship = relationshipMap.get(sheet.relationshipId);
+      if (!relationship) {
+        throw new Error(
+          `Workbook sheet "${sheet.name}" references missing relationship "${sheet.relationshipId}".`,
+        );
+      }
+      const isWorksheet = hasRelationshipRole(relationship, "worksheet");
+      const isChartSheet = hasRelationshipRole(relationship, "chartsheet");
+      if (!isWorksheet && !isChartSheet) {
+        throw new Error(
+          `Workbook sheet "${sheet.name}" has unsupported relationship type "${relationship.type}".`,
+        );
+      }
+      const part = internalTarget(workbookPart, relationship);
+      if (isWorksheet && worksheetParts.has(part)) {
+        throw new Error(
+          `Worksheet part "${part}" is referenced by more than one workbook sheet.`,
+        );
+      }
+      if (!archive.entries.has(part)) {
+        throw new Error(
+          `${isWorksheet ? "Worksheet" : "Chart sheet"} "${sheet.name}" is missing part "${part}".`,
+        );
+      }
+      if (isChartSheet) continue;
+      worksheetParts.add(part);
+      worksheetIndexByWorkbookIndex.set(workbookIndex, sheets.length);
+      sheets.push({ name: sheet.name, visibility: sheet.visibility, part });
+    }
+    const namedRanges = workbook.namedRanges.flatMap((range) => {
+      if (range.localSheetId === undefined) return [range];
+      if (workbook.sheets[range.localSheetId] === undefined) return [range];
+      const worksheetIndex = worksheetIndexByWorkbookIndex.get(
+        range.localSheetId,
+      );
+      return worksheetIndex === undefined
+        ? []
+        : [{ ...range, localSheetId: worksheetIndex }];
+    });
+
+    const tables: StreamTable[] = [];
+    for (const sheet of sheets) {
+      const relationshipsEntry = archive.entries.get(
+        relationshipPart(sheet.part),
+      );
+      if (!relationshipsEntry) continue;
+      const sheetRelationships = parseRelationships(
+        await readMetadataText(
+          relationshipsEntry,
+          archive.limits,
+          options.signal,
+        ),
+      );
+      if (
+        !sheetRelationships.some((relationship) =>
+          hasRelationshipRole(relationship, "table"),
+        )
+      ) {
+        continue;
+      }
+      const sheetEntry = archive.entries.get(sheet.part);
+      if (!sheetEntry) {
+        throw new Error(
+          `Worksheet "${sheet.name}" is missing its worksheet part.`,
+        );
+      }
+      const relationshipsById = new Map(
+        sheetRelationships.map((relationship) => [
+          relationship.id,
+          relationship,
+        ]),
+      );
+      const activeIds = await activeTableRelationshipIds(
+        sheetEntry,
+        new Set(relationshipsById.keys()),
+        options,
+      );
+      for (const id of activeIds) {
+        const relationship = relationshipsById.get(id);
+        if (relationship === undefined) {
+          throw new Error(
+            `Worksheet "${sheet.name}" references missing table relationship "${id}".`,
+          );
+        }
+        if (!hasRelationshipRole(relationship, "table")) {
+          throw new Error(
+            `Worksheet "${sheet.name}" relationship "${id}" does not point to an Excel Table.`,
+          );
+        }
+        const tablePart = internalTarget(sheet.part, relationship);
+        const tableEntry = archive.entries.get(tablePart);
+        if (!tableEntry) {
+          throw new Error(
+            `Worksheet "${sheet.name}" points to missing table part "${tablePart}".`,
+          );
+        }
+        tables.push(
+          parseTable(
+            await readMetadataText(tableEntry, archive.limits, options.signal),
+            sheet.name,
+          ),
+        );
+      }
+    }
+    const sharedStringsRelationship = relationshipByRole(
+      relationships,
+      "sharedStrings",
+    );
+    const stylesRelationship = relationshipByRole(relationships, "styles");
+    const partEntry = (
+      relationship: Relationship | undefined,
+    ): FileEntry | undefined => {
+      if (relationship === undefined) return undefined;
+      const part = internalTarget(workbookPart, relationship);
+      const entry = archive.entries.get(part);
+      if (entry === undefined) {
+        throw new Error(
+          `Relationship "${relationship.id}" points to missing part "${part}".`,
+        );
+      }
+      return entry;
+    };
+    return {
+      source,
+      archive,
+      sheets,
+      inspection: {
+        sheets: sheets.map(({ name, visibility }) => ({ name, visibility })),
+        tables,
+        namedRanges,
+      },
+      sharedStringsEntry: partEntry(sharedStringsRelationship),
+      stylesEntry: partEntry(stylesRelationship),
+      date1904: workbook.date1904,
+    };
+  } catch (cause) {
+    let cleanupFailure: { readonly cause: unknown } | undefined;
+    try {
+      await archive.reader.close();
+    } catch (cleanupCause) {
+      cleanupFailure = { cause: cleanupCause };
+    }
+    throw workbookFailure(source, cause, options.signal, cleanupFailure);
+  }
+}

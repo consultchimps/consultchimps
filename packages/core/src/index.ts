@@ -1,4 +1,5 @@
 export { safeNameFragment, truncateToUtf8Bytes } from "./names.js";
+export type { RandomAccessFile, RandomAccessSource } from "./bytes.js";
 
 export type ArtifactKind = "file" | "directory";
 
@@ -139,3 +140,8 @@ export function isConsultChimpsError(
 ): error is ConsultChimpsError {
   return error instanceof ConsultChimpsError;
 }
+export {
+  OwnedResources,
+  type CloseableResource,
+  type ResourceCloseFailure,
+} from "./resource-close.js";

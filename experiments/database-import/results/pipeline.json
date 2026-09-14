@@ -1,0 +1,480 @@
+{
+  "environment": {
+    "node": "v24.18.0",
+    "duckdbNodeApi": "1.5.5-r.4"
+  },
+  "results": [
+    {
+      "rowCount": 100000,
+      "sourceBytes": 2125972,
+      "preparedBytes": 32141312,
+      "targetBytes": 17313792,
+      "inspectMilliseconds": 28,
+      "prepareMilliseconds": 1555,
+      "parseMilliseconds": 1054,
+      "captureOverheadMilliseconds": 501,
+      "resolveMilliseconds": 188,
+      "applyMilliseconds": 1243,
+      "replay": {
+        "prepareMilliseconds": 282,
+        "applyMilliseconds": 992,
+        "targetBytes": 25964544
+      },
+      "conversion": {
+        "milliseconds": 1201,
+        "rows": 200000,
+        "bytes": 48041984
+      },
+      "throughput": {
+        "prepareRowsPerSecond": 64309,
+        "parseRowsPerSecond": 94901,
+        "applyRowsPerSecond": 80451
+      },
+      "sourceReads": {
+        "calls": 3,
+        "bytes": 2125972,
+        "milliseconds": 1
+      },
+      "storage": {
+        "database_size": "24.7 MiB",
+        "block_size": "262144",
+        "total_blocks": "99",
+        "used_blocks": "86",
+        "free_blocks": "13",
+        "memory": [
+          {
+            "tag": "BASE_TABLE",
+            "memory_usage_bytes": "1048576",
+            "temporary_storage_bytes": "0"
+          },
+          {
+            "tag": "IN_MEMORY_TABLE",
+            "memory_usage_bytes": "561152",
+            "temporary_storage_bytes": "0"
+          }
+        ],
+        "constraints": [
+          {
+            "table_name": "_consultchimps_captures",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(capture_id)"
+          },
+          {
+            "table_name": "_consultchimps_captures",
+            "constraint_type": "UNIQUE",
+            "constraint_text": "UNIQUE(source_file_id, selection_key, reader_version)"
+          },
+          {
+            "table_name": "_consultchimps_counters",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(counter_name)"
+          },
+          {
+            "table_name": "_consultchimps_database",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(database_id)"
+          },
+          {
+            "table_name": "_consultchimps_delivery_events",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(delivery_id)"
+          },
+          {
+            "table_name": "_consultchimps_delivery_events",
+            "constraint_type": "UNIQUE",
+            "constraint_text": "UNIQUE(request_id)"
+          },
+          {
+            "table_name": "_consultchimps_delivery_memberships",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(delivery_id, capture_id)"
+          },
+          {
+            "table_name": "_consultchimps_import_applications",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(import_id)"
+          },
+          {
+            "table_name": "_consultchimps_import_applications",
+            "constraint_type": "UNIQUE",
+            "constraint_text": "UNIQUE(application_key)"
+          },
+          {
+            "table_name": "_consultchimps_import_applications",
+            "constraint_type": "UNIQUE",
+            "constraint_text": "UNIQUE(request_id, capture_id, table_name)"
+          },
+          {
+            "table_name": "_consultchimps_import_plans",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(plan_id, plan_revision)"
+          },
+          {
+            "table_name": "_consultchimps_import_requests",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(request_id)"
+          },
+          {
+            "table_name": "_consultchimps_source_contents",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(content_hash)"
+          },
+          {
+            "table_name": "_consultchimps_source_files",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(source_file_id)"
+          },
+          {
+            "table_name": "_consultchimps_source_files",
+            "constraint_type": "UNIQUE",
+            "constraint_text": "UNIQUE(content_hash)"
+          },
+          {
+            "table_name": "_consultchimps_source_names",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(source_file_id, display_name)"
+          },
+          {
+            "table_name": "_consultchimps_tables",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(table_name)"
+          },
+          {
+            "table_name": "attributes_100000",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(record_id)"
+          },
+          {
+            "table_name": "attributes_100000_replay",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(record_id)"
+          }
+        ],
+        "indexes": []
+      },
+      "queries": {
+        "count": {
+          "milliseconds": 1,
+          "rows": [
+            {
+              "rows": "100000"
+            }
+          ]
+        },
+        "grouped": {
+          "milliseconds": 1,
+          "rows": [
+            {
+              "is_cde": false,
+              "rows": "90000"
+            },
+            {
+              "is_cde": true,
+              "rows": "10000"
+            }
+          ]
+        },
+        "joined": {
+          "milliseconds": 1,
+          "rows": [
+            {
+              "domain_id": "0",
+              "rows": "5000"
+            },
+            {
+              "domain_id": "10",
+              "rows": "5000"
+            }
+          ]
+        },
+        "plans": {
+          "grouped": ["SEQ_SCAN", "HASH_GROUP_BY"],
+          "joined": [
+            "SEQ_SCAN",
+            "HASH_GROUP_BY",
+            "PERFECT_HASH_GROUP_BY",
+            "HASH_JOIN"
+          ]
+        }
+      },
+      "memory": {
+        "setup": {
+          "rss": 82247680,
+          "heapUsed": 12612224,
+          "external": 2504268
+        },
+        "inspect": {
+          "rss": 113950720,
+          "heapUsed": 20133328,
+          "external": 4392254
+        },
+        "prepare": {
+          "rss": 376651776,
+          "heapUsed": 102743056,
+          "external": 22836548
+        },
+        "resolve": {
+          "rss": 376668160,
+          "heapUsed": 64739080,
+          "external": 5369279
+        },
+        "apply": {
+          "rss": 525877248,
+          "heapUsed": 119272440,
+          "external": 10537229
+        },
+        "replay": {
+          "rss": 564068352,
+          "heapUsed": 140838960,
+          "external": 16243767
+        },
+        "conversion": {
+          "rss": 571621376,
+          "heapUsed": 75814976,
+          "external": 11615989
+        },
+        "queries": {
+          "rss": 575209472,
+          "heapUsed": 47179152,
+          "external": 4880412
+        }
+      }
+    },
+    {
+      "rowCount": 1000000,
+      "sourceBytes": 21464593,
+      "preparedBytes": 335564800,
+      "targetBytes": 107753472,
+      "inspectMilliseconds": 3,
+      "prepareMilliseconds": 14875,
+      "parseMilliseconds": 10270,
+      "captureOverheadMilliseconds": 4605,
+      "resolveMilliseconds": 1790,
+      "applyMilliseconds": 12592,
+      "replay": {
+        "prepareMilliseconds": 3814,
+        "applyMilliseconds": 11483,
+        "targetBytes": 163065856
+      },
+      "conversion": {
+        "milliseconds": 15059,
+        "rows": 2000000,
+        "bytes": 484904960
+      },
+      "throughput": {
+        "prepareRowsPerSecond": 67227,
+        "parseRowsPerSecond": 97372,
+        "applyRowsPerSecond": 79416
+      },
+      "sourceReads": {
+        "calls": 21,
+        "bytes": 21464593,
+        "milliseconds": 3
+      },
+      "storage": {
+        "database_size": "155.5 MiB",
+        "block_size": "262144",
+        "total_blocks": "622",
+        "used_blocks": "609",
+        "free_blocks": "13",
+        "memory": [
+          {
+            "tag": "BASE_TABLE",
+            "memory_usage_bytes": "1835008",
+            "temporary_storage_bytes": "0"
+          },
+          {
+            "tag": "IN_MEMORY_TABLE",
+            "memory_usage_bytes": "561152",
+            "temporary_storage_bytes": "0"
+          }
+        ],
+        "constraints": [
+          {
+            "table_name": "_consultchimps_captures",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(capture_id)"
+          },
+          {
+            "table_name": "_consultchimps_captures",
+            "constraint_type": "UNIQUE",
+            "constraint_text": "UNIQUE(source_file_id, selection_key, reader_version)"
+          },
+          {
+            "table_name": "_consultchimps_counters",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(counter_name)"
+          },
+          {
+            "table_name": "_consultchimps_database",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(database_id)"
+          },
+          {
+            "table_name": "_consultchimps_delivery_events",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(delivery_id)"
+          },
+          {
+            "table_name": "_consultchimps_delivery_events",
+            "constraint_type": "UNIQUE",
+            "constraint_text": "UNIQUE(request_id)"
+          },
+          {
+            "table_name": "_consultchimps_delivery_memberships",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(delivery_id, capture_id)"
+          },
+          {
+            "table_name": "_consultchimps_import_applications",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(import_id)"
+          },
+          {
+            "table_name": "_consultchimps_import_applications",
+            "constraint_type": "UNIQUE",
+            "constraint_text": "UNIQUE(application_key)"
+          },
+          {
+            "table_name": "_consultchimps_import_applications",
+            "constraint_type": "UNIQUE",
+            "constraint_text": "UNIQUE(request_id, capture_id, table_name)"
+          },
+          {
+            "table_name": "_consultchimps_import_plans",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(plan_id, plan_revision)"
+          },
+          {
+            "table_name": "_consultchimps_import_requests",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(request_id)"
+          },
+          {
+            "table_name": "_consultchimps_source_contents",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(content_hash)"
+          },
+          {
+            "table_name": "_consultchimps_source_files",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(source_file_id)"
+          },
+          {
+            "table_name": "_consultchimps_source_files",
+            "constraint_type": "UNIQUE",
+            "constraint_text": "UNIQUE(content_hash)"
+          },
+          {
+            "table_name": "_consultchimps_source_names",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(source_file_id, display_name)"
+          },
+          {
+            "table_name": "_consultchimps_tables",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(table_name)"
+          },
+          {
+            "table_name": "attributes_1000000",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(record_id)"
+          },
+          {
+            "table_name": "attributes_1000000_replay",
+            "constraint_type": "PRIMARY KEY",
+            "constraint_text": "PRIMARY KEY(record_id)"
+          }
+        ],
+        "indexes": []
+      },
+      "queries": {
+        "count": {
+          "milliseconds": 0,
+          "rows": [
+            {
+              "rows": "1000000"
+            }
+          ]
+        },
+        "grouped": {
+          "milliseconds": 2,
+          "rows": [
+            {
+              "is_cde": false,
+              "rows": "900000"
+            },
+            {
+              "is_cde": true,
+              "rows": "100000"
+            }
+          ]
+        },
+        "joined": {
+          "milliseconds": 1,
+          "rows": [
+            {
+              "domain_id": "0",
+              "rows": "50000"
+            },
+            {
+              "domain_id": "10",
+              "rows": "50000"
+            }
+          ]
+        },
+        "plans": {
+          "grouped": ["SEQ_SCAN", "HASH_GROUP_BY"],
+          "joined": [
+            "SEQ_SCAN",
+            "HASH_GROUP_BY",
+            "PERFECT_HASH_GROUP_BY",
+            "HASH_JOIN"
+          ]
+        }
+      },
+      "memory": {
+        "setup": {
+          "rss": 575225856,
+          "heapUsed": 47301136,
+          "external": 4946628
+        },
+        "inspect": {
+          "rss": 575520768,
+          "heapUsed": 49423944,
+          "external": 5229097
+        },
+        "prepare": {
+          "rss": 609992704,
+          "heapUsed": 143180912,
+          "external": 77387835
+        },
+        "resolve": {
+          "rss": 609992704,
+          "heapUsed": 95084672,
+          "external": 6898266
+        },
+        "apply": {
+          "rss": 876199936,
+          "heapUsed": 148246312,
+          "external": 9960275
+        },
+        "replay": {
+          "rss": 897564672,
+          "heapUsed": 116902488,
+          "external": 31165453
+        },
+        "conversion": {
+          "rss": 890716160,
+          "heapUsed": 99851712,
+          "external": 12144665
+        },
+        "queries": {
+          "rss": 867663872,
+          "heapUsed": 83893592,
+          "external": 5393290
+        }
+      }
+    }
+  ]
+}

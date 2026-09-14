@@ -1,0 +1,271 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { afterEach, expect, test } from "vitest";
+
+import { inspectDatabase, type Database } from "../src/database.js";
+import {
+  applyImport,
+  prepareImport,
+  resolveImport,
+} from "../src/import/operations.js";
+import { draftImportProfile } from "../src/import/profile.js";
+import type { ImportSource } from "../src/import/types.js";
+import {
+  createDatabase,
+  createImportBatch,
+  exportDatabase,
+  openDatabase,
+  openImportBatch,
+} from "../src/node.js";
+
+const directories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    directories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
+
+function source(): ImportSource {
+  const bytes = new TextEncoder().encode("synthetic snapshot identity source");
+  return {
+    key: "Inventory",
+    readerVersion: "snapshot-identity-1",
+    bytes: {
+      name: "inventory.xlsx",
+      size: bytes.length,
+      async readAt(offset, length) {
+        return bytes.slice(offset, offset + length);
+      },
+    },
+    selections: [
+      {
+        key: "inventory",
+        label: "Inventory",
+        async open() {
+          return {
+            columns: ["Name"],
+            async *batches() {
+              yield [
+                {
+                  sourceRow: 2,
+                  cells: {
+                    Name: { kind: "string" as const, value: "North" },
+                  },
+                },
+              ];
+            },
+            async close() {},
+          };
+        },
+      },
+    ],
+  };
+}
+
+for (const format of ["sqlite", "duckdb"] as const) {
+  test(`${format}: same-format snapshots retain plan identity while conversions require review`, async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), `cc-export-identity-${format}-`),
+    );
+    directories.push(directory);
+    const databasePath = path.join(directory, `source.${format}`);
+    const sameFormatPath = path.join(directory, `snapshot.${format}`);
+    const convertedFormat = format === "sqlite" ? "duckdb" : "sqlite";
+    const convertedPath = path.join(directory, `converted.${convertedFormat}`);
+    const { database: sourceDatabase } = await createDatabase({
+      path: databasePath,
+      format,
+    });
+    const importSource = source();
+    const profile = await draftImportProfile({ sources: [importSource] });
+    const sourceBefore = await inspectDatabase({ database: sourceDatabase });
+    const planPath = path.join(directory, "review.ccplan");
+    let prepared = await createImportBatch({
+      path: planPath,
+      database: sourceDatabase,
+      profile,
+      baselineRevision: sourceBefore.revision,
+    });
+    let snapshot: Database | undefined;
+    let converted: Database | undefined;
+    try {
+      await prepareImport({
+        database: sourceDatabase,
+        prepared,
+        sources: [importSource],
+        profile,
+      });
+      const approved = await resolveImport({
+        database: sourceDatabase,
+        prepared,
+        decisions: [],
+      });
+      expect(approved.state).toBe("ready");
+      if (approved.state !== "ready") throw new Error("Plan failed review");
+
+      const sameFormatExport = await exportDatabase({
+        database: sourceDatabase,
+        output: sameFormatPath,
+      });
+      expect(sameFormatExport.plan).toMatchObject({
+        databaseId: sourceDatabase.id,
+        baselineRevision: sourceBefore.revision,
+        sourceFormat: format,
+        targetFormat: format,
+      });
+      const conversionExport = await exportDatabase({
+        database: sourceDatabase,
+        output: convertedPath,
+        format: convertedFormat,
+      });
+      expect(conversionExport.plan).toMatchObject({
+        databaseId: sourceDatabase.id,
+        baselineRevision: sourceBefore.revision,
+        sourceFormat: format,
+        targetFormat: convertedFormat,
+      });
+      await prepared.close();
+      prepared = await openImportBatch({ path: planPath });
+      expect(prepared.databaseId).toBe(sourceDatabase.id);
+
+      snapshot = await openDatabase({ path: sameFormatPath });
+      converted = await openDatabase({ path: convertedPath });
+      const snapshotBefore = await inspectDatabase({ database: snapshot });
+      const convertedBefore = await inspectDatabase({ database: converted });
+      expect(snapshotBefore).toEqual(sourceBefore);
+      expect(convertedBefore.id).not.toBe(sourceDatabase.id);
+      expect(convertedBefore).toMatchObject({
+        format: convertedFormat,
+        revision: sourceBefore.revision,
+        tables: [],
+        captures: 0n,
+        completedImports: 0n,
+      });
+
+      await expect(
+        applyImport({
+          database: converted,
+          prepared,
+          approved,
+          requestId: `${format}-converted-apply`,
+        }),
+      ).rejects.toMatchObject({ code: "DB_STALE_IMPORT_PLAN" });
+      expect(await inspectDatabase({ database: converted })).toEqual(
+        convertedBefore,
+      );
+
+      const applied = await applyImport({
+        database: snapshot,
+        prepared,
+        approved,
+        requestId: `${format}-snapshot-apply`,
+      });
+      expect(applied.metrics.rowsImported).toBe(1);
+      const snapshotAfter = await inspectDatabase({ database: snapshot });
+      expect(snapshotAfter).toMatchObject({
+        id: sourceDatabase.id,
+        format,
+        revision: sourceBefore.revision + 1n,
+        completedImports: 1n,
+        tables: [{ name: "Inventory", rowCount: 1n }],
+      });
+      expect(await inspectDatabase({ database: sourceDatabase })).toEqual(
+        sourceBefore,
+      );
+    } finally {
+      await converted?.close();
+      await snapshot?.close();
+      await prepared.close();
+      await sourceDatabase.close();
+    }
+  });
+
+  test(`${format}: a converted receipt cannot replay an approval for the source database`, async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), `cc-converted-receipt-${format}-`),
+    );
+    directories.push(directory);
+    const convertedFormat = format === "sqlite" ? "duckdb" : "sqlite";
+    const convertedPath = path.join(directory, `converted.${convertedFormat}`);
+    const { database } = await createDatabase({
+      path: path.join(directory, `source.${format}`),
+      format,
+    });
+    const importSource = source();
+    const profile = await draftImportProfile({ sources: [importSource] });
+    const prepared = await createImportBatch({
+      path: path.join(directory, "applied.ccplan"),
+      database,
+      profile,
+      baselineRevision: 0n,
+    });
+    let converted: Database | undefined;
+    try {
+      await prepareImport({
+        database,
+        prepared,
+        sources: [importSource],
+        profile,
+      });
+      const approved = await resolveImport({
+        database,
+        prepared,
+        decisions: [],
+      });
+      if (approved.state !== "ready") throw new Error("Plan failed review");
+      const requestId = `${format}-source-application`;
+      const applied = await applyImport({
+        database,
+        prepared,
+        approved,
+        requestId,
+      });
+      const sourceAfterApply = await inspectDatabase({ database });
+
+      await expect(
+        applyImport({ database, prepared, approved, requestId }),
+      ).resolves.toMatchObject({
+        importIds: applied.importIds,
+        metrics: { rowsImported: 0, rowsReused: 1 },
+      });
+      expect(await inspectDatabase({ database })).toEqual(sourceAfterApply);
+
+      await exportDatabase({
+        database,
+        output: convertedPath,
+        format: convertedFormat,
+      });
+      converted = await openDatabase({ path: convertedPath });
+      const convertedBefore = await inspectDatabase({ database: converted });
+      expect(convertedBefore).toMatchObject({
+        format: convertedFormat,
+        revision: 1n,
+        completedImports: 1n,
+        tables: [{ name: "Inventory", rowCount: 1n }],
+      });
+      expect(convertedBefore.id).not.toBe(database.id);
+
+      await expect(
+        applyImport({
+          database: converted,
+          prepared,
+          approved,
+          requestId,
+        }),
+      ).rejects.toMatchObject({ code: "DB_STALE_IMPORT_PLAN" });
+      expect(await inspectDatabase({ database: converted })).toEqual(
+        convertedBefore,
+      );
+      expect(await inspectDatabase({ database })).toEqual(sourceAfterApply);
+    } finally {
+      await converted?.close();
+      await prepared.close();
+      await database.close();
+    }
+  });
+}
