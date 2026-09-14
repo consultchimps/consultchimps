@@ -1,38 +1,36 @@
 import {
   applyImport,
   applySchema,
+  checkpointDatabaseWrite,
   createWorkbookImportSource,
-  draftImportRecipe,
+  draftImportProfile,
   identifierKey,
-  inspectAppliedImportPlan,
   inspectDatabase,
   inspectImport,
-  listDeliveries,
+  listBatches,
   parseDatabaseSchema,
   planSchema,
   prepareImport,
-  recordDelivery,
+  recordBatch,
   resolveImport,
   type ColumnDefinition,
   type Database,
-  type DeliveryContext,
-  type DeliveryRecord,
+  type BatchContext,
+  type BatchRecord,
   type ImportCell,
   type ImportConflict,
   type ImportDecision,
   type ImportInspection,
-  type ImportRecipe,
-  type PreparedImport,
-  type PreparedImportRef,
-  type ReadyImportRef,
+  type ImportBatch,
+  type ImportRouteInspection,
   type SchemaPlan,
-  type TableSchema,
 } from "@consultchimps/db";
 import {
   configureBrowserDatabaseRuntime,
   type BrowserDatabaseRuntime,
 } from "@consultchimps/db/browser";
 import {
+  ConsultChimpsError,
   isConsultChimpsError,
   throwIfAborted,
   type OperationProgress,
@@ -49,17 +47,13 @@ import {
 } from "@/lib/workspace-files";
 import {
   workspaceSourceDescription,
-  workspaceSourceFileName,
   workspaceSourceKey,
 } from "@/lib/workspace-source";
 import {
   closeTrackedResources,
   replaceActiveWorkspace,
 } from "@/lib/workspace-replacement";
-import {
-  workspaceRecordIdPrefix,
-  workspaceWorkingCopyName,
-} from "@/lib/workspace-naming";
+import { workspaceWorkingCopyName } from "@/lib/workspace-naming";
 import type {
   WorkspaceCommand,
   WorkspaceDeliveryContext,
@@ -68,6 +62,7 @@ import type {
   WorkspaceEvent,
   WorkspaceImportColumn,
   WorkspaceImportRegion,
+  WorkspaceImportResult,
   WorkspacePreparedImport,
   WorkspacePreviewPage,
   WorkspaceProgress,
@@ -98,26 +93,8 @@ interface OpenWorkspace {
   readonly workingCopyName: string;
 }
 
-interface RegionMetadata {
-  readonly id: string;
-  readonly source: string;
-  readonly selection: string;
-  readonly fileName: string;
-  readonly label: string;
-  readonly schema: TableSchema;
-  readonly destinationSchema?: TableSchema | undefined;
-  readonly rowCount: bigint;
-  readonly captureId: string;
-}
-
 interface HeldImport {
-  readonly prepared: PreparedImport;
-  ref: PreparedImportRef | ReadyImportRef;
-  recipe: ImportRecipe;
-  readonly regions: readonly RegionMetadata[];
-  application:
-    | { readonly state: "pending" }
-    | { readonly state: "applied"; readonly captureIds: readonly string[] };
+  readonly prepared: ImportBatch;
 }
 
 let browserRuntime: Promise<BrowserDatabaseRuntime> | null = null;
@@ -128,6 +105,7 @@ const controllers = new Map<number, AbortController>();
 const sourceCleanupOwners = new RetryableCleanupOwners();
 const privatePlanCleanupOwners = new RetryableCleanupOwners();
 const savedPlanCleanupOwners = new RetryableCleanupOwners();
+const IMPORT_ROUTE_PAGE_SIZE = 50;
 
 function runtime(): Promise<BrowserDatabaseRuntime> {
   const configured =
@@ -181,7 +159,10 @@ async function summaryOf(open: OpenWorkspace): Promise<WorkspaceSummary> {
       })),
     })),
     importCount: boundedNumber(inspection.completedImports, "import count"),
-    deliveryCount: boundedNumber(inspection.deliveries, "delivery count"),
+    deliveryCount: boundedNumber(
+      inspection.recordedBatches,
+      "recorded batch count",
+    ),
   };
 }
 
@@ -326,17 +307,6 @@ function regionId(source: string, selection: string): string {
   return JSON.stringify([source, selection]);
 }
 
-function reviewRowCount(regions: readonly RegionMetadata[]): bigint {
-  const countedCaptures = new Set<string>();
-  let total = 0n;
-  for (const region of regions) {
-    if (countedCaptures.has(region.captureId)) continue;
-    countedCaptures.add(region.captureId);
-    total += region.rowCount;
-  }
-  return total;
-}
-
 function conflictText(conflict: ImportConflict): string {
   switch (conflict.kind) {
     case "missing-destination":
@@ -370,44 +340,33 @@ function conflictText(conflict: ImportConflict): string {
   }
 }
 
-function columnsFor(
-  region: RegionMetadata,
-  recipe: ImportRecipe,
+function routeConflicts(
+  route: ImportRouteInspection,
   conflicts: readonly ImportConflict[],
-  tables: WorkspaceSummary["tables"],
+): readonly ImportConflict[] {
+  return conflicts.filter(
+    (conflict) =>
+      (!("source" in conflict) || conflict.source === route.source) &&
+      (!("selection" in conflict) || conflict.selection === route.selection),
+  );
+}
+
+function columnsFor(
+  route: ImportRouteInspection,
+  conflicts: readonly ImportConflict[],
 ): WorkspaceImportColumn[] {
-  const route = recipe.routes.find(
-    (candidate) =>
-      candidate.source === region.source &&
-      candidate.selection === region.selection,
-  );
-  const tableName =
-    route?.destination.kind === "existing-table"
-      ? route.destination.table
-      : route?.destination.kind === "new-table"
-        ? route.destination.schema.name
-        : undefined;
-  const destinationTable = tables.find(
-    (table) =>
-      tableName !== undefined &&
-      identifierKey(table.name) === identifierKey(tableName),
-  );
-  const proposedTable =
-    route?.destination.kind === "new-table"
-      ? route.destination.schema
-      : undefined;
-  return region.schema.columns.map((column) => {
-    const mapped = route?.columns.find((entry) => entry.source === column.name);
+  return route.inferredColumns.map((column) => {
+    const mapped = route.columns.find((entry) => entry.source === column.name);
     const destination = mapped?.target ?? column.name;
-    const target = (destinationTable?.columns ?? proposedTable?.columns)?.find(
+    const target = route.destinationColumns.find(
       (candidate) =>
         identifierKey(candidate.name) === identifierKey(destination),
     );
     const conflict = conflicts.find(
       (candidate) =>
         "source" in candidate &&
-        candidate.source === region.source &&
-        candidate.selection === region.selection &&
+        candidate.source === route.source &&
+        candidate.selection === route.selection &&
         "column" in candidate &&
         candidate.column === column.name,
     );
@@ -422,81 +381,84 @@ function columnsFor(
   });
 }
 
-async function importDto(held: HeldImport): Promise<WorkspacePreparedImport> {
-  const inspection = await inspectImport({
-    database: current().database,
-    prepared: held.prepared,
-    page: { limit: 1 },
-  });
-  held.ref = inspection.prepared;
-  const workspaceSummary = await summaryOf(current());
-  const regions: WorkspaceImportRegion[] = held.regions.map((region) => {
-    const route = held.recipe.routes.find(
-      (candidate) =>
-        candidate.source === region.source &&
-        candidate.selection === region.selection,
-    );
-    const regionConflicts = inspection.conflicts.filter(
-      (conflict) =>
-        (!("source" in conflict) || conflict.source === region.source) &&
-        (!("selection" in conflict) || conflict.selection === region.selection),
-    );
+function importDto(
+  inspection: ImportInspection,
+  routeCursor: string | null,
+): WorkspacePreparedImport {
+  const regions = inspection.routes.map((route): WorkspaceImportRegion => {
+    const conflicts = routeConflicts(route, inspection.conflicts);
     return {
-      id: region.id,
-      sourceId: region.source,
-      fileName: region.fileName,
-      label: region.label,
-      rowCount: boundedNumber(region.rowCount, "captured row count"),
-      columns: columnsFor(
-        region,
-        held.recipe,
-        inspection.conflicts,
-        workspaceSummary.tables,
-      ),
+      id: regionId(route.source, route.selection),
+      sourceId: route.source,
+      fileName: route.displayName,
+      label: route.label,
+      rowCount: boundedNumber(route.rowCount, "captured row count"),
+      columns: columnsFor(route, conflicts),
       route:
-        route?.destination.kind === "existing-table"
+        route.destination?.kind === "existing-table"
           ? { kind: "append", table: route.destination.table }
-          : route?.destination.kind === "new-table"
+          : route.destination?.kind === "new-table"
             ? { kind: "create", table: route.destination.schema.name }
             : {
                 kind: "unresolved",
-                suggestedTable:
-                  route?.destination.kind === "new-table-infer"
-                    ? route.destination.name
-                    : region.schema.name,
+                suggestedTable: route.suggestedDestination.name,
               },
-      conflicts: regionConflicts.map(conflictText),
+      conflicts: conflicts.map(conflictText),
     };
   });
   const includedRoutes = inspection.routes.filter(
     (route) => route.destination !== null,
   );
+  const routeCount = boundedNumber(inspection.routeCount, "batch route count");
+  const application =
+    inspection.application.state === "applied" ? "applied" : "pending";
   return {
-    id: held.ref.id,
-    state: held.ref.state,
-    application: held.application.state,
+    id: inspection.prepared.id,
+    reviewFingerprint: inspection.prepared.reviewFingerprint,
+    state: inspection.prepared.state,
+    application,
     duplicateOf:
+      routeCount <= inspection.routes.length &&
       includedRoutes.length > 0 &&
       includedRoutes.every(
         (route) => route.applicationState === "already-applied",
       )
         ? "existing-application"
         : null,
-    captureIds: held.regions.map((region) => region.captureId),
+    captureIds:
+      inspection.application.state === "applied"
+        ? inspection.application.captureIds
+        : inspection.captureIds,
     regions,
-    totalRows: boundedNumber(reviewRowCount(held.regions), "review row count"),
+    routeCount,
+    routeCursor,
+    nextRouteCursor: inspection.nextRouteCursor ?? null,
+    totalRows: boundedNumber(inspection.reviewRows, "review row count"),
     warningCount: inspection.conflicts.length,
   };
 }
 
-function deliveryContext(input: WorkspaceDeliveryContext): DeliveryContext {
-  const scopeValue: DeliveryContext["scope"] =
+function requireReviewFingerprint(
+  inspection: ImportInspection,
+  expected: string,
+): void {
+  if (inspection.prepared.reviewFingerprint !== expected) {
+    throw new ConsultChimpsError(
+      "DB_STALE_IMPORT_PLAN",
+      "The saved batch review changed after it was displayed. Review the latest batch before continuing.",
+      { details: { batchId: inspection.prepared.id } },
+    );
+  }
+}
+
+function deliveryContext(input: WorkspaceDeliveryContext): BatchContext {
+  const scopeValue: BatchContext["scope"] =
     input.coverage === "full"
       ? { kind: "full" }
       : input.coverage === "partial"
         ? {
             kind: "partial",
-            description: input.note.trim() || "Partial delivery",
+            description: input.note.trim() || "Partial batch",
           }
         : { kind: "unknown" };
   return {
@@ -521,7 +483,7 @@ function deliveryContext(input: WorkspaceDeliveryContext): DeliveryContext {
   };
 }
 
-function deliveryDto(delivery: DeliveryRecord): WorkspaceDeliverySummary {
+function deliveryDto(delivery: BatchRecord): WorkspaceDeliverySummary {
   const attributes = delivery.context.attributes ?? {};
   return {
     id: delivery.id,
@@ -556,7 +518,7 @@ function cellValue(
 
 function decisionFor(
   decision: WorkspaceRouteDecision,
-  region: RegionMetadata,
+  route: ImportRouteInspection,
 ): ImportDecision {
   const columns = decision.columns
     .filter(
@@ -568,11 +530,20 @@ function decisionFor(
       target: column.destination,
       type: column.type as ColumnDefinition["type"],
     }));
+  if (decision.route.kind === "append") {
+    return {
+      kind: "route",
+      source: route.source,
+      selection: route.selection,
+      destination: { kind: "existing-table", table: decision.route.table },
+      columns,
+    };
+  }
   const schemaColumns = columns.map((column): ColumnDefinition => {
-    const inferred = region.schema.columns.find(
+    const inferred = route.inferredColumns.find(
       (candidate) => candidate.name === column.source,
     );
-    const destination = region.destinationSchema?.columns.find(
+    const destination = route.destinationColumns.find(
       (candidate) =>
         identifierKey(candidate.name) === identifierKey(column.target),
     );
@@ -598,38 +569,23 @@ function decisionFor(
   });
   return {
     kind: "route",
-    source: region.source,
-    selection: region.selection,
-    destination:
-      decision.route.kind === "append"
-        ? { kind: "existing-table", table: decision.route.table }
-        : {
-            kind: "new-table",
-            schema: {
-              ...(region.destinationSchema ?? region.schema),
-              name: decision.route.table,
-              columns: schemaColumns,
-            },
-          },
+    source: route.source,
+    selection: route.selection,
+    destination: {
+      kind: "new-table",
+      schema: {
+        ...(route.destination?.kind === "new-table"
+          ? route.destination.schema
+          : {
+              name: route.suggestedDestination.name,
+              recordId: route.suggestedDestination.recordId,
+              columns: route.destinationColumns,
+            }),
+        name: decision.route.table,
+        columns: schemaColumns,
+      },
+    },
     columns,
-  };
-}
-
-function recipeFrom(decisions: readonly ImportDecision[]): ImportRecipe {
-  return {
-    version: 1,
-    routes: decisions.flatMap((decision) =>
-      decision.kind === "route"
-        ? [
-            {
-              source: decision.source,
-              selection: decision.selection,
-              destination: decision.destination,
-              columns: decision.columns,
-            },
-          ]
-        : [],
-    ),
   };
 }
 
@@ -727,100 +683,31 @@ async function handleSchema(
   if (plan === undefined) {
     throw new Error("Review the schema again before applying it");
   }
-  await applySchema({ database: current().database, plan, signal });
+  const result = await applySchema({
+    database: current().database,
+    plan,
+    signal,
+  });
   schemaPlans.delete(command.planId);
-  const summary = await summaryOf(current());
-  let checkpoint: WorkspaceSchemaApplication["checkpoint"] = {
-    state: "saved",
-  };
-  try {
-    await current().database.checkpoint();
-  } catch {
-    checkpoint = {
-      state: "failed",
-      code: "DB_BROWSER_SCHEMA_PERSISTENCE_REQUIRED",
-      message:
-        "The schema changes were applied, but the browser could not finish saving the database. Keep this tab open and export the database again to retry saving it. Do not apply the schema changes again",
-    };
-  }
+  const checkpointed = await checkpointDatabaseWrite({
+    database: current().database,
+    result,
+  });
+  const summary = await refreshSummary();
+  const checkpoint: WorkspaceSchemaApplication["checkpoint"] =
+    checkpointed.checkpoint.state === "checkpoint-completed"
+      ? { state: "saved" }
+      : {
+          state: "failed",
+          code: "DB_BROWSER_SCHEMA_PERSISTENCE_REQUIRED",
+          message:
+            "The schema changes were applied, but the browser could not finish saving the database. Keep this tab open and export the database again to retry saving it. Do not apply the schema changes again",
+        };
   scope.postMessage({
     type: "schemaApplied",
     id,
     result: { summary, checkpoint },
   });
-}
-
-function suggestedTable(label: string): string {
-  return (
-    label
-      .normalize("NFKC")
-      .trim()
-      .replace(/[^\p{L}\p{N}_]+/gu, "_")
-      .replace(/^_+|_+$/gu, "") || "Imported_Data"
-  );
-}
-
-function heldFromInspection(
-  prepared: PreparedImport,
-  inspection: ImportInspection,
-  application: HeldImport["application"] = { state: "pending" },
-): HeldImport {
-  const recipe: ImportRecipe = {
-    version: 1,
-    routes: inspection.routes.flatMap((route) =>
-      route.destination === null
-        ? []
-        : [
-            {
-              source: route.source,
-              selection: route.selection,
-              destination: route.destination,
-              columns: route.columns,
-            },
-          ],
-    ),
-  };
-  const regions = inspection.routes.map((route): RegionMetadata => {
-    const inferredName = suggestedTable(route.label);
-    const destinationSchema =
-      route.destination?.kind === "new-table"
-        ? route.destination.schema
-        : undefined;
-    const schema: TableSchema = {
-      name:
-        destinationSchema?.name ??
-        (route.destination?.kind === "new-table-infer"
-          ? route.destination.name
-          : inferredName),
-      recordId:
-        destinationSchema?.recordId ??
-        (route.destination?.kind === "new-table-infer"
-          ? route.destination.recordId
-          : {
-              prefix: workspaceRecordIdPrefix(inferredName),
-              padding: 6,
-            }),
-      columns: route.inferredColumns,
-    };
-    return {
-      id: regionId(route.source, route.selection),
-      source: route.source,
-      selection: route.selection,
-      fileName: workspaceSourceFileName(route.source),
-      label: route.label,
-      schema,
-      ...(destinationSchema === undefined ? {} : { destinationSchema }),
-      rowCount: route.rowCount,
-      captureId: route.captureId,
-    };
-  });
-  return {
-    prepared,
-    ref: inspection.prepared,
-    recipe,
-    regions,
-    application,
-  };
 }
 
 async function listSavedImports(id: number): Promise<void> {
@@ -836,39 +723,26 @@ async function listSavedImports(id: number): Promise<void> {
   }
   const listing = await (
     await runtime()
-  ).listPreparedImports({ database: current().database });
+  ).listImportBatches({ database: current().database });
   const ignoredPlans = [...listing.ignored];
+  const openedImports: {
+    readonly held: HeldImport;
+    readonly plan: WorkspacePreparedImport;
+  }[] = [];
   const operationFailures: unknown[] = [];
   const cleanupFailures: unknown[] = [];
   for (const entry of listing.imports) {
     if (entry.databaseId !== current().database.id) continue;
-    let prepared: PreparedImport | undefined;
+    let prepared: ImportBatch | undefined;
     try {
-      prepared = await (
-        await runtime()
-      ).openPreparedImport({ name: entry.name });
+      prepared = await (await runtime()).openImportBatch({ name: entry.name });
       const inspection = await inspectImport({
         database: current().database,
         prepared,
         page: { limit: 1 },
       });
-      let application: HeldImport["application"] = { state: "pending" };
-      if (entry.application === "applied") {
-        const applied = await inspectAppliedImportPlan({
-          database: current().database,
-          planId: inspection.prepared.id,
-          planRevision: inspection.prepared.planRevision,
-        });
-        if (applied === null) {
-          throw new Error("The applied import history is unavailable");
-        }
-        application = {
-          state: "applied",
-          captureIds: applied.bindings.map((binding) => binding.captureId),
-        };
-      }
-      const held = heldFromInspection(prepared, inspection, application);
-      imports.set(held.ref.id, held);
+      const held = { prepared } satisfies HeldImport;
+      openedImports.push({ held, plan: importDto(inspection, null) });
       prepared = undefined;
     } catch (error) {
       const ignoredPlan = isConsultChimpsError(error)
@@ -877,7 +751,7 @@ async function listSavedImports(id: number): Promise<void> {
             name: entry.name,
             code: "DB_BROWSER_PREPARED_IMPORT_UNREADABLE",
             message:
-              "This saved import plan could not be reopened. Reload the workspace, then prepare the original sources again or restore a verified plan copy if it remains unavailable.",
+              "This saved batch could not be reopened. Reload the database tool, then prepare the original sources again or restore a verified batch copy if it remains unavailable.",
           };
       if (prepared === undefined) {
         ignoredPlans.push(ignoredPlan);
@@ -896,14 +770,22 @@ async function listSavedImports(id: number): Promise<void> {
     }
   }
   if (cleanupFailures.length > 0) {
+    const openedCleanupFailure = await cleanupFailureOf(() =>
+      closeAndRetainFailures(
+        openedImports.map((entry) => entry.held.prepared),
+        savedPlanCleanupOwners,
+      ),
+    );
+    if (openedCleanupFailure !== undefined) {
+      cleanupFailures.push(openedCleanupFailure.error);
+    }
     throw savedPlanCleanupError({ operationFailures, cleanupFailures });
   }
-  const plans = [];
-  for (const held of imports.values()) plans.push(await importDto(held));
+  for (const entry of openedImports) imports.set(entry.plan.id, entry.held);
   scope.postMessage({
     type: "importsListed",
     id,
-    plans,
+    plans: openedImports.map((entry) => entry.plan),
     ignoredPlans,
   });
 }
@@ -921,11 +803,8 @@ async function prepareSources(
     source,
     key: workspaceSourceKey(source, ordinal),
   }));
-  const sourceByKey = new Map(
-    sourceInputs.map(({ key, source }) => [key, source] as const),
-  );
   let privatePlan:
-    { readonly name: string; readonly prepared: PreparedImport } | undefined;
+    { readonly name: string; readonly prepared: ImportBatch } | undefined;
   let completed:
     | { readonly held: HeldImport; readonly plan: WorkspacePreparedImport }
     | undefined;
@@ -943,38 +822,20 @@ async function prepareSources(
       );
     }
     const sources = workbookSources.map((source) => source.source);
-    await draftImportRecipe({ sources });
-    const recipe: ImportRecipe = {
-      version: 1,
-      routes: sources.flatMap((source) =>
-        source.selections.map((selection) => {
-          const name = suggestedTable(selection.label);
-          return {
-            source: source.key,
-            selection: selection.key,
-            destination: {
-              kind: "new-table-infer" as const,
-              name,
-              recordId: {
-                prefix: workspaceRecordIdPrefix(name),
-                padding: 6,
-              },
-            },
-            columns: [],
-          };
-        }),
-      ),
-    };
+    const profile = await draftImportProfile({
+      sources,
+      naming: { kind: "selection-label" },
+    });
     const databaseInspection = await inspectDatabase({
       database: current().database,
     });
     const privatePlanName = `.consultchimps-import-${globalThis.crypto.randomUUID()}.sqlite`;
     const prepared = await (
       await runtime()
-    ).createPreparedImport({
+    ).createImportBatch({
       name: privatePlanName,
       database: current().database,
-      recipe,
+      profile,
       baselineRevision: databaseInspection.revision,
       signal,
     });
@@ -983,55 +844,13 @@ async function prepareSources(
       database: current().database,
       prepared,
       sources,
-      recipe,
+      profile,
+      reviewPage: { limit: 1 },
       signal,
       onProgress: onProgress(id),
     });
-    const firstInspection = await inspectImport({
-      database: current().database,
-      prepared,
-      page: { limit: 1 },
-    });
-    const regions = firstInspection.routes.map((route) => {
-      const inferred = firstInspection.conflicts.find(
-        (
-          conflict,
-        ): conflict is Extract<
-          ImportConflict,
-          { readonly kind: "inferred-schema" }
-        > =>
-          conflict.kind === "inferred-schema" &&
-          conflict.source === route.source &&
-          conflict.selection === route.selection,
-      );
-      const destinationSchema =
-        route.destination?.kind === "new-table"
-          ? route.destination.schema
-          : inferred?.schema;
-      if (destinationSchema === undefined) {
-        throw new Error("The import region is missing its inferred columns");
-      }
-      return {
-        id: regionId(route.source, route.selection),
-        source: route.source,
-        selection: route.selection,
-        fileName:
-          sourceByKey.get(route.source)?.file.name ??
-          workspaceSourceFileName(route.source),
-        label: route.label,
-        schema: destinationSchema,
-        rowCount: route.rowCount,
-        captureId: route.captureId,
-      };
-    });
-    const held: HeldImport = {
-      prepared,
-      ref: outcome.prepared,
-      recipe,
-      regions,
-      application: { state: "pending" },
-    };
-    const automatic = firstInspection.conflicts.flatMap(
+    let inspection = outcome.inspection;
+    const automatic = inspection.conflicts.flatMap(
       (conflict): ImportDecision[] => {
         if (conflict.kind !== "inferred-schema") return [];
         const existing = databaseInspection.tables.find(
@@ -1063,41 +882,17 @@ async function prepareSources(
       },
     );
     if (automatic.length > 0) {
-      held.ref = await resolveImport({
-        database: current().database,
-        prepared,
-        decisions: automatic,
-      });
-      const replacements = new Map(
-        automatic.flatMap((decision) =>
-          decision.kind === "route"
-            ? [
-                [
-                  regionId(decision.source, decision.selection),
-                  decision,
-                ] as const,
-              ]
-            : [],
-        ),
-      );
-      held.recipe = {
-        version: 1,
-        routes: recipe.routes.map((route) => {
-          const replacement = replacements.get(
-            regionId(route.source, route.selection),
-          );
-          return replacement === undefined || replacement.kind !== "route"
-            ? route
-            : {
-                source: replacement.source,
-                selection: replacement.selection,
-                destination: replacement.destination,
-                columns: replacement.columns,
-              };
-        }),
-      };
+      inspection = (
+        await resolveImport({
+          database: current().database,
+          prepared,
+          decisions: automatic,
+          reviewPage: { limit: 1 },
+        })
+      ).inspection;
     }
-    completed = { held, plan: await importDto(held) };
+    const held = { prepared } satisfies HeldImport;
+    completed = { held, plan: importDto(inspection, null) };
   } catch (error) {
     operationFailure = { error };
   }
@@ -1112,7 +907,7 @@ async function prepareSources(
       const cleanupOwner = stagedPrivatePlanCleanup({
         close: () => plan.prepared.close(),
         discard: async () =>
-          (await runtime()).discardPreparedImport({ name: plan.name }),
+          (await runtime()).discardImportBatch({ name: plan.name }),
       });
       planCleanupFailure = await cleanupFailureOf(() => cleanupOwner.close());
       if (planCleanupFailure !== undefined) {
@@ -1134,11 +929,53 @@ async function prepareSources(
   }
 
   if (completed === undefined) {
-    throw new Error("The prepared import result is unavailable");
+    throw new Error("The prepared batch result is unavailable");
   }
-  imports.set(completed.held.ref.id, completed.held);
+  imports.set(completed.plan.id, completed.held);
   privatePlan = undefined;
   scope.postMessage({ type: "importPrepared", id, plan: completed.plan });
+}
+
+function parseRegionId(id: string): readonly [string, string] {
+  let value: unknown;
+  try {
+    value = JSON.parse(id);
+  } catch {
+    throw new Error("The selected batch region is no longer available");
+  }
+  if (
+    !Array.isArray(value) ||
+    value.length !== 2 ||
+    typeof value[0] !== "string" ||
+    typeof value[1] !== "string"
+  ) {
+    throw new Error("The selected batch region is no longer available");
+  }
+  return [value[0], value[1]];
+}
+
+async function inspectImportPage(
+  id: number,
+  command: Extract<WorkspaceCommand, { readonly type: "inspectImport" }>,
+): Promise<void> {
+  const held = imports.get(command.planId);
+  if (held === undefined) {
+    throw new Error("Prepare the batch again before reviewing it");
+  }
+  const inspection = await inspectImport({
+    database: current().database,
+    prepared: held.prepared,
+    page: { limit: 1 },
+    routePage: {
+      limit: IMPORT_ROUTE_PAGE_SIZE,
+      ...(command.routeCursor === null ? {} : { cursor: command.routeCursor }),
+    },
+  });
+  scope.postMessage({
+    type: "importInspected",
+    id,
+    plan: importDto(inspection, command.routeCursor),
+  });
 }
 
 async function previewImport(
@@ -1147,25 +984,31 @@ async function previewImport(
 ): Promise<void> {
   const held = imports.get(command.planId);
   if (held === undefined) {
-    throw new Error("Prepare the import again before previewing it");
+    throw new Error("Prepare the batch again before previewing it");
   }
-  const region = held.regions.find(
-    (candidate) => candidate.id === command.regionId,
-  );
-  if (region === undefined) {
-    throw new Error("The selected import region is no longer available");
-  }
+  const [source, selection] = parseRegionId(command.regionId);
   const inspection = await inspectImport({
     database: current().database,
     prepared: held.prepared,
     page: {
       limit: command.limit,
       ...(command.cursor === null ? {} : { cursor: command.cursor }),
-      source: region.source,
-      selection: region.selection,
+      source,
+      selection,
+    },
+    routePage: {
+      limit: IMPORT_ROUTE_PAGE_SIZE,
+      ...(command.routeCursor === null ? {} : { cursor: command.routeCursor }),
     },
   });
-  const columns = region.schema.columns.map((column) => column.name);
+  const route = inspection.routes.find(
+    (candidate) =>
+      candidate.source === source && candidate.selection === selection,
+  );
+  if (route === undefined) {
+    throw new Error("The selected batch region is no longer available");
+  }
+  const columns = route.inferredColumns.map((column) => column.name);
   const page: WorkspacePreviewPage = {
     planId: command.planId,
     regionId: command.regionId,
@@ -1185,56 +1028,104 @@ async function updateImport(
 ): Promise<void> {
   const held = imports.get(command.planId);
   if (held === undefined) {
-    throw new Error("Prepare the import again before updating it");
+    throw new Error("Prepare the batch again before updating it");
   }
-  const decisions = command.decisions.map((decision) => {
-    const region = held.regions.find(
-      (candidate) => candidate.id === decision.regionId,
-    );
-    if (region === undefined) {
-      throw new Error("An import decision refers to an unavailable region");
-    }
-    return decisionFor(decision, region);
+  const inspection = await inspectImport({
+    database: current().database,
+    prepared: held.prepared,
+    page: { limit: 1 },
+    routePage: {
+      limit: IMPORT_ROUTE_PAGE_SIZE,
+      ...(command.routeCursor === null ? {} : { cursor: command.routeCursor }),
+    },
   });
-  held.ref = await resolveImport({
+  requireReviewFingerprint(inspection, command.reviewFingerprint);
+  const decisions = command.decisions.map((decision) => {
+    const route = inspection.routes.find(
+      (candidate) =>
+        regionId(candidate.source, candidate.selection) === decision.regionId,
+    );
+    if (route === undefined) {
+      throw new Error("A batch decision refers to an unavailable region");
+    }
+    return decisionFor(decision, route);
+  });
+  const resolved = await resolveImport({
     database: current().database,
     prepared: held.prepared,
     decisions,
+    reviewPage: { limit: 1 },
   });
-  held.recipe = recipeFrom(decisions);
   scope.postMessage({
     type: "importResolved",
     id,
-    plan: await importDto(held),
+    plan: importDto(resolved.inspection, null),
   });
 }
 
-async function applyPreparedImport(
+function checkpointDto(
+  checkpoint: Awaited<ReturnType<typeof checkpointDatabaseWrite>>["checkpoint"],
+): WorkspaceImportResult["checkpoint"] {
+  return checkpoint.state === "checkpoint-completed"
+    ? { state: "saved" }
+    : {
+        state: "failed",
+        code: checkpoint.code,
+        message: checkpoint.message,
+      };
+}
+
+async function refreshSummary(): Promise<WorkspaceImportResult["summary"]> {
+  try {
+    return { state: "updated", value: await summaryOf(current()) };
+  } catch {
+    return {
+      state: "refresh-required",
+      code: "DB_BROWSER_SUMMARY_REFRESH_REQUIRED",
+      message:
+        "The database operation completed, but the browser could not refresh its summary. Keep this tab open and reopen the database view before continuing",
+    };
+  }
+}
+
+async function applyImportBatch(
   id: number,
   command: Extract<WorkspaceCommand, { readonly type: "applyImport" }>,
   signal: AbortSignal,
 ): Promise<void> {
   const held = imports.get(command.planId);
-  if (held === undefined || held.ref.state !== "ready") {
-    throw new Error("Resolve the import review before applying it");
+  if (held === undefined) {
+    throw new Error("Update the batch review before applying it");
+  }
+  const inspection = await inspectImport({
+    database: current().database,
+    prepared: held.prepared,
+    page: { limit: 1 },
+  });
+  requireReviewFingerprint(inspection, command.reviewFingerprint);
+  if (inspection.prepared.state !== "ready") {
+    throw new Error("Update the batch review before applying it");
   }
   const result = await applyImport({
     database: current().database,
     prepared: held.prepared,
-    approved: held.ref,
+    approved: inspection.prepared,
     requestId: command.delivery.requestId,
-    delivery: deliveryContext(command.delivery),
+    batchContext: deliveryContext(command.delivery),
     signal,
     onProgress: onProgress(id),
   });
-  held.application = { state: "applied", captureIds: result.captureIds };
-  await current().database.checkpoint();
+  const checkpointed = await checkpointDatabaseWrite({
+    database: current().database,
+    result,
+  });
+  const summary = await refreshSummary();
   scope.postMessage({
     type: "importApplied",
     id,
     result: {
       importId: result.importIds[0] ?? command.delivery.requestId,
-      receiptId: result.deliveryId ?? command.delivery.requestId,
+      receiptId: result.batchId ?? command.delivery.requestId,
       outcome:
         result.metrics.rowsImported === 0 && result.metrics.rowsReused > 0
           ? "duplicate"
@@ -1243,9 +1134,10 @@ async function applyPreparedImport(
       skippedRows: result.metrics.rowsReused,
       unresolvedRows: 0,
       schemaChanges: result.metrics.tablesCreated,
-      deliveriesRecorded: result.metrics.deliveriesRecorded,
+      deliveriesRecorded: result.metrics.batchesRecorded,
       captureIds: result.captureIds,
-      summary: await summaryOf(current()),
+      summary,
+      checkpoint: checkpointDto(checkpointed.checkpoint),
     },
   });
 }
@@ -1256,44 +1148,49 @@ async function recordPreparedDelivery(
   signal: AbortSignal,
 ): Promise<void> {
   const held = imports.get(command.planId);
-  if (held === undefined || held.ref.state !== "ready") {
-    throw new Error("Resolve the import review before recording its delivery");
+  if (held === undefined) {
+    throw new Error("Update the batch review before recording it again");
   }
   signal.throwIfAborted();
+  const inspection = await inspectImport({
+    database: current().database,
+    prepared: held.prepared,
+    page: { limit: 1 },
+  });
+  requireReviewFingerprint(inspection, command.reviewFingerprint);
+  if (inspection.prepared.state !== "ready") {
+    throw new Error("Update the batch review before recording it again");
+  }
   const captureIds =
-    held.application.state === "applied"
-      ? held.application.captureIds
-      : held.regions.map((region) => region.captureId);
-  const record = await recordDelivery({
+    inspection.application.state === "applied"
+      ? inspection.application.captureIds
+      : inspection.captureIds;
+  const record = await recordBatch({
     database: current().database,
     captureIds: [...new Set(captureIds)],
     context: deliveryContext(command.delivery),
     requestId: command.delivery.requestId,
   });
-  if (held.application.state === "applied") {
-    held.application = {
-      state: "applied",
-      captureIds: record.delivery.captureIds,
-    };
-  }
-  await current().database.checkpoint();
+  const checkpointed = await checkpointDatabaseWrite({
+    database: current().database,
+    result: record,
+  });
+  const summary = await refreshSummary();
   scope.postMessage({
     type: "importApplied",
     id,
     result: {
-      importId: record.delivery.id,
-      receiptId: record.delivery.id,
+      importId: record.batch.id,
+      receiptId: record.batch.id,
       outcome: "duplicate",
       appendedRows: 0,
-      skippedRows: boundedNumber(
-        reviewRowCount(held.regions),
-        "review row count",
-      ),
+      skippedRows: boundedNumber(inspection.reviewRows, "review row count"),
       unresolvedRows: 0,
       schemaChanges: 0,
-      deliveriesRecorded: record.metrics.deliveriesRecorded,
-      captureIds: record.delivery.captureIds,
-      summary: await summaryOf(current()),
+      deliveriesRecorded: record.metrics.batchesRecorded,
+      captureIds: record.batch.captureIds,
+      summary,
+      checkpoint: checkpointDto(checkpointed.checkpoint),
     },
   });
 }
@@ -1302,13 +1199,13 @@ async function deliveryHistory(
   id: number,
   command: Extract<WorkspaceCommand, { readonly type: "listDeliveries" }>,
 ): Promise<void> {
-  const page = await listDeliveries({
+  const page = await listBatches({
     database: current().database,
     limit: command.limit,
     ...(command.cursor === null ? {} : { cursor: command.cursor }),
   });
   const dto: WorkspaceDeliveryPage = {
-    deliveries: page.deliveries.map(deliveryDto),
+    deliveries: page.batches.map(deliveryDto),
     nextCursor: page.nextCursor ?? null,
   };
   scope.postMessage({ type: "deliveries", id, page: dto });
@@ -1432,6 +1329,9 @@ async function handle(id: number, command: WorkspaceCommand): Promise<void> {
       case "listImports":
         await listSavedImports(id);
         return;
+      case "inspectImport":
+        await inspectImportPage(id, command);
+        return;
       case "previewImport":
         await previewImport(id, command);
         return;
@@ -1439,7 +1339,7 @@ async function handle(id: number, command: WorkspaceCommand): Promise<void> {
         await updateImport(id, command);
         return;
       case "applyImport":
-        await applyPreparedImport(id, command, controller.signal);
+        await applyImportBatch(id, command, controller.signal);
         return;
       case "recordDelivery":
         await recordPreparedDelivery(id, command, controller.signal);

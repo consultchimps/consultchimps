@@ -19,33 +19,33 @@ documentation site renders its cards and tabs from;
 `scripts/check-readme-operations.ts` fails `pnpm docs:check`, and therefore
 `pnpm check` and CI, when this table and that registry disagree.
 
-| Operation                        | CLI   | Library | Browser |
-| -------------------------------- | ----- | ------- | ------- |
-| Consolidate spreadsheets         | Works | Works   | Works   |
-| Merge workbook tabs              | Works | Works   | Works   |
-| Split spreadsheets               | Works | Works   | Works   |
-| Populate PowerPoint templates    | Works | Works   | Works   |
-| Split PDF pages                  | Works | Works   | Works   |
-| Merge PDF packs                  | Works | Works   | Works   |
-| Inspect PowerPoint templates     | Works | Works   | Works   |
-| Inspect workbooks                | Works | Works   | Works   |
-| Unprotect Excel workbooks        | Works | Works   | Works   |
-| Import workbooks into a database | Works | Works   | Works   |
+| Operation                               | CLI   | Library | Browser |
+| --------------------------------------- | ----- | ------- | ------- |
+| Consolidate spreadsheets                | Works | Works   | Works   |
+| Merge workbook tabs                     | Works | Works   | Works   |
+| Split spreadsheets                      | Works | Works   | Works   |
+| Populate PowerPoint templates           | Works | Works   | Works   |
+| Split PDF pages                         | Works | Works   | Works   |
+| Merge PDF packs                         | Works | Works   | Works   |
+| Inspect PowerPoint templates            | Works | Works   | Works   |
+| Inspect workbooks                       | Works | Works   | Works   |
+| Unprotect Excel workbooks               | Works | Works   | Works   |
+| Prepare workbook batches for a database | Works | Works   | Works   |
 
 ## Packages
 
-| Package                   | Responsibility                                                             |
-| ------------------------- | -------------------------------------------------------------------------- |
-| `@consultchimps/core`     | Shared errors, artifacts, and operation results                            |
-| `@consultchimps/files`    | Input discovery and safe output-path handling                              |
-| `@consultchimps/tabular`  | Runtime-neutral table model, union, and column mapping                     |
-| `@consultchimps/theme`    | Runtime-neutral palette model and colour validation                        |
-| `@consultchimps/db`       | Persistent SQLite and DuckDB files, schemas, imports, and delivery history |
-| `@consultchimps/xlsx`     | Excel workbook input and output                                            |
-| `@consultchimps/pptx`     | PowerPoint template inspection and population                              |
-| `@consultchimps/pdf`      | PDF split and merge operations                                             |
-| `@consultchimps/messages` | Plain-language rendering of results and errors                             |
-| `consultchimps`           | Command-line interface                                                     |
+| Package                   | Responsibility                                                          |
+| ------------------------- | ----------------------------------------------------------------------- |
+| `@consultchimps/core`     | Shared errors, artifacts, and operation results                         |
+| `@consultchimps/files`    | Input discovery and safe output-path handling                           |
+| `@consultchimps/tabular`  | Runtime-neutral table model, union, and column mapping                  |
+| `@consultchimps/theme`    | Runtime-neutral palette model and colour validation                     |
+| `@consultchimps/db`       | Persistent SQLite and DuckDB files, schemas, imports, and batch history |
+| `@consultchimps/xlsx`     | Excel workbook input and output                                         |
+| `@consultchimps/pptx`     | PowerPoint template inspection and population                           |
+| `@consultchimps/pdf`      | PDF split and merge operations                                          |
+| `@consultchimps/messages` | Plain-language rendering of results and errors                          |
+| `consultchimps`           | Command-line interface                                                  |
 
 ## Install
 

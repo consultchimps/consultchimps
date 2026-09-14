@@ -19,7 +19,7 @@ import type {
   WorkspaceSummary,
 } from "@/lib/workspace-protocol";
 import type { WorkspaceClient } from "@/lib/workspace-worker";
-import { isConsultChimpsError } from "@consultchimps/core";
+import { ConsultChimpsError, isConsultChimpsError } from "@consultchimps/core";
 import {
   FileSpreadsheet,
   LoaderCircle,
@@ -67,6 +67,7 @@ const PENDING_IMPORTS_KEY = "consultchimps.workspace.pending-imports.v1";
 interface PendingImportRequest {
   readonly databaseId: string;
   readonly planId: string;
+  readonly reviewFingerprint?: string | undefined;
   readonly delivery: WorkspaceDeliveryContext;
   readonly operation?: "apply" | "delivery" | undefined;
 }
@@ -88,6 +89,8 @@ function isPendingImportRequest(value: unknown): value is PendingImportRequest {
   return (
     typeof request["databaseId"] === "string" &&
     typeof request["planId"] === "string" &&
+    (request["reviewFingerprint"] === undefined ||
+      typeof request["reviewFingerprint"] === "string") &&
     (request["operation"] === undefined ||
       request["operation"] === "apply" ||
       request["operation"] === "delivery") &&
@@ -244,7 +247,6 @@ export function WorkspaceImport({
   runLong,
 }: WorkspaceImportProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const decisionGenerationRef = useRef(0);
   const lastCompletedRequest = useRef<{
     readonly planId: string;
     readonly requestId: string;
@@ -261,9 +263,6 @@ export function WorkspaceImport({
   const [decisions, setDecisions] = useState<readonly WorkspaceRouteDecision[]>(
     [],
   );
-  const [approvedDecisions, setApprovedDecisions] = useState<
-    readonly WorkspaceRouteDecision[] | null
-  >(null);
   const [resolving, setResolving] = useState(false);
   const [preview, setPreview] = useState<WorkspacePreviewPage | null>(null);
   const [delivery, setDelivery] =
@@ -311,7 +310,7 @@ export function WorkspaceImport({
 
   const retrySavedPlans = useCallback(async () => {
     if (busy || resolving || plan !== null) return;
-    const listing = await runLong("Loading saved import reviews", () =>
+    const listing = await runLong("Loading saved batch reviews", () =>
       client().listImports(),
     );
     if (listing !== null) acceptSavedPlans(listing);
@@ -334,9 +333,7 @@ export function WorkspaceImport({
           revision: "",
         })),
       );
-      decisionGenerationRef.current += 1;
       setPlan(null);
-      setApprovedDecisions(null);
       setPreview(null);
       setResult(null);
       setDelivery({
@@ -366,7 +363,7 @@ export function WorkspaceImport({
       role: source.role,
       revision: source.revision,
     }));
-    const prepared = await runLong("Preparing import", (options) =>
+    const prepared = await runLong("Preparing batch", (options) =>
       client().prepareImport(selected, options),
     );
     if (prepared === null) return;
@@ -376,9 +373,7 @@ export function WorkspaceImport({
       ...current.filter((candidate) => candidate.id !== prepared.id),
     ]);
     const preparedDecisions = decisionsFor(prepared);
-    decisionGenerationRef.current += 1;
     setDecisions(preparedDecisions);
-    setApprovedDecisions(prepared.state === "ready" ? preparedDecisions : null);
     setPreview(null);
     setResult(null);
   }, [client, resolving, runLong, sources]);
@@ -392,7 +387,6 @@ export function WorkspaceImport({
             : decision,
         ),
       );
-      decisionGenerationRef.current += 1;
     },
     [],
   );
@@ -424,7 +418,6 @@ export function WorkspaceImport({
             : decision,
         ),
       );
-      decisionGenerationRef.current += 1;
     },
     [],
   );
@@ -432,11 +425,12 @@ export function WorkspaceImport({
   const resolve = useCallback(async () => {
     if (plan === null || resolving || plan.application === "applied") return;
     const submittedDecisions = decisions;
-    const submittedGeneration = decisionGenerationRef.current;
     setResolving(true);
     try {
       const resolved = await client().resolveImport(
         plan.id,
+        plan.reviewFingerprint,
+        plan.routeCursor,
         submittedDecisions,
       );
       const resolvedDecisions = decisionsFor(resolved);
@@ -446,10 +440,7 @@ export function WorkspaceImport({
           candidate.id === resolved.id ? resolved : candidate,
         ),
       );
-      setApprovedDecisions(resolvedDecisions);
-      if (decisionGenerationRef.current === submittedGeneration) {
-        setDecisions(resolvedDecisions);
-      }
+      setDecisions(resolvedDecisions);
     } catch (error) {
       reportError(error);
     } finally {
@@ -457,15 +448,11 @@ export function WorkspaceImport({
     }
   }, [client, decisions, plan, reportError, resolving]);
 
+  const mappingDirty =
+    plan !== null && !sameDecisions(decisions, decisionsFor(plan));
   const reviewIsCurrent =
-    !resolving &&
-    plan?.state === "ready" &&
-    approvedDecisions !== null &&
-    sameDecisions(decisions, approvedDecisions);
-  const reviewNeedsUpdate =
-    plan?.state === "ready" &&
-    approvedDecisions !== null &&
-    !sameDecisions(decisions, approvedDecisions);
+    !resolving && plan?.state === "ready" && !mappingDirty;
+  const reviewNeedsUpdate = plan !== null && mappingDirty;
   const pendingRequest =
     plan === null ? null : pendingImport(summary.databaseId, plan.id);
   const mappingLocked =
@@ -475,7 +462,14 @@ export function WorkspaceImport({
     async (regionId: string, cursor: string | null) => {
       if (plan === null) return;
       try {
-        setPreview(await client().previewImport(plan.id, regionId, cursor));
+        setPreview(
+          await client().previewImport(
+            plan.id,
+            regionId,
+            plan.routeCursor,
+            cursor,
+          ),
+        );
       } catch (error) {
         reportError(error);
       }
@@ -483,24 +477,56 @@ export function WorkspaceImport({
     [client, plan, reportError],
   );
 
+  const loadRoutePage = useCallback(
+    async (routeCursor: string | null) => {
+      if (busy || plan === null || resolving || mappingDirty) return;
+      const inspected = await runLong("Loading batch routes", () =>
+        client().inspectImport(plan.id, routeCursor),
+      );
+      if (inspected === null) return;
+      setPlan(inspected);
+      setSavedPlans((current) =>
+        current.map((candidate) =>
+          candidate.id === inspected.id ? inspected : candidate,
+        ),
+      );
+      setDecisions(decisionsFor(inspected));
+      setPreview(null);
+    },
+    [busy, client, mappingDirty, plan, resolving, runLong],
+  );
+
   const apply = useCallback(async () => {
     if (plan === null || plan.state !== "ready" || !reviewIsCurrent) return;
     const pending = pendingImport(summary.databaseId, plan.id);
     const request = pending?.delivery ?? delivery;
     const operation = pending?.operation ?? "apply";
+    const reviewFingerprint =
+      pending?.reviewFingerprint ?? plan.reviewFingerprint;
     setDelivery(request);
-    const applied = await runLong("Applying import", (options) =>
+    const applied = await runLong("Applying batch", (options) =>
       executePendingImport(
         {
           databaseId: summary.databaseId,
           planId: plan.id,
+          reviewFingerprint,
           delivery: request,
           operation,
         },
         () =>
           operation === "delivery"
-            ? client().recordDelivery(plan.id, request, options)
-            : client().applyImport(plan.id, request, options),
+            ? client().recordDelivery(
+                plan.id,
+                reviewFingerprint,
+                request,
+                options,
+              )
+            : client().applyImport(
+                plan.id,
+                reviewFingerprint,
+                request,
+                options,
+              ),
       ),
     );
     if (applied === null) return;
@@ -512,7 +538,9 @@ export function WorkspaceImport({
     setSavedPlans((current) =>
       current.filter((candidate) => candidate.id !== plan.id),
     );
-    onSummary(applied.summary);
+    if (applied.summary.state === "updated") {
+      onSummary(applied.summary.value);
+    }
     setResult(
       applied.outcome === "duplicate"
         ? `This capture was already applied. Added 0 rows and skipped ${applied.skippedRows.toLocaleString()} rows`
@@ -524,11 +552,24 @@ export function WorkspaceImport({
       duplicateOf: applied.outcome === "duplicate" ? applied.importId : null,
       captureIds: applied.captureIds,
     });
+    if (applied.checkpoint.state === "failed") {
+      reportError(
+        new ConsultChimpsError(
+          applied.checkpoint.code,
+          applied.checkpoint.message,
+        ),
+      );
+    } else if (applied.summary.state === "refresh-required") {
+      reportError(
+        new ConsultChimpsError(applied.summary.code, applied.summary.message),
+      );
+    }
   }, [
     client,
     delivery,
     onSummary,
     plan,
+    reportError,
     reviewIsCurrent,
     runLong,
     summary.databaseId,
@@ -554,19 +595,32 @@ export function WorkspaceImport({
             requestId: `delivery-${globalThis.crypto.randomUUID()}`,
           }
         : delivery);
+    const reviewFingerprint =
+      pending?.reviewFingerprint ?? plan.reviewFingerprint;
     setDelivery(request);
-    const recorded = await runLong("Recording delivery", (options) =>
+    const recorded = await runLong("Recording batch", (options) =>
       executePendingImport(
         {
           databaseId: summary.databaseId,
           planId: plan.id,
+          reviewFingerprint,
           delivery: request,
           operation,
         },
         () =>
           operation === "delivery"
-            ? client().recordDelivery(plan.id, request, options)
-            : client().applyImport(plan.id, request, options),
+            ? client().recordDelivery(
+                plan.id,
+                reviewFingerprint,
+                request,
+                options,
+              )
+            : client().applyImport(
+                plan.id,
+                reviewFingerprint,
+                request,
+                options,
+              ),
       ),
     );
     if (recorded === null) return;
@@ -578,22 +632,37 @@ export function WorkspaceImport({
     setSavedPlans((current) =>
       current.filter((candidate) => candidate.id !== plan.id),
     );
-    onSummary(recorded.summary);
+    if (recorded.summary.state === "updated") {
+      onSummary(recorded.summary.value);
+    }
     setResult(
       recorded.deliveriesRecorded > 0
-        ? "Recorded a separate delivery event and reused the captured rows"
-        : "This delivery was already recorded; reused the captured rows without adding another event",
+        ? "Recorded a separate batch event and reused the captured rows"
+        : "This batch was already recorded; reused the captured rows without adding another event",
     );
     setPlan({
       ...plan,
       application: "applied",
       captureIds: recorded.captureIds,
     });
+    if (recorded.checkpoint.state === "failed") {
+      reportError(
+        new ConsultChimpsError(
+          recorded.checkpoint.code,
+          recorded.checkpoint.message,
+        ),
+      );
+    } else if (recorded.summary.state === "refresh-required") {
+      reportError(
+        new ConsultChimpsError(recorded.summary.code, recorded.summary.message),
+      );
+    }
   }, [
     client,
     delivery,
     onSummary,
     plan,
+    reportError,
     reviewIsCurrent,
     resolving,
     runLong,
@@ -616,11 +685,11 @@ export function WorkspaceImport({
 
   return (
     <section className={sectionClass} data-testid="workspace-import">
-      <h2 className="font-display text-xl font-semibold">Prepare an import</h2>
+      <h2 className="font-display text-xl font-semibold">Prepare a batch</h2>
       <p className="mt-2 text-sm text-fd-muted-foreground">
         Choose one or more Excel workbooks. The worker hashes and reads them in
-        bounded batches, then holds a durable review without changing accepted
-        tables
+        bounded batches, then holds a durable batch review without changing
+        accepted tables
       </p>
       <div className="mt-4 flex flex-wrap gap-3">
         <button
@@ -657,7 +726,7 @@ export function WorkspaceImport({
           ) : (
             <PackageCheck aria-hidden="true" className="size-4" />
           )}
-          Prepare review
+          Prepare batch review
         </button>
       </div>
 
@@ -669,13 +738,13 @@ export function WorkspaceImport({
           onClick={() => void retrySavedPlans()}
           type="button"
         >
-          Retry saved imports
+          Retry saved batches
         </button>
       ) : null}
 
       {savedPlans.length === 0 ? null : (
         <div className="mt-4 rounded-lg border p-4">
-          <h3 className="font-semibold">Saved import reviews</h3>
+          <h3 className="font-semibold">Saved batch reviews</h3>
           <p className="mt-1 text-xs text-fd-muted-foreground">
             Captured rows stay in browser storage, so you can resume without
             choosing the original workbook again
@@ -691,11 +760,7 @@ export function WorkspaceImport({
                   const pending = pendingImport(summary.databaseId, saved.id);
                   const savedDecisions = decisionsFor(saved);
                   setPlan(saved);
-                  decisionGenerationRef.current += 1;
                   setDecisions(savedDecisions);
-                  setApprovedDecisions(
-                    saved.state === "ready" ? savedDecisions : null,
-                  );
                   setPreview(null);
                   setResult(null);
                   setDelivery(
@@ -938,6 +1003,37 @@ export function WorkspaceImport({
               );
             })}
           </div>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <span
+              className="text-xs text-fd-muted-foreground"
+              data-testid="workspace-import-route-count"
+            >
+              Showing {plan.regions.length.toLocaleString()} of{" "}
+              {plan.routeCount.toLocaleString()} routes
+            </span>
+            {plan.routeCursor === null ? null : (
+              <button
+                className={secondaryButtonClass}
+                data-testid="workspace-import-routes-first"
+                disabled={busy || resolving || mappingDirty}
+                onClick={() => void loadRoutePage(null)}
+                type="button"
+              >
+                First routes
+              </button>
+            )}
+            {plan.nextRouteCursor === null ? null : (
+              <button
+                className={secondaryButtonClass}
+                data-testid="workspace-import-routes-next"
+                disabled={busy || resolving || mappingDirty}
+                onClick={() => void loadRoutePage(plan.nextRouteCursor)}
+                type="button"
+              >
+                Next routes
+              </button>
+            )}
+          </div>
           <button
             className={secondaryButtonClass}
             data-testid="workspace-import-resolve"
@@ -954,7 +1050,7 @@ export function WorkspaceImport({
               role="status"
             >
               The route or column mapping changed. Update the review before
-              applying this import
+              applying this batch
             </p>
           ) : null}
 
@@ -1010,7 +1106,7 @@ export function WorkspaceImport({
             className="mt-6 grid gap-3 rounded-lg border p-4 sm:grid-cols-2"
             data-testid="workspace-delivery-context"
           >
-            <legend className="px-2 font-semibold">Delivery context</legend>
+            <legend className="px-2 font-semibold">Batch context</legend>
             <label className="text-xs">
               Request ID
               <input
@@ -1117,9 +1213,10 @@ export function WorkspaceImport({
               type="button"
             >
               <PackageCheck aria-hidden="true" className="size-4" />
-              Apply import
+              Apply batch
             </button>
-            {plan.duplicateOf === null ? null : (
+            {plan.application !== "applied" &&
+            plan.duplicateOf === null ? null : (
               <button
                 className={secondaryButtonClass}
                 data-testid="workspace-delivery-record-reuse"
@@ -1134,7 +1231,7 @@ export function WorkspaceImport({
                 type="button"
               >
                 <Truck aria-hidden="true" className="size-4" />
-                Record another delivery
+                Record batch again
               </button>
             )}
           </div>

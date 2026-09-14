@@ -7,9 +7,24 @@
 "consultchimps": minor
 ---
 
+Group staged imports under `db import prepare`, `inspect`, `update`, and
+`apply`. Use `db import run` for one-step execution, `--profile` for reusable
+settings, and `--batch` for a saved review. Rename the library contracts to
+import profiles and batches while preserving the current stored database and
+batch formats.
+
+Page saved import routes independently from row previews and expose applied
+capture membership in import inspection. Share destination naming policies
+between callers while preserving their Record ID prefix conventions. Count
+shared captures once in review totals while retaining each source binding.
+
+Report whether database writes committed or returned an unchanged result. Keep
+completed write results available after checkpoint or summary-refresh failures.
+Add retryable resource ownership through `OwnedResources` in the core package.
+
 Create and reopen persistent SQLite and DuckDB databases, prepare workbook
-imports for review, and retain source captures and separately recorded
-deliveries. Add bounded workbook reading and file access for large imports.
+imports for review, and retain source captures and separately recorded batches.
+Add bounded workbook reading and file access for large imports.
 
 Replace the database spike's synchronous in-memory API with asynchronous
 persistent operations. Applications must migrate to the new database and runtime
@@ -21,16 +36,16 @@ Node major, rather than a single JavaScript file.
 
 Bind prepared artifact format 3 reviews to their metadata fingerprint and
 capture row checksums. Verify consumed row values before committing an import.
-Version 1 and 2 spike plans must be regenerated from their source files;
+Version 1 and 2 spike batches must be regenerated from their source files;
 existing working database files keep their format.
 
 Accept leading-plus integer tokens consistently during inference and import.
-Keep database and import-plan replacement blocked after failed closure until a
+Keep database and import-batch replacement blocked after failed closure until a
 close retry succeeds.
 
 Reject ill-formed Unicode in schema identifiers and Record ID components. Reject
 added, missing, or reordered internal metadata columns when opening working
-databases and saved import plans.
+databases and saved import batches.
 
 Preserve supplementary Unicode characters in inferred table names and Record ID
 prefixes. Keep streaming workbook cleanup retryable after a scratch-file close
@@ -50,7 +65,7 @@ cells before capture. Preserve cleanup failures and recovery paths when a native
 open or one-step CLI import fails.
 
 Validate internal table types, nullability, and key constraints when opening
-databases and saved plans. Delay CLI database results until resource cleanup
+databases and saved batches. Delay CLI database results until resource cleanup
 finishes, preserving valid JSON and recovery details after a committed
 operation. Check cancellation during browser replacement copies and preserve
 failed browser open cleanup so live owners continue to block replacement.
@@ -65,21 +80,21 @@ new table applications. Report structured corruption errors for counter
 conflicts and pending Record ID collisions while preserving valid counter gaps
 and the already-applied retry path.
 
-Reject import receipt replay when the approved plan belongs to another database,
-including a copy converted to a different format.
+Reject import receipt replay when the approved batch belongs to another
+database, including a copy converted to a different format.
 
 Parse workbook row references in linear time so malformed references cannot
 trigger excessive regular-expression backtracking.
 
-Detect DuckDB view changes before applying reviewed schema or import plans.
+Detect DuckDB view changes before applying reviewed schema or import batches.
 Validate saved import receipt totals against application metadata before
 returning a successful retry result.
 
 Read the workbook date system only from its SpreadsheetML property element so
 extension metadata cannot shift imported dates.
 
-Reject saved import plans containing rows from an unfinished capture when
-reopening them, without deleting the plan or scanning row values.
+Reject saved import batches containing rows from an unfinished capture when
+reopening them, without deleting the batch or scanning row values.
 
 Ignore foreign or misplaced workbook sheet and named-range declarations. Reject
 retry receipts that substitute applications from unrelated captures or tables
@@ -90,11 +105,11 @@ and table references. Advance the workbook reader version so new preparations
 read files again when only an older reader capture exists. Existing imported
 rows and capture history are not rewritten automatically.
 
-Reject unsupported schema and import-recipe versions from JavaScript callers
-before publishing database or prepared-plan outputs.
+Reject unsupported schema and import-profile versions from JavaScript callers
+before publishing database or prepared-batch outputs.
 
 Reject unsupported XML document roots instead of reporting an empty workbook.
-Verify delivery capture memberships before returning an import retry receipt.
+Verify batch capture memberships before returning an import retry receipt.
 
 Reject worksheet aliases and require supported OOXML relationship role URIs.
 Preserve orphaned browser DuckDB recovery files by refusing publication over

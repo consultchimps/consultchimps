@@ -2,10 +2,6 @@ import { isConsultChimpsError } from "@consultchimps/core";
 
 import { databaseError } from "../errors.js";
 import {
-  assertInternalTableStorage,
-  type InternalTableStorage,
-} from "./table-storage.js";
-import {
   identifierKey,
   quoteIdentifier,
   type ColumnDefinition,
@@ -13,147 +9,15 @@ import {
   type TableSchema,
 } from "../schema.js";
 import { parseDatabaseSchema } from "../validators.js";
-import {
-  APPLICATION_TABLE,
-  CAPTURE_ROW_TABLE,
-  CAPTURE_TABLE,
-  COUNTERS_TABLE,
-  DATABASE_METADATA_TABLE,
-  DELIVERY_MEMBERSHIP_TABLE,
-  DELIVERY_TABLE,
-  IMPORT_REQUEST_TABLE,
-  PLAN_TABLE,
-  SOURCE_CONTENT_TABLE,
-  SOURCE_FILE_TABLE,
-  SOURCE_NAME_TABLE,
-  TABLE_REGISTRY_TABLE,
-} from "../metadata.js";
+import { COUNTERS_TABLE, TABLE_REGISTRY_TABLE } from "../metadata.js";
 import type {
   DatabaseEngine,
   EngineRow,
   EngineTransaction,
   EngineValue,
 } from "./engine.js";
-
-const REQUIRED_DATABASE_SCHEMA = [
-  {
-    table: DATABASE_METADATA_TABLE,
-    primaryKey: ["database_id"],
-    integerColumns: ["format_version", "revision"],
-    columns: ["database_id", "format", "format_version", "revision"],
-  },
-  {
-    table: TABLE_REGISTRY_TABLE,
-    primaryKey: ["table_name"],
-    integerColumns: ["schema_version", "next_record_id"],
-    columns: ["table_name", "schema_json", "schema_version", "next_record_id"],
-  },
-  {
-    table: COUNTERS_TABLE,
-    primaryKey: ["counter_name"],
-    integerColumns: ["next_value"],
-    columns: ["counter_name", "next_value"],
-  },
-  {
-    table: SOURCE_CONTENT_TABLE,
-    primaryKey: ["content_hash"],
-    integerColumns: ["byte_count"],
-    columns: ["content_hash", "byte_count"],
-  },
-  {
-    table: SOURCE_FILE_TABLE,
-    primaryKey: ["source_file_id"],
-    uniqueKeys: [["content_hash"]],
-    columns: ["source_file_id", "content_hash", "display_name"],
-  },
-  {
-    table: SOURCE_NAME_TABLE,
-    primaryKey: ["source_file_id", "display_name"],
-    columns: ["source_file_id", "display_name"],
-  },
-  {
-    table: CAPTURE_TABLE,
-    primaryKey: ["capture_id"],
-    integerColumns: ["row_count"],
-    uniqueKeys: [["source_file_id", "selection_key", "reader_version"]],
-    columns: [
-      "capture_id",
-      "source_file_id",
-      "source_key",
-      "selection_key",
-      "selection_label",
-      "reader_version",
-      "state",
-      "row_count",
-      "columns_json",
-    ],
-  },
-  {
-    table: PLAN_TABLE,
-    primaryKey: ["plan_id", "plan_revision"],
-    integerColumns: ["plan_revision", "baseline_revision"],
-    columns: [
-      "plan_id",
-      "plan_revision",
-      "baseline_revision",
-      "state",
-      "recipe_json",
-      "conflicts_json",
-      "decisions_json",
-      "bindings_json",
-    ],
-  },
-  {
-    table: CAPTURE_ROW_TABLE,
-    primaryKey: ["capture_id", "source_row"],
-    integerColumns: ["source_row"],
-    duckdbWithoutPrimaryKey: true,
-    columns: ["capture_id", "source_row", "values_json"],
-  },
-  {
-    table: APPLICATION_TABLE,
-    primaryKey: ["import_id"],
-    integerColumns: ["plan_revision", "row_count"],
-    uniqueKeys: [
-      ["application_key"],
-      ["request_id", "capture_id", "table_name"],
-    ],
-    columns: [
-      "import_id",
-      "application_key",
-      "request_id",
-      "capture_id",
-      "table_name",
-      "plan_id",
-      "plan_revision",
-      "row_count",
-    ],
-  },
-  {
-    table: IMPORT_REQUEST_TABLE,
-    primaryKey: ["request_id"],
-    integerColumns: ["plan_revision", "row_count"],
-    columns: [
-      "request_id",
-      "plan_id",
-      "plan_revision",
-      "import_ids_json",
-      "capture_ids_json",
-      "row_count",
-    ],
-  },
-  {
-    table: DELIVERY_TABLE,
-    primaryKey: ["delivery_id"],
-    uniqueKeys: [["request_id"]],
-    columns: ["delivery_id", "request_id", "context_json"],
-  },
-  {
-    table: DELIVERY_MEMBERSHIP_TABLE,
-    primaryKey: ["delivery_id", "capture_id"],
-    columns: ["delivery_id", "capture_id"],
-  },
-] as const satisfies readonly InternalTableStorage[];
+import { DATABASE_STORAGE } from "./storage-layouts.js";
+import { validateInternalTables } from "./storage-schema.js";
 
 export async function assertNoSqliteTableTriggers(
   transaction: EngineTransaction,
@@ -194,7 +58,7 @@ export async function assertNoManagedDatabaseTriggers(
     transaction,
     format,
     [
-      ...REQUIRED_DATABASE_SCHEMA.map(({ table }) => table),
+      ...Object.values(DATABASE_STORAGE.tables).map(({ name }) => name),
       ...registered.flatMap((row) =>
         typeof row["table_name"] === "string" ? [row["table_name"]] : [],
       ),
@@ -441,70 +305,10 @@ export async function queryDatabaseMetadata(
 export async function validateDatabaseLayout(
   engine: DatabaseEngine,
 ): Promise<void> {
-  const requiredTables = REQUIRED_DATABASE_SCHEMA.map(({ table }) => table);
-  const placeholders = requiredTables.map(() => "?").join(", ");
-  const tableRows = await queryDatabaseMetadata(
-    engine,
-    engine.format === "sqlite"
-      ? `SELECT name AS table_name FROM sqlite_master WHERE type = 'table' AND name IN (${placeholders})`
-      : `SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' AND table_type = 'BASE TABLE' AND table_name IN (${placeholders})`,
-    requiredTables,
-  );
-  const baseTables = new Set(
-    tableRows.flatMap((row) =>
-      typeof row["table_name"] === "string" ? [row["table_name"]] : [],
-    ),
-  );
-  const missingTables = requiredTables.filter(
-    (table) => !baseTables.has(table),
-  );
-  if (missingTables.length > 0) {
-    throw corruptDatabase({ missingTables });
-  }
-  for (const required of REQUIRED_DATABASE_SCHEMA) {
-    const rows = await queryDatabaseMetadata(
-      engine,
-      engine.format === "sqlite"
-        ? "SELECT *, name AS column_name FROM pragma_table_xinfo(?, 'main') ORDER BY cid"
-        : "SELECT *, name AS column_name FROM pragma_table_info(?) ORDER BY cid",
-      [required.table],
-    );
-    const columns = rows.map((row) =>
-      typeof row["column_name"] === "string" ? row["column_name"] : null,
-    );
-    const columnNames = new Set(
-      columns.filter((column): column is string => column !== null),
-    );
-    const missingColumns = required.columns.filter(
-      (column) => !columnNames.has(column),
-    );
-    const columnOrderMatches = required.columns.every(
-      (column, index) => columns[index] === column,
-    );
-    if (
-      missingColumns.length > 0 ||
-      columns.length !== required.columns.length ||
-      !columnOrderMatches
-    ) {
-      throw corruptDatabase({
-        table: required.table,
-        ...(missingColumns.length === 0 ? {} : { missingColumns }),
-        ...(columns.length <= required.columns.length
-          ? {}
-          : {
-              unexpectedColumnCount: columns.length - required.columns.length,
-            }),
-        ...(!columnOrderMatches && missingColumns.length === 0
-          ? { columnOrderMismatch: true }
-          : {}),
-      });
-    }
-    await assertInternalTableStorage({
-      query: (sql, values) => queryDatabaseMetadata(engine, sql, values),
-      format: engine.format,
-      layout: required,
-      columns: rows,
-      invalid: corruptDatabase,
-    });
-  }
+  await validateInternalTables({
+    query: (sql, values) => queryDatabaseMetadata(engine, sql, values),
+    format: engine.format,
+    schema: DATABASE_STORAGE,
+    invalid: corruptDatabase,
+  });
 }

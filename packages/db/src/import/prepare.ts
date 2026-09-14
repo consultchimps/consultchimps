@@ -6,13 +6,15 @@ import { isConsultChimpsError, throwIfAborted } from "@consultchimps/core";
 import { engineOf, valueAsString } from "../database.js";
 import { databaseError } from "../errors.js";
 import type { EngineValue } from "../internal/engine.js";
+import { PREPARED_STORAGE } from "../internal/storage-layouts.js";
+import { insertInternalRow } from "../internal/storage-schema.js";
 import { CAPTURE_ROW_TABLE } from "../metadata.js";
 import { validateTableSchema } from "../schema.js";
 import {
   PREPARED_BINDING_TABLE,
   PREPARED_CAPTURE_TABLE,
   PREPARED_ROW_TABLE,
-  assertPreparedImportWritable,
+  assertImportBatchWritable,
   preparedEngineOf,
   readPreparedReviewSnapshot,
   updatePreparedCaptureMetadata,
@@ -33,10 +35,16 @@ import type {
   ImportRegionReader,
   PrepareImportOptions,
   PrepareImportOutcome,
+  PrepareImportReviewOutcome,
+  ImportBatchPage,
 } from "./types.js";
-import { validateColumnMappings, validateImportRecipe } from "../validators.js";
+import {
+  validateColumnMappings,
+  validateImportProfile,
+} from "../validators.js";
 import { assertValidImportDateCell } from "./date-cell.js";
 import { assertValidImportNumberCell } from "./number-cell.js";
+import { inspectUpdatedImport, assertImportReviewPage } from "./inspection.js";
 import { createCaptureRowChecksum } from "./row-checksum.js";
 import { assertCaptureRowCount, readSourceRowPage } from "./source-rows.js";
 
@@ -81,7 +89,7 @@ async function checksumDatabaseCapture(options: {
     let cursor: bigint | undefined;
     let rowsRead = 0n;
     while (true) {
-      throwIfAborted(options.signal, "db.prepare");
+      throwIfAborted(options.signal, "db.import.prepare");
       const page = await readSourceRowPage({
         engine: transaction,
         table: CAPTURE_ROW_TABLE,
@@ -90,7 +98,7 @@ async function checksumDatabaseCapture(options: {
         limit: CAPTURE_BATCH_ROWS,
         owner: "database",
       });
-      throwIfAborted(options.signal, "db.prepare");
+      throwIfAborted(options.signal, "db.import.prepare");
       if (page.rows.length === 0) break;
       for (const { row, sourceRow } of page.rows) {
         checksum.update(
@@ -115,7 +123,7 @@ function validateReaderColumns(options: {
   readonly source: string;
   readonly selection: string;
   readonly columns: readonly string[];
-  readonly recipe: PrepareImportOptions["recipe"];
+  readonly profile: PrepareImportOptions["profile"];
 }): void {
   const exactNames = new Set<string>();
   for (const column of options.columns) {
@@ -132,7 +140,7 @@ function validateReaderColumns(options: {
     }
     exactNames.add(column);
   }
-  const route = options.recipe.routes.find(
+  const route = options.profile.routes.find(
     (candidate) =>
       candidate.source === options.source &&
       candidate.selection === options.selection,
@@ -197,7 +205,7 @@ async function hashSource(
 ): Promise<string> {
   const hash = sha256.create();
   for (let offset = 0; offset < source.size; offset += HASH_CHUNK_BYTES) {
-    throwIfAborted(signal, "db.prepare");
+    throwIfAborted(signal, "db.import.prepare");
     const expected = Math.min(HASH_CHUNK_BYTES, source.size - offset);
     const bytes = await source.readAt(offset, expected, signal);
     if (bytes.length !== expected) {
@@ -212,16 +220,24 @@ async function hashSource(
   return bytesToHex(hash.digest());
 }
 
+export function prepareImport(
+  options: PrepareImportOptions & { readonly reviewPage: ImportBatchPage },
+): Promise<PrepareImportReviewOutcome>;
+export function prepareImport(
+  options: PrepareImportOptions,
+): Promise<PrepareImportOutcome>;
 export async function prepareImport(
   options: PrepareImportOptions,
-): Promise<PrepareImportOutcome> {
-  throwIfAborted(options.signal, "db.prepare");
-  validateImportRecipe(options.recipe);
+): Promise<PrepareImportOutcome | PrepareImportReviewOutcome> {
+  if (options.reviewPage !== undefined)
+    assertImportReviewPage(options.reviewPage);
+  throwIfAborted(options.signal, "db.import.prepare");
+  validateImportProfile(options.profile);
   validateSourceSelections(options.sources);
   if (options.prepared.databaseId !== options.database.id) {
     throw databaseError(
       "DB_PREPARED_WRONG_DATABASE",
-      "The import plan belongs to a different database.",
+      "The import batch belongs to a different database.",
     );
   }
   const preparedEngine = preparedEngineOf(options.prepared);
@@ -234,7 +250,7 @@ export async function prepareImport(
     const contentHash = await hashSource(source.bytes, options.signal);
     await source.verifyUnchanged?.();
     for (const selection of source.selections) {
-      throwIfAborted(options.signal, "db.prepare");
+      throwIfAborted(options.signal, "db.import.prepare");
       const existingBinding = await preparedEngine.query(
         `SELECT c.content_hash, c.reader_version FROM ${PREPARED_BINDING_TABLE} b JOIN ${PREPARED_CAPTURE_TABLE} c ON c.capture_id = b.capture_id WHERE b.source_key = ? AND b.selection_key = ?`,
         [source.key, selection.key],
@@ -250,7 +266,7 @@ export async function prepareImport(
         ) {
           throw databaseError(
             "DB_PREPARED_SOURCE_CHANGED",
-            `Source "${source.key}" selection "${selection.key}" differs from the content already stored in this import plan. Create a new plan for the changed source.`,
+            `Source "${source.key}" selection "${selection.key}" differs from the content already stored in this import batch. Create a new batch for the changed source.`,
             { source: source.key, selection: selection.key },
           );
         }
@@ -268,14 +284,15 @@ export async function prepareImport(
         await updatePreparedCaptureMetadata(
           options.prepared,
           async (transaction) => {
-            await transaction.execute(
-              `INSERT INTO ${PREPARED_BINDING_TABLE} VALUES (?, ?, ?, ?)`,
-              [
-                source.key,
-                selection.key,
-                duplicateCaptureId,
-                source.bytes.name,
-              ],
+            await insertInternalRow(
+              transaction,
+              PREPARED_STORAGE.tables.bindings,
+              {
+                source_key: source.key,
+                selection_key: selection.key,
+                capture_id: duplicateCaptureId,
+                display_name: source.bytes.name,
+              },
             );
           },
         );
@@ -298,32 +315,34 @@ export async function prepareImport(
         await updatePreparedCaptureMetadata(
           options.prepared,
           async (transaction) => {
-            await transaction.execute(
-              `INSERT INTO ${PREPARED_CAPTURE_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [
-                reusable.captureId,
-                reusable.sourceFileId,
-                source.key,
-                source.bytes.name,
-                selection.key,
-                selection.label,
-                source.readerVersion,
-                contentHash,
-                BigInt(source.bytes.size),
-                1n,
-                reusable.rowCount,
-                reusable.columns,
-                rowChecksum,
-              ],
+            await insertInternalRow(
+              transaction,
+              PREPARED_STORAGE.tables.captures,
+              {
+                capture_id: reusable.captureId,
+                source_file_id: reusable.sourceFileId,
+                source_key: source.key,
+                display_name: source.bytes.name,
+                selection_key: selection.key,
+                selection_label: selection.label,
+                reader_version: source.readerVersion,
+                content_hash: contentHash,
+                byte_count: BigInt(source.bytes.size),
+                reused: 1n,
+                row_count: reusable.rowCount,
+                columns_json: reusable.columns,
+                row_checksum: rowChecksum,
+              },
             );
-            await transaction.execute(
-              `INSERT INTO ${PREPARED_BINDING_TABLE} VALUES (?, ?, ?, ?)`,
-              [
-                source.key,
-                selection.key,
-                reusable.captureId,
-                source.bytes.name,
-              ],
+            await insertInternalRow(
+              transaction,
+              PREPARED_STORAGE.tables.bindings,
+              {
+                source_key: source.key,
+                selection_key: selection.key,
+                capture_id: reusable.captureId,
+                display_name: source.bytes.name,
+              },
             );
           },
         );
@@ -345,7 +364,7 @@ export async function prepareImport(
             source: source.key,
             selection: selection.key,
             columns: columnNames,
-            recipe: options.recipe,
+            profile: options.profile,
           });
           const declaredColumns = new Set(columnNames);
           const profiles = new Map<string, ColumnProfile>(
@@ -356,7 +375,7 @@ export async function prepareImport(
             signal: options.signal,
             onProgress: options.onProgress,
           })) {
-            throwIfAborted(options.signal, "db.prepare");
+            throwIfAborted(options.signal, "db.import.prepare");
             const rows: Array<readonly EngineValue[]> = [];
             for (const row of batch) {
               if (
@@ -433,7 +452,7 @@ export async function prepareImport(
               rows.push([captureId, sourceRow, valuesJson]);
             }
             await preparedEngine.transaction(async (transaction) => {
-              await assertPreparedImportWritable(transaction);
+              await assertImportBatchWritable(transaction);
               await transaction.bulkInsert({
                 table: PREPARED_ROW_TABLE,
                 columns: ["capture_id", "source_row", "values_json"],
@@ -450,27 +469,34 @@ export async function prepareImport(
         await updatePreparedCaptureMetadata(
           options.prepared,
           async (transaction) => {
-            await transaction.execute(
-              `INSERT INTO ${PREPARED_CAPTURE_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [
-                captureId,
-                null,
-                source.key,
-                source.bytes.name,
-                selection.key,
-                selection.label,
-                source.readerVersion,
-                contentHash,
-                BigInt(source.bytes.size),
-                0n,
-                BigInt(rowCount),
-                JSON.stringify(columns),
-                rowChecksum.digest(),
-              ],
+            await insertInternalRow(
+              transaction,
+              PREPARED_STORAGE.tables.captures,
+              {
+                capture_id: captureId,
+                source_file_id: null,
+                source_key: source.key,
+                display_name: source.bytes.name,
+                selection_key: selection.key,
+                selection_label: selection.label,
+                reader_version: source.readerVersion,
+                content_hash: contentHash,
+                byte_count: BigInt(source.bytes.size),
+                reused: 0n,
+                row_count: BigInt(rowCount),
+                columns_json: JSON.stringify(columns),
+                row_checksum: rowChecksum.digest(),
+              },
             );
-            await transaction.execute(
-              `INSERT INTO ${PREPARED_BINDING_TABLE} VALUES (?, ?, ?, ?)`,
-              [source.key, selection.key, captureId, source.bytes.name],
+            await insertInternalRow(
+              transaction,
+              PREPARED_STORAGE.tables.bindings,
+              {
+                source_key: source.key,
+                selection_key: selection.key,
+                capture_id: captureId,
+                display_name: source.bytes.name,
+              },
             );
           },
         );
@@ -478,7 +504,7 @@ export async function prepareImport(
         if (rowCount === 0) throw error;
         try {
           await preparedEngine.transaction(async (transaction) => {
-            await assertPreparedImportWritable(transaction);
+            await assertImportBatchWritable(transaction);
             await transaction.execute(
               `DELETE FROM ${PREPARED_ROW_TABLE} WHERE capture_id = ?`,
               [captureId],
@@ -510,28 +536,35 @@ export async function prepareImport(
     options.database,
     options.prepared,
     captures,
-    options.recipe,
+    options.profile,
   );
   const prepared = await updatePreparedPlan({
     prepared: options.prepared,
-    recipe: options.recipe,
+    profile: options.profile,
     conflicts,
     ready: conflicts.length === 0,
     expectedReviewFingerprint: reviewSnapshot.review.prepared.reviewFingerprint,
   });
   await preparedEngine.checkpoint();
-  return {
-    prepared,
-    result: {
-      operation: "db.prepare",
-      artifacts: [],
-      warnings: [],
-      metrics: {
-        sourcesRead,
-        sourcesReused,
-        rowsCaptured,
-        conflicts: conflicts.length,
-      },
+  const result: PrepareImportOutcome["result"] = {
+    operation: "db.import.prepare",
+    artifacts: [],
+    warnings: [],
+    metrics: {
+      sourcesRead,
+      sourcesReused,
+      rowsCaptured,
+      conflicts: conflicts.length,
     },
+  };
+  if (options.reviewPage === undefined) return { prepared, result };
+  return {
+    ...(await inspectUpdatedImport({
+      database: options.database,
+      prepared: options.prepared,
+      expected: prepared,
+      page: options.reviewPage,
+    })),
+    result,
   };
 }

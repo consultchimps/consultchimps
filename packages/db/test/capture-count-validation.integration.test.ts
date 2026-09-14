@@ -11,8 +11,8 @@ import {
   prepareImport,
 } from "../src/import/operations.js";
 import { preparedCaptures } from "../src/import/planning.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 import { PREPARED_CAPTURE_TABLE, preparedEngineOf } from "../src/prepared.js";
 import type { DatabaseFormat } from "../src/schema.js";
 
@@ -26,7 +26,7 @@ afterEach(async () => {
   );
 });
 
-const recipe: ImportRecipe = {
+const profile: ImportProfile = {
   version: 1,
   routes: [
     {
@@ -89,16 +89,16 @@ async function fixture(format: DatabaseFormat) {
     path: path.join(directory, `workspace.${format}`),
     format,
   });
-  const prepared = await createPreparedImport({
+  const prepared = await createImportBatch({
     path: path.join(directory, "review.ccplan"),
     database,
-    recipe,
+    profile,
     baselineRevision: 0n,
   });
   const outcome = await prepareImport({
     database,
     prepared,
-    recipe,
+    profile,
     sources: [source()],
   });
   expect(outcome.prepared.state).toBe("ready");

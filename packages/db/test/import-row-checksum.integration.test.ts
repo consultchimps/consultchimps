@@ -11,14 +11,14 @@ import {
   prepareImport,
   resolveImport,
 } from "../src/import/operations.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
 import { CAPTURE_ROW_TABLE, DATABASE_METADATA_TABLE } from "../src/metadata.js";
 import {
   PREPARED_BINDING_TABLE,
   PREPARED_ROW_TABLE,
   preparedEngineOf,
 } from "../src/prepared.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 
 const directories: string[] = [];
 
@@ -76,7 +76,7 @@ function source(options: {
 function route(
   sourceKey: string,
   table: string,
-): ImportRecipe["routes"][number] {
+): ImportProfile["routes"][number] {
   return {
     source: sourceKey,
     selection: "Data",
@@ -130,21 +130,21 @@ for (const format of ["sqlite", "duckdb"] as const) {
       path: path.join(directory, `workspace.${format}`),
       format,
     });
-    const recipe: ImportRecipe = {
+    const profile: ImportProfile = {
       version: 1,
       routes: [route("alias-a", "Included"), route("alias-b", "Included")],
     };
-    const prepared = await createPreparedImport({
+    const prepared = await createImportBatch({
       path: path.join(directory, "review.ccplan"),
       database,
-      recipe,
+      profile,
       baselineRevision: 0n,
     });
     try {
       const outcome = await prepareImport({
         database,
         prepared,
-        recipe,
+        profile,
         sources: [
           source({
             key: "alias-a",
@@ -210,7 +210,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         tables: [],
         captures: 0n,
         completedImports: 0n,
-        deliveries: 0n,
+        recordedBatches: 0n,
       });
     } finally {
       await prepared.close();
@@ -226,27 +226,26 @@ for (const format of ["sqlite", "duckdb"] as const) {
       format,
     });
     const importSource = source({ key: "submission", value: "reviewed" });
-    const firstRecipe: ImportRecipe = {
+    const firstRecipe: ImportProfile = {
       version: 1,
       routes: [route("submission", "First")],
     };
-    const firstPlan = await createPreparedImport({
+    const firstPlan = await createImportBatch({
       path: path.join(directory, "first.ccplan"),
       database,
-      recipe: firstRecipe,
+      profile: firstRecipe,
       baselineRevision: 0n,
     });
-    const secondRecipe: ImportRecipe = {
+    const secondRecipe: ImportProfile = {
       version: 1,
       routes: [route("submission", "Second")],
     };
-    let secondPlan:
-      Awaited<ReturnType<typeof createPreparedImport>> | undefined;
+    let secondPlan: Awaited<ReturnType<typeof createImportBatch>> | undefined;
     try {
       const first = await prepareImport({
         database,
         prepared: firstPlan,
-        recipe: firstRecipe,
+        profile: firstRecipe,
         sources: [importSource],
       });
       if (first.prepared.state !== "ready") {
@@ -259,16 +258,16 @@ for (const format of ["sqlite", "duckdb"] as const) {
         requestId: `${format}-first-capture`,
       });
       const baseline = await inspectDatabase({ database });
-      secondPlan = await createPreparedImport({
+      secondPlan = await createImportBatch({
         path: path.join(directory, "second.ccplan"),
         database,
-        recipe: secondRecipe,
+        profile: secondRecipe,
         baselineRevision: baseline.revision,
       });
       const second = await prepareImport({
         database,
         prepared: secondPlan,
-        recipe: secondRecipe,
+        profile: secondRecipe,
         sources: [importSource],
       });
       if (second.prepared.state !== "ready") {
@@ -317,11 +316,11 @@ for (const format of ["sqlite", "duckdb"] as const) {
       path: path.join(directory, `workspace.${format}`),
       format,
     });
-    const recipe: ImportRecipe = { version: 1, routes: [] };
-    const prepared = await createPreparedImport({
+    const profile: ImportProfile = { version: 1, routes: [] };
+    const prepared = await createImportBatch({
       path: path.join(directory, "empty.ccplan"),
       database,
-      recipe,
+      profile,
       baselineRevision: 0n,
     });
     const controller = new AbortController();
@@ -329,7 +328,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       await prepareImport({
         database,
         prepared,
-        recipe,
+        profile,
         sources: [emptySource()],
       });
       const approved = await resolveImport({
@@ -386,14 +385,14 @@ for (const format of ["sqlite", "duckdb"] as const) {
       path: path.join(directory, `workspace.${format}`),
       format,
     });
-    const recipe: ImportRecipe = {
+    const profile: ImportProfile = {
       version: 1,
       routes: [route("submission", "Imported")],
     };
-    const prepared = await createPreparedImport({
+    const prepared = await createImportBatch({
       path: path.join(directory, "review.ccplan"),
       database,
-      recipe,
+      profile,
       baselineRevision: 0n,
     });
     const controller = new AbortController();
@@ -403,7 +402,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const outcome = await prepareImport({
         database,
         prepared,
-        recipe,
+        profile,
         sources: [source({ key: "submission", value: "reviewed" })],
       });
       if (outcome.prepared.state !== "ready") {

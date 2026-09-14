@@ -38,3 +38,28 @@ test("retains only owners whose cleanup retry remains unconfirmed", async () => 
   await registry.retry("review.sqlite");
   expect(retryClose).toHaveBeenCalledTimes(2);
 });
+
+test("shares a concurrent cleanup attempt without duplicating its cause", async () => {
+  const registry = new BrowserOpenCleanupRegistry();
+  const pending = Promise.withResolvers<void>();
+  const cleanupFailure = new Error("Injected retry failure");
+  const retryClose = vi.fn(async () => {
+    await pending.promise;
+    throw cleanupFailure;
+  });
+  registry.retain("review.sqlite", "prepared", retryClose, []);
+
+  const first = registry.retry("review.sqlite");
+  const second = registry.retry("review.sqlite");
+  pending.resolve();
+
+  const failures = await Promise.all([
+    first.catch((error: unknown) => error),
+    second.catch((error: unknown) => error),
+  ]);
+  expect(retryClose).toHaveBeenCalledOnce();
+  expect(failures).toEqual([
+    expect.objectContaining({ cleanupCauses: [cleanupFailure] }),
+    expect.objectContaining({ cleanupCauses: [cleanupFailure] }),
+  ]);
+});

@@ -53,7 +53,7 @@ const METADATA_ALLOCATIONS: readonly {
 function corruptCounter(counter: string, table: string): never {
   throw databaseError(
     "DB_CORRUPT_DATABASE",
-    "An allocation counter conflicts with stored identifiers. Restore a verified database copy before importing or recording another delivery.",
+    "An allocation counter conflicts with stored identifiers. Restore a verified database copy before importing or recording another batch.",
     { counter, table },
   );
 }

@@ -79,7 +79,7 @@ for (const operation of ["database", "prepared", "inspect"] as const) {
           operation === "database"
             ? api.openDatabase
             : operation === "prepared"
-              ? api.openPreparedImport
+              ? api.openImportBatch
               : api.inspectFileKind;
         const failure: unknown = await open({ path: filename }).catch(
           (error: unknown) => error,
@@ -136,7 +136,7 @@ for (const operation of ["database", "prepared", "inspect"] as const) {
         operation === "database"
           ? api.openDatabase
           : operation === "prepared"
-            ? api.openPreparedImport
+            ? api.openImportBatch
             : api.inspectFileKind;
       await expect(open({ path: filename })).rejects.toBe(failure);
       await expect(

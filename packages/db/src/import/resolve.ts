@@ -4,7 +4,7 @@ import { APPLICATION_TABLE } from "../metadata.js";
 import { readPreparedReviewSnapshot, updatePreparedPlan } from "../prepared.js";
 import type { PreparedReview, preparedRef } from "../prepared.js";
 import { readSchemaFingerprint } from "../records.js";
-import { validateImportRecipe } from "../validators.js";
+import { validateImportProfile } from "../validators.js";
 import {
   evaluateConflicts,
   preparedCapturesFromEngine,
@@ -14,9 +14,15 @@ import {
 } from "./planning.js";
 import type {
   ImportDecision,
-  ImportRecipe,
+  ImportBatchPage,
+  ImportBatchRef,
+  ReadyImportBatchRef,
+  ImportReviewOutcome,
+  ImportProfile,
   PrepareImportOptions,
 } from "./types.js";
+
+import { inspectUpdatedImport, assertImportReviewPage } from "./inspection.js";
 
 interface ReviewSnapshot {
   readonly review: PreparedReview;
@@ -44,7 +50,7 @@ async function resolveReviewedImport(options: {
   if (options.prepared.databaseId !== options.database.id) {
     throw databaseError(
       "DB_IMPORT_DATABASE_MISMATCH",
-      "This import plan belongs to a different database.",
+      "This import batch belongs to a different database.",
     );
   }
   const baseline = options.rebase
@@ -59,7 +65,7 @@ async function resolveReviewedImport(options: {
   const current = options.snapshot.review;
   const captures = options.snapshot.captures;
   const routes = new Map(
-    current.recipe.routes.map((route) => [
+    current.profile.routes.map((route) => [
       routeKey(route.source, route.selection),
       route,
     ]),
@@ -101,7 +107,7 @@ async function resolveReviewedImport(options: {
             : { kind: "new-table", schema: conflict.schema },
         columns:
           capture === undefined ? route.columns : routeColumns(route, capture),
-      } satisfies ImportRecipe["routes"][number];
+      } satisfies ImportProfile["routes"][number];
       routes.set(key, approvedRoute);
       reviewDecisions.set(key, {
         kind: "route",
@@ -118,7 +124,7 @@ async function resolveReviewedImport(options: {
       if (!knownSelections.has(key)) {
         throw databaseError(
           "DB_IMPORT_DECISION_NOT_FOUND",
-          `The exclusion for source "${decision.source}" selection "${decision.selection}" does not match a captured selection or an existing recipe route. Check the source alias and selection key.`,
+          `The exclusion for source "${decision.source}" selection "${decision.selection}" does not match a captured selection or an existing profile route. Check the source alias and selection key.`,
           { source: decision.source, selection: decision.selection },
         );
       }
@@ -133,8 +139,8 @@ async function resolveReviewedImport(options: {
     }
     reviewDecisions.set(key, decision);
   }
-  const recipe: ImportRecipe = { version: 1, routes: [...routes.values()] };
-  validateImportRecipe(recipe);
+  const profile: ImportProfile = { version: 1, routes: [...routes.values()] };
+  validateImportProfile(profile);
   const excluded = new Set(
     [...reviewDecisions.values()].flatMap((decision) =>
       decision.kind === "exclude"
@@ -150,11 +156,11 @@ async function resolveReviewedImport(options: {
     options.database,
     options.prepared,
     included,
-    recipe,
+    profile,
   );
   return updatePreparedPlan({
     prepared: options.prepared,
-    recipe,
+    profile,
     conflicts,
     ready: conflicts.length === 0,
     decisions: [...reviewDecisions.values()],
@@ -168,38 +174,56 @@ async function resolveReviewedImport(options: {
   });
 }
 
-export async function resolveImport(options: {
+interface ResolveImportOptions {
   readonly database: PrepareImportOptions["database"];
   readonly prepared: PrepareImportOptions["prepared"];
   readonly decisions: readonly ImportDecision[];
   readonly rebase?: boolean | undefined;
-}): Promise<
-  ReturnType<typeof preparedRef> extends Promise<infer T> ? T : never
-> {
-  return resolveReviewedImport({
+  readonly reviewPage?: ImportBatchPage | undefined;
+}
+
+export function resolveImport(
+  options: ResolveImportOptions & { readonly reviewPage: ImportBatchPage },
+): Promise<ImportReviewOutcome>;
+export function resolveImport(
+  options: ResolveImportOptions,
+): Promise<ImportBatchRef | ReadyImportBatchRef>;
+export async function resolveImport(
+  options: ResolveImportOptions,
+): Promise<ImportReviewOutcome | ImportBatchRef | ReadyImportBatchRef> {
+  if (options.reviewPage !== undefined)
+    assertImportReviewPage(options.reviewPage);
+  const prepared = await resolveReviewedImport({
     ...options,
     snapshot: await preparedReviewSnapshot(options.prepared),
   });
+  if (options.reviewPage === undefined) return prepared;
+  return inspectUpdatedImport({
+    database: options.database,
+    prepared: options.prepared,
+    expected: prepared,
+    page: options.reviewPage,
+  });
 }
 
-export async function replaceImportRecipe(options: {
+export async function replaceImportProfile(options: {
   readonly database: PrepareImportOptions["database"];
   readonly prepared: PrepareImportOptions["prepared"];
-  readonly recipe: ImportRecipe;
+  readonly profile: ImportProfile;
   readonly rebase?: boolean | undefined;
 }): ReturnType<typeof resolveImport> {
-  validateImportRecipe(options.recipe);
+  validateImportProfile(options.profile);
   const snapshot = await preparedReviewSnapshot(options.prepared);
   const current = snapshot.review;
   const captures = snapshot.captures;
   const replacementKeys = new Set(
-    options.recipe.routes.map((route) =>
+    options.profile.routes.map((route) =>
       routeKey(route.source, route.selection),
     ),
   );
   const existing = new Map(
     [
-      ...current.recipe.routes,
+      ...current.profile.routes,
       ...captures.map((capture) => ({
         source: capture.sourceKey,
         selection: capture.selectionKey,
@@ -213,7 +237,7 @@ export async function replaceImportRecipe(options: {
     database: options.database,
     prepared: options.prepared,
     decisions: [
-      ...options.recipe.routes.map((route): ImportDecision => ({
+      ...options.profile.routes.map((route): ImportDecision => ({
         kind: "route",
         ...route,
       })),
@@ -226,7 +250,7 @@ export async function replaceImportRecipe(options: {
           kind: "exclude",
           source,
           selection,
-          reason: "Omitted from the replacement recipe.",
+          reason: "Omitted from the replacement profile.",
         })),
     ],
     rebase: options.rebase,

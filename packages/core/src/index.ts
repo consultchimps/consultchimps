@@ -140,3 +140,8 @@ export function isConsultChimpsError(
 ): error is ConsultChimpsError {
   return error instanceof ConsultChimpsError;
 }
+export {
+  OwnedResources,
+  type CloseableResource,
+  type ResourceCloseFailure,
+} from "./resource-close.js";

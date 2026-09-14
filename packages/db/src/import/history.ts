@@ -4,12 +4,12 @@ import { PLAN_TABLE } from "../metadata.js";
 import {
   parseImportConflicts,
   parseImportDecisions,
-  parseImportRecipe,
+  parseImportProfile,
 } from "../validators.js";
 import type {
-  AppliedImportPlan,
-  AppliedImportPlanBinding,
-  PreparedImportId,
+  AppliedImportBatch,
+  AppliedImportBatchBinding,
+  ImportBatchId,
   PrepareImportOptions,
 } from "./types.js";
 
@@ -19,7 +19,7 @@ function parseJson(text: string, label: string): unknown {
   } catch (cause) {
     throw databaseError(
       "DB_CORRUPT_IMPORT_PLAN_HISTORY",
-      `The saved import plan has invalid ${label}.`,
+      `The saved import batch has invalid ${label}.`,
       undefined,
       cause,
     );
@@ -30,18 +30,18 @@ function textField(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length === 0) {
     throw databaseError(
       "DB_CORRUPT_IMPORT_PLAN_HISTORY",
-      `The saved import plan has an invalid ${field}.`,
+      `The saved import batch has an invalid ${field}.`,
       { field },
     );
   }
   return value;
 }
 
-function parseBindings(value: unknown): readonly AppliedImportPlanBinding[] {
+function parseBindings(value: unknown): readonly AppliedImportBatchBinding[] {
   if (!Array.isArray(value)) {
     throw databaseError(
       "DB_CORRUPT_IMPORT_PLAN_HISTORY",
-      "The saved import plan has invalid source bindings.",
+      "The saved import batch has invalid source bindings.",
     );
   }
   return value.map((binding) => {
@@ -52,7 +52,7 @@ function parseBindings(value: unknown): readonly AppliedImportPlanBinding[] {
     ) {
       throw databaseError(
         "DB_CORRUPT_IMPORT_PLAN_HISTORY",
-        "The saved import plan has an invalid source binding.",
+        "The saved import batch has an invalid source binding.",
       );
     }
     const fields = binding as Record<string, unknown>;
@@ -66,11 +66,11 @@ function parseBindings(value: unknown): readonly AppliedImportPlanBinding[] {
   });
 }
 
-export async function inspectAppliedImportPlan(options: {
+export async function inspectAppliedImportBatch(options: {
   readonly database: PrepareImportOptions["database"];
-  readonly planId: PreparedImportId;
+  readonly planId: ImportBatchId;
   readonly planRevision: bigint;
-}): Promise<AppliedImportPlan | null> {
+}): Promise<AppliedImportBatch | null> {
   const rows = await engineOf(options.database).query(
     `SELECT baseline_revision, state, recipe_json, conflicts_json, decisions_json, bindings_json FROM ${PLAN_TABLE} WHERE plan_id = ? AND plan_revision = ?`,
     [options.planId, options.planRevision],
@@ -79,11 +79,11 @@ export async function inspectAppliedImportPlan(options: {
   if (row === undefined) return null;
   if (
     rows.length !== 1 ||
-    valueAsString(row["state"], "plan state") !== "applied"
+    valueAsString(row["state"], "batch state") !== "applied"
   ) {
     throw databaseError(
       "DB_CORRUPT_IMPORT_PLAN_HISTORY",
-      "The saved import plan has an invalid state.",
+      "The saved import batch has an invalid state.",
       { planId: options.planId },
     );
   }
@@ -95,8 +95,8 @@ export async function inspectAppliedImportPlan(options: {
       "baseline revision",
     ),
     state: "applied",
-    recipe: parseImportRecipe(
-      parseJson(valueAsString(row["recipe_json"], "import recipe"), "recipe"),
+    profile: parseImportProfile(
+      parseJson(valueAsString(row["recipe_json"], "import profile"), "profile"),
     ),
     conflicts: parseImportConflicts(
       parseJson(

@@ -7,11 +7,11 @@ import { afterEach, expect, test } from "vitest";
 
 import { inspectDatabase } from "../src/database.js";
 import { inspectImport } from "../src/import/inspection.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
 import {
   createDatabase,
-  createPreparedImport,
-  openPreparedImport,
+  createImportBatch,
+  openImportBatch,
   prepareImportFile,
 } from "../src/node.js";
 
@@ -25,7 +25,7 @@ afterEach(async () => {
   );
 });
 
-const recipe: ImportRecipe = {
+const profile: ImportProfile = {
   version: 1,
   routes: [
     {
@@ -91,10 +91,10 @@ async function existingPlan() {
     format: "sqlite",
   });
   const baselineRevision = (await inspectDatabase({ database })).revision;
-  const prepared = await createPreparedImport({
+  const prepared = await createImportBatch({
     path: planPath,
     database,
-    recipe: { version: 1, routes: [] },
+    profile: { version: 1, routes: [] },
     baselineRevision,
   });
   const preparedId = prepared.id;
@@ -118,7 +118,7 @@ async function expectOriginalPlan(
       (name) => name.includes(".cc-prepare-") || name.includes(".cc-plan-"),
     ),
   ).toEqual([]);
-  const reopened = await openPreparedImport({ path: options.planPath });
+  const reopened = await openImportBatch({ path: options.planPath });
   try {
     expect(reopened.id).toBe(options.preparedId);
     expect(
@@ -145,7 +145,7 @@ test("cancellation after capture does not publish a replacement plan", async () 
             if (verifications === 2) controller.abort("test cancellation");
           }),
         ],
-        recipe,
+        profile,
         baselineRevision: fixture.baselineRevision,
         overwrite: true,
         signal: controller.signal,
@@ -177,7 +177,7 @@ test("source verification failure after capture does not publish a replacement p
             }
           }),
         ],
-        recipe,
+        profile,
         baselineRevision: fixture.baselineRevision,
         overwrite: true,
       }),

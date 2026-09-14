@@ -1,4 +1,4 @@
-# Excel-to-database delivery plan
+# Excel-to-database batch plan
 
 Status: Staged implementation proposal. The storage experiment has produced
 initial measurements. The db package will support SQLite and DuckDB as working
@@ -64,8 +64,8 @@ handled by separate operations.
    conversion. Use the measurements to explain performance tradeoffs.
 
 Keep the public flow as plan, review, then apply. Browser and CLI use the same
-saved recipes and import plans. A general reconciliation workflow is no longer
-required just to ingest and query conflicting inventories.
+saved profiles and import batches. A general reconciliation workflow is no
+longer required just to ingest and query conflicting inventories.
 
 ## Import experience
 
@@ -73,18 +73,19 @@ required just to ingest and query conflicting inventories.
 
 Open an existing database or create a new one. Select files and identify their
 entity, inventory or use-case role, phase, and source revision when known. These
-values can come from a saved recipe. Unknown revision information stays unknown.
+values can come from a saved profile. Unknown revision information stays
+unknown.
 
 Hash file content before parsing worksheets. If the selected content and import
 intent were already applied successfully, report the earlier import and skip it.
 A renamed copy of a 300,000-attribute file must add zero rows. Hashing still
 reads the bytes; it avoids Excel parsing and downstream processing.
 
-Distinguish retrying that import from recording a new vendor delivery. A new
-delivery event can reuse the same captured contents without copying its rows.
-The review offers reuse of the earlier import or recording a new delivery that
-references it. A matching hash cannot decide whether a business touch point
-occurred. CLI callers make the same intent explicit.
+Distinguish retrying that import from recording a new vendor batch. A new batch
+event can reuse the same captured contents without copying its rows. The review
+offers reuse of the earlier import or recording a new batch that references it.
+A matching hash cannot decide whether a business touch point occurred. CLI
+callers make the same intent explicit.
 
 ### Route each selected sheet or range
 
@@ -131,7 +132,7 @@ because vendors disagree.
 
 ### Apply and report
 
-Check the target schema and recipe baseline under write ownership before
+Check the target schema and profile baseline under write ownership before
 applying. A stale plan must be refreshed if its destination or interpretation
 changed. Additive imports still need transactional receipts and duplicate
 guards.
@@ -153,14 +154,14 @@ Separate these identities:
 | ------------------- | -------------------------------------------------------------------------------- |
 | Source content hash | Recognize identical file bytes, independent of filename                          |
 | Source File ID      | Identify the captured file to which observations belong                          |
-| Delivery event ID   | Identify a vendor touch point independently of file contents and import attempts |
+| Batch event ID      | Identify a vendor touch point independently of file contents and import attempts |
 | Import ID           | Identify the capture or application context and its outcome                      |
 | Imported Row ID     | Identify a captured source row without trusting vendor IDs                       |
 | Record ID           | Identify the resolved record used by business tables and relationships           |
 | Record revision     | Identify the values a mapping or decision was based on                           |
 
 Recommend SHA-256 for source content. Enforce uniqueness for successful
-applications using source selection, target table identity, and relevant recipe
+applications using source selection, target table identity, and relevant profile
 versions. A hash alone must not block a previously unselected sheet. Separate
 capturing source content from applying it: changing a mapping should reuse
 captured data where available, not create another raw copy or blindly append
@@ -178,35 +179,35 @@ matches remain proposals. Entity, domain, dataset membership, and phase affect
 scope only when the model says they do.
 
 Repeated successful imports allocate no new observations or resolved records.
-Recording a distinct delivery event creates its own metadata and membership
+Recording a distinct batch event creates its own metadata and membership
 references, even when its contents were previously captured. Retry identity is
 separate from content identity: repeating the same event operation creates
-neither another event nor another membership. Do not deduplicate delivery events
-by file hash, filename, or arrival time. Failed attempts remain retryable.
+neither another event nor another membership. Do not deduplicate batch events by
+file hash, filename, or arrival time. Failed attempts remain retryable.
 Duplicate files in the same batch cannot race past the receipt check.
 Deterministic source ordering and recorded allocation state make retries
 reproducible; do not allocate IDs according to worker completion order.
 
 ## Deliverable history and scoped snapshots
 
-Retain a delivery event for each explicitly recorded vendor touch point. Record
-the vendor and entity, deliverable type, phase or sprint, source references,
+Retain a batch event for each explicitly recorded vendor touch point. Record the
+vendor and entity, deliverable type, phase or sprint, source references,
 declared coverage, and the person or process recording it. Keep the vendor's
 effective date, actual received date when known, and database recording time
 separate. A late upload of older evidence must not become the current baseline
 merely because it was recorded later. Unknown dates and coverage stay unknown.
 
-A delivery can include several files, reported metrics, and relationship
+A batch can include several files, reported metrics, and relationship
 assertions. A metric-only touch point does not require fabricated dataset rows
 or a workbook. Link each claim to its source or a locally recorded note. Changes
 to recorded claims or coverage create attributed corrections retaining the prior
 statement. Record receipt, validation, and business acceptance separately.
 
-Store captured row values once when safe to reuse them. Delivery membership
-links each event to the selected captured data and interpretation version. Keep
+Store captured row values once when safe to reuse them. Batch membership links
+each event to the selected captured data and interpretation version. Keep
 event-specific scope on that association rather than overwriting the earlier
 capture's context. Identical files in separate iterations therefore remain
-visible in both delivery histories without duplicating 300,000 attribute values.
+visible in both batch histories without duplicating 300,000 attribute values.
 Changed selections or mapping rules still need validation before an earlier
 capture can be reused. A hash proves content equality, not equal meaning or
 coverage.
@@ -217,9 +218,9 @@ The following fictional example uses invented counts and iteration labels:
 | --------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | Planning              | Vendor reports 12 datasets, 80 attributes, and 16 CDEs                | Preserve the stated totals even without row-level evidence                           |
 | Iteration 1 statement | Vendor reports 40 datasets, 320 attributes, and 64 CDEs               | Record the statement's scope and effective date; do not assume a delivered row count |
-| Iteration 1 delivery  | Files containing only the first iteration population                  | Record partial coverage; absent datasets are not removed from the entity inventory   |
-| Iteration 2 delivery  | Files for second-iteration cleansing and a claim of 8 additional CDEs | Preserve the claim and compare identities and scope before confirming net additions  |
-| Repeated delivery     | Vendor submits previously captured contents at another touch point    | Record a new event and reuse contents; a retry of that event creates nothing further |
+| Iteration 1 batch     | Files containing only the first iteration population                  | Record partial coverage; absent datasets are not removed from the entity inventory   |
+| Iteration 2 batch     | Files for second-iteration cleansing and a claim of 8 additional CDEs | Preserve the claim and compare identities and scope before confirming net additions  |
+| Repeated batch        | Vendor submits previously captured contents at another touch point    | Record a new event and reuse contents; a retry of that event creates nothing further |
 
 Keep three answers distinct: what the vendor claimed, what the delivered rows
 contain, and what the accepted inventory currently contains. Report a difference
@@ -229,8 +230,8 @@ new classifications, or use a different counting unit. Unresolved overlap
 remains visible instead of being treated as zero overlap.
 
 Preserve submitted dataset-to-attribute and attribute-to-CDE mappings as
-relationship assertions with delivery membership. Mapping rows can repeat or
-change across submissions. Keep their reported endpoints and optional resolved
+relationship assertions with batch membership. Mapping rows can repeat or change
+across submissions. Keep their reported endpoints and optional resolved
 identities, and retain the baseline used for each accepted mapping. Several
 attributes can reference one CDE; count distinct CDE subjects separately from
 mapping rows. Do not assume the reported tree is globally one-to-one.
@@ -240,14 +241,14 @@ It is distinct from the latest accepted inventory. Full snapshots, partial
 snapshots, and explicit change sets have different rules. A partial snapshot
 cannot supersede the entire entity inventory. Applying a change set requires a
 named baseline and explicit additions, updates, or removals. Corrections and
-superseding deliveries retain earlier evidence and dependent mappings.
+superseding batches retain earlier evidence and dependent mappings.
 
 Queries should answer both what was received at a touch point and what was known
 as of a date. A later correction or identity resolution must not silently change
 an earlier report. Retain the interpretation and resolution versions used by a
 saved report, and distinguish a historical result from a later reassessment.
 This is an application audit trail for recorded events, not proof against
-arbitrary external database edits or proof that unrecorded deliveries occurred.
+arbitrary external database edits or proof that unrecorded batches occurred.
 
 ## Query file membership and changes
 
@@ -263,10 +264,10 @@ Proposed minimal shape for an attribute-observation table:
 Source File ID is necessary because a single import can contain multiple files.
 Preserve the filename for display, but do not use it as identity. The source
 registry holds the content hash; exact repeat uploads do not clone its rows. Use
-typed observation tables per schema rather than a generic JSON cell store.
-Delivery membership supplies event-specific context when several deliveries
-reference that capture. Queries by delivery must follow those memberships rather
-than treating the capture's original Import ID as its only delivery.
+typed observation tables per schema rather than a generic JSON cell store. Batch
+membership supplies event-specific context when several batches reference that
+capture. Queries by batch must follow those memberships rather than treating the
+capture's original Import ID as its only batch.
 
 Example questions available before canonical matching is complete:
 
@@ -297,11 +298,11 @@ views.
 
 ## Master dataset register
 
-Maintain one master record per resolved dataset alongside the delivery history.
+Maintain one master record per resolved dataset alongside the batch history.
 Give it a generated Record ID independent of vendor identifiers and names. Link
 submitted dataset records to that identity through scoped, versioned resolution
-decisions. A rename, new sprint, or another delivery does not itself create a
-new dataset. Equal names in different entities or source systems do not prove a
+decisions. A rename, new sprint, or another batch does not itself create a new
+dataset. Equal names in different entities or source systems do not prove a
 shared identity. Suspected duplicates remain pending until resolved; report
 unresolved dataset observations separately from confirmed master counts.
 
@@ -312,13 +313,13 @@ the import history:
 | ------------------------------------ | -------------------------------------------------------------------------------------------- |
 | Dataset ID, name, entity, and domain | Resolved identity and accepted descriptive details                                           |
 | Source system and vendor references  | Scoped aliases retained with their supporting sources                                        |
-| First seen and latest delivery       | Earliest known evidence and latest relevant receipt, distinct from acceptance                |
+| First seen and latest batch          | Earliest known evidence and latest relevant receipt, distinct from acceptance                |
 | Current accepted revision            | The dataset baseline selected by the acceptance policy                                       |
 | Attribute count                      | Distinct active resolved attribute memberships in that baseline                              |
 | CDE count                            | Distinct active CDE subjects linked to that dataset under the selected classification policy |
 | Coverage and unresolved counts       | Whether counts describe a full inventory or a known subset, and what remains unresolved      |
 | Cleansing status and dates           | Reported completion, latest verified completion, scope, and revision covered                 |
-| Evidence and outstanding issues      | Supporting deliveries, decisions, disputed values, and unresolved mappings                   |
+| Evidence and outstanding issues      | Supporting batches, decisions, disputed values, and unresolved mappings                      |
 
 Vendor-reported totals remain separate from these calculated counts. Unknown
 counts are not zero. If only a partial attribute submission is available, show
@@ -343,10 +344,10 @@ mark an entire dataset cleansed from evidence covering only a subset. When the
 source does not describe the scope, show it as unknown.
 
 For example, two successive submissions can both map to dataset DS-0001. Its
-register entry uses the accepted memberships, retains each delivery link, and
-lists both cleansing events with their coverage. Reimporting the same
-second-delivery contents changes neither the accepted attribute count nor the
-CDE count. A newly recorded delivery is still visible in its receipt history.
+register entry uses the accepted memberships, retains each batch link, and lists
+both cleansing events with their coverage. Reimporting the same second-batch
+contents changes neither the accepted attribute count nor the CDE count. A newly
+recorded batch is still visible in its receipt history.
 
 Curated master edits and accepted reconciliation update affected memberships and
 derived summaries together. Keep the supporting decision and prior values. An
@@ -377,7 +378,7 @@ evidence needed by active use-case mappings.
 ## Schema and relationship behavior
 
 Assign tables stable identities separate from their display names. Keep schema
-versions with the import plan. Renaming a table does not create a new
+versions with the import batch. Renaming a table does not create a new
 population.
 
 Prefer explicit schemas and reusable templates. Infer types for new inputs as
@@ -397,7 +398,7 @@ keys cover different roles; link tables cover many-to-many relations. If an
 attribute occurs in several datasets, model that membership explicitly. A
 use-case mapping can target that membership and its revision rather than an
 ambiguous attribute name. Parent and child selections can come from different
-files in one import plan.
+files in one import batch.
 
 Check combinations as well as individual references. Valid domain and dataset
 IDs can still form an invalid pair. Source records with unresolved references
@@ -523,51 +524,51 @@ implicit capability.
 These are proposed contracts, not shipped commands. Reuse existing packages and
 introduce new ones only for a distinct runtime or dependency boundary.
 
-| Owner                    | Responsibility                                                                                    |
-| ------------------------ | ------------------------------------------------------------------------------------------------- |
-| xlsx                     | Select source regions and produce bounded batches with source coordinates                         |
-| tabular                  | Validate mappings, normalize and convert batches, define reusable DQ rules                        |
-| db import module         | Capture sources, identify duplicates, propose routing and changes, persist and apply import plans |
-| db storage module        | Own engine resources, transactions, schema, references, incremental persistence, and export       |
-| db reconciliation module | Match identities, compare baselines, resolve approved changes, validate dependent mappings        |
-| core and files           | Shared results, progress, cancellation, artifact references, and safe CLI file destinations       |
-| CLI and browser          | Collect options, render review, and call the same operations                                      |
+| Owner                    | Responsibility                                                                                      |
+| ------------------------ | --------------------------------------------------------------------------------------------------- |
+| xlsx                     | Select source regions and produce bounded batches with source coordinates                           |
+| tabular                  | Validate mappings, normalize and convert batches, define reusable DQ rules                          |
+| db import module         | Capture sources, identify duplicates, propose routing and changes, persist and apply import batches |
+| db storage module        | Own engine resources, transactions, schema, references, incremental persistence, and export         |
+| db reconciliation module | Match identities, compare baselines, resolve approved changes, validate dependent mappings          |
+| core and files           | Shared results, progress, cancellation, artifact references, and safe CLI file destinations         |
+| CLI and browser          | Collect options, render review, and call the same operations                                        |
 
 The caller-facing shape should remain small:
 
 ```text
-prepareImport(database, sources, recipe, staging, controls) -> PreparedImportRef
-inspectImport(preparedImport, page) -> CountsAndExamples
-resolveImport(preparedImport, decisions) -> ReadyImportRef
+prepareImport(database, sources, profile, staging, controls) -> ImportBatchRef
+inspectImport(importBatch, page) -> CountsAndExamples
+resolveImport(importBatch, decisions) -> ReadyImportBatchRef
 applyImport(database, readyPlan, controls) -> OperationResult
 exportDatabase(database, destination, options) -> ArtifactRef
 ```
 
 A plan or table reference names managed staged or persisted data; it is not an
-array of millions of JavaScript objects. A recipe stores intent and rules; a
+array of millions of JavaScript objects. A profile stores intent and rules; a
 plan stores the exact changes against a particular baseline. Preview and
 execution use the same derived plan so their decisions cannot drift.
 
 Database create, schema apply, seed/import, inspect, and export are foundation
 operations. Both SQLite and DuckDB are working formats, with validated
 conversion between supported schemas. Validation and optimization can expand
-later. Browser sequences and CLI recipes compose these operations. Do not build
+later. Browser sequences and CLI profiles compose these operations. Do not build
 a general workflow scheduler or visual pipeline editor before two real
 compositions require it.
 
-## Staged delivery
+## Staged batch
 
 Each product PR ships browser and CLI behavior together where applicable. Small
 fixtures belong in CI; the full-scale benchmark is reproducible outside routine
 CI. Refactor the existing workspace into the same product, retaining useful
 import and management behavior and updating their callers and tests together.
-Paused analytics UI migration is not a delivery requirement.
+Paused analytics UI migration is not a batch requirement.
 
 | Stage                                       | Deliverable                                                                                                                                                                   | Exit evidence                                                                                                                                       |
 | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Storage experiment                          | Compare native DuckDB and SQLite, browser persistence, export/reopen, and bounded Excel parsing                                                                               | Measured memory, disk, and query behavior up to the target workload; an engine and storage recommendation                                           |
 | PR 1: File-attributed database creation     | Create SQLite or DuckDB databases, apply schemas, seed typed tables, route sheets, map columns, generate IDs, hash sources, append observations, persist and validate exports | Query CDE rows by file in standalone DuckDB; repeated 300k-row file adds nothing after reopen; two different files retain separate classifications  |
-| PR 2: Extend an existing database           | Select existing or new tables, append new submissions, review schema changes, retain incompatible inputs for resolution, save recipes                                         | Updated submission appends evidence without rewriting the earlier file; schema conflicts offer explicit choices; imports preserve database curation |
+| PR 2: Extend an existing database           | Select existing or new tables, append new submissions, review schema changes, retain incompatible inputs for resolution, save profiles                                        | Updated submission appends evidence without rewriting the earlier file; schema conflicts offer explicit choices; imports preserve database curation |
 | PR 3: DQ, current views, and drift          | Resolve subjects, configure relationships, select current revisions, compare inventories, model use-case and CDE decisions                                                    | Old and new classifications remain queryable; unresolved identity is visible; affected use-case mappings are flagged without inventing authority    |
 | PR 4: Standalone operations and composition | Richer schema templates, validation, explicit curated updates, optimization, and reusable sequences over foundation operations                                                | Browser and CLI compose the same operations without loading full tables between steps                                                               |
 | Paused indefinitely: Analytics UI           | Query editor, analytical browsing, charts, and general grid editing                                                                                                           | Resume only after an explicit product decision; evaluate external tools separately                                                                  |
@@ -575,12 +576,12 @@ Paused analytics UI migration is not a delivery requirement.
 PR 1 establishes provenance and source-observation identity. It does not require
 matching all vendor records before data can be imported or queried by file. CDE
 matching and approval policy do not block the generic source importer. PR 1 also
-establishes delivery events, declared coverage, reported metrics, and membership
-references for reused contents. Prove a second recorded delivery can reuse a
+establishes batch events, declared coverage, reported metrics, and membership
+references for reused contents. Prove a second recorded batch can reuse a
 300k-row capture while remaining separately queryable. PR 3 adds scoped current
 views, reconciled counts, and versioned relationship interpretation. PR 3
 includes the master dataset register and cleansing events. Its acceptance checks
-cover repeated deliveries resolving to one dataset, equal names resolving to
+cover repeated batches resolving to one dataset, equal names resolving to
 different datasets, distinct CDE counts across repeated mapping rows, partial
 coverage, and new attributes arriving after verified cleansing.
 
@@ -609,7 +610,7 @@ subjects, unresolved subjects, reported CDE rows, and approved designations. A
 query should not label all 600,000 observations as unique attributes.
 
 Also cover repeated files in one batch, renamed files, new sheet selections,
-changed recipes, legitimate duplicate-looking rows, missing CDE values, new
+changed profiles, legitimate duplicate-looking rows, missing CDE values, new
 tables, two sheets feeding one table, new nullable columns, incompatible types,
 interrupted captures, disk exhaustion, and direct curation followed by another
 source import.
@@ -684,13 +685,12 @@ source names and mapping files are untrusted inputs.
   tables for unresolved schema incompatibilities.
 - Preserve distinct submissions as observations with membership queried per
   file; curated updates remain separate operations.
-- Begin staged delivery with the storage experiment and import foundation.
-- Repeated contents can be evidence of separate deliveries. Preserve touch
-  points while reusing captured data. Record full versus sprint-only coverage,
-  vendor totals separately from observed counts, and submitted attribute-to-CDE
-  links.
+- Begin staged batch with the storage experiment and import foundation.
+- Repeated contents can be evidence of separate batches. Preserve touch points
+  while reusing captured data. Record full versus sprint-only coverage, vendor
+  totals separately from observed counts, and submitted attribute-to-CDE links.
 - Support a master dataset register with unique resolved datasets, attribute and
-  CDE counts, and cleansing history. Preserve the delivery trail separately and
+  CDE counts, and cleansing history. Preserve the batch trail separately and
   derive current counts from accepted memberships and coverage.
 - Use the existing @consultchimps/db package and consultchimps db CLI group for
   SQLite and DuckDB working files and outputs. Refactor the database spike and
@@ -715,11 +715,11 @@ Applied principles:
 - Foundational thinking: choose persistent artifact and identity contracts
   before extending the browser editor.
 - Model the domain: separate source observations, current views, revisions,
-  mappings, and approval decisions. Separate delivery events from captured
-  contents so duplicate protection does not erase the vendor paper trail.
+  mappings, and approval decisions. Separate batch events from captured contents
+  so duplicate protection does not erase the vendor paper trail.
 - Make operations idempotent: bind receipts and changes so retries add no
-  copies. Apply retry identity to the delivery operation independently of file
-  hashes, preserving intentional repeat deliveries.
+  copies. Apply retry identity to the batch operation independently of file
+  hashes, preserving intentional repeat batches.
 - Subtract before you add: reuse existing semantics, avoid a workflow framework,
   and keep recurring vendor synchronization out of scope.
 - Prove it works: measure real exported artifacts and persistence at target

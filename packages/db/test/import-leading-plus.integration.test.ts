@@ -11,10 +11,10 @@ import {
   prepareImport,
   resolveImport,
 } from "../src/import/operations.js";
-import { draftImportRecipe } from "../src/import/recipe.js";
+import { draftImportProfile } from "../src/import/profile.js";
 import { valueForColumn } from "../src/import/inference.js";
 import type { ImportSource } from "../src/import/types.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 
 const directories: string[] = [];
 
@@ -102,18 +102,18 @@ for (const format of ["sqlite", "duckdb"] as const) {
       format,
     });
     const input = source();
-    const recipe = await draftImportRecipe({ sources: [input] });
-    const prepared = await createPreparedImport({
+    const profile = await draftImportProfile({ sources: [input] });
+    const prepared = await createImportBatch({
       path: path.join(directory, "numbers.ccplan"),
       database,
-      recipe,
+      profile,
       baselineRevision: 0n,
     });
     try {
       await prepareImport({
         database,
         prepared,
-        recipe,
+        profile,
         sources: [input],
       });
       const inspection = await inspectImport({

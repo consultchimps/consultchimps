@@ -10,12 +10,12 @@ import {
   prepareImport,
   resolveImport,
 } from "../src/import/operations.js";
-import { inspectAppliedImportPlan } from "../src/import/history.js";
-import { draftImportRecipe } from "../src/import/recipe.js";
-import type { ImportSource, ReadyImportRef } from "../src/import/types.js";
+import { inspectAppliedImportBatch } from "../src/import/history.js";
+import { draftImportProfile } from "../src/import/profile.js";
+import type { ImportSource, ReadyImportBatchRef } from "../src/import/types.js";
 import {
   createDatabase,
-  createPreparedImport,
+  createImportBatch,
   exportDatabase,
   openDatabase,
 } from "../src/node.js";
@@ -73,16 +73,16 @@ test("converts a managed import from SQLite to DuckDB and back", async () => {
       },
     ],
   };
-  const recipe = await draftImportRecipe({ sources: [source] });
-  const prepared = await createPreparedImport({
+  const profile = await draftImportProfile({ sources: [source] });
+  const prepared = await createImportBatch({
     path: path.join(directory, "source.ccplan"),
     database,
-    recipe,
+    profile,
     baselineRevision: 0n,
   });
-  let approvedRef: ReadyImportRef | undefined;
+  let approvedRef: ReadyImportBatchRef | undefined;
   try {
-    await prepareImport({ database, prepared, sources: [source], recipe });
+    await prepareImport({ database, prepared, sources: [source], profile });
     const approved = await resolveImport({ database, prepared, decisions: [] });
     if (approved.state !== "ready") throw new Error("Plan failed review");
     approvedRef = approved;
@@ -91,7 +91,7 @@ test("converts a managed import from SQLite to DuckDB and back", async () => {
       prepared,
       approved,
       requestId: "conversion-import",
-      delivery: { label: "September", scope: { kind: "full" } },
+      batchContext: { label: "September", scope: { kind: "full" } },
     });
   } finally {
     await prepared.close();
@@ -109,15 +109,15 @@ test("converts a managed import from SQLite to DuckDB and back", async () => {
   const duck = await openDatabase({ path: duckPath });
   const duckInspection = await inspectDatabase({ database: duck });
   expect(duckInspection.tables[0]?.rowCount).toBe(1n);
-  expect(duckInspection.appliedImportPlans).toBe(1n);
+  expect(duckInspection.appliedImportBatches).toBe(1n);
   if (approvedRef === undefined) throw new Error("Import was not approved");
-  const duckPlan = await inspectAppliedImportPlan({
+  const duckPlan = await inspectAppliedImportBatch({
     database: duck,
     planId: approvedRef.id,
     planRevision: approvedRef.planRevision,
   });
   expect(duckPlan).toMatchObject({
-    recipe: {
+    profile: {
       routes: [
         {
           source: "amounts",
@@ -156,10 +156,10 @@ test("converts a managed import from SQLite to DuckDB and back", async () => {
     expect(inspection.tables[0]?.rowCount).toBe(1n);
     expect(inspection.captures).toBe(1n);
     expect(inspection.completedImports).toBe(1n);
-    expect(inspection.deliveries).toBe(1n);
-    expect(inspection.appliedImportPlans).toBe(1n);
+    expect(inspection.recordedBatches).toBe(1n);
+    expect(inspection.appliedImportBatches).toBe(1n);
     await expect(
-      inspectAppliedImportPlan({
+      inspectAppliedImportBatch({
         database: roundtrip,
         planId: approvedRef.id,
         planRevision: approvedRef.planRevision,

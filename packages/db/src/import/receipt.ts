@@ -10,7 +10,7 @@ import {
 import { identifierKey } from "../schema.js";
 import { historicalCaptureBindings } from "./application-identity.js";
 import { routeKey } from "./planning.js";
-import type { ImportRecipe } from "./types.js";
+import type { ImportProfile } from "./types.js";
 
 const RECEIPT_APPLICATION_QUERY_VALUES = 400;
 
@@ -56,15 +56,15 @@ function corruptReceiptCaptures(): never {
 
 export async function assertReceiptDeliveryMemberships(options: {
   readonly transaction: EngineTransaction;
-  readonly deliveryId: string;
+  readonly batchId: string;
   readonly captureIds: readonly string[];
 }): Promise<void> {
   const rows = await options.transaction.query(
     `SELECT capture_id FROM ${DELIVERY_MEMBERSHIP_TABLE} WHERE delivery_id = ? ORDER BY capture_id`,
-    [options.deliveryId],
+    [options.batchId],
   );
   const actualCaptureIds = rows.map((row) =>
-    valueAsString(row["capture_id"], "delivery capture ID"),
+    valueAsString(row["capture_id"], "batch capture ID"),
   );
   const expectedCaptureIds = [...new Set(options.captureIds)].sort();
   if (
@@ -75,7 +75,7 @@ export async function assertReceiptDeliveryMemberships(options: {
   ) {
     throw databaseError(
       "DB_CORRUPT_DATABASE",
-      "The saved delivery capture memberships do not match its import receipt. Restore a verified database copy before retrying.",
+      "The saved batch capture memberships do not match its import receipt. Restore a verified database copy before retrying.",
     );
   }
 }
@@ -99,7 +99,7 @@ export async function validatedReceiptRowCount(options: {
   readonly importIds: readonly string[];
   readonly captureIds: readonly string[];
   readonly storedRowCount: unknown;
-  readonly recipe: ImportRecipe;
+  readonly profile: ImportProfile;
   readonly planId: string;
   readonly planRevision: bigint;
 }): Promise<bigint> {
@@ -113,7 +113,7 @@ export async function validatedReceiptRowCount(options: {
   );
   if (
     planRows.length !== 1 ||
-    valueAsString(planRows[0]?.["state"], "plan state") !== "applied"
+    valueAsString(planRows[0]?.["state"], "batch state") !== "applied"
   ) {
     corruptReceiptApplications();
   }
@@ -130,7 +130,7 @@ export async function validatedReceiptRowCount(options: {
     corruptReceiptCaptures();
   }
   const expectedIdentities = new Map<string, number>();
-  for (const route of options.recipe.routes) {
+  for (const route of options.profile.routes) {
     const captureId = bindings.get(routeKey(route.source, route.selection));
     if (captureId === undefined) corruptReceiptApplications();
     const tableName =

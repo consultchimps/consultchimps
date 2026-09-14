@@ -43,7 +43,7 @@ function storedObject(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",
-      `The import plan has invalid ${label}.`,
+      `The import batch has invalid ${label}.`,
       { label },
     );
   }
@@ -54,7 +54,7 @@ function storedString(value: unknown, label: string): string {
   if (typeof value !== "string") {
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",
-      `The import plan has invalid ${label}.`,
+      `The import batch has invalid ${label}.`,
       { label },
     );
   }
@@ -71,7 +71,7 @@ function parseStoredJson(text: string, label: string): unknown {
   } catch (cause) {
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",
-      `The import plan ${label} are not valid JSON.`,
+      `The import batch ${label} are not valid JSON.`,
       { label },
       cause,
     );
@@ -84,7 +84,7 @@ export function parseInferredColumns(
   if (!Array.isArray(value)) {
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",
-      "The import plan has invalid captured columns.",
+      "The import batch has invalid captured columns.",
     );
   }
   return value.map((entry) => {
@@ -94,7 +94,7 @@ export function parseInferredColumns(
     if (!isColumnType(type)) {
       throw databaseError(
         "DB_INVALID_PREPARED_IMPORT",
-        "The import plan has an unsupported captured column type.",
+        "The import batch has an unsupported captured column type.",
         { column: name, type },
       );
     }
@@ -113,7 +113,7 @@ export function parseInferredColumns(
     ) {
       throw databaseError(
         "DB_INVALID_PREPARED_IMPORT",
-        "The import plan has invalid captured decimal precision or scale.",
+        "The import batch has invalid captured decimal precision or scale.",
         { column: name },
       );
     }
@@ -185,7 +185,7 @@ function parseStoredCell(value: unknown, allowFormula: boolean): ImportCell {
   }
   throw databaseError(
     "DB_INVALID_PREPARED_IMPORT",
-    "The import plan contains an invalid captured cell.",
+    "The import batch contains an invalid captured cell.",
     { kind: cell["kind"] },
   );
 }

@@ -10,10 +10,10 @@ import { NodeSqliteEngine } from "../src/engines/sqlite/node.js";
 import { DATABASE_METADATA_TABLE } from "../src/metadata.js";
 import {
   createDatabase,
-  createPreparedImport,
+  createImportBatch,
   inspectFileKind,
   openDatabase,
-  openPreparedImport,
+  openImportBatch,
 } from "../src/node.js";
 import { PREPARED_METADATA_TABLE } from "../src/prepared.js";
 
@@ -38,10 +38,10 @@ test("detects databases and renamed prepared imports by content", async () => {
   });
   try {
     const inspection = await inspectDatabase({ database });
-    const prepared = await createPreparedImport({
+    const prepared = await createImportBatch({
       path: planPath,
       database,
-      recipe: { version: 1, routes: [] },
+      profile: { version: 1, routes: [] },
       baselineRevision: inspection.revision,
     });
     await prepared.close();
@@ -168,10 +168,10 @@ test("rejects unsupported prepared versions", async () => {
   });
   try {
     const inspection = await inspectDatabase({ database });
-    const prepared = await createPreparedImport({
+    const prepared = await createImportBatch({
       path: planPath,
       database,
-      recipe: { version: 1, routes: [] },
+      profile: { version: 1, routes: [] },
       baselineRevision: inspection.revision,
     });
     await prepared.close();
@@ -183,7 +183,7 @@ test("rejects unsupported prepared versions", async () => {
     `UPDATE ${PREPARED_METADATA_TABLE} SET format_version = 4`,
   );
   await corrupt.close();
-  await expect(openPreparedImport({ path: planPath })).rejects.toMatchObject({
+  await expect(openImportBatch({ path: planPath })).rejects.toMatchObject({
     code: "DB_UNSUPPORTED_PREPARED_IMPORT_VERSION",
   });
 
@@ -192,7 +192,7 @@ test("rejects unsupported prepared versions", async () => {
     `UPDATE ${PREPARED_METADATA_TABLE} SET format_version = 3, state = 'unknown'`,
   );
   await invalidState.close();
-  await expect(openPreparedImport({ path: planPath })).rejects.toMatchObject({
+  await expect(openImportBatch({ path: planPath })).rejects.toMatchObject({
     code: "DB_INVALID_PREPARED_IMPORT",
   });
 
@@ -201,7 +201,7 @@ test("rejects unsupported prepared versions", async () => {
     `UPDATE ${PREPARED_METADATA_TABLE} SET state = 'needs-review', recipe_json = 'not-json'`,
   );
   await invalidJson.close();
-  await expect(openPreparedImport({ path: planPath })).rejects.toMatchObject({
+  await expect(openImportBatch({ path: planPath })).rejects.toMatchObject({
     code: "DB_INVALID_PREPARED_IMPORT",
   });
 });

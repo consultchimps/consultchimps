@@ -174,11 +174,11 @@ function Summary({ summary }: { readonly summary: WorkspaceSummary }) {
           <dd data-testid="workspace-table-count">{summary.tables.length}</dd>
         </div>
         <div>
-          <dt className="text-fd-muted-foreground">Applied imports</dt>
+          <dt className="text-fd-muted-foreground">Applied batches</dt>
           <dd>{summary.importCount}</dd>
         </div>
         <div>
-          <dt className="text-fd-muted-foreground">Deliveries</dt>
+          <dt className="text-fd-muted-foreground">Recorded batches</dt>
           <dd data-testid="workspace-delivery-count">
             {summary.deliveryCount}
           </dd>
@@ -482,12 +482,13 @@ export function WorkspaceTool() {
 
   const applySchema = useCallback(async () => {
     if (schemaPlan === null || !schemaPlan.ready) return;
-    const revision = schemaReviewRevisionRef.current;
     const result = await runLong("Applying schema", (options) =>
       client().applySchema(schemaPlan.id, options),
     );
-    if (result === null || revision !== schemaReviewRevisionRef.current) return;
-    setSummary(result.summary);
+    if (result === null) return;
+    if (result.summary.state === "updated") {
+      setSummary(result.summary.value);
+    }
     invalidateSchemaReview();
     if (result.checkpoint.state === "failed") {
       setStatus({
@@ -497,6 +498,15 @@ export function WorkspaceTool() {
             result.checkpoint.code,
             result.checkpoint.message,
           ),
+        ),
+      });
+      return;
+    }
+    if (result.summary.state === "refresh-required") {
+      setStatus({
+        kind: "error",
+        message: describeFailure(
+          new ConsultChimpsError(result.summary.code, result.summary.message),
         ),
       });
       return;
@@ -551,7 +561,7 @@ export function WorkspaceTool() {
   const disabled = busy !== null;
   return (
     <ToolShell
-      description="Create or open a persistent local database, review workbook imports, record deliveries, and export a portable copy"
+      description="Create or open a persistent local database, review workbook batches, record batch context, and export a portable copy"
       guideHref="/docs/getting-started"
       guideLabel="Read the getting started guide"
       kicker="Local database"
@@ -791,10 +801,10 @@ export function WorkspaceTool() {
             <div className="flex items-center justify-between gap-4">
               <div>
                 <h2 className="font-display text-xl font-semibold">
-                  Delivery history
+                  Batch history
                 </h2>
                 <p className="mt-1 text-sm text-fd-muted-foreground">
-                  Delivery events stay separate from captured file contents
+                  Batch records stay separate from captured file contents
                 </p>
               </div>
               <button
@@ -810,7 +820,7 @@ export function WorkspaceTool() {
             </div>
             {deliveries === null ? null : deliveries.deliveries.length === 0 ? (
               <p className="mt-4 text-sm text-fd-muted-foreground">
-                No deliveries recorded
+                No batches recorded
               </p>
             ) : (
               <ol className="mt-4 space-y-3">
@@ -849,7 +859,7 @@ export function WorkspaceTool() {
                 onClick={() => void loadDeliveries(deliveries.nextCursor)}
                 type="button"
               >
-                Next deliveries
+                Next batches
               </button>
             )}
           </section>

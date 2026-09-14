@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { createWorkbookUpload } from "./fixtures";
 
-test("hidden-only workbooks do not create an empty import plan", async ({
+test("hidden-only workbooks do not create an empty saved batch", async ({
   page,
 }) => {
   const workbook = await createWorkbookUpload("hidden-only.xlsx", [

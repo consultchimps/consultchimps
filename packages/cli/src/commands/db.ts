@@ -9,30 +9,30 @@ import {
 import {
   applyImport,
   applySchema,
-  draftImportRecipe,
+  draftImportProfile,
   inspectDatabase,
   inspectImport,
-  listDeliveries,
+  listBatches,
   parseDatabaseSchema,
-  parseDeliveryContext,
-  parseImportRecipe,
+  parseBatchContext,
+  parseImportProfile,
   planSchema,
   planConversion,
   prepareImport,
-  recordDelivery,
-  replaceImportRecipe,
+  recordBatch,
+  replaceImportProfile,
   resolveImport,
   type DatabaseFormat,
-  type PreparedImportRef,
-  type ReadyImportRef,
+  type ImportBatchRef,
+  type ReadyImportBatchRef,
 } from "@consultchimps/db";
 import {
   createDatabase,
-  createPreparedImport,
+  createImportBatch,
   exportDatabase,
   inspectFileKind,
   openDatabase,
-  openPreparedImport,
+  openImportBatch,
   prepareImportFile,
 } from "@consultchimps/db/node";
 import { planFilePublication } from "@consultchimps/files";
@@ -64,7 +64,7 @@ import { withoutTerminalControlsInProse } from "../text.js";
 
 interface ImportOptions extends DbInputOptions {
   output?: string;
-  recipe?: string;
+  profile?: string;
   into?: string;
   force?: boolean;
   context?: string;
@@ -72,12 +72,12 @@ interface ImportOptions extends DbInputOptions {
 }
 
 function requireReady(
-  prepared: PreparedImportRef | ReadyImportRef,
-): ReadyImportRef {
+  prepared: ImportBatchRef | ReadyImportBatchRef,
+): ReadyImportBatchRef {
   if (prepared.state !== "ready") {
     throw new ConsultChimpsError(
       "DB_IMPORT_NEEDS_REVIEW",
-      "The import has unresolved table or column conflicts. Use db plan to save the captured data, db inspect to review it, and db resolve with a corrected recipe before applying.",
+      "The batch has unresolved table or column conflicts. Use db import prepare to save the captured data, db import inspect to review it, and db import update with a corrected profile before applying.",
     );
   }
   return prepared;
@@ -147,8 +147,8 @@ function sources(command: Command): Command {
       collect,
     )
     .option(
-      "--recipe <file>",
-      "versioned JSON table routing and column mapping",
+      "--profile <file>",
+      "reusable JSON table routing and column mapping",
     )
     .option("--sheet <name>", "select one worksheet from one workbook")
     .option("--table <name>", "select one named Excel Table")
@@ -177,27 +177,29 @@ async function prepare(
     async (output) => {
       await withControls(output, async (controls) => {
         const delivery = options.context
-          ? parseDeliveryContext(await readDbDocument(options.context))
+          ? parseBatchContext(await readDbDocument(options.context))
           : undefined;
         const database = await openDatabase({ path: databasePath });
         let temporary: string | undefined;
         let inputs: Awaited<ReturnType<typeof openDbInputs>> | undefined;
-        let prepared:
-          Awaited<ReturnType<typeof createPreparedImport>> | undefined;
+        let prepared: Awaited<ReturnType<typeof createImportBatch>> | undefined;
         let outcome: CliImportOutcome = { status: "completed" };
         try {
-          const suppliedRecipe = options.recipe
-            ? parseImportRecipe(await readDbDocument(options.recipe))
+          const suppliedProfile = options.profile
+            ? parseImportProfile(await readDbDocument(options.profile))
             : undefined;
-          inputs = await openDbInputs(options, controls, suppliedRecipe);
+          inputs = await openDbInputs(options, controls, suppliedProfile);
           const sourceList = inputs.workbooks.map(
             (workbook) => workbook.source,
           );
-          const recipe =
-            suppliedRecipe ??
-            (await draftImportRecipe({
+          const profile =
+            suppliedProfile ??
+            (await draftImportProfile({
               sources: sourceList,
-              into: options.into,
+              naming:
+                options.into === undefined
+                  ? { kind: "source-or-selection" }
+                  : { kind: "single-table", name: options.into },
             }));
           const inspected = await inspectDatabase({ database });
           if (!options.output)
@@ -206,7 +208,7 @@ async function prepare(
             options.output ?? path.join(temporary ?? "", "review.ccplan");
           const protectedInputPaths = [
             ...inputs.paths,
-            ...(options.recipe ? [options.recipe] : []),
+            ...(options.profile ? [options.profile] : []),
             ...(options.context ? [options.context] : []),
           ];
           if (!apply) {
@@ -214,7 +216,7 @@ async function prepare(
               path: planPath,
               database,
               sources: sourceList,
-              recipe,
+              profile,
               baselineRevision: inspected.revision,
               overwrite: options.force,
               protectedInputPaths,
@@ -222,13 +224,13 @@ async function prepare(
             });
             output.result(preparedFile.result);
             output.prose(
-              "Review this plan with db inspect, then apply it with db apply. The captured plan can contain source values; keep it private.\n",
+              "Review this batch with db import inspect, then apply it with db import apply. The saved batch can contain source values; keep it private.\n",
             );
           } else {
-            prepared = await createPreparedImport({
+            prepared = await createImportBatch({
               path: planPath,
               database,
-              recipe,
+              profile,
               baselineRevision: inspected.revision,
               overwrite: options.force,
               protectedInputPaths,
@@ -237,7 +239,7 @@ async function prepare(
               database,
               prepared,
               sources: sourceList,
-              recipe,
+              profile,
               ...controls,
             });
             const approved = requireReady(
@@ -251,7 +253,7 @@ async function prepare(
                 prepared,
                 approved,
                 requestId: options.requestId ?? prepared.id,
-                delivery,
+                batchContext: delivery,
                 ...controls,
               }),
             );
@@ -297,7 +299,7 @@ export function registerDbCommands(
     )
     .addHelpText(
       "after",
-      "\nStart with: consultchimps db create -o inventory.duckdb\nThen: consultchimps db plan inventory.duckdb --input inventory.xlsx -o review.ccplan\nReview: consultchimps db inspect review.ccplan\nApply: consultchimps db apply inventory.duckdb --plan review.ccplan\n",
+      "\nStart with: consultchimps db create -o inventory.duckdb\nThen: consultchimps db import prepare inventory.duckdb --input inventory.xlsx -o review.ccplan\nReview: consultchimps db import inspect review.ccplan\nApply: consultchimps db import apply inventory.duckdb --batch review.ccplan\n",
     );
 
   db.command("create")
@@ -351,75 +353,39 @@ export function registerDbCommands(
     );
 
   db.command("inspect")
-    .description(
-      "Inspect a database or saved import plan without reading Excel",
-    )
-    .argument("<file>", "database or .ccplan file")
-    .option("--limit <number>", "maximum preview rows", Number, 20)
-    .option(
-      "--cursor <cursor>",
-      "preview cursor returned by a prior saved-plan inspection",
-    )
-    .option(
-      "--database <file>",
-      "target database containing reused rows for a saved-plan preview",
-    )
-    .action(
-      async (
-        file: string,
-        options: { limit: number; cursor?: string; database?: string },
-      ) => {
-        await withDeferredDbCommandOutput(output, async (output) => {
-          const kind = await inspectFileKind({ path: file });
-          if (kind.kind === "unmanaged-database") {
-            const tables = kind.tables
-              .map(
-                (table) =>
-                  `${withoutTerminalControlsInProse(table.name)}: ${table.columns.length} columns\n`,
-              )
-              .join("");
-            output.data(
-              kind,
-              `${kind.format === "duckdb" ? "DuckDB" : "SQLite"} database, read-only inspection\nThis file has no ConsultChimps import history. No tables or metadata were added.\n${tables}Create a separate ConsultChimps database for managed imports.\n`,
-            );
-          } else if (kind.kind === "prepared-import") {
-            const prepared = await openPreparedImport({
-              path: file,
-              readonly: true,
-            });
-            try {
-              const database =
-                options.database === undefined
-                  ? undefined
-                  : await openDatabase({
-                      path: options.database,
-                      readonly: true,
-                    });
-              try {
-                const inspection = await inspectImport({
-                  database,
-                  prepared,
-                  page: { limit: options.limit, cursor: options.cursor },
-                });
-                output.data(inspection, formatImportInspection(inspection));
-              } finally {
-                await database?.close();
-              }
-            } finally {
-              await prepared.close();
-            }
-          } else {
-            const database = await openDatabase({ path: file, readonly: true });
-            try {
-              const inspection = await inspectDatabase({ database });
-              output.data(inspection, formatDatabaseInspection(inspection));
-            } finally {
-              await database.close();
-            }
-          }
-        });
-      },
-    );
+    .description("Inspect a database without changing it")
+    .argument("<database>", "SQLite or DuckDB database file")
+    .action(async (file: string) => {
+      await withDeferredDbCommandOutput(output, async (output) => {
+        const kind = await inspectFileKind({ path: file });
+        if (kind.kind === "unmanaged-database") {
+          const tables = kind.tables
+            .map(
+              (table) =>
+                `${withoutTerminalControlsInProse(table.name)}: ${table.columns.length} columns\n`,
+            )
+            .join("");
+          output.data(
+            kind,
+            `${kind.format === "duckdb" ? "DuckDB" : "SQLite"} database, read-only inspection\nThis file has no ConsultChimps import history. No tables or metadata were added.\n${tables}Create a separate ConsultChimps database for managed imports.\n`,
+          );
+          return;
+        }
+        if (kind.kind === "prepared-import") {
+          throw new ConsultChimpsError(
+            "DB_EXPECTED_DATABASE",
+            "This file is a saved import batch. Inspect it with db import inspect.",
+          );
+        }
+        const database = await openDatabase({ path: file, readonly: true });
+        try {
+          const inspection = await inspectDatabase({ database });
+          output.data(inspection, formatDatabaseInspection(inspection));
+        } finally {
+          await database.close();
+        }
+      });
+    });
 
   db.command("schema")
     .description("Manage database table definitions")
@@ -456,57 +422,123 @@ export function registerDbCommands(
       },
     );
 
+  const importCommand = db
+    .command("import")
+    .description("Prepare, review, apply, and audit workbook batches");
+
+  importCommand
+    .command("inspect")
+    .description("Inspect a saved batch without reading Excel")
+    .argument("<batch>", "saved batch file")
+    .option("--limit <number>", "maximum preview rows", Number, 20)
+    .option(
+      "--cursor <cursor>",
+      "preview cursor returned by a prior batch inspection",
+    )
+    .option("--route-limit <number>", "maximum routes", Number, 50)
+    .option(
+      "--route-cursor <cursor>",
+      "route cursor returned by a prior batch inspection",
+    )
+    .option(
+      "--database <file>",
+      "target database containing reused rows for a saved batch preview",
+    )
+    .action(
+      async (
+        batch: string,
+        options: {
+          limit: number;
+          cursor?: string;
+          database?: string;
+          routeLimit: number;
+          routeCursor?: string;
+        },
+      ) => {
+        await withDeferredDbCommandOutput(output, async (output) => {
+          const prepared = await openImportBatch({
+            path: batch,
+            readonly: true,
+          });
+          try {
+            const database =
+              options.database === undefined
+                ? undefined
+                : await openDatabase({
+                    path: options.database,
+                    readonly: true,
+                  });
+            try {
+              const inspection = await inspectImport({
+                database,
+                prepared,
+                page: { limit: options.limit, cursor: options.cursor },
+                routePage: {
+                  limit: options.routeLimit,
+                  cursor: options.routeCursor,
+                },
+              });
+              output.data(inspection, formatImportInspection(inspection));
+            } finally {
+              await database?.close();
+            }
+          } finally {
+            await prepared.close();
+          }
+        });
+      },
+    );
+
   sources(
-    db
-      .command("plan")
-      .description(
-        "Capture workbook data into a durable, reviewable import plan",
-      )
+    importCommand
+      .command("prepare")
+      .description("Capture workbook data into a durable, reviewable batch")
       .argument("<database>"),
   )
-    .requiredOption("-o, --output <file>", "private .ccplan staging artifact")
-    .option("-f, --force", "allow replacing an existing plan output")
+    .requiredOption("-o, --output <file>", "private saved batch file")
+    .option("-f, --force", "allow replacing an existing batch output")
     .action((database: string, options: ImportOptions) =>
       prepare(database, options, output, false),
     );
 
   sources(
-    db
-      .command("import")
-      .description("Prepare and apply an explicit import recipe")
+    importCommand
+      .command("run")
+      .description("Prepare and apply a workbook batch with one profile")
       .argument("<database>"),
   )
     .option(
       "--context <file>",
-      "delivery label, scope, and reported attributes as JSON",
+      "batch label, scope, and reported attributes as JSON",
     )
     .option("--request-id <id>", "retry key for this application")
     .action((database: string, options: ImportOptions) =>
       prepare(database, options, output, true),
     );
 
-  db.command("apply")
-    .description("Approve and apply a reviewed saved import plan")
+  importCommand
+    .command("apply")
+    .description("Apply a reviewed saved batch")
     .argument("<database>")
-    .requiredOption("--plan <file>", "saved .ccplan artifact")
-    .option("--context <file>", "delivery context JSON")
+    .requiredOption("--batch <file>", "saved batch file")
+    .option("--context <file>", "batch context JSON")
     .option("--request-id <id>", "retry key for this application")
     .action(
       async (
         databasePath: string,
-        options: { plan: string; context?: string; requestId?: string },
+        options: { batch: string; context?: string; requestId?: string },
       ) => {
         await withDeferredDbCommandOutput(
           output,
           async (output) => {
             await withControls(output, async (controls) => {
               const delivery = options.context
-                ? parseDeliveryContext(await readDbDocument(options.context))
+                ? parseBatchContext(await readDbDocument(options.context))
                 : undefined;
               const database = await openDatabase({ path: databasePath });
               try {
-                let prepared = await openPreparedImport({
-                  path: options.plan,
+                let prepared = await openImportBatch({
+                  path: options.batch,
                   readonly: true,
                 });
                 try {
@@ -517,7 +549,7 @@ export function registerDbCommands(
                   });
                   if (review.prepared.state !== "ready") {
                     await prepared.close();
-                    prepared = await openPreparedImport({ path: options.plan });
+                    prepared = await openImportBatch({ path: options.batch });
                     review = await inspectImport({
                       database,
                       prepared,
@@ -538,7 +570,7 @@ export function registerDbCommands(
                       database,
                       prepared,
                       approved,
-                      delivery,
+                      batchContext: delivery,
                       requestId: options.requestId ?? prepared.id,
                       ...controls,
                     }),
@@ -556,41 +588,42 @@ export function registerDbCommands(
       },
     );
 
-  db.command("resolve")
-    .description("Update a saved plan's table routing and column mapping")
+  importCommand
+    .command("update")
+    .description("Update a saved batch's table routing and column mapping")
     .argument("<database>")
-    .requiredOption("--plan <file>", "saved .ccplan artifact")
+    .requiredOption("--batch <file>", "saved batch file")
     .option(
-      "--recipe <file>",
-      "replacement import recipe; omitted routes stop table loading; omit this option to re-review captured data",
+      "--profile <file>",
+      "replacement import profile; omitted routes stop table loading; omit this option to re-review captured data",
     )
     .action(
       async (
         databasePath: string,
-        options: { plan: string; recipe?: string },
+        options: { batch: string; profile?: string },
       ) => {
         await withDeferredDbCommandOutput(
           output,
           async (output) => {
-            const recipe = options.recipe
-              ? parseImportRecipe(await readDbDocument(options.recipe))
+            const profile = options.profile
+              ? parseImportProfile(await readDbDocument(options.profile))
               : undefined;
             const database = await openDatabase({ path: databasePath });
             try {
-              const prepared = await openPreparedImport({ path: options.plan });
+              const prepared = await openImportBatch({ path: options.batch });
               try {
                 const resolved =
-                  recipe === undefined
+                  profile === undefined
                     ? await resolveImport({
                         database,
                         prepared,
                         decisions: [],
                         rebase: true,
                       })
-                    : await replaceImportRecipe({
+                    : await replaceImportProfile({
                         database,
                         prepared,
-                        recipe,
+                        profile,
                         rebase: true,
                       });
                 output.completedData(
@@ -604,15 +637,16 @@ export function registerDbCommands(
               await database.close();
             }
           },
-          [options.plan],
+          [options.batch],
         );
       },
     );
 
-  db.command("deliveries")
-    .description("List recorded deliveries and their source captures")
+  importCommand
+    .command("history")
+    .description("List recorded batches and their source captures")
     .argument("<database>")
-    .option("--limit <number>", "maximum deliveries", Number, 50)
+    .option("--limit <number>", "maximum batch records", Number, 50)
     .option("--cursor <cursor>", "pagination cursor from a prior response")
     .action(
       async (
@@ -625,7 +659,7 @@ export function registerDbCommands(
             readonly: true,
           });
           try {
-            const deliveries = await listDeliveries({ database, ...options });
+            const deliveries = await listBatches({ database, ...options });
             output.data(deliveries, formatDeliveryPage(deliveries));
           } finally {
             await database.close();
@@ -634,20 +668,19 @@ export function registerDbCommands(
       },
     );
 
-  db.command("delivery")
-    .description("Record a delivery without importing row values again")
+  importCommand
     .command("record")
-    .description("Associate an intentional new delivery with existing captures")
+    .description("Record another batch without importing row values again")
     .argument("<database>")
     .requiredOption(
       "--capture <id>",
       "capture ID, repeat for additional captures",
       collect,
     )
-    .requiredOption("--context <file>", "delivery context JSON")
+    .requiredOption("--context <file>", "batch context JSON")
     .requiredOption(
       "--request-id <id>",
-      "stable key used to retry this delivery safely",
+      "stable key used to retry this batch record safely",
     )
     .action(
       async (
@@ -657,13 +690,13 @@ export function registerDbCommands(
         await withDeferredDbCommandOutput(
           output,
           async (output) => {
-            const context = parseDeliveryContext(
+            const context = parseBatchContext(
               await readDbDocument(options.context),
             );
             const database = await openDatabase({ path: databasePath });
             try {
               output.result(
-                await recordDelivery({
+                await recordBatch({
                   database,
                   captureIds: options.capture,
                   context,

@@ -12,7 +12,7 @@ import path from "node:path";
 
 import { afterEach, expect, test } from "vitest";
 
-import { createDatabase, openPreparedImport } from "../src/node.js";
+import { createDatabase, openImportBatch } from "../src/node.js";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -53,10 +53,10 @@ test.each(cases)(
         ? await readFile(filePath)
         : undefined;
     await expect(
-      openPreparedImport({ path: filePath, readonly }),
+      openImportBatch({ path: filePath, readonly }),
     ).rejects.toMatchObject({
       code: "DB_INVALID_PREPARED_IMPORT",
-      message: expect.stringMatching(/import plan/u),
+      message: expect.stringMatching(/import batch/u),
     });
     if (before !== undefined)
       expect((await readFile(filePath)).equals(before)).toBe(true);

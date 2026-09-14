@@ -105,7 +105,7 @@ test.each(["sqlite", "duckdb"] as const)(
 );
 
 test.each(["sqlite", "duckdb"] as const)(
-  "db deliveries reports damaged %s history with a stable error",
+  "db import history reports damaged %s history with a stable error",
   async (format) => {
     const directory = await mkdtemp(
       path.join(tmpdir(), "cc-cli-delivery-damage-"),
@@ -128,7 +128,8 @@ test.each(["sqlite", "duckdb"] as const)(
     const failure = await runFailure([
       "--json",
       "db",
-      "deliveries",
+      "import",
+      "history",
       databasePath,
     ]);
     const expected = {
@@ -136,7 +137,7 @@ test.each(["sqlite", "duckdb"] as const)(
       error: {
         code: "DB_CORRUPT_DATABASE",
         message:
-          "The recorded delivery details are damaged. Restore a verified database copy before retrying.",
+          "The recorded batch details are damaged. Restore a verified database copy before retrying.",
       },
     };
     expect(JSON.parse(failure.stdout)).toEqual(expected);
@@ -147,7 +148,7 @@ test.each(["sqlite", "duckdb"] as const)(
 );
 
 test.each(["missing", "invalid", "duckdb"] as const)(
-  "db apply reports a stable error for a %s plan without changing the database",
+  "db import apply reports a stable error for a %s batch without changing the database",
   async (kind) => {
     const directory = await mkdtemp(path.join(tmpdir(), "cc-cli-plan-open-"));
     directories.push(directory);
@@ -173,9 +174,10 @@ test.each(["missing", "invalid", "duckdb"] as const)(
     const failure = await runFailure([
       "--json",
       "db",
+      "import",
       "apply",
       databasePath,
-      "--plan",
+      "--batch",
       planPath,
     ]);
     for (const output of [failure.stdout, failure.stderr]) {
@@ -183,7 +185,7 @@ test.each(["missing", "invalid", "duckdb"] as const)(
         ok: false,
         error: {
           code: "DB_INVALID_PREPARED_IMPORT",
-          message: expect.stringMatching(/import plan/u),
+          message: expect.stringMatching(/import batch/u),
         },
       });
       expect(output).not.toContain(planPath);

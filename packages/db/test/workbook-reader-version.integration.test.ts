@@ -15,8 +15,8 @@ import {
   inspectImport,
   prepareImport,
 } from "../src/import/operations.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 import { createWorkbookImportSource } from "../src/workbook.js";
 
 const directories: string[] = [];
@@ -67,7 +67,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         ...legacyWorkbook.source,
         readerVersion: "consultchimps-xlsx-stream-1",
       };
-      const createRecipe: ImportRecipe = {
+      const createRecipe: ImportProfile = {
         version: 1,
         routes: [
           {
@@ -92,7 +92,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
           },
         ],
       };
-      const reuseRecipe: ImportRecipe = {
+      const reuseRecipe: ImportProfile = {
         version: 1,
         routes: [
           {
@@ -101,10 +101,10 @@ for (const format of ["sqlite", "duckdb"] as const) {
           },
         ],
       };
-      const legacyPlan = await createPreparedImport({
+      const legacyPlan = await createImportBatch({
         path: path.join(directory, "legacy.ccplan"),
         database,
-        recipe: createRecipe,
+        profile: createRecipe,
         baselineRevision: (await inspectDatabase({ database })).revision,
         protectedInputPaths: [workbookPath],
       });
@@ -112,7 +112,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         const legacy = await prepareImport({
           database,
           prepared: legacyPlan,
-          recipe: createRecipe,
+          profile: createRecipe,
           sources: [legacySource],
         });
         expect(legacy.result.metrics).toMatchObject({
@@ -140,10 +140,10 @@ for (const format of ["sqlite", "duckdb"] as const) {
         scratch,
         verifyUnchanged: () => bytes.verifyUnchanged(),
       });
-      const currentPlan = await createPreparedImport({
+      const currentPlan = await createImportBatch({
         path: path.join(directory, "current.ccplan"),
         database,
-        recipe: reuseRecipe,
+        profile: reuseRecipe,
         baselineRevision: (await inspectDatabase({ database })).revision,
         protectedInputPaths: [workbookPath],
       });
@@ -151,7 +151,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         const current = await prepareImport({
           database,
           prepared: currentPlan,
-          recipe: reuseRecipe,
+          profile: reuseRecipe,
           sources: [currentWorkbook.source],
         });
         expect(current.result.metrics).toMatchObject({
@@ -192,10 +192,10 @@ for (const format of ["sqlite", "duckdb"] as const) {
         scratch,
         verifyUnchanged: () => bytes.verifyUnchanged(),
       });
-      const repeatedPlan = await createPreparedImport({
+      const repeatedPlan = await createImportBatch({
         path: path.join(directory, "repeated.ccplan"),
         database,
-        recipe: reuseRecipe,
+        profile: reuseRecipe,
         baselineRevision: (await inspectDatabase({ database })).revision,
         protectedInputPaths: [workbookPath],
       });
@@ -203,7 +203,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         const repeated = await prepareImport({
           database,
           prepared: repeatedPlan,
-          recipe: reuseRecipe,
+          profile: reuseRecipe,
           sources: [repeatedWorkbook.source],
         });
         expect(repeated.result.metrics).toMatchObject({

@@ -10,9 +10,9 @@ import {
   prepareImport,
   resolveImport,
 } from "../src/import/operations.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
 import { DELIVERY_MEMBERSHIP_TABLE } from "../src/metadata.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 
 const directories: string[] = [];
 
@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 const selections = ["North", "South"] as const;
-const recipe: ImportRecipe = {
+const profile: ImportProfile = {
   version: 1,
   routes: selections.map((selection) => ({
     source: "submission",
@@ -88,10 +88,10 @@ for (const format of ["sqlite", "duckdb"] as const) {
       path: path.join(directory, `workspace.${format}`),
       format,
     });
-    const prepared = await createPreparedImport({
+    const prepared = await createImportBatch({
       path: path.join(directory, "review.ccplan"),
       database,
-      recipe,
+      profile,
       baselineRevision: 0n,
     });
     const requestId = `delivery-membership-${format}`;
@@ -103,7 +103,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       await prepareImport({
         database,
         prepared,
-        recipe,
+        profile,
         sources: [importSource()],
       });
       const approved = await resolveImport({
@@ -117,11 +117,11 @@ for (const format of ["sqlite", "duckdb"] as const) {
         prepared,
         approved,
         requestId,
-        delivery,
+        batchContext: delivery,
       });
-      const deliveryId = applied.deliveryId;
+      const batchId = applied.batchId;
       const firstCapture = applied.captureIds[0];
-      if (deliveryId === undefined || firstCapture === undefined) {
+      if (batchId === undefined || firstCapture === undefined) {
         throw new Error("Import did not return its delivery and captures");
       }
       expect(applied.captureIds).toHaveLength(2);
@@ -138,7 +138,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
             prepared,
             approved,
             requestId,
-            delivery,
+            batchContext: delivery,
           }),
         ).rejects.toMatchObject({ code: "DB_CORRUPT_DATABASE" });
         expect(await inspectDatabase({ database })).toEqual(beforeInspection);
@@ -151,40 +151,40 @@ for (const format of ["sqlite", "duckdb"] as const) {
 
       await engine.execute(
         `DELETE FROM ${DELIVERY_MEMBERSHIP_TABLE} WHERE delivery_id = ? AND capture_id = ?`,
-        [deliveryId, firstCapture],
+        [batchId, firstCapture],
       );
       await assertRejectedWithoutMutation();
       await engine.execute(
         `INSERT INTO ${DELIVERY_MEMBERSHIP_TABLE} VALUES (?, ?)`,
-        [deliveryId, firstCapture],
+        [batchId, firstCapture],
       );
 
       await engine.execute(
         `INSERT INTO ${DELIVERY_MEMBERSHIP_TABLE} VALUES (?, ?)`,
-        [deliveryId, "CAP-extra"],
+        [batchId, "CAP-extra"],
       );
       await assertRejectedWithoutMutation();
       await engine.execute(
         `DELETE FROM ${DELIVERY_MEMBERSHIP_TABLE} WHERE delivery_id = ? AND capture_id = ?`,
-        [deliveryId, "CAP-extra"],
+        [batchId, "CAP-extra"],
       );
 
       await engine.execute(
         `DELETE FROM ${DELIVERY_MEMBERSHIP_TABLE} WHERE delivery_id = ? AND capture_id = ?`,
-        [deliveryId, firstCapture],
+        [batchId, firstCapture],
       );
       await engine.execute(
         `INSERT INTO ${DELIVERY_MEMBERSHIP_TABLE} VALUES (?, ?)`,
-        [deliveryId, "CAP-substituted"],
+        [batchId, "CAP-substituted"],
       );
       await assertRejectedWithoutMutation();
       await engine.execute(
         `DELETE FROM ${DELIVERY_MEMBERSHIP_TABLE} WHERE delivery_id = ? AND capture_id = ?`,
-        [deliveryId, "CAP-substituted"],
+        [batchId, "CAP-substituted"],
       );
       await engine.execute(
         `INSERT INTO ${DELIVERY_MEMBERSHIP_TABLE} VALUES (?, ?)`,
-        [deliveryId, firstCapture],
+        [batchId, firstCapture],
       );
 
       await expect(
@@ -193,15 +193,15 @@ for (const format of ["sqlite", "duckdb"] as const) {
           prepared,
           approved,
           requestId,
-          delivery,
+          batchContext: delivery,
         }),
       ).resolves.toMatchObject({
-        deliveryId,
+        batchId,
         captureIds: applied.captureIds,
         metrics: {
           rowsImported: 0,
           rowsReused: 2,
-          deliveriesRecorded: 0,
+          batchesRecorded: 0,
         },
       });
     } finally {

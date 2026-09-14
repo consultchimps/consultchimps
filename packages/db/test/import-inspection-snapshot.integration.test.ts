@@ -9,9 +9,9 @@ import {
   inspectImport,
   prepareImport,
 } from "../src/import/operations.js";
-import { replaceImportRecipe } from "../src/import/resolve.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import { replaceImportProfile } from "../src/import/resolve.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 import { inspectDatabase } from "../src/database.js";
 import { preparedEngineOf } from "../src/prepared.js";
 
@@ -25,11 +25,11 @@ afterEach(async () => {
   );
 });
 
-function recipe(
+function profile(
   table: string,
   sourceKey = "submission",
   selectionKey = "Inventory",
-): ImportRecipe {
+): ImportProfile {
   return {
     version: 1,
     routes: [
@@ -97,18 +97,18 @@ function source(
 }
 
 for (const format of ["sqlite", "duckdb"] as const) {
-  test(`${format}: inspection returns the review reference for the recipe it displayed`, async () => {
+  test(`${format}: inspection returns the review reference for the profile it displayed`, async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "cc-review-snapshot-"));
     directories.push(directory);
     const { database } = await createDatabase({
       path: path.join(directory, `workspace.${format}`),
       format,
     });
-    const initialRecipe = recipe("Inventory");
-    const prepared = await createPreparedImport({
+    const initialRecipe = profile("Inventory");
+    const prepared = await createImportBatch({
       path: path.join(directory, "review.ccplan"),
       database,
-      recipe: initialRecipe,
+      profile: initialRecipe,
       baselineRevision: 0n,
     });
     const engine = preparedEngineOf(prepared);
@@ -117,7 +117,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const initial = await prepareImport({
         database,
         prepared,
-        recipe: initialRecipe,
+        profile: initialRecipe,
         sources: [source()],
       });
       expect(initial.prepared.state).toBe("ready");
@@ -131,10 +131,10 @@ for (const format of ["sqlite", "duckdb"] as const) {
         if (!revised) {
           revised = true;
           engine.readTransaction = originalReadTransaction;
-          const replacement = await replaceImportRecipe({
+          const replacement = await replaceImportProfile({
             database,
             prepared,
-            recipe: recipe("RevisedInventory"),
+            profile: profile("RevisedInventory"),
           });
           expect(replacement.state).toBe("ready");
         }
@@ -177,11 +177,11 @@ for (const format of ["sqlite", "duckdb"] as const) {
       path: path.join(directory, `workspace.${format}`),
       format,
     });
-    const initialRecipe = recipe("Inventory");
-    const prepared = await createPreparedImport({
+    const initialRecipe = profile("Inventory");
+    const prepared = await createImportBatch({
       path: path.join(directory, "review.ccplan"),
       database,
-      recipe: initialRecipe,
+      profile: initialRecipe,
       baselineRevision: 0n,
     });
     const engine = preparedEngineOf(prepared);
@@ -190,15 +190,15 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const initial = await prepareImport({
         database,
         prepared,
-        recipe: initialRecipe,
+        profile: initialRecipe,
         sources: [source()],
       });
       expect(initial.prepared.state).toBe("ready");
       if (initial.prepared.state !== "ready") {
         throw new Error("The synthetic import plan did not become ready.");
       }
-      const addedRecipe = recipe("Added", "added", "Added");
-      const expandedRecipe: ImportRecipe = {
+      const addedRecipe = profile("Added", "added", "Added");
+      const expandedRecipe: ImportProfile = {
         version: 1,
         routes: [...initialRecipe.routes, ...addedRecipe.routes],
       };
@@ -211,7 +211,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
           const expanded = await prepareImport({
             database,
             prepared,
-            recipe: expandedRecipe,
+            profile: expandedRecipe,
             sources: [source("added", "Added", "South")],
           });
           expect(expanded.prepared.state).toBe("ready");

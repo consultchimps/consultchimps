@@ -60,7 +60,7 @@ const BROWSER_TOOLS = [
     tab: "Database",
     route: "/tools/db",
     heading: "Database",
-    card: "Import workbooks into a database",
+    card: "Prepare workbook batches for a database",
   },
 ] as const;
 

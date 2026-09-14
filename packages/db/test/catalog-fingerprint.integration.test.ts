@@ -6,8 +6,8 @@ import { afterEach, expect, test } from "vitest";
 
 import { engineOf, inspectDatabase } from "../src/database.js";
 import { applyImport, prepareImport } from "../src/import/operations.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 import {
   applySchema,
   planSchema,
@@ -37,7 +37,7 @@ function plannedSchema() {
   };
 }
 
-const recipe: ImportRecipe = {
+const profile: ImportProfile = {
   version: 1,
   routes: [
     {
@@ -140,17 +140,17 @@ test("DuckDB views invalidate an approved import before capture application", as
     path: path.join(directory, "workspace.duckdb"),
     format: "duckdb",
   });
-  const prepared = await createPreparedImport({
+  const prepared = await createImportBatch({
     path: path.join(directory, "review.ccplan"),
     database,
-    recipe,
+    profile,
     baselineRevision: 0n,
   });
   try {
     const outcome = await prepareImport({
       database,
       prepared,
-      recipe,
+      profile,
       sources: [source()],
     });
     expect(outcome.prepared.state).toBe("ready");
@@ -178,7 +178,7 @@ test("DuckDB views invalidate an approved import before capture application", as
       tables: [],
       captures: 0n,
       completedImports: 0n,
-      deliveries: 0n,
+      recordedBatches: 0n,
     });
   } finally {
     await prepared.close();

@@ -14,13 +14,13 @@ import {
   prepareImport,
   resolveImport,
 } from "../src/import/operations.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
 import {
   APPLICATION_TABLE,
   IMPORT_REQUEST_TABLE,
   PLAN_TABLE,
 } from "../src/metadata.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 
 const directories: string[] = [];
 
@@ -70,12 +70,12 @@ function source(): ImportSource {
   };
 }
 
-function recipe(options: {
+function profile(options: {
   readonly table: string;
   readonly kind: "new-table" | "existing-table";
   readonly swapped?: boolean | undefined;
   readonly reversed?: boolean | undefined;
-}): ImportRecipe {
+}): ImportProfile {
   const columns = options.swapped
     ? [
         { source: "A", target: "Second", type: "text" as const },
@@ -117,25 +117,25 @@ function recipe(options: {
 }
 
 async function preparePlan(options: {
-  readonly database: Parameters<typeof createPreparedImport>[0]["database"];
+  readonly database: Parameters<typeof createImportBatch>[0]["database"];
   readonly path: string;
-  readonly recipe: ImportRecipe;
+  readonly profile: ImportProfile;
 }) {
   const baselineRevision = (
     await inspectDatabase({
       database: options.database,
     })
   ).revision;
-  const prepared = await createPreparedImport({
+  const prepared = await createImportBatch({
     path: options.path,
     database: options.database,
-    recipe: options.recipe,
+    profile: options.profile,
     baselineRevision,
   });
   const outcome = await prepareImport({
     database: options.database,
     prepared,
-    recipe: options.recipe,
+    profile: options.profile,
     sources: [source()],
   });
   const approved = await resolveImport({
@@ -149,7 +149,7 @@ async function preparePlan(options: {
 }
 
 async function historyCounts(
-  database: Parameters<typeof createPreparedImport>[0]["database"],
+  database: Parameters<typeof createImportBatch>[0]["database"],
 ) {
   const engine = engineOf(database);
   const [applications, requests, plans] = await Promise.all([
@@ -173,11 +173,11 @@ for (const format of ["sqlite", "duckdb"] as const) {
       format,
     });
     try {
-      const initialRecipe = recipe({ table: "Records", kind: "new-table" });
+      const initialRecipe = profile({ table: "Records", kind: "new-table" });
       const initial = await preparePlan({
         database,
         path: path.join(directory, "initial.ccplan"),
-        recipe: initialRecipe,
+        profile: initialRecipe,
       });
       let captureId: string;
       try {
@@ -211,7 +211,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const malformed = await preparePlan({
         database,
         path: path.join(directory, "malformed.ccplan"),
-        recipe: recipe({ table: "Records", kind: "existing-table" }),
+        profile: profile({ table: "Records", kind: "existing-table" }),
       });
       const beforeMalformed = await inspectDatabase({ database });
       const beforeMalformedHistory = await historyCounts(database);
@@ -234,7 +234,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         [legacyKey],
       );
 
-      const corruptHistoricalRecipe: ImportRecipe = {
+      const corruptHistoricalRecipe: ImportProfile = {
         ...initialRecipe,
         routes: [
           {
@@ -272,7 +272,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const corruptHistory = await preparePlan({
         database,
         path: path.join(directory, "corrupt-history.ccplan"),
-        recipe: recipe({ table: "Records", kind: "existing-table" }),
+        profile: profile({ table: "Records", kind: "existing-table" }),
       });
       try {
         await expect(
@@ -299,7 +299,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         [legacyKey],
       );
 
-      const changedRecipe = recipe({
+      const changedRecipe = profile({
         table: "Records",
         kind: "existing-table",
         swapped: true,
@@ -307,7 +307,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const changed = await preparePlan({
         database,
         path: path.join(directory, "changed.ccplan"),
-        recipe: changedRecipe,
+        profile: changedRecipe,
       });
       const beforeConflict = await inspectDatabase({ database });
       const beforeHistory = await historyCounts(database);
@@ -343,12 +343,12 @@ for (const format of ["sqlite", "duckdb"] as const) {
         ),
       ).resolves.toEqual([{ First: "North", Second: "South" }]);
 
-      const repeatedBase = recipe({
+      const repeatedBase = profile({
         table: "Ｒｅｃｏｒｄｓ",
         kind: "existing-table",
         reversed: true,
       });
-      const repeatedRecipe: ImportRecipe = {
+      const repeatedRecipe: ImportProfile = {
         ...repeatedBase,
         routes: [
           {
@@ -363,7 +363,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const repeated = await preparePlan({
         database,
         path: path.join(directory, "repeated.ccplan"),
-        recipe: repeatedRecipe,
+        profile: repeatedRecipe,
       });
       try {
         expect(
@@ -402,11 +402,11 @@ for (const format of ["sqlite", "duckdb"] as const) {
         { name: "Records", rowCount: 1n },
       ]);
 
-      const archiveRecipe = recipe({ table: "Archive", kind: "new-table" });
+      const archiveRecipe = profile({ table: "Archive", kind: "new-table" });
       const archive = await preparePlan({
         database,
         path: path.join(directory, "archive.ccplan"),
-        recipe: archiveRecipe,
+        profile: archiveRecipe,
       });
       try {
         expect(
@@ -449,11 +449,11 @@ for (const format of ["sqlite", "duckdb"] as const) {
       format,
     });
     try {
-      const initialRecipe = recipe({ table: "Records", kind: "new-table" });
+      const initialRecipe = profile({ table: "Records", kind: "new-table" });
       const initial = await preparePlan({
         database,
         path: path.join(directory, "initial-count.ccplan"),
-        recipe: initialRecipe,
+        profile: initialRecipe,
       });
       let captureId: string;
       try {
@@ -471,7 +471,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const repeated = await preparePlan({
         database,
         path: path.join(directory, "repeated-count.ccplan"),
-        recipe: recipe({ table: "Records", kind: "existing-table" }),
+        profile: profile({ table: "Records", kind: "existing-table" }),
       });
       const legacyKey = bytesToHex(
         sha256(

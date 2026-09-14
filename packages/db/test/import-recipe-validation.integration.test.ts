@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { inspectDatabase } from "../src/database.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
 import {
   PREPARED_METADATA_TABLE,
   preparedEngineOf,
@@ -13,11 +13,11 @@ import {
   readPreparedRecipe,
   updatePreparedPlan,
 } from "../src/prepared.js";
-import { parseDatabaseSchema, parseImportRecipe } from "../src/validators.js";
+import { parseDatabaseSchema, parseImportProfile } from "../src/validators.js";
 import {
   createDatabase,
-  createPreparedImport,
-  openPreparedImport,
+  createImportBatch,
+  openImportBatch,
   prepareImportFile,
 } from "../src/node.js";
 
@@ -31,7 +31,7 @@ afterEach(async () => {
   );
 });
 
-const duplicateTargetRecipe: ImportRecipe = {
+const duplicateTargetRecipe: ImportProfile = {
   version: 1,
   routes: [
     {
@@ -46,7 +46,7 @@ const duplicateTargetRecipe: ImportRecipe = {
   ],
 };
 
-const unsafeInferredRecipe: ImportRecipe = {
+const unsafeInferredRecipe: ImportProfile = {
   version: 1,
   routes: [
     {
@@ -98,11 +98,11 @@ function unreadSource(counters: {
 }
 
 test("JSON recipes reject unsafe inferred tables, Record IDs, and duplicate normalized targets", () => {
-  expect(() => parseImportRecipe(unsafeInferredRecipe)).toThrowError(
+  expect(() => parseImportProfile(unsafeInferredRecipe)).toThrowError(
     expect.objectContaining({ code: "DB_INVALID_IDENTIFIER" }),
   );
   expect(() =>
-    parseImportRecipe({
+    parseImportProfile({
       version: 1,
       routes: [
         {
@@ -121,7 +121,7 @@ test("JSON recipes reject unsafe inferred tables, Record IDs, and duplicate norm
     expect.objectContaining({ code: "DB_INVALID_RECORD_ID_CONFIG" }),
   );
   expect(() =>
-    parseImportRecipe({
+    parseImportProfile({
       version: 1,
       routes: [
         {
@@ -149,7 +149,7 @@ test("JSON recipes reject unsafe inferred tables, Record IDs, and duplicate norm
       ],
     }),
   ).toThrowError(expect.objectContaining({ code: "DB_INVALID_DOCUMENT" }));
-  expect(() => parseImportRecipe(duplicateTargetRecipe)).toThrowError(
+  expect(() => parseImportProfile(duplicateTargetRecipe)).toThrowError(
     expect.objectContaining({
       code: "DB_INVALID_RECIPE",
       details: {
@@ -164,10 +164,10 @@ test("JSON recipes reject unsafe inferred tables, Record IDs, and duplicate norm
 });
 
 describe.each(["sqlite", "duckdb"] as const)(
-  "%s recipe validation",
+  "%s profile validation",
   (format) => {
     test("rejects invalid typed recipes before source reads or plan publication", async () => {
-      const directory = await mkdtemp(path.join(tmpdir(), "cc-recipe-check-"));
+      const directory = await mkdtemp(path.join(tmpdir(), "cc-profile-check-"));
       directories.push(directory);
       const { database } = await createDatabase({
         path: path.join(directory, `workspace.${format}`),
@@ -176,10 +176,10 @@ describe.each(["sqlite", "duckdb"] as const)(
       const baselineRevision = (await inspectDatabase({ database })).revision;
       const invalidCreatePath = path.join(directory, "invalid-create.ccplan");
       await expect(
-        createPreparedImport({
+        createImportBatch({
           path: invalidCreatePath,
           database,
-          recipe: duplicateTargetRecipe,
+          profile: duplicateTargetRecipe,
           baselineRevision,
         }),
       ).rejects.toMatchObject({ code: "DB_INVALID_RECIPE" });
@@ -188,10 +188,10 @@ describe.each(["sqlite", "duckdb"] as const)(
       });
 
       const planPath = path.join(directory, "review.ccplan");
-      const original = await createPreparedImport({
+      const original = await createImportBatch({
         path: planPath,
         database,
-        recipe: { version: 1, routes: [] },
+        profile: { version: 1, routes: [] },
         baselineRevision,
       });
       const originalId = original.id;
@@ -205,7 +205,7 @@ describe.each(["sqlite", "duckdb"] as const)(
             path: planPath,
             database,
             sources: [unreadSource(counters)],
-            recipe: duplicateTargetRecipe,
+            profile: duplicateTargetRecipe,
             baselineRevision,
             overwrite: true,
           }),
@@ -219,7 +219,7 @@ describe.each(["sqlite", "duckdb"] as const)(
             path: unsafePath,
             database,
             sources: [unreadSource(counters)],
-            recipe: unsafeInferredRecipe,
+            profile: unsafeInferredRecipe,
             baselineRevision,
           }),
         ).rejects.toMatchObject({ code: "DB_INVALID_IDENTIFIER" });
@@ -228,18 +228,18 @@ describe.each(["sqlite", "duckdb"] as const)(
           code: "ENOENT",
         });
 
-        const reopened = await openPreparedImport({ path: planPath });
+        const reopened = await openImportBatch({ path: planPath });
         try {
           expect(reopened.id).toBe(originalId);
           await expect(
             updatePreparedPlan({
               prepared: reopened,
-              recipe: duplicateTargetRecipe,
+              profile: duplicateTargetRecipe,
               conflicts: [],
               ready: true,
             }),
           ).rejects.toMatchObject({ code: "DB_INVALID_RECIPE" });
-          expect((await readPreparedRecipe(reopened)).recipe.routes).toEqual(
+          expect((await readPreparedRecipe(reopened)).profile.routes).toEqual(
             [],
           );
 

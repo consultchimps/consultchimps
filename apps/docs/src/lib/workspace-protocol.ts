@@ -74,7 +74,7 @@ export interface WorkspaceSchemaPlan {
 }
 
 export interface WorkspaceSchemaApplication {
-  readonly summary: WorkspaceSummary;
+  readonly summary: WorkspaceSummaryRefresh;
   readonly checkpoint:
     | { readonly state: "saved" }
     | {
@@ -83,6 +83,14 @@ export interface WorkspaceSchemaApplication {
         readonly message: string;
       };
 }
+
+export type WorkspaceSummaryRefresh =
+  | { readonly state: "updated"; readonly value: WorkspaceSummary }
+  | {
+      readonly state: "refresh-required";
+      readonly code: "DB_BROWSER_SUMMARY_REFRESH_REQUIRED";
+      readonly message: string;
+    };
 
 export interface WorkspaceDeliveryContext {
   readonly requestId: string;
@@ -129,11 +137,15 @@ export interface WorkspaceImportRegion {
 
 export interface WorkspacePreparedImport {
   readonly id: string;
+  readonly reviewFingerprint: string;
   readonly state: "needs-review" | "ready";
   readonly application: "applied" | "pending";
   readonly duplicateOf: string | null;
   readonly captureIds: readonly string[];
   readonly regions: readonly WorkspaceImportRegion[];
+  readonly routeCount: number;
+  readonly routeCursor: string | null;
+  readonly nextRouteCursor: string | null;
   readonly totalRows: number;
   readonly warningCount: number;
 }
@@ -180,7 +192,14 @@ export interface WorkspaceImportResult {
   readonly schemaChanges: number;
   readonly deliveriesRecorded: number;
   readonly captureIds: readonly string[];
-  readonly summary: WorkspaceSummary;
+  readonly summary: WorkspaceSummaryRefresh;
+  readonly checkpoint:
+    | { readonly state: "saved" }
+    | {
+        readonly state: "failed";
+        readonly code: "DB_CHECKPOINT_REQUIRED";
+        readonly message: string;
+      };
 }
 
 export interface WorkspaceDeliverySummary {
@@ -250,25 +269,35 @@ export type WorkspaceCommand =
     })
   | (WorkspaceCommandBase & { readonly type: "listImports" })
   | (WorkspaceCommandBase & {
+      readonly type: "inspectImport";
+      readonly planId: string;
+      readonly routeCursor: string | null;
+    })
+  | (WorkspaceCommandBase & {
       readonly type: "previewImport";
       readonly planId: string;
       readonly regionId: string;
+      readonly routeCursor: string | null;
       readonly cursor: string | null;
       readonly limit: number;
     })
   | (WorkspaceCommandBase & {
       readonly type: "resolveImport";
       readonly planId: string;
+      readonly reviewFingerprint: string;
+      readonly routeCursor: string | null;
       readonly decisions: readonly WorkspaceRouteDecision[];
     })
   | (WorkspaceCommandBase & {
       readonly type: "applyImport";
       readonly planId: string;
+      readonly reviewFingerprint: string;
       readonly delivery: WorkspaceDeliveryContext;
     })
   | (WorkspaceCommandBase & {
       readonly type: "recordDelivery";
       readonly planId: string;
+      readonly reviewFingerprint: string;
       readonly delivery: WorkspaceDeliveryContext;
     })
   | (WorkspaceCommandBase & {
@@ -311,6 +340,10 @@ export type WorkspaceEvent =
       readonly type: "importsListed";
       readonly plans: readonly WorkspacePreparedImport[];
       readonly ignoredPlans: readonly WorkspaceIgnoredImport[];
+    })
+  | (WorkspaceEventBase & {
+      readonly type: "importInspected";
+      readonly plan: WorkspacePreparedImport;
     })
   | (WorkspaceEventBase & {
       readonly type: "importPreview";

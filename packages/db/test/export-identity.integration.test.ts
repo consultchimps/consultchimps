@@ -10,14 +10,14 @@ import {
   prepareImport,
   resolveImport,
 } from "../src/import/operations.js";
-import { draftImportRecipe } from "../src/import/recipe.js";
+import { draftImportProfile } from "../src/import/profile.js";
 import type { ImportSource } from "../src/import/types.js";
 import {
   createDatabase,
-  createPreparedImport,
+  createImportBatch,
   exportDatabase,
   openDatabase,
-  openPreparedImport,
+  openImportBatch,
 } from "../src/node.js";
 
 const directories: string[] = [];
@@ -82,13 +82,13 @@ for (const format of ["sqlite", "duckdb"] as const) {
       format,
     });
     const importSource = source();
-    const recipe = await draftImportRecipe({ sources: [importSource] });
+    const profile = await draftImportProfile({ sources: [importSource] });
     const sourceBefore = await inspectDatabase({ database: sourceDatabase });
     const planPath = path.join(directory, "review.ccplan");
-    let prepared = await createPreparedImport({
+    let prepared = await createImportBatch({
       path: planPath,
       database: sourceDatabase,
-      recipe,
+      profile,
       baselineRevision: sourceBefore.revision,
     });
     let snapshot: Database | undefined;
@@ -98,7 +98,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         database: sourceDatabase,
         prepared,
         sources: [importSource],
-        recipe,
+        profile,
       });
       const approved = await resolveImport({
         database: sourceDatabase,
@@ -130,7 +130,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         targetFormat: convertedFormat,
       });
       await prepared.close();
-      prepared = await openPreparedImport({ path: planPath });
+      prepared = await openImportBatch({ path: planPath });
       expect(prepared.databaseId).toBe(sourceDatabase.id);
 
       snapshot = await openDatabase({ path: sameFormatPath });
@@ -197,11 +197,11 @@ for (const format of ["sqlite", "duckdb"] as const) {
       format,
     });
     const importSource = source();
-    const recipe = await draftImportRecipe({ sources: [importSource] });
-    const prepared = await createPreparedImport({
+    const profile = await draftImportProfile({ sources: [importSource] });
+    const prepared = await createImportBatch({
       path: path.join(directory, "applied.ccplan"),
       database,
-      recipe,
+      profile,
       baselineRevision: 0n,
     });
     let converted: Database | undefined;
@@ -210,7 +210,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         database,
         prepared,
         sources: [importSource],
-        recipe,
+        profile,
       });
       const approved = await resolveImport({
         database,

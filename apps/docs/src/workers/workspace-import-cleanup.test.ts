@@ -60,6 +60,7 @@ describe("workspace import cleanup", () => {
     const first = retained.close();
     const second = retained.close();
     expect(second).toBe(first);
+    await Promise.resolve();
     expect(close).toHaveBeenCalledOnce();
     release();
     await expect(Promise.all([first, second])).resolves.toEqual([
@@ -108,6 +109,6 @@ describe("workspace import cleanup", () => {
         errors: [inspectionFailure, closeFailure],
       }),
     });
-    expect(error.message).toContain("Choose Retry saved imports");
+    expect(error.message).toContain("Choose Retry saved batches");
   });
 });

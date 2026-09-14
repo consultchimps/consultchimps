@@ -10,9 +10,9 @@ import { inspectDatabase } from "../src/database.js";
 import { inspectImport } from "../src/import/inspection.js";
 import { applyImport, prepareImport } from "../src/import/operations.js";
 import type {
-  ImportRecipe,
+  ImportProfile,
   ImportSource,
-  ReadyImportRef,
+  ReadyImportBatchRef,
 } from "../src/import/types.js";
 import { canonicalJson } from "../src/internal/json.js";
 import {
@@ -23,8 +23,8 @@ import {
 } from "../src/prepared.js";
 import {
   createDatabase,
-  createPreparedImport,
-  openPreparedImport,
+  createImportBatch,
+  openImportBatch,
 } from "../src/node.js";
 
 const directories: string[] = [];
@@ -37,7 +37,7 @@ afterEach(async () => {
   );
 });
 
-const originalRecipe: ImportRecipe = {
+const originalRecipe: ImportProfile = {
   version: 1,
   routes: [
     {
@@ -56,7 +56,7 @@ const originalRecipe: ImportRecipe = {
   ],
 };
 
-const changedRecipe: ImportRecipe = {
+const changedRecipe: ImportProfile = {
   ...originalRecipe,
   routes: [
     {
@@ -157,7 +157,7 @@ function namedSource(options: {
 function route(
   sourceKey: string,
   selection: string,
-): ImportRecipe["routes"][number] {
+): ImportProfile["routes"][number] {
   return {
     source: sourceKey,
     selection,
@@ -183,16 +183,16 @@ async function fixture(format: "sqlite" | "duckdb") {
     format,
   });
   const planPath = path.join(directory, "review.ccplan");
-  const prepared = await createPreparedImport({
+  const prepared = await createImportBatch({
     path: planPath,
     database,
-    recipe: originalRecipe,
+    profile: originalRecipe,
     baselineRevision: 0n,
   });
   const outcome = await prepareImport({
     database,
     prepared,
-    recipe: originalRecipe,
+    profile: originalRecipe,
     sources: [source()],
   });
   if (outcome.prepared.state !== "ready") {
@@ -274,11 +274,11 @@ async function reviewedCaptureMetadata(
 
 async function replaceReviewedRecipe(options: {
   readonly prepared: Parameters<typeof preparedEngineOf>[0];
-  readonly recipe: ImportRecipe;
+  readonly profile: ImportProfile;
   readonly updateFingerprint: boolean;
 }): Promise<void> {
   const engine = preparedEngineOf(options.prepared);
-  const recipeJson = canonicalJson(options.recipe);
+  const recipeJson = canonicalJson(options.profile);
   if (!options.updateFingerprint) {
     await engine.execute(
       `UPDATE ${PREPARED_METADATA_TABLE} SET recipe_json = ?`,
@@ -324,7 +324,7 @@ async function expectUnchangedEmptyDatabase(
     tables: [],
     captures: 0n,
     completedImports: 0n,
-    deliveries: 0n,
+    recordedBatches: 0n,
   });
 }
 
@@ -334,7 +334,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
     try {
       await replaceReviewedRecipe({
         prepared,
-        recipe: changedRecipe,
+        profile: changedRecipe,
         updateFingerprint: false,
       });
       await expect(
@@ -357,7 +357,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
     try {
       await replaceReviewedRecipe({
         prepared,
-        recipe: changedRecipe,
+        profile: changedRecipe,
         updateFingerprint: true,
       });
       await expect(
@@ -427,7 +427,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
     const fixtureValue = await fixture(format);
     const { database, planPath } = fixtureValue;
     await fixtureValue.prepared.close();
-    const prepared = await openPreparedImport({ path: planPath });
+    const prepared = await openImportBatch({ path: planPath });
     try {
       const inspection = await inspectImport({
         prepared,
@@ -437,7 +437,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       if (inspection.prepared.state !== "ready") {
         throw new Error("Reopened plan did not remain ready");
       }
-      const approved: ReadyImportRef = inspection.prepared;
+      const approved: ReadyImportBatchRef = inspection.prepared;
       const first = await applyImport({
         database,
         prepared,
@@ -467,17 +467,17 @@ for (const format of ["sqlite", "duckdb"] as const) {
     const fixtureValue = await fixture(format);
     const { database, planPath } = fixtureValue;
     await fixtureValue.prepared.close();
-    const editor = await openPreparedImport({ path: planPath });
+    const editor = await openImportBatch({ path: planPath });
     await replaceReviewedRecipe({
       prepared: editor,
-      recipe: changedRecipe,
+      profile: changedRecipe,
       updateFingerprint: false,
     });
     await editor.close();
     const before = await readFile(planPath);
     try {
       await expect(
-        openPreparedImport({ path: planPath, readonly: true }),
+        openImportBatch({ path: planPath, readonly: true }),
       ).rejects.toMatchObject({ code: "DB_INVALID_PREPARED_IMPORT" });
       expect((await readFile(planPath)).equals(before)).toBe(true);
       await expectUnchangedEmptyDatabase(database);
@@ -496,11 +496,11 @@ for (const format of ["sqlite", "duckdb"] as const) {
       format,
     });
     const planPath = path.join(directory, "review.ccplan");
-    const initialRecipe: ImportRecipe = {
+    const initialRecipe: ImportProfile = {
       version: 1,
       routes: [route("first", "First")],
     };
-    const expandedRecipe: ImportRecipe = {
+    const expandedRecipe: ImportProfile = {
       version: 1,
       routes: [
         ...initialRecipe.routes,
@@ -508,16 +508,16 @@ for (const format of ["sqlite", "duckdb"] as const) {
         route("third", "Third"),
       ],
     };
-    let prepared = await createPreparedImport({
+    let prepared = await createImportBatch({
       path: planPath,
       database,
-      recipe: initialRecipe,
+      profile: initialRecipe,
       baselineRevision: 0n,
     });
     const initial = await prepareImport({
       database,
       prepared,
-      recipe: initialRecipe,
+      profile: initialRecipe,
       sources: [namedSource({ key: "first", selection: "First", value: "A" })],
     });
     if (initial.prepared.state !== "ready") {
@@ -529,7 +529,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         prepareImport({
           database,
           prepared,
-          recipe: expandedRecipe,
+          profile: expandedRecipe,
           sources: [
             namedSource({
               key: "second",
@@ -558,7 +558,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       await expectUnchangedEmptyDatabase(database);
 
       await prepared.close();
-      prepared = await openPreparedImport({ path: planPath });
+      prepared = await openImportBatch({ path: planPath });
       const interrupted = await inspectImport({
         prepared,
         database,
@@ -572,7 +572,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const retried = await prepareImport({
         database,
         prepared,
-        recipe: expandedRecipe,
+        profile: expandedRecipe,
         sources: [
           namedSource({
             key: "second",

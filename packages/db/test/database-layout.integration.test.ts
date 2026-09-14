@@ -179,7 +179,11 @@ for (const format of ["sqlite", "duckdb"] as const) {
       openDatabase({ path: damaged, readonly: true }),
     ).rejects.toMatchObject({
       code: "DB_CORRUPT_DATABASE",
-      details: { table: CAPTURE_TABLE, unexpectedColumnCount: 1 },
+      details: {
+        table: CAPTURE_TABLE,
+        expectedColumns: expect.not.arrayContaining(["unexpected_metadata"]),
+        actualColumns: expect.arrayContaining(["unexpected_metadata"]),
+      },
     });
     expect((await readFile(damaged)).equals(before)).toBe(true);
   });
@@ -214,7 +218,16 @@ for (const format of ["sqlite", "duckdb"] as const) {
       openDatabase({ path: damaged, readonly: true }),
     ).rejects.toMatchObject({
       code: "DB_CORRUPT_DATABASE",
-      details: { table: DATABASE_METADATA_TABLE, columnOrderMismatch: true },
+      details: {
+        table: DATABASE_METADATA_TABLE,
+        expectedColumns: [
+          "database_id",
+          "format",
+          "format_version",
+          "revision",
+        ],
+        actualColumns: ["revision", "database_id", "format", "format_version"],
+      },
     });
     expect((await readFile(damaged)).equals(before)).toBe(true);
   });

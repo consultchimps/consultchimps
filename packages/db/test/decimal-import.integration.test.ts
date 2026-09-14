@@ -10,9 +10,9 @@ import {
   prepareImport,
   resolveImport,
 } from "../src/import/operations.js";
-import { draftImportRecipe } from "../src/import/recipe.js";
+import { draftImportProfile } from "../src/import/profile.js";
 import type { ImportSource } from "../src/import/types.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 import { engineOf, inspectDatabase } from "../src/database.js";
 
 const directories: string[] = [];
@@ -67,15 +67,15 @@ test("infers decimal capacity from integer digits and scale", async () => {
       },
     ],
   };
-  const recipe = await draftImportRecipe({ sources: [source] });
-  const prepared = await createPreparedImport({
+  const profile = await draftImportProfile({ sources: [source] });
+  const prepared = await createImportBatch({
     path: path.join(directory, "decimal.ccplan"),
     database,
-    recipe,
+    profile,
     baselineRevision: 0n,
   });
   try {
-    await prepareImport({ database, prepared, sources: [source], recipe });
+    await prepareImport({ database, prepared, sources: [source], profile });
     const inspection = await inspectImport({ prepared, page: { limit: 1 } });
     expect(inspection.routes[0]?.inferredColumns).toEqual([
       { name: "Amount", type: "decimal", precision: 8, scale: 3 },
@@ -157,11 +157,11 @@ for (const format of ["sqlite", "duckdb"] as const) {
         },
       ],
     };
-    const draft = await draftImportRecipe({ sources: [source] });
-    const prepared = await createPreparedImport({
+    const draft = await draftImportProfile({ sources: [source] });
+    const prepared = await createImportBatch({
       path: path.join(directory, "decimal.ccplan"),
       database,
-      recipe: draft,
+      profile: draft,
       baselineRevision: (await inspectDatabase({ database })).revision,
     });
     try {
@@ -169,7 +169,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         database,
         prepared,
         sources: [source],
-        recipe: draft,
+        profile: draft,
       });
       const inspection = await inspectImport({ prepared, page: { limit: 1 } });
       expect(inspection.routes[0]?.inferredColumns).toEqual([

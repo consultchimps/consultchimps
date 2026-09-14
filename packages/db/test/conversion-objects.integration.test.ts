@@ -146,7 +146,7 @@ for (const sourceFormat of ["sqlite", "duckdb"] as const) {
         tables: [],
         captures: 0n,
         completedImports: 0n,
-        deliveries: 0n,
+        recordedBatches: 0n,
       });
 
       await engineOf(source).execute(

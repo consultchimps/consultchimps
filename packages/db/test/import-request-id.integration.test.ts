@@ -10,9 +10,9 @@ import {
   prepareImport,
   resolveImport,
 } from "../src/import/operations.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
 import { APPLICATION_TABLE, IMPORT_REQUEST_TABLE } from "../src/metadata.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 
 const directories: string[] = [];
 
@@ -24,7 +24,7 @@ afterEach(async () => {
   );
 });
 
-const recipe: ImportRecipe = {
+const profile: ImportProfile = {
   version: 1,
   routes: [
     {
@@ -89,10 +89,10 @@ for (const format of ["sqlite", "duckdb"] as const) {
       path: path.join(directory, `workspace.${format}`),
       format,
     });
-    const prepared = await createPreparedImport({
+    const prepared = await createImportBatch({
       path: path.join(directory, "review.ccplan"),
       database,
-      recipe,
+      profile,
       baselineRevision: 0n,
     });
     try {
@@ -100,7 +100,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         database,
         prepared,
         sources: [importSource()],
-        recipe,
+        profile,
       });
       expect(preparedResult.prepared.state).toBe("ready");
       const approved = await resolveImport({
@@ -118,7 +118,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
             prepared,
             approved,
             requestId,
-            delivery: {
+            batchContext: {
               label: "Synthetic delivery",
               scope: { kind: "full" },
             },
@@ -137,21 +137,21 @@ for (const format of ["sqlite", "duckdb"] as const) {
         prepared,
         approved,
         requestId: `valid-${format}`,
-        delivery: {
+        batchContext: {
           label: "Synthetic delivery",
           scope: { kind: "full" },
         },
       });
       expect(applied.metrics).toMatchObject({
         rowsImported: 1,
-        deliveriesRecorded: 1,
+        batchesRecorded: 1,
       });
       const retried = await applyImport({
         database,
         prepared,
         approved,
         requestId: `valid-${format}`,
-        delivery: {
+        batchContext: {
           label: "Synthetic delivery",
           scope: { kind: "full" },
         },
@@ -161,7 +161,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       expect(retried.metrics).toMatchObject({
         rowsImported: 0,
         rowsReused: 1,
-        deliveriesRecorded: 0,
+        batchesRecorded: 0,
       });
       const importId = applied.importIds[0];
       if (importId === undefined) throw new Error("Import ID was not returned");
@@ -170,7 +170,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         tables: [{ name: "Inventory", rowCount: 1n }],
         captures: 1n,
         completedImports: 1n,
-        deliveries: 1n,
+        recordedBatches: 1n,
       });
       await expect(
         engineOf(database).query(
@@ -189,7 +189,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
           prepared,
           approved,
           requestId: `valid-${format}`,
-          delivery: {
+          batchContext: {
             label: "Synthetic delivery",
             scope: { kind: "full" },
           },
@@ -222,7 +222,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
             prepared,
             approved,
             requestId: `valid-${format}`,
-            delivery: {
+            batchContext: {
               label: "Synthetic delivery",
               scope: { kind: "full" },
             },
@@ -251,7 +251,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
           prepared,
           approved,
           requestId: `valid-${format}`,
-          delivery: {
+          batchContext: {
             label: "Synthetic delivery",
             scope: { kind: "full" },
           },
@@ -261,14 +261,14 @@ for (const format of ["sqlite", "duckdb"] as const) {
         beforeMissingApplication,
       );
 
-      const originalRoute = recipe.routes[0];
+      const originalRoute = profile.routes[0];
       if (
         originalRoute === undefined ||
         originalRoute.destination.kind !== "new-table"
       ) {
         throw new Error("Expected a new table route");
       }
-      const archiveRecipe: ImportRecipe = {
+      const archiveRecipe: ImportProfile = {
         version: 1,
         routes: [
           {
@@ -284,10 +284,10 @@ for (const format of ["sqlite", "duckdb"] as const) {
           },
         ],
       };
-      const archivePlan = await createPreparedImport({
+      const archivePlan = await createImportBatch({
         path: path.join(directory, "archive.ccplan"),
         database,
-        recipe: archiveRecipe,
+        profile: archiveRecipe,
         baselineRevision: (await inspectDatabase({ database })).revision,
       });
       try {
@@ -295,7 +295,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
           database,
           prepared: archivePlan,
           sources: [importSource()],
-          recipe: archiveRecipe,
+          profile: archiveRecipe,
         });
         expect(archivePrepared.prepared.state).toBe("ready");
         const archiveApproved = await resolveImport({
@@ -346,7 +346,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
             prepared,
             approved,
             requestId: `valid-${format}`,
-            delivery: {
+            batchContext: {
               label: "Synthetic delivery",
               scope: { kind: "full" },
             },

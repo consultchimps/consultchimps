@@ -1,13 +1,13 @@
 import { expect, test } from "vitest";
 
-import { draftImportRecipe } from "../src/import/recipe.js";
+import { draftImportProfile } from "../src/import/profile.js";
 import type { ImportSource } from "../src/import/types.js";
-import { validateImportRecipe } from "../src/validators.js";
+import { validateImportProfile } from "../src/validators.js";
 
 function source(key: string): ImportSource {
   return {
     key,
-    readerVersion: "synthetic-recipe-unicode-1",
+    readerVersion: "synthetic-profile-unicode-1",
     bytes: {
       name: "synthetic.xlsx",
       size: 0,
@@ -20,7 +20,7 @@ function source(key: string): ImportSource {
         key: "Data",
         label: "Data",
         async open() {
-          throw new Error("Recipe drafting must not open a source selection");
+          throw new Error("Profile drafting must not open a source selection");
         },
       },
     ],
@@ -28,10 +28,10 @@ function source(key: string): ImportSource {
 }
 
 function inferredDestination(
-  recipe: Awaited<ReturnType<typeof draftImportRecipe>>,
+  profile: Awaited<ReturnType<typeof draftImportProfile>>,
 ) {
-  validateImportRecipe(recipe);
-  const destination = recipe.routes[0]?.destination;
+  validateImportProfile(profile);
+  const destination = profile.routes[0]?.destination;
   expect(destination?.kind).toBe("new-table-infer");
   if (destination?.kind !== "new-table-infer") {
     throw new Error("Drafted route did not infer a new table");
@@ -41,7 +41,7 @@ function inferredDestination(
 
 test("drafts a valid prefix from a leading supplementary letter", async () => {
   const destination = inferredDestination(
-    await draftImportRecipe({ sources: [source("𐐀Data")] }),
+    await draftImportProfile({ sources: [source("𐐀Data")] }),
   );
   expect(destination).toMatchObject({
     name: "𐐀Data",
@@ -51,9 +51,9 @@ test("drafts a valid prefix from a leading supplementary letter", async () => {
 
 test("drafts multiword prefixes by code point and keeps ASCII behavior", async () => {
   const unicode = inferredDestination(
-    await draftImportRecipe({
+    await draftImportProfile({
       sources: [source("source")],
-      into: "𐐀 𐐁 𐐂 𐐃 𐐄 𐐅 𐐆 𐐇 𐐈",
+      naming: { kind: "single-table", name: "𐐀 𐐁 𐐂 𐐃 𐐄 𐐅 𐐆 𐐇 𐐈" },
     }),
   );
   expect(Array.from(unicode.recordId.prefix)).toEqual([
@@ -68,9 +68,9 @@ test("drafts multiword prefixes by code point and keeps ASCII behavior", async (
   ]);
 
   const ascii = inferredDestination(
-    await draftImportRecipe({
+    await draftImportProfile({
       sources: [source("source")],
-      into: "north sales data",
+      naming: { kind: "single-table", name: "north sales data" },
     }),
   );
   expect(ascii).toMatchObject({
@@ -79,14 +79,45 @@ test("drafts multiword prefixes by code point and keeps ASCII behavior", async (
   });
 });
 
+test("selection-label table prefixes preserve whole code points before uppercasing", async () => {
+  const input = source("source");
+  const selection = input.selections[0];
+  if (selection === undefined) {
+    throw new Error("Expected a synthetic selection");
+  }
+  const profile = await draftImportProfile({
+    sources: [
+      {
+        ...input,
+        selections: [
+          { ...selection, label: "AAAAAAAßtail" },
+          { ...selection, key: "unicode", label: "ABCDEF𐐨GHI" },
+        ],
+      },
+    ],
+    naming: { kind: "selection-label" },
+  });
+  validateImportProfile(profile);
+
+  expect(
+    profile.routes.map((route) => {
+      expect(route.destination.kind).toBe("new-table-infer");
+      if (route.destination.kind !== "new-table-infer") {
+        throw new Error("Drafted route did not infer a new table");
+      }
+      return route.destination.recordId.prefix;
+    }),
+  ).toEqual(["AAAAAAASS", "ABCDEF𐐀G"]);
+});
+
 test("truncates table suggestions without splitting a supplementary letter", async () => {
   const included = `A${"a".repeat(197)}𐐀`;
   expect(included.length).toBe(200);
   expect(
     inferredDestination(
-      await draftImportRecipe({
+      await draftImportProfile({
         sources: [source("source")],
-        into: included,
+        naming: { kind: "single-table", name: included },
       }),
     ).name,
   ).toBe(included);
@@ -94,9 +125,9 @@ test("truncates table suggestions without splitting a supplementary letter", asy
   const excluded = `A${"a".repeat(198)}𐐀`;
   expect(excluded.length).toBe(201);
   const truncated = inferredDestination(
-    await draftImportRecipe({
+    await draftImportProfile({
       sources: [source("source")],
-      into: excluded,
+      naming: { kind: "single-table", name: excluded },
     }),
   ).name;
   expect(truncated).toBe(`A${"a".repeat(198)}`);

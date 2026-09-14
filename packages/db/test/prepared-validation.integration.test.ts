@@ -8,8 +8,8 @@ import { inspectDatabase } from "../src/database.js";
 import { NodeSqliteEngine } from "../src/engines/sqlite/node.js";
 import {
   createDatabase,
-  createPreparedImport,
-  openPreparedImport,
+  createImportBatch,
+  openImportBatch,
 } from "../src/node.js";
 import {
   PREPARED_BINDING_TABLE,
@@ -93,10 +93,10 @@ test.each([false, true])(
           directory,
           `${damage.label.replaceAll(" ", "-")}-${String(readonly)}.ccplan`,
         );
-        const created = await createPreparedImport({
+        const created = await createImportBatch({
           path: planPath,
           database,
-          recipe: { version: 1, routes: [] },
+          profile: { version: 1, routes: [] },
           baselineRevision,
         });
         await created.close();
@@ -110,20 +110,20 @@ test.each([false, true])(
         const before = await readFile(planPath);
 
         await expect(
-          openPreparedImport({ path: planPath, readonly }),
+          openImportBatch({ path: planPath, readonly }),
           damage.label,
         ).rejects.toMatchObject({ code: "DB_INVALID_PREPARED_IMPORT" });
         expect(await readFile(planPath)).toEqual(before);
 
-        const replacement = await createPreparedImport({
+        const replacement = await createImportBatch({
           path: planPath,
           database,
-          recipe: { version: 1, routes: [] },
+          profile: { version: 1, routes: [] },
           baselineRevision,
           overwrite: true,
         });
         await replacement.close();
-        const reopened = await openPreparedImport({ path: planPath, readonly });
+        const reopened = await openImportBatch({ path: planPath, readonly });
         await reopened.close();
       }
     } finally {
@@ -145,17 +145,17 @@ test.each([false, true])(
     });
     try {
       const baselineRevision = (await inspectDatabase({ database })).revision;
-      const created = await createPreparedImport({
+      const created = await createImportBatch({
         path: planPath,
         database,
-        recipe: { version: 1, routes: [] },
+        profile: { version: 1, routes: [] },
         baselineRevision,
       });
       const id = created.id;
       await created.close();
       const before = await readFile(planPath);
 
-      const opened = await openPreparedImport({ path: planPath, readonly });
+      const opened = await openImportBatch({ path: planPath, readonly });
       expect(await preparedRef(opened)).toMatchObject({
         id,
         databaseId: database.id,
@@ -179,10 +179,10 @@ test("reports an unsupported future version before validating its changed layout
     format: "sqlite",
   });
   try {
-    const created = await createPreparedImport({
+    const created = await createImportBatch({
       path: planPath,
       database,
-      recipe: { version: 1, routes: [] },
+      profile: { version: 1, routes: [] },
       baselineRevision: (await inspectDatabase({ database })).revision,
     });
     await created.close();
@@ -195,7 +195,7 @@ test("reports an unsupported future version before validating its changed layout
     const before = await readFile(planPath);
 
     await expect(
-      openPreparedImport({ path: planPath, readonly: true }),
+      openImportBatch({ path: planPath, readonly: true }),
     ).rejects.toMatchObject({
       code: "DB_UNSUPPORTED_PREPARED_IMPORT_VERSION",
       details: { fileVersion: "4", supportedVersion: 3 },
@@ -216,10 +216,10 @@ test("reports that version 2 plans must be regenerated from their sources", asyn
     format: "sqlite",
   });
   try {
-    const created = await createPreparedImport({
+    const created = await createImportBatch({
       path: planPath,
       database,
-      recipe: { version: 1, routes: [] },
+      profile: { version: 1, routes: [] },
       baselineRevision: (await inspectDatabase({ database })).revision,
     });
     await created.close();
@@ -230,11 +230,11 @@ test("reports that version 2 plans must be regenerated from their sources", asyn
     await oldVersion.close();
 
     await expect(
-      openPreparedImport({ path: planPath, readonly: true }),
+      openImportBatch({ path: planPath, readonly: true }),
     ).rejects.toMatchObject({
       code: "DB_UNSUPPORTED_PREPARED_IMPORT_VERSION",
       message: expect.stringContaining(
-        "Regenerate the plan from its original sources with this build.",
+        "Regenerate the batch from its original sources with this build.",
       ),
       details: { fileVersion: "2", supportedVersion: 3 },
     });

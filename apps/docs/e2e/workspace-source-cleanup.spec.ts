@@ -148,11 +148,13 @@ test("retries retained workbook cleanup before preparing another import", async 
         });
         const seedPlan = Reflect.get(seedPrepared, "plan") as {
           readonly id: string;
+          readonly reviewFingerprint: string;
           readonly state: string;
         };
         const applied = await request({
           type: "applyImport",
           planId: seedPlan.id,
+          reviewFingerprint: seedPlan.reviewFingerprint,
           delivery: {
             requestId: crypto.randomUUID(),
             vendor: "Synthetic vendor",
@@ -224,7 +226,10 @@ test("retries retained workbook cleanup before preparing another import", async 
     type: "importApplied",
     result: {
       appendedRows: 1,
-      summary: { tables: [{ name: "Inventory", rowCount: 1 }] },
+      summary: {
+        state: "updated",
+        value: { tables: [{ name: "Inventory", rowCount: 1 }] },
+      },
     },
   });
   expect(result.failed).toMatchObject({

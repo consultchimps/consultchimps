@@ -5,14 +5,14 @@ import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 
 import { inspectDatabase } from "../src/database.js";
-import { listDeliveries, recordDelivery } from "../src/import/deliveries.js";
+import { listBatches, recordBatch } from "../src/import/deliveries.js";
 import {
   applyImport,
   prepareImport,
   resolveImport,
 } from "../src/import/operations.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 
 const directories: string[] = [];
 
@@ -24,7 +24,7 @@ afterEach(async () => {
   );
 });
 
-const recipe: ImportRecipe = {
+const profile: ImportProfile = {
   version: 1,
   routes: [
     {
@@ -88,22 +88,22 @@ for (const format of ["sqlite", "duckdb"] as const) {
       path: path.join(directory, `workspace.${format}`),
       format,
     });
-    const prepared = await createPreparedImport({
+    const prepared = await createImportBatch({
       path: path.join(directory, "initial.ccplan"),
       database,
-      recipe,
+      profile,
       baselineRevision: 0n,
     });
     const delivery = {
       label: "Synthetic delivery",
       scope: { kind: "full" as const },
     };
-    let emptyPlan: Awaited<ReturnType<typeof createPreparedImport>> | undefined;
+    let emptyPlan: Awaited<ReturnType<typeof createImportBatch>> | undefined;
     try {
       await prepareImport({
         database,
         prepared,
-        recipe,
+        profile,
         sources: [source()],
       });
       const approved = await resolveImport({
@@ -117,48 +117,48 @@ for (const format of ["sqlite", "duckdb"] as const) {
         prepared,
         approved,
         requestId: `paired-${format}`,
-        delivery,
+        batchContext: delivery,
       });
       const pairedRetry = await applyImport({
         database,
         prepared,
         approved,
         requestId: `paired-${format}`,
-        delivery,
+        batchContext: delivery,
       });
       expect(pairedRetry).toMatchObject({
         importIds: paired.importIds,
-        deliveryId: paired.deliveryId,
-        metrics: { rowsImported: 0, rowsReused: 1, deliveriesRecorded: 0 },
+        batchId: paired.batchId,
+        metrics: { rowsImported: 0, rowsReused: 1, batchesRecorded: 0 },
       });
 
-      const standalone = await recordDelivery({
+      const standalone = await recordBatch({
         database,
         captureIds: paired.captureIds,
         context: { ...delivery, label: "Standalone delivery" },
         requestId: `delivery-first-${format}`,
       });
-      const standaloneRetry = await recordDelivery({
+      const standaloneRetry = await recordBatch({
         database,
         captureIds: paired.captureIds,
         context: { ...delivery, label: "Standalone delivery" },
         requestId: `delivery-first-${format}`,
       });
-      expect(standaloneRetry.delivery).toEqual(standalone.delivery);
-      expect(standaloneRetry.metrics.deliveriesRecorded).toBe(0);
+      expect(standaloneRetry.batch).toEqual(standalone.batch);
+      expect(standaloneRetry.metrics.batchesRecorded).toBe(0);
 
-      const emptyRecipe: ImportRecipe = { version: 1, routes: [] };
+      const emptyRecipe: ImportProfile = { version: 1, routes: [] };
       const baseline = await inspectDatabase({ database });
-      emptyPlan = await createPreparedImport({
+      emptyPlan = await createImportBatch({
         path: path.join(directory, "empty.ccplan"),
         database,
-        recipe: emptyRecipe,
+        profile: emptyRecipe,
         baselineRevision: baseline.revision,
       });
       await prepareImport({
         database,
         prepared: emptyPlan,
-        recipe: emptyRecipe,
+        profile: emptyRecipe,
         sources: [],
       });
       const emptyApproved = await resolveImport({
@@ -171,7 +171,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       }
 
       const beforeDeliveryCollision = await inspectDatabase({ database });
-      const beforeDeliveries = await listDeliveries({ database, limit: 10 });
+      const beforeDeliveries = await listBatches({ database, limit: 10 });
       for (const withDelivery of [false, true]) {
         await expect(
           applyImport({
@@ -179,26 +179,26 @@ for (const format of ["sqlite", "duckdb"] as const) {
             prepared: emptyPlan,
             approved: emptyApproved,
             requestId: `delivery-first-${format}`,
-            ...(withDelivery ? { delivery } : {}),
+            ...(withDelivery ? { batchContext: delivery } : {}),
           }),
         ).rejects.toMatchObject({ code: "DB_REQUEST_ID_CONFLICT" });
         expect(await inspectDatabase({ database })).toEqual(
           beforeDeliveryCollision,
         );
-        expect(await listDeliveries({ database, limit: 10 })).toEqual(
+        expect(await listBatches({ database, limit: 10 })).toEqual(
           beforeDeliveries,
         );
       }
       expect(
         (
-          await recordDelivery({
+          await recordBatch({
             database,
             captureIds: paired.captureIds,
             context: { ...delivery, label: "Standalone delivery" },
             requestId: `delivery-first-${format}`,
           })
-        ).delivery,
-      ).toEqual(standalone.delivery);
+        ).batch,
+      ).toEqual(standalone.batch);
 
       const imported = await applyImport({
         database,
@@ -219,12 +219,12 @@ for (const format of ["sqlite", "duckdb"] as const) {
       });
 
       const beforeImportCollision = await inspectDatabase({ database });
-      const deliveriesBeforeImportCollision = await listDeliveries({
+      const deliveriesBeforeImportCollision = await listBatches({
         database,
         limit: 10,
       });
       await expect(
-        recordDelivery({
+        recordBatch({
           database,
           captureIds: paired.captureIds,
           context: delivery,
@@ -234,19 +234,19 @@ for (const format of ["sqlite", "duckdb"] as const) {
       expect(await inspectDatabase({ database })).toEqual(
         beforeImportCollision,
       );
-      expect(await listDeliveries({ database, limit: 10 })).toEqual(
+      expect(await listBatches({ database, limit: 10 })).toEqual(
         deliveriesBeforeImportCollision,
       );
 
-      const pairedDeliveryRetry = await recordDelivery({
+      const pairedDeliveryRetry = await recordBatch({
         database,
         captureIds: paired.captureIds,
         context: delivery,
         requestId: `paired-${format}`,
       });
       expect(pairedDeliveryRetry).toMatchObject({
-        metrics: { deliveriesRecorded: 0 },
-        delivery: { id: paired.deliveryId },
+        metrics: { batchesRecorded: 0 },
+        batch: { id: paired.batchId },
       });
       for (const changed of [
         {
@@ -256,7 +256,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         { captureIds: ["CAP-missing"], context: delivery },
       ]) {
         await expect(
-          recordDelivery({
+          recordBatch({
             database,
             ...changed,
             requestId: `paired-${format}`,
@@ -266,7 +266,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       expect(await inspectDatabase({ database })).toEqual(
         beforeImportCollision,
       );
-      expect(await listDeliveries({ database, limit: 10 })).toEqual(
+      expect(await listBatches({ database, limit: 10 })).toEqual(
         deliveriesBeforeImportCollision,
       );
       expect(

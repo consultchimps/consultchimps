@@ -15,21 +15,9 @@ import {
 import { databaseError } from "./errors.js";
 import { validatedConversionRows } from "./internal/conversion-values.js";
 import type { EngineTransaction, EngineValue } from "./internal/engine.js";
-import {
-  APPLICATION_TABLE,
-  CAPTURE_ROW_TABLE,
-  CAPTURE_TABLE,
-  COUNTERS_TABLE,
-  DATABASE_METADATA_TABLE,
-  DELIVERY_MEMBERSHIP_TABLE,
-  DELIVERY_TABLE,
-  IMPORT_REQUEST_TABLE,
-  PLAN_TABLE,
-  SOURCE_CONTENT_TABLE,
-  SOURCE_FILE_TABLE,
-  SOURCE_NAME_TABLE,
-  TABLE_REGISTRY_TABLE,
-} from "./metadata.js";
+import { DATABASE_STORAGE } from "./internal/storage-layouts.js";
+import { internalCopyTables } from "./internal/storage-schema.js";
+import { DATABASE_METADATA_TABLE, TABLE_REGISTRY_TABLE } from "./metadata.js";
 import {
   applySchema,
   assertRegisteredColumns,
@@ -79,21 +67,9 @@ export interface ConversionPlan {
   readonly state: "ready" | "unsupported";
 }
 
-const INTERNAL_TABLES = new Set([
-  APPLICATION_TABLE,
-  CAPTURE_ROW_TABLE,
-  CAPTURE_TABLE,
-  COUNTERS_TABLE,
-  DATABASE_METADATA_TABLE,
-  DELIVERY_MEMBERSHIP_TABLE,
-  DELIVERY_TABLE,
-  IMPORT_REQUEST_TABLE,
-  SOURCE_CONTENT_TABLE,
-  SOURCE_FILE_TABLE,
-  SOURCE_NAME_TABLE,
-  TABLE_REGISTRY_TABLE,
-  PLAN_TABLE,
-]);
+const INTERNAL_TABLES = new Set(
+  Object.values(DATABASE_STORAGE.tables).map(({ name }) => name),
+);
 
 async function unsupportedObjectsFrom(
   engine: EngineTransaction,
@@ -299,110 +275,17 @@ function requiredInteger(name: string): ColumnDefinition {
   return { name, type: "integer", nullable: false };
 }
 
-const COPY_TABLES: readonly CopyTable[] = [
-  {
-    name: COUNTERS_TABLE,
-    columns: [requiredText("counter_name"), requiredInteger("next_value")],
-    key: ["counter_name"],
-  },
-  {
-    name: SOURCE_CONTENT_TABLE,
-    columns: [requiredText("content_hash"), requiredInteger("byte_count")],
-    key: ["content_hash"],
-  },
-  {
-    name: SOURCE_FILE_TABLE,
-    columns: [
-      requiredText("source_file_id"),
-      requiredText("content_hash"),
-      requiredText("display_name"),
-    ],
-    key: ["source_file_id"],
-  },
-  {
-    name: SOURCE_NAME_TABLE,
-    columns: [requiredText("source_file_id"), requiredText("display_name")],
-    key: ["source_file_id", "display_name"],
-  },
-  {
-    name: CAPTURE_TABLE,
-    columns: [
-      requiredText("capture_id"),
-      requiredText("source_file_id"),
-      requiredText("source_key"),
-      requiredText("selection_key"),
-      requiredText("selection_label"),
-      requiredText("reader_version"),
-      requiredText("state"),
-      requiredInteger("row_count"),
-      requiredText("columns_json"),
-    ],
-    key: ["capture_id"],
-  },
-  {
-    name: CAPTURE_ROW_TABLE,
-    columns: [
-      requiredText("capture_id"),
-      requiredInteger("source_row"),
-      requiredText("values_json"),
-    ],
-    key: ["capture_id", "source_row"],
-  },
-  {
-    name: PLAN_TABLE,
-    columns: [
-      requiredText("plan_id"),
-      requiredInteger("plan_revision"),
-      requiredInteger("baseline_revision"),
-      requiredText("state"),
-      requiredText("recipe_json"),
-      requiredText("conflicts_json"),
-      requiredText("decisions_json"),
-      requiredText("bindings_json"),
-    ],
-    key: ["plan_id", "plan_revision"],
-  },
-  {
-    name: APPLICATION_TABLE,
-    columns: [
-      requiredText("import_id"),
-      requiredText("application_key"),
-      requiredText("request_id"),
-      requiredText("capture_id"),
-      requiredText("table_name"),
-      requiredText("plan_id"),
-      requiredInteger("plan_revision"),
-      requiredInteger("row_count"),
-    ],
-    key: ["import_id"],
-  },
-  {
-    name: IMPORT_REQUEST_TABLE,
-    columns: [
-      requiredText("request_id"),
-      requiredText("plan_id"),
-      requiredInteger("plan_revision"),
-      requiredText("import_ids_json"),
-      requiredText("capture_ids_json"),
-      requiredInteger("row_count"),
-    ],
-    key: ["request_id"],
-  },
-  {
-    name: DELIVERY_TABLE,
-    columns: [
-      requiredText("delivery_id"),
-      requiredText("request_id"),
-      requiredText("context_json"),
-    ],
-    key: ["delivery_id"],
-  },
-  {
-    name: DELIVERY_MEMBERSHIP_TABLE,
-    columns: [requiredText("delivery_id"), requiredText("capture_id")],
-    key: ["delivery_id", "capture_id"],
-  },
-];
+const COPY_TABLES: readonly CopyTable[] = internalCopyTables(
+  DATABASE_STORAGE,
+).map((table) => ({
+  name: table.name,
+  columns: table.columns.map((column) =>
+    column.storage === "integer"
+      ? requiredInteger(column.name)
+      : requiredText(column.name),
+  ),
+  key: table.key,
+}));
 
 function keysetWhere(
   key: readonly string[],
@@ -499,7 +382,7 @@ export async function executeConversion(
     targetInspection.tables.length !== 0 ||
     targetInspection.captures !== 0n ||
     targetInspection.completedImports !== 0n ||
-    targetInspection.deliveries !== 0n
+    targetInspection.recordedBatches !== 0n
   ) {
     throw databaseError(
       "DB_CONVERSION_TARGET_NOT_EMPTY",
@@ -644,8 +527,8 @@ export async function executeConversion(
     invalidTable !== undefined ||
     converted.captures !== inspection.captures ||
     converted.completedImports !== inspection.completedImports ||
-    converted.deliveries !== inspection.deliveries ||
-    converted.appliedImportPlans !== inspection.appliedImportPlans
+    converted.recordedBatches !== inspection.recordedBatches ||
+    converted.appliedImportBatches !== inspection.appliedImportBatches
   ) {
     throw databaseError(
       "DB_CONVERSION_VALIDATION_FAILED",

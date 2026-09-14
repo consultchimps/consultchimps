@@ -7,11 +7,11 @@ import { afterEach, expect, test } from "vitest";
 import { inspectDatabase } from "../src/database.js";
 import {
   createDatabase,
-  createPreparedImport,
+  createImportBatch,
   openDatabase,
-  openPreparedImport,
+  openImportBatch,
 } from "../src/node.js";
-import { draftImportRecipe } from "../src/import/recipe.js";
+import { draftImportProfile } from "../src/import/profile.js";
 import {
   applyImport,
   inspectImport,
@@ -36,10 +36,10 @@ for (const format of ["sqlite", "duckdb"] as const) {
     const databasePath = path.join(directory, `inventory.${format}`);
     const planPath = path.join(directory, "review.ccplan");
     const { database } = await createDatabase({ path: databasePath, format });
-    const prepared = await createPreparedImport({
+    const prepared = await createImportBatch({
       path: planPath,
       database,
-      recipe: { version: 1, routes: [] },
+      profile: { version: 1, routes: [] },
       baselineRevision: (await inspectDatabase({ database })).revision,
     });
     const id = prepared.id;
@@ -50,7 +50,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       inspectImport({ prepared, page: { limit: 1 } }),
     ).rejects.toThrow();
     const reopened = await openDatabase({ path: databasePath });
-    const reopenedPlan = await openPreparedImport({ path: planPath });
+    const reopenedPlan = await openImportBatch({ path: planPath });
     try {
       expect(reopenedPlan.id).toBe(id);
       expect(reopenedPlan.databaseId).toBe(reopened.id);
@@ -114,12 +114,12 @@ for (const format of ["sqlite", "duckdb"] as const) {
           },
         ],
       };
-      const recipe = await draftImportRecipe({ sources: [source] });
+      const profile = await draftImportProfile({ sources: [source] });
       const before = await inspectDatabase({ database });
-      const prepared = await createPreparedImport({
+      const prepared = await createImportBatch({
         path: path.join(directory, "review.ccplan"),
         database,
-        recipe,
+        profile,
         baselineRevision: before.revision,
       });
       try {
@@ -127,7 +127,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
           database,
           prepared,
           sources: [source],
-          recipe,
+          profile,
         });
         expect(captured.result.metrics.rowsCaptured).toBe(2);
         expect((await inspectDatabase({ database })).tables).toHaveLength(0);
@@ -161,10 +161,10 @@ for (const format of ["sqlite", "duckdb"] as const) {
         })),
       };
       const latest = await inspectDatabase({ database });
-      const repeatedPlan = await createPreparedImport({
+      const repeatedPlan = await createImportBatch({
         path: path.join(directory, "repeat.ccplan"),
         database,
-        recipe,
+        profile,
         baselineRevision: latest.revision,
       });
       try {
@@ -172,7 +172,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
           database,
           prepared: repeatedPlan,
           sources: [duplicate],
-          recipe,
+          profile,
         });
         expect(repeated.result.metrics.sourcesReused).toBe(1);
         expect(repeated.result.metrics.rowsCaptured).toBe(0);

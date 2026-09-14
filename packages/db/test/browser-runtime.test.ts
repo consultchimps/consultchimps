@@ -1684,27 +1684,27 @@ describe("browser database runtime", () => {
       format: "sqlite",
     });
     const inspection = await inspectDatabase({ database: created.database });
-    const prepared = await runtime.createPreparedImport({
+    const prepared = await runtime.createImportBatch({
       name: ".consultchimps-import-review.sqlite",
       database: created.database,
-      recipe: { version: 1, routes: [] },
+      profile: { version: 1, routes: [] },
       baselineRevision: inspection.revision,
     });
     const preparedId = prepared.id;
     await expect(
-      runtime.createPreparedImport({
+      runtime.createImportBatch({
         name: ".consultchimps-import-review.sqlite",
         database: created.database,
-        recipe: { version: 1, routes: [] },
+        profile: { version: 1, routes: [] },
         baselineRevision: inspection.revision,
         overwrite: true,
       }),
     ).rejects.toMatchObject({ code: "DB_BROWSER_DATABASE_BUSY" });
     await prepared.close();
-    const legacyVersionOne = await runtime.createPreparedImport({
+    const legacyVersionOne = await runtime.createImportBatch({
       name: ".consultchimps-import-legacy-v1.sqlite",
       database: created.database,
-      recipe: { version: 1, routes: [] },
+      profile: { version: 1, routes: [] },
       baselineRevision: inspection.revision,
     });
     await legacyVersionOne.close();
@@ -1722,10 +1722,10 @@ describe("browser database runtime", () => {
       "ALTER TABLE _consultchimps_prepared_captures DROP COLUMN row_checksum",
     );
     legacyVersionOneStorage.close();
-    const legacyVersionTwo = await runtime.createPreparedImport({
+    const legacyVersionTwo = await runtime.createImportBatch({
       name: ".consultchimps-import-legacy-v2.sqlite",
       database: created.database,
-      recipe: { version: 1, routes: [] },
+      profile: { version: 1, routes: [] },
       baselineRevision: inspection.revision,
     });
     await legacyVersionTwo.close();
@@ -1746,25 +1746,25 @@ describe("browser database runtime", () => {
     });
     await unrelated.database.close();
     await expect(
-      runtime.createPreparedImport({
+      runtime.createImportBatch({
         name: ".consultchimps-import-unrelated.sqlite",
         database: created.database,
-        recipe: { version: 1, routes: [] },
+        profile: { version: 1, routes: [] },
         baselineRevision: inspection.revision,
         overwrite: true,
       }),
     ).rejects.toMatchObject({ code: "DB_BROWSER_STORAGE_KIND_MISMATCH" });
 
     await expect(
-      runtime.createPreparedImport({
+      runtime.createImportBatch({
         name: ".consultchimps-import-review.sqlite",
         database: created.database,
-        recipe: { version: 1, routes: [] },
+        profile: { version: 1, routes: [] },
         baselineRevision: inspection.revision,
       }),
     ).rejects.toMatchObject({ code: "DB_OUTPUT_EXISTS" });
     await expect(
-      runtime.listPreparedImports({ database: created.database }),
+      runtime.listImportBatches({ database: created.database }),
     ).resolves.toEqual({
       imports: [
         {
@@ -1799,12 +1799,12 @@ describe("browser database runtime", () => {
           name: ".consultchimps-import-unrelated.sqlite",
           code: "DB_INVALID_PREPARED_IMPORT",
           message:
-            "This import plan is incomplete or damaged. Prepare the workbook again or restore a verified plan copy.",
+            "This import batch is incomplete or damaged. Prepare the workbook again or restore a verified batch copy.",
         },
       ],
     });
 
-    const reopened = await runtime.openPreparedImport({
+    const reopened = await runtime.openImportBatch({
       name: ".consultchimps-import-review.sqlite",
     });
     expect(reopened.id).toBe(preparedId);
@@ -1820,10 +1820,10 @@ describe("browser database runtime", () => {
     });
     const inspection = await inspectDatabase({ database: created.database });
     const planName = ".consultchimps-import-listing-lock.sqlite";
-    const prepared = await runtime.createPreparedImport({
+    const prepared = await runtime.createImportBatch({
       name: planName,
       database: created.database,
-      recipe: { version: 1, routes: [] },
+      profile: { version: 1, routes: [] },
       baselineRevision: inspection.revision,
     });
     const planId = prepared.id;
@@ -1847,12 +1847,12 @@ describe("browser database runtime", () => {
       markPlanOpened = resolve;
     });
     harness.afterNextOpen = { name: `/${planName}`, run: markPlanOpened };
-    const listing = runtime.listPreparedImports({ database: created.database });
+    const listing = runtime.listImportBatches({ database: created.database });
     await planOpened;
 
     let discardSettled = false;
     const discard = runtime
-      .discardPreparedImport({ name: planName })
+      .discardImportBatch({ name: planName })
       .finally(() => {
         discardSettled = true;
       });
@@ -1866,7 +1866,7 @@ describe("browser database runtime", () => {
     });
     await discard;
     await expect(
-      runtime.openPreparedImport({ name: planName }),
+      runtime.openImportBatch({ name: planName }),
     ).rejects.toMatchObject({ code: "DB_BROWSER_STORAGE_MISSING" });
     await created.database.close();
   });
@@ -1879,27 +1879,27 @@ describe("browser database runtime", () => {
     });
     const inspection = await inspectDatabase({ database: created.database });
     const planName = ".consultchimps-import-protected.sqlite";
-    const original = await runtime.createPreparedImport({
+    const original = await runtime.createImportBatch({
       name: planName,
       database: created.database,
-      recipe: { version: 1, routes: [] },
+      profile: { version: 1, routes: [] },
       baselineRevision: inspection.revision,
     });
     const originalId = original.id;
     await original.close();
-    harness.failNextSqlContaining = "CREATE TABLE _consultchimps_prepared";
+    harness.failNextSqlContaining = 'CREATE TABLE "_consultchimps_prepared"';
 
     await expect(
-      runtime.createPreparedImport({
+      runtime.createImportBatch({
         name: planName,
         database: created.database,
-        recipe: { version: 1, routes: [] },
+        profile: { version: 1, routes: [] },
         baselineRevision: inspection.revision,
         overwrite: true,
       }),
     ).rejects.toThrow("Injected SQLite metadata failure");
 
-    const reopened = await runtime.openPreparedImport({ name: planName });
+    const reopened = await runtime.openImportBatch({ name: planName });
     expect(reopened.id).toBe(originalId);
     expect(
       [...harness.databases.keys()].filter((name) =>
@@ -1922,15 +1922,15 @@ describe("browser database runtime", () => {
     const randomUuid = vi
       .spyOn(globalThis.crypto, "randomUUID")
       .mockReturnValueOnce(candidateId);
-    harness.failNextSqlContaining = "CREATE TABLE _consultchimps_prepared";
+    harness.failNextSqlContaining = 'CREATE TABLE "_consultchimps_prepared"';
     harness.failNextCloseName = `/${candidate}`;
 
     let failure: unknown;
     try {
-      await runtime.createPreparedImport({
+      await runtime.createImportBatch({
         name: ".consultchimps-import-new.sqlite",
         database: created.database,
-        recipe: { version: 1, routes: [] },
+        profile: { version: 1, routes: [] },
         baselineRevision: inspection.revision,
       });
     } catch (error) {
@@ -1977,14 +1977,14 @@ describe("browser database runtime", () => {
     const randomUuid = vi
       .spyOn(globalThis.crypto, "randomUUID")
       .mockReturnValueOnce(candidateId);
-    harness.failNextSqlContaining = "CREATE TABLE _consultchimps_prepared";
+    harness.failNextSqlContaining = 'CREATE TABLE "_consultchimps_prepared"';
     harness.failNextUnlinkName = `/${candidate}`;
 
     await expect(
-      runtime.createPreparedImport({
+      runtime.createImportBatch({
         name: ".consultchimps-import-new.sqlite",
         database: created.database,
-        recipe: { version: 1, routes: [] },
+        profile: { version: 1, routes: [] },
         baselineRevision: inspection.revision,
       }),
     ).rejects.toMatchObject({
@@ -2013,10 +2013,10 @@ describe("browser database runtime", () => {
     });
     const inspection = await inspectDatabase({ database: created.database });
     const planName = ".consultchimps-import-close-protected.sqlite";
-    const original = await runtime.createPreparedImport({
+    const original = await runtime.createImportBatch({
       name: planName,
       database: created.database,
-      recipe: { version: 1, routes: [] },
+      profile: { version: 1, routes: [] },
       baselineRevision: inspection.revision,
     });
     const originalId = original.id;
@@ -2027,10 +2027,10 @@ describe("browser database runtime", () => {
     );
     expect(original.isOpen).toBe(true);
     await expect(
-      runtime.createPreparedImport({
+      runtime.createImportBatch({
         name: planName,
         database: created.database,
-        recipe: { version: 1, routes: [] },
+        profile: { version: 1, routes: [] },
         baselineRevision: inspection.revision,
         overwrite: true,
       }),
@@ -2038,13 +2038,13 @@ describe("browser database runtime", () => {
     expect(original.id).toBe(originalId);
 
     await original.close();
-    const reopened = await runtime.openPreparedImport({ name: planName });
+    const reopened = await runtime.openImportBatch({ name: planName });
     expect(reopened.id).toBe(originalId);
     await reopened.close();
-    const replacement = await runtime.createPreparedImport({
+    const replacement = await runtime.createImportBatch({
       name: planName,
       database: created.database,
-      recipe: { version: 1, routes: [] },
+      profile: { version: 1, routes: [] },
       baselineRevision: inspection.revision,
       overwrite: true,
     });
@@ -2260,10 +2260,10 @@ describe("browser database runtime", () => {
     });
     const inspection = await inspectDatabase({ database: created.database });
     const planName = ".consultchimps-import-open-cleanup.sqlite";
-    const original = await runtime.createPreparedImport({
+    const original = await runtime.createImportBatch({
       name: planName,
       database: created.database,
-      recipe: { version: 1, routes: [] },
+      profile: { version: 1, routes: [] },
       baselineRevision: inspection.revision,
     });
     const originalId = original.id;
@@ -2274,22 +2274,22 @@ describe("browser database runtime", () => {
     };
 
     await expect(
-      runtime.openPreparedImport({ name: planName }),
+      runtime.openImportBatch({ name: planName }),
     ).rejects.toMatchObject({
       code: "DB_BROWSER_OPEN_CLEANUP_REQUIRED",
       details: { name: planName, ownerKinds: ["prepared"] },
     });
     await expect(
-      runtime.createPreparedImport({
+      runtime.createImportBatch({
         name: planName,
         database: created.database,
-        recipe: { version: 1, routes: [] },
+        profile: { version: 1, routes: [] },
         baselineRevision: inspection.revision,
         overwrite: true,
       }),
     ).rejects.toMatchObject({ code: "DB_BROWSER_DATABASE_BUSY" });
 
-    const reopened = await runtime.openPreparedImport({ name: planName });
+    const reopened = await runtime.openImportBatch({ name: planName });
     expect(reopened.id).toBe(originalId);
     await reopened.close();
     await created.database.close();
@@ -2303,25 +2303,25 @@ describe("browser database runtime", () => {
     });
     const inspection = await inspectDatabase({ database: created.database });
     const planName = ".consultchimps-import-private.sqlite";
-    const prepared = await runtime.createPreparedImport({
+    const prepared = await runtime.createImportBatch({
       name: planName,
       database: created.database,
-      recipe: { version: 1, routes: [] },
+      profile: { version: 1, routes: [] },
       baselineRevision: inspection.revision,
     });
 
     await expect(
-      runtime.discardPreparedImport({ name: planName }),
+      runtime.discardImportBatch({ name: planName }),
     ).rejects.toMatchObject({ code: "DB_BROWSER_DATABASE_BUSY" });
     await prepared.close();
     await expect(
-      runtime.discardPreparedImport({ name: planName }),
+      runtime.discardImportBatch({ name: planName }),
     ).resolves.toBeUndefined();
     await expect(
-      runtime.openPreparedImport({ name: planName }),
+      runtime.openImportBatch({ name: planName }),
     ).rejects.toMatchObject({ code: "DB_BROWSER_STORAGE_MISSING" });
     await expect(
-      runtime.discardPreparedImport({ name: "workspace.sqlite" }),
+      runtime.discardImportBatch({ name: "workspace.sqlite" }),
     ).rejects.toMatchObject({ code: "DB_BROWSER_STORAGE_KIND_MISMATCH" });
 
     expect([...harness.databases.keys()]).toEqual(["/workspace.sqlite"]);

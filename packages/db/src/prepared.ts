@@ -13,31 +13,42 @@ import type {
 import { assertNoSqliteTableTriggers } from "./internal/database-layout.js";
 import { canonicalJson } from "./internal/json.js";
 import {
-  assertInternalTableStorage,
-  type InternalTableStorage,
-} from "./internal/table-storage.js";
+  PREPARED_BINDING_TABLE,
+  PREPARED_CAPTURE_TABLE,
+  PREPARED_METADATA_TABLE,
+  PREPARED_ROW_TABLE,
+  PREPARED_STORAGE,
+} from "./internal/storage-layouts.js";
+import { RetryableClose } from "./internal/retryable-close.js";
+import {
+  createInternalTables,
+  insertInternalRow,
+  validateInternalTables,
+} from "./internal/storage-schema.js";
 import {
   parseImportConflicts,
   parseImportDecisions,
-  parseImportRecipe,
-  validateImportRecipe,
+  parseImportProfile,
+  validateImportProfile,
 } from "./validators.js";
 import type {
   ImportConflict,
   ImportDecision,
-  ImportRecipe,
-  PreparedImportId,
-  PreparedImportRef,
-  ReadyImportRef,
+  ImportProfile,
+  ImportBatchId,
+  ImportBatchRef,
+  ReadyImportBatchRef,
 } from "./import/types.js";
 
-export const PREPARED_METADATA_TABLE = "_consultchimps_prepared";
-export const PREPARED_CAPTURE_TABLE = "_consultchimps_prepared_captures";
-export const PREPARED_BINDING_TABLE = "_consultchimps_prepared_bindings";
-export const PREPARED_ROW_TABLE = "_consultchimps_prepared_rows";
+export {
+  PREPARED_BINDING_TABLE,
+  PREPARED_CAPTURE_TABLE,
+  PREPARED_METADATA_TABLE,
+  PREPARED_ROW_TABLE,
+} from "./internal/storage-layouts.js";
 export const PREPARED_FORMAT_VERSION = 3;
 
-export async function assertPreparedImportWritable(
+export async function assertImportBatchWritable(
   transaction: EngineTransaction,
 ): Promise<void> {
   await assertNoSqliteTableTriggers(
@@ -52,65 +63,12 @@ export async function assertPreparedImportWritable(
     {
       code: "DB_SCHEMA_DRIFT",
       message:
-        "A trigger was added to a prepared import table outside the import operations. Remove the trigger or restore a verified plan copy before writing.",
+        "A trigger was added to a prepared-batch table outside the import operations. Remove the trigger or restore a verified batch copy before writing.",
     },
   );
 }
 
-const REQUIRED_PREPARED_SCHEMA = [
-  {
-    table: PREPARED_METADATA_TABLE,
-    primaryKey: ["plan_id"],
-    integerColumns: ["format_version", "baseline_revision", "plan_revision"],
-    columns: [
-      "format_version",
-      "plan_id",
-      "database_id",
-      "baseline_revision",
-      "schema_fingerprint",
-      "plan_revision",
-      "state",
-      "recipe_json",
-      "conflicts_json",
-      "decisions_json",
-      "review_fingerprint",
-    ],
-  },
-  {
-    table: PREPARED_CAPTURE_TABLE,
-    primaryKey: ["capture_id"],
-    integerColumns: ["byte_count", "reused", "row_count"],
-    nullableColumns: ["source_file_id"],
-    columns: [
-      "capture_id",
-      "source_file_id",
-      "source_key",
-      "display_name",
-      "selection_key",
-      "selection_label",
-      "reader_version",
-      "content_hash",
-      "byte_count",
-      "reused",
-      "row_count",
-      "columns_json",
-      "row_checksum",
-    ],
-  },
-  {
-    table: PREPARED_BINDING_TABLE,
-    primaryKey: ["source_key", "selection_key"],
-    columns: ["source_key", "selection_key", "capture_id", "display_name"],
-  },
-  {
-    table: PREPARED_ROW_TABLE,
-    primaryKey: ["capture_id", "source_row"],
-    integerColumns: ["source_row"],
-    columns: ["capture_id", "source_row", "values_json"],
-  },
-] as const satisfies readonly InternalTableStorage[];
-
-const engines = new WeakMap<PreparedImport, DatabaseEngine>();
+const engines = new WeakMap<ImportBatch, DatabaseEngine>();
 
 function preparedBigInt(value: unknown, field: string): bigint {
   if (typeof value === "bigint") return value;
@@ -122,7 +80,7 @@ function preparedBigInt(value: unknown, field: string): bigint {
   }
   throw databaseError(
     "DB_INVALID_PREPARED_IMPORT",
-    `The import plan has an invalid ${field}.`,
+    `The import batch has an invalid ${field}.`,
     { field },
   );
 }
@@ -163,42 +121,38 @@ function reviewFingerprint(options: {
   );
 }
 
-export interface PreparedImport extends AsyncDisposable {
-  readonly id: PreparedImportId;
+export interface ImportBatch extends AsyncDisposable {
+  readonly id: ImportBatchId;
   readonly databaseId: DatabaseId;
   readonly isOpen: boolean;
   close(): Promise<void>;
 }
 
-class ManagedPreparedImport implements PreparedImport {
-  readonly id: PreparedImportId;
+class ManagedImportBatch implements ImportBatch {
+  readonly id: ImportBatchId;
   readonly databaseId: DatabaseId;
-  #open = true;
-  #closing: Promise<void> | undefined;
+  readonly #lifecycle: RetryableClose;
 
-  constructor(id: PreparedImportId, databaseId: DatabaseId) {
+  constructor(
+    id: ImportBatchId,
+    databaseId: DatabaseId,
+    engine: DatabaseEngine,
+  ) {
     this.id = id;
     this.databaseId = databaseId;
+    engines.set(this, engine);
+    this.#lifecycle = new RetryableClose(async () => {
+      await engine.close();
+      engines.delete(this);
+    });
   }
 
   get isOpen(): boolean {
-    return this.#open;
+    return this.#lifecycle.isOpen;
   }
 
   close(): Promise<void> {
-    if (this.#closing !== undefined) return this.#closing;
-    if (!this.#open) return Promise.resolve();
-    const closing = Promise.resolve()
-      .then(() => preparedEngineOf(this).close())
-      .then(() => {
-        this.#open = false;
-        engines.delete(this);
-      })
-      .finally(() => {
-        if (this.#closing === closing) this.#closing = undefined;
-      });
-    this.#closing = closing;
-    return closing;
+    return this.#lifecycle.close();
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
@@ -206,26 +160,26 @@ class ManagedPreparedImport implements PreparedImport {
   }
 }
 
-export function preparedEngineOf(prepared: PreparedImport): DatabaseEngine {
+export function preparedEngineOf(prepared: ImportBatch): DatabaseEngine {
   assertOpen(prepared.isOpen);
   const engine = engines.get(prepared);
   if (engine === undefined) {
-    throw databaseError("DB_PREPARED_CLOSED", "The prepared import is closed.");
+    throw databaseError("DB_PREPARED_CLOSED", "The import batch is closed.");
   }
   return engine;
 }
 
-function preparedId(): PreparedImportId {
-  return `PLAN-${globalThis.crypto.randomUUID()}` as PreparedImportId;
+function preparedId(): ImportBatchId {
+  return `PLAN-${globalThis.crypto.randomUUID()}` as ImportBatchId;
 }
 
-function invalidPreparedImport(
+function invalidImportBatch(
   details?: Record<string, unknown>,
   cause?: unknown,
 ) {
   return databaseError(
     "DB_INVALID_PREPARED_IMPORT",
-    "This import plan is incomplete or damaged. Prepare the workbook again or restore a verified plan copy.",
+    "This import batch is incomplete or damaged. Prepare the workbook again or restore a verified batch copy.",
     details,
     cause,
   );
@@ -241,53 +195,17 @@ async function preparedQuery(
   } catch (cause) {
     if (isConsultChimpsError(cause)) throw cause;
     if (cause instanceof Error && cause.name === "AbortError") throw cause;
-    throw invalidPreparedImport(undefined, cause);
+    throw invalidImportBatch(undefined, cause);
   }
 }
 
 async function validatePreparedSchema(engine: DatabaseEngine): Promise<void> {
-  const tables = await preparedQuery(
-    engine,
-    "SELECT name FROM sqlite_master WHERE type = 'table'",
-  );
-  const tableNames = new Set(
-    tables.flatMap((row) =>
-      typeof row["name"] === "string" ? [row["name"]] : [],
-    ),
-  );
-  const missingTables = REQUIRED_PREPARED_SCHEMA.flatMap(({ table }) =>
-    tableNames.has(table) ? [] : [table],
-  );
-  if (missingTables.length > 0) {
-    throw invalidPreparedImport({ missingTables });
-  }
-  for (const required of REQUIRED_PREPARED_SCHEMA) {
-    const columns = await preparedQuery(
-      engine,
-      "SELECT * FROM pragma_table_xinfo(?, 'main') ORDER BY cid",
-      [required.table],
-    );
-    const actualColumns = columns.map((row) =>
-      typeof row["name"] === "string" ? row["name"] : null,
-    );
-    if (
-      actualColumns.length !== required.columns.length ||
-      actualColumns.some((column, index) => column !== required.columns[index])
-    ) {
-      throw invalidPreparedImport({
-        table: required.table,
-        expectedColumns: [...required.columns],
-        actualColumns,
-      });
-    }
-    await assertInternalTableStorage({
-      query: (sql, values) => preparedQuery(engine, sql, values),
-      format: engine.format,
-      layout: required,
-      columns,
-      invalid: invalidPreparedImport,
-    });
-  }
+  await validateInternalTables({
+    query: (sql, values) => preparedQuery(engine, sql, values),
+    format: engine.format,
+    schema: PREPARED_STORAGE,
+    invalid: invalidImportBatch,
+  });
 }
 
 async function validatePreparedRowOwners(
@@ -320,7 +238,7 @@ async function validatePreparedRowOwners(
     if (!captureIds.has(captureId)) {
       throw databaseError(
         "DB_INVALID_PREPARED_IMPORT",
-        "The import plan contains captured rows without their capture definition. Regenerate the plan from its original sources or restore a verified plan copy.",
+        "The import batch contains captured rows without their capture definition. Regenerate the batch from its original sources or restore a verified batch copy.",
         { captureId },
       );
     }
@@ -328,19 +246,20 @@ async function validatePreparedRowOwners(
   }
 }
 
-export async function createPreparedImportHandle(options: {
+export async function createImportBatchHandle(options: {
   readonly engine: DatabaseEngine;
   readonly databaseId: DatabaseId;
   readonly baselineRevision: bigint;
   readonly baselineSchemaFingerprint: string;
-  readonly recipe: ImportRecipe;
-}): Promise<PreparedImport> {
-  validateImportRecipe(options.recipe);
+  readonly profile: ImportProfile;
+}): Promise<ImportBatch> {
+  assertBaselineRevision(options.baselineRevision);
+  validateImportProfile(options.profile);
   const id = preparedId();
   const formatVersion = BigInt(PREPARED_FORMAT_VERSION);
   const planRevision = 1n;
   const state = "needs-review";
-  const recipeJson = canonicalJson(options.recipe);
+  const recipeJson = canonicalJson(options.profile);
   const conflictsJson = "[]";
   const decisionsJson = "[]";
   const fingerprint = reviewFingerprint({
@@ -358,43 +277,27 @@ export async function createPreparedImportHandle(options: {
     bindingsJson: "[]",
   });
   await options.engine.transaction(async (transaction) => {
-    await transaction.execute(
-      `CREATE TABLE ${PREPARED_METADATA_TABLE} (format_version BIGINT NOT NULL, plan_id VARCHAR PRIMARY KEY, database_id VARCHAR NOT NULL, baseline_revision BIGINT NOT NULL, schema_fingerprint VARCHAR NOT NULL, plan_revision BIGINT NOT NULL, state VARCHAR NOT NULL, recipe_json VARCHAR NOT NULL, conflicts_json VARCHAR NOT NULL, decisions_json VARCHAR NOT NULL, review_fingerprint VARCHAR NOT NULL)`,
-    );
-    await transaction.execute(
-      `INSERT INTO ${PREPARED_METADATA_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        formatVersion,
-        id,
-        options.databaseId,
-        options.baselineRevision,
-        options.baselineSchemaFingerprint,
-        planRevision,
-        state,
-        recipeJson,
-        conflictsJson,
-        decisionsJson,
-        fingerprint,
-      ],
-    );
-    await transaction.execute(
-      `CREATE TABLE ${PREPARED_CAPTURE_TABLE} (capture_id VARCHAR PRIMARY KEY, source_file_id VARCHAR, source_key VARCHAR NOT NULL, display_name VARCHAR NOT NULL, selection_key VARCHAR NOT NULL, selection_label VARCHAR NOT NULL, reader_version VARCHAR NOT NULL, content_hash VARCHAR NOT NULL, byte_count BIGINT NOT NULL, reused BIGINT NOT NULL, row_count BIGINT NOT NULL, columns_json VARCHAR NOT NULL, row_checksum VARCHAR NOT NULL)`,
-    );
-    await transaction.execute(
-      `CREATE TABLE ${PREPARED_BINDING_TABLE} (source_key VARCHAR NOT NULL, selection_key VARCHAR NOT NULL, capture_id VARCHAR NOT NULL, display_name VARCHAR NOT NULL, PRIMARY KEY(source_key, selection_key))`,
-    );
-    await transaction.execute(
-      `CREATE TABLE ${PREPARED_ROW_TABLE} (capture_id VARCHAR NOT NULL, source_row BIGINT NOT NULL, values_json VARCHAR NOT NULL, PRIMARY KEY(capture_id, source_row))`,
-    );
+    await createInternalTables(transaction, PREPARED_STORAGE, "sqlite");
+    await insertInternalRow(transaction, PREPARED_STORAGE.tables.metadata, {
+      format_version: formatVersion,
+      plan_id: id,
+      database_id: options.databaseId,
+      baseline_revision: options.baselineRevision,
+      schema_fingerprint: options.baselineSchemaFingerprint,
+      plan_revision: planRevision,
+      state,
+      recipe_json: recipeJson,
+      conflicts_json: conflictsJson,
+      decisions_json: decisionsJson,
+      review_fingerprint: fingerprint,
+    });
   });
-  const prepared = new ManagedPreparedImport(id, options.databaseId);
-  engines.set(prepared, options.engine);
-  return prepared;
+  return new ManagedImportBatch(id, options.databaseId, options.engine);
 }
 
-export async function openPreparedImportHandle(
+export async function openImportBatchHandle(
   engine: DatabaseEngine,
-): Promise<PreparedImport> {
+): Promise<ImportBatch> {
   const rows = await preparedQuery(
     engine,
     `SELECT format_version, plan_id, database_id FROM ${PREPARED_METADATA_TABLE}`,
@@ -408,7 +311,7 @@ export async function openPreparedImportHandle(
   ) {
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",
-      "This file is not a readable ConsultChimps import plan.",
+      "This file is not a readable ConsultChimps import batch.",
     );
   }
   const formatVersion =
@@ -424,7 +327,7 @@ export async function openPreparedImportHandle(
   if (formatVersion !== BigInt(PREPARED_FORMAT_VERSION)) {
     throw databaseError(
       "DB_UNSUPPORTED_PREPARED_IMPORT_VERSION",
-      `This import plan uses format version ${String(row["format_version"])}, but this build supports version ${PREPARED_FORMAT_VERSION}. Regenerate the plan from its original sources with this build.`,
+      `This import batch uses format version ${String(row["format_version"])}, but this build supports version ${PREPARED_FORMAT_VERSION}. Regenerate the batch from its original sources with this build.`,
       {
         fileVersion: String(row["format_version"]),
         supportedVersion: PREPARED_FORMAT_VERSION,
@@ -434,17 +337,17 @@ export async function openPreparedImportHandle(
   await validatePreparedSchema(engine);
   const review = await readStoredPreparedReview(engine);
   await validatePreparedRowOwners(engine);
-  const prepared = new ManagedPreparedImport(
+  const prepared = new ManagedImportBatch(
     review.prepared.id,
     review.prepared.databaseId,
+    engine,
   );
-  engines.set(prepared, engine);
   return prepared;
 }
 
 export interface PreparedReview {
-  readonly prepared: PreparedImportRef | ReadyImportRef;
-  readonly recipe: ImportRecipe;
+  readonly prepared: ImportBatchRef | ReadyImportBatchRef;
+  readonly profile: ImportProfile;
   readonly conflicts: readonly ImportConflict[];
   readonly decisions: readonly ImportDecision[];
 }
@@ -464,7 +367,7 @@ function preparedString(value: unknown, field: string): string {
   if (typeof value === "string") return value;
   throw databaseError(
     "DB_INVALID_PREPARED_IMPORT",
-    `The import plan has an invalid ${field}.`,
+    `The import batch has an invalid ${field}.`,
     { field },
   );
 }
@@ -473,7 +376,7 @@ function requiredPreparedString(value: unknown, field: string): string {
   if (typeof value === "string" && value.trim().length > 0) return value;
   throw databaseError(
     "DB_INVALID_PREPARED_IMPORT",
-    `The import plan has an invalid ${field}.`,
+    `The import batch has an invalid ${field}.`,
     { field },
   );
 }
@@ -483,8 +386,17 @@ function nonNegativePreparedBigInt(value: unknown, field: string): bigint {
   if (parsed >= 0n) return parsed;
   throw databaseError(
     "DB_INVALID_PREPARED_IMPORT",
-    `The import plan has an invalid ${field}.`,
+    `The import batch has an invalid ${field}.`,
     { field },
+  );
+}
+
+function assertBaselineRevision(value: unknown): asserts value is bigint {
+  if (typeof value === "bigint" && value >= 0n) return;
+  throw databaseError(
+    "DB_INVALID_PREPARED_IMPORT",
+    "The import batch has an invalid baseline revision.",
+    { field: "baseline revision" },
   );
 }
 
@@ -493,7 +405,7 @@ function positivePreparedBigInt(value: unknown, field: string): bigint {
   if (parsed > 0n) return parsed;
   throw databaseError(
     "DB_INVALID_PREPARED_IMPORT",
-    `The import plan has an invalid ${field}.`,
+    `The import batch has an invalid ${field}.`,
     { field },
   );
 }
@@ -569,7 +481,7 @@ async function readStoredPreparedReview(
   if (row === undefined || rows.length !== 1) {
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",
-      "The import plan metadata is missing.",
+      "The import batch metadata is missing.",
     );
   }
   const formatVersion = nonNegativePreparedBigInt(
@@ -579,7 +491,7 @@ async function readStoredPreparedReview(
   if (formatVersion !== BigInt(PREPARED_FORMAT_VERSION)) {
     throw databaseError(
       "DB_UNSUPPORTED_PREPARED_IMPORT_VERSION",
-      `This import plan uses format version ${formatVersion.toString()}, but this build supports version ${PREPARED_FORMAT_VERSION}. Regenerate the plan from its original sources with this build.`,
+      `This import batch uses format version ${formatVersion.toString()}, but this build supports version ${PREPARED_FORMAT_VERSION}. Regenerate the batch from its original sources with this build.`,
       {
         fileVersion: formatVersion.toString(),
         supportedVersion: PREPARED_FORMAT_VERSION,
@@ -598,24 +510,24 @@ async function readStoredPreparedReview(
   );
   const planRevision = positivePreparedBigInt(
     row["plan_revision"],
-    "plan revision",
+    "batch revision",
   );
   if (row["state"] !== "ready" && row["state"] !== "needs-review") {
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",
-      "The import plan has an invalid review state.",
+      "The import batch has an invalid review state.",
       { state: row["state"] },
     );
   }
   const state = row["state"];
-  const recipeJson = requiredPreparedString(row["recipe_json"], "recipe");
+  const recipeJson = requiredPreparedString(row["recipe_json"], "profile");
   if (
     typeof row["conflicts_json"] !== "string" ||
     typeof row["decisions_json"] !== "string"
   ) {
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",
-      "The import plan recipe or conflicts are missing.",
+      "The import batch profile or conflicts are missing.",
     );
   }
   const conflictsJson = row["conflicts_json"];
@@ -630,18 +542,18 @@ async function readStoredPreparedReview(
   } catch (cause) {
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",
-      "The import plan recipe or conflicts are not valid JSON.",
+      "The import batch profile or conflicts are not valid JSON.",
       undefined,
       cause,
     );
   }
-  const recipe = parseImportRecipe(recipeValue);
+  const profile = parseImportProfile(recipeValue);
   const conflicts = parseImportConflicts(conflictsValue);
   const decisions = parseImportDecisions(decisionsValue);
   if (state === "ready" && conflicts.length > 0) {
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",
-      "The import plan is marked ready but still contains conflicts. Review the plan again before applying it.",
+      "The import batch is marked ready but still contains conflicts. Review the batch again before applying it.",
     );
   }
   const storedFingerprint = requiredPreparedString(
@@ -670,11 +582,11 @@ async function readStoredPreparedReview(
   ) {
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",
-      "The import plan review metadata changed outside the review workflow. Regenerate the plan from its original sources or restore a verified plan copy.",
+      "The import batch review metadata changed outside the review workflow. Regenerate the batch from its original sources or restore a verified batch copy.",
     );
   }
   const common = {
-    id: planId as PreparedImportId,
+    id: planId as ImportBatchId,
     databaseId: databaseId as DatabaseId,
     baselineRevision,
     baselineSchemaFingerprint: schemaFingerprint,
@@ -686,7 +598,7 @@ async function readStoredPreparedReview(
       state === "ready"
         ? { ...common, state: "ready" }
         : { ...common, state: "needs-review" },
-    recipe,
+    profile,
     conflicts,
     decisions,
     raw: {
@@ -701,7 +613,7 @@ async function readStoredPreparedReview(
 }
 
 export async function readPreparedReview(
-  prepared: PreparedImport,
+  prepared: ImportBatch,
 ): Promise<PreparedReview> {
   return readPreparedReviewSnapshot(prepared, (review) =>
     Promise.resolve(review),
@@ -709,7 +621,7 @@ export async function readPreparedReview(
 }
 
 export async function readPreparedReviewSnapshot<T>(
-  prepared: PreparedImport,
+  prepared: ImportBatch,
   read: (review: PreparedReview, transaction: EngineTransaction) => Promise<T>,
 ): Promise<T> {
   return preparedEngineOf(prepared).readTransaction(async (transaction) => {
@@ -719,30 +631,33 @@ export async function readPreparedReviewSnapshot<T>(
 }
 
 export async function preparedRef(
-  prepared: PreparedImport,
-): Promise<PreparedImportRef | ReadyImportRef> {
+  prepared: ImportBatch,
+): Promise<ImportBatchRef | ReadyImportBatchRef> {
   return (await readPreparedReview(prepared)).prepared;
 }
 
 export async function updatePreparedPlan(options: {
-  readonly prepared: PreparedImport;
-  readonly recipe: ImportRecipe;
+  readonly prepared: ImportBatch;
+  readonly profile: ImportProfile;
   readonly conflicts: readonly ImportConflict[];
   readonly ready: boolean;
   readonly decisions?: readonly ImportDecision[] | undefined;
   readonly baselineRevision?: bigint | undefined;
   readonly baselineSchemaFingerprint?: string | undefined;
   readonly expectedReviewFingerprint?: string | undefined;
-}): Promise<PreparedImportRef | ReadyImportRef> {
-  validateImportRecipe(options.recipe);
+}): Promise<ImportBatchRef | ReadyImportBatchRef> {
+  if (options.baselineRevision !== undefined) {
+    assertBaselineRevision(options.baselineRevision);
+  }
+  validateImportProfile(options.profile);
   if (options.ready && options.conflicts.length > 0) {
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",
-      "An import plan with unresolved conflicts cannot be marked ready.",
+      "An import batch with unresolved conflicts cannot be marked ready.",
     );
   }
   const engine = preparedEngineOf(options.prepared);
-  const recipeJson = canonicalJson(options.recipe);
+  const recipeJson = canonicalJson(options.profile);
   const conflictsJson = canonicalJson(options.conflicts);
   const decisionsJson = canonicalJson(options.decisions ?? []);
   const state = options.ready ? "ready" : "needs-review";
@@ -754,7 +669,7 @@ export async function updatePreparedPlan(options: {
     ) {
       throw databaseError(
         "DB_STALE_IMPORT_PLAN",
-        "The import plan changed while it was being reviewed. Inspect and approve its latest revision.",
+        "The import batch changed while it was being reviewed. Inspect and approve its latest revision.",
       );
     }
     const baselineRevision =
@@ -772,7 +687,7 @@ export async function updatePreparedPlan(options: {
     ) {
       return current.prepared;
     }
-    await assertPreparedImportWritable(transaction);
+    await assertImportBatchWritable(transaction);
     const planRevision = current.prepared.planRevision + 1n;
     const fingerprint = reviewFingerprint({
       formatVersion: BigInt(PREPARED_FORMAT_VERSION),
@@ -816,13 +731,13 @@ export async function updatePreparedPlan(options: {
 }
 
 export async function updatePreparedCaptureMetadata(
-  prepared: PreparedImport,
+  prepared: ImportBatch,
   mutate: (transaction: EngineTransaction) => Promise<void>,
-): Promise<PreparedImportRef> {
+): Promise<ImportBatchRef> {
   const engine = preparedEngineOf(prepared);
   return engine.transaction(async (transaction) => {
     const current = await readStoredPreparedReview(transaction);
-    await assertPreparedImportWritable(transaction);
+    await assertImportBatchWritable(transaction);
     await mutate(transaction);
     const { captureDefinitionsJson, bindingsJson } =
       await readPreparedCaptureMetadata(transaction);
@@ -861,14 +776,14 @@ export async function updatePreparedCaptureMetadata(
   });
 }
 
-export async function readPreparedRecipe(prepared: PreparedImport): Promise<{
-  readonly recipe: ImportRecipe;
+export async function readPreparedRecipe(prepared: ImportBatch): Promise<{
+  readonly profile: ImportProfile;
   readonly conflicts: readonly ImportConflict[];
   readonly decisions: readonly ImportDecision[];
 }> {
   const review = await readPreparedReview(prepared);
   return {
-    recipe: review.recipe,
+    profile: review.profile,
     conflicts: review.conflicts,
     decisions: review.decisions,
   };

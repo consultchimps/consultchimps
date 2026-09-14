@@ -11,14 +11,14 @@ import { DuckDBInstance } from "@duckdb/node-api";
 import {
   applyImport,
   createWorkbookImportSource,
-  draftImportRecipe,
+  draftImportProfile,
   inspectDatabase,
   prepareImport,
   resolveImport,
 } from "../../packages/db/dist/index.js";
 import {
   createDatabase,
-  createPreparedImport,
+  createImportBatch,
   exportDatabase,
   openDatabase,
 } from "../../packages/db/dist/node.js";
@@ -179,17 +179,20 @@ async function run(rowCount) {
     });
     const inspectMilliseconds = elapsed(inspectStarted);
     const source = instrumentSource(workbook.source, measurements);
-    const recipe = await draftImportRecipe({ sources: [source] });
+    const profile = await draftImportProfile({
+      sources: [source],
+      naming: { kind: "single-table", name: `attributes_${rowCount}` },
+    });
     const created = await createDatabase({
       path: targetPath,
       format: "duckdb",
     });
     database = created.database;
     const before = await inspectDatabase({ database });
-    prepared = await createPreparedImport({
+    prepared = await createImportBatch({
       path: preparedPath,
       database,
-      recipe,
+      profile,
       baselineRevision: before.revision,
       protectedInputPaths: [fixture],
     });
@@ -200,7 +203,7 @@ async function run(rowCount) {
       database,
       prepared,
       sources: [source],
-      recipe,
+      profile,
     });
     const prepareMilliseconds = elapsed(prepareStarted);
     assert.equal(captured.result.metrics.rowsCaptured, rowCount);
@@ -240,15 +243,15 @@ async function run(rowCount) {
       ...workbook.source,
       key: `attributes_${rowCount}_replay`,
     };
-    const replayRecipe = await draftImportRecipe({
+    const replayProfile = await draftImportProfile({
       sources: [replaySource],
-      into: `${table}_replay`,
+      naming: { kind: "single-table", name: `${table}_replay` },
     });
     const replayBaseline = await inspectDatabase({ database });
-    replayPrepared = await createPreparedImport({
+    replayPrepared = await createImportBatch({
       path: replayPreparedPath,
       database,
-      recipe: replayRecipe,
+      profile: replayProfile,
       baselineRevision: replayBaseline.revision,
       protectedInputPaths: [fixture],
     });
@@ -258,7 +261,7 @@ async function run(rowCount) {
       database,
       prepared: replayPrepared,
       sources: [replaySource],
-      recipe: replayRecipe,
+      profile: replayProfile,
     });
     const replayPrepareMilliseconds = elapsed(replayPrepareStarted);
     assert.equal(replayCaptured.result.metrics.rowsCaptured, 0);

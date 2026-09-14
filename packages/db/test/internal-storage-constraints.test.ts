@@ -17,9 +17,9 @@ import {
 } from "../src/metadata.js";
 import {
   createDatabase,
-  createPreparedImport,
+  createImportBatch,
   openDatabase,
-  openPreparedImport,
+  openImportBatch,
 } from "../src/node.js";
 import {
   PREPARED_BINDING_TABLE,
@@ -112,10 +112,10 @@ beforeAll(async () => {
   }
   const database = await openDatabase({ path: templates.sqlite });
   preparedTemplate = path.join(templateDirectory, "template.ccplan");
-  const prepared = await createPreparedImport({
+  const prepared = await createImportBatch({
     path: preparedTemplate,
     database,
-    recipe: { version: 1, routes: [] },
+    profile: { version: 1, routes: [] },
     baselineRevision: (await inspectDatabase({ database })).revision,
   });
   await prepared.close();
@@ -291,7 +291,7 @@ for (const readonly of [false, true]) {
       }
       const before = await readFile(filePath);
 
-      const failure = await openPreparedImport({
+      const failure = await openImportBatch({
         path: filePath,
         readonly,
       }).then(
@@ -327,8 +327,8 @@ test("prepared captures keep nullable source identity in valid plans", async () 
   } finally {
     await engine.close();
   }
-  const writable = await openPreparedImport({ path: filePath });
+  const writable = await openImportBatch({ path: filePath });
   await writable.close();
-  const readonly = await openPreparedImport({ path: filePath, readonly: true });
+  const readonly = await openImportBatch({ path: filePath, readonly: true });
   await readonly.close();
 });

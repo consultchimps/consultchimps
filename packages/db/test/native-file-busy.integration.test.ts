@@ -6,13 +6,13 @@ import { afterEach, expect, test } from "vitest";
 
 import { engineOf, inspectDatabase } from "../src/database.js";
 import { inspectImport } from "../src/import/inspection.js";
-import type { ImportRecipe } from "../src/import/types.js";
+import type { ImportProfile } from "../src/import/types.js";
 import {
   createDatabase,
-  createPreparedImport,
+  createImportBatch,
   exportDatabase,
   openDatabase,
-  openPreparedImport,
+  openImportBatch,
   prepareImportFile,
 } from "../src/node.js";
 import { applySchema, planSchema } from "../src/records.js";
@@ -39,7 +39,7 @@ function schema(...tables: readonly string[]): DatabaseSchema {
   };
 }
 
-const emptyRecipe: ImportRecipe = { version: 1, routes: [] };
+const emptyRecipe: ImportProfile = { version: 1, routes: [] };
 
 for (const format of ["sqlite", "duckdb"] as const) {
   test(`${format}: failed close retains native replacement protection until retry succeeds`, async () => {
@@ -256,19 +256,19 @@ test("refuses prepared-plan replacement while its handle is open", async () => {
     path: databasePath,
     format: "sqlite",
   });
-  let prepared = await createPreparedImport({
+  let prepared = await createImportBatch({
     path: planPath,
     database,
-    recipe: emptyRecipe,
+    profile: emptyRecipe,
     baselineRevision: 0n,
   });
   const originalId = prepared.id;
   try {
     await expect(
-      createPreparedImport({
+      createImportBatch({
         path: planPath,
         database,
-        recipe: emptyRecipe,
+        profile: emptyRecipe,
         baselineRevision: 0n,
         overwrite: true,
       }),
@@ -278,7 +278,7 @@ test("refuses prepared-plan replacement while its handle is open", async () => {
         path: planPath,
         database,
         sources: [],
-        recipe: emptyRecipe,
+        profile: emptyRecipe,
         baselineRevision: 0n,
         overwrite: true,
       }),
@@ -292,11 +292,11 @@ test("refuses prepared-plan replacement while its handle is open", async () => {
       path: planPath,
       database,
       sources: [],
-      recipe: emptyRecipe,
+      profile: emptyRecipe,
       baselineRevision: 0n,
       overwrite: true,
     });
-    prepared = await openPreparedImport({ path: planPath });
+    prepared = await openImportBatch({ path: planPath });
     expect(prepared.id).toBe(outcome.prepared.id);
     expect(prepared.id).not.toBe(originalId);
   } finally {

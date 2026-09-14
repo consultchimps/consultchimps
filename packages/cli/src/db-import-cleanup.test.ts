@@ -2,7 +2,7 @@ import { expect, test, vi } from "vitest";
 
 import { finishCliImport } from "./db-import-cleanup.js";
 
-test("skips private plan removal after its handle fails to close", async () => {
+test("skips private batch removal after its handle fails to close", async () => {
   const closeInputs = vi.fn(async () => undefined);
   const closeDatabase = vi.fn(async () => undefined);
   const removeTemporary = vi.fn(async () => undefined);
@@ -44,7 +44,7 @@ test("skips private plan removal after its handle fails to close", async () => {
   ]);
 });
 
-test("removes a closed private plan even when the database close fails", async () => {
+test("removes a closed private batch even when the database close fails", async () => {
   const databaseFailure = new Error("Injected database close failure");
   const removeTemporary = vi.fn(async () => undefined);
 

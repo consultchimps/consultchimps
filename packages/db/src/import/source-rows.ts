@@ -23,7 +23,7 @@ function invalidSourceRow(
       ? "DB_INVALID_PREPARED_IMPORT"
       : "DB_CORRUPT_DATABASE",
     owner === "prepared-import"
-      ? "The import plan has invalid source row numbers. Prepare the source again or restore a verified plan copy."
+      ? "The import batch has invalid source row numbers. Prepare the source again or restore a verified batch copy."
       : "A saved capture has invalid source row numbers. Restore a verified database copy before importing it again.",
     {
       captureId,
@@ -101,7 +101,7 @@ export function assertCaptureRowCount(options: {
       ? "DB_INVALID_PREPARED_IMPORT"
       : "DB_CORRUPT_DATABASE",
     options.owner === "prepared-import"
-      ? "The import plan's captured row count does not match its recorded total. Prepare the source again or restore a verified plan copy."
+      ? "The import batch's captured row count does not match its recorded total. Prepare the source again or restore a verified batch copy."
       : "A saved capture's row count does not match its recorded total. Restore a verified database copy before importing it again.",
     {
       captureId: options.captureId,

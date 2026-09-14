@@ -5,11 +5,11 @@ import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 
 import { engineOf, inspectDatabase } from "../src/database.js";
-import { listDeliveries, recordDelivery } from "../src/import/deliveries.js";
+import { listBatches, recordBatch } from "../src/import/deliveries.js";
 import { applyImport, prepareImport } from "../src/import/operations.js";
-import type { DeliveryContext, ImportRecipe } from "../src/import/types.js";
+import type { BatchContext, ImportProfile } from "../src/import/types.js";
 import { DELIVERY_TABLE } from "../src/metadata.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 
 const directories: string[] = [];
 
@@ -29,14 +29,14 @@ for (const format of ["sqlite", "duckdb"] as const) {
       path: path.join(directory, `workspace.${format}`),
       format,
     });
-    const recipe: ImportRecipe = { version: 1, routes: [] };
-    const prepared = await createPreparedImport({
+    const profile: ImportProfile = { version: 1, routes: [] };
+    const prepared = await createImportBatch({
       path: path.join(directory, "review.ccplan"),
       database,
-      recipe,
+      profile,
       baselineRevision: 0n,
     });
-    const context: DeliveryContext = {
+    const context: BatchContext = {
       label: "Synthetic delivery",
       scope: { kind: "unknown" },
     };
@@ -44,7 +44,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const result = await prepareImport({
         database,
         prepared,
-        recipe,
+        profile,
         sources: [],
       });
       const approved = result.prepared;
@@ -54,7 +54,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         prepared,
         approved,
         requestId: "synthetic-request",
-        delivery: context,
+        batchContext: context,
       };
       const applied = await applyImport(request);
       const before = await inspectDatabase({ database });
@@ -70,11 +70,11 @@ for (const format of ["sqlite", "duckdb"] as const) {
         );
         const failure = { code: "DB_CORRUPT_DATABASE" };
         await expect(
-          listDeliveries({ database, limit: 10 }),
+          listBatches({ database, limit: 10 }),
         ).rejects.toMatchObject(failure);
         await expect(applyImport(request)).rejects.toMatchObject(failure);
         await expect(
-          recordDelivery({
+          recordBatch({
             database,
             requestId: request.requestId,
             context,
@@ -94,13 +94,13 @@ for (const format of ["sqlite", "duckdb"] as const) {
         [JSON.stringify(context, null, 2)],
       );
       const retried = await applyImport(request);
-      expect(retried.deliveryId).toBe(applied.deliveryId);
-      expect(retried.metrics.deliveriesRecorded).toBe(0);
-      await expect(
-        listDeliveries({ database, limit: 10 }),
-      ).resolves.toMatchObject({
-        deliveries: [{ context }],
-      });
+      expect(retried.batchId).toBe(applied.batchId);
+      expect(retried.metrics.batchesRecorded).toBe(0);
+      await expect(listBatches({ database, limit: 10 })).resolves.toMatchObject(
+        {
+          batches: [{ context }],
+        },
+      );
       expect(await inspectDatabase({ database })).toEqual(before);
     } finally {
       await prepared.close();

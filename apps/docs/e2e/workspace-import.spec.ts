@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { listDeliveries } from "@consultchimps/db";
+import { listBatches } from "@consultchimps/db";
 import { openDatabase as openNativeDatabase } from "@consultchimps/db/node";
 
 import { createWorkbookUpload, type UploadFile } from "./fixtures";
@@ -239,6 +239,20 @@ test.describe("reviewed workbook imports", () => {
     await expect(page.getByTestId("workspace-error")).toContainText(
       "worker is no longer available",
     );
+    await page.evaluate(() => {
+      const key = "consultchimps.workspace.pending-imports.v1";
+      const pending = JSON.parse(window.localStorage.getItem(key) ?? "[]") as
+        Array<Record<string, unknown>> | undefined;
+      window.localStorage.setItem(
+        key,
+        JSON.stringify(
+          (pending ?? []).map((request) => {
+            delete request["reviewFingerprint"];
+            return request;
+          }),
+        ),
+      );
+    });
 
     await page.reload();
     await page.getByTestId("workspace-reopen").first().click();
@@ -259,7 +273,7 @@ test.describe("reviewed workbook imports", () => {
 
     await page.getByTestId("workspace-delivery-record-reuse").click();
     await expect(page.getByTestId("workspace-import-result")).toContainText(
-      "Recorded a separate delivery event",
+      "Recorded a separate batch event",
     );
     await expect(page.getByTestId("workspace-delivery-count")).toHaveText("2");
     await page.getByTestId("workspace-deliveries-refresh").click();
@@ -276,11 +290,11 @@ test.describe("reviewed workbook imports", () => {
       readonly: true,
     });
     try {
-      const history = await listDeliveries({ database, limit: 10 });
-      expect(history.deliveries).toHaveLength(2);
-      expect(history.deliveries[0]?.captureIds).toHaveLength(1);
-      expect(history.deliveries[1]?.captureIds).toEqual(
-        history.deliveries[0]?.captureIds,
+      const history = await listBatches({ database, limit: 10 });
+      expect(history.batches).toHaveLength(2);
+      expect(history.batches[0]?.captureIds).toHaveLength(1);
+      expect(history.batches[1]?.captureIds).toEqual(
+        history.batches[0]?.captureIds,
       );
     } finally {
       await database.close();
@@ -388,7 +402,7 @@ test.describe("reviewed workbook imports", () => {
     await page.getByLabel("Request ID").fill("corrected-delivery-request");
     await page.getByTestId("workspace-delivery-record-reuse").click();
     await expect(page.getByTestId("workspace-import-result")).toContainText(
-      "Recorded a separate delivery event",
+      "Recorded a separate batch event",
     );
     await expect(page.getByTestId("workspace-delivery-count")).toHaveText("5");
     await expect(page.getByTestId("workspace-table")).toContainText("2 rows");

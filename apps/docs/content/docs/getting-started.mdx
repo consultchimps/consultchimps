@@ -140,15 +140,15 @@ consultchimps pptx populate \
 
 ```bash
 consultchimps db create -o inventory.duckdb
-consultchimps db plan inventory.duckdb --input inventory.xlsx -o review.ccplan
-consultchimps db inspect review.ccplan
-consultchimps db apply inventory.duckdb --plan review.ccplan
+consultchimps db import prepare inventory.duckdb --input inventory.xlsx -o review.ccplan
+consultchimps db import inspect review.ccplan
+consultchimps db import apply inventory.duckdb --batch review.ccplan
 ```
 
 Or [open the database tool](/tools/db). It uses a persistent browser working
 copy and exports a separate OS file. See the
 [database guide](/docs/tools/data-workspace) for duplicate handling, table
-routing, and delivery history.
+routing, and batch history.
 
 ## Open the documentation locally
 

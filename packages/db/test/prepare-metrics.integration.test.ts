@@ -6,8 +6,8 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import { inspectDatabase } from "../src/database.js";
 import { applyImport, prepareImport } from "../src/import/operations.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 
 const directories: string[] = [];
 
@@ -57,7 +57,7 @@ function source(...selectionKeys: readonly string[]): ImportSource {
   };
 }
 
-function recipe(...selectionKeys: readonly string[]): ImportRecipe {
+function profile(...selectionKeys: readonly string[]): ImportProfile {
   return {
     version: 1,
     routes: selectionKeys.map((selection) => ({
@@ -88,11 +88,11 @@ describe.each(["sqlite", "duckdb"] as const)(
         path: path.join(directory, `workspace.${format}`),
         format,
       });
-      const initialRecipe = recipe("one", "two", "three");
-      const first = await createPreparedImport({
+      const initialRecipe = profile("one", "two", "three");
+      const first = await createImportBatch({
         path: path.join(directory, "first.ccplan"),
         database,
-        recipe: initialRecipe,
+        profile: initialRecipe,
         baselineRevision: (await inspectDatabase({ database })).revision,
       });
       try {
@@ -100,7 +100,7 @@ describe.each(["sqlite", "duckdb"] as const)(
           database,
           prepared: first,
           sources: [source("one", "two", "three")],
-          recipe: initialRecipe,
+          profile: initialRecipe,
         });
         expect(captured.result.metrics).toMatchObject({
           sourcesRead: 1,
@@ -113,7 +113,7 @@ describe.each(["sqlite", "duckdb"] as const)(
           database,
           prepared: first,
           sources: [source("one", "two", "three")],
-          recipe: initialRecipe,
+          profile: initialRecipe,
         });
         expect(retry.result.metrics).toMatchObject({
           sourcesRead: 0,
@@ -130,10 +130,10 @@ describe.each(["sqlite", "duckdb"] as const)(
           requestId: `prepare-metrics-${format}`,
         });
 
-        const repeated = await createPreparedImport({
+        const repeated = await createImportBatch({
           path: path.join(directory, "repeated.ccplan"),
           database,
-          recipe: initialRecipe,
+          profile: initialRecipe,
           baselineRevision: (await inspectDatabase({ database })).revision,
         });
         try {
@@ -141,7 +141,7 @@ describe.each(["sqlite", "duckdb"] as const)(
             database,
             prepared: repeated,
             sources: [source("one", "two", "three")],
-            recipe: initialRecipe,
+            profile: initialRecipe,
           });
           expect(reused.result.metrics).toMatchObject({
             sourcesRead: 0,
@@ -152,11 +152,11 @@ describe.each(["sqlite", "duckdb"] as const)(
           await repeated.close();
         }
 
-        const mixedRecipe = recipe("one", "four");
-        const mixed = await createPreparedImport({
+        const mixedRecipe = profile("one", "four");
+        const mixed = await createImportBatch({
           path: path.join(directory, "mixed.ccplan"),
           database,
-          recipe: mixedRecipe,
+          profile: mixedRecipe,
           baselineRevision: (await inspectDatabase({ database })).revision,
         });
         try {
@@ -164,7 +164,7 @@ describe.each(["sqlite", "duckdb"] as const)(
             database,
             prepared: mixed,
             sources: [source("one", "four")],
-            recipe: mixedRecipe,
+            profile: mixedRecipe,
           });
           expect(outcome.result.metrics).toMatchObject({
             sourcesRead: 1,

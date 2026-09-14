@@ -12,8 +12,8 @@ makes file size a memory requirement. Materializing an Excel workbook before
 insertion creates the same problem earlier in the import.
 
 Repeated source content also has two meanings. An accidental retry must not
-duplicate observations. A deliberately recorded delivery must remain visible in
-the audit trail even when its contents were supplied before.
+duplicate observations. A deliberately recorded batch must remain visible in the
+audit trail even when its contents were supplied before.
 
 ## Decision
 
@@ -21,10 +21,10 @@ Refactor the existing `@consultchimps/db` package into one asynchronous database
 interface. SQLite and DuckDB are both persistent working formats and output
 formats. Internal engine adapters implement storage, SQL, and transaction
 mechanics. Shared operations implement schemas, identifiers, imports, receipts,
-and delivery history. There is one `consultchimps db` command group and one
-browser tool at `/tools/db` for database management and import review. The
-browser tool belongs under Online Tools and uses its shared navigation. It does
-not introduce a separate top-level Workspace tab.
+and batch history. There is one `consultchimps db` command group and one browser
+tool at `/tools/db` for database management and import review. The browser tool
+belongs under Online Tools and uses its shared navigation. It does not introduce
+a separate top-level Workspace tab.
 
 Native operations open a local database path. Browser operations use persistent
 browser storage and identify its working location explicitly. An origin-private
@@ -39,25 +39,25 @@ space count toward the operation's storage budget.
 
 `@consultchimps/xlsx/stream` owns bounded Excel decoding and physical source
 coordinates. `@consultchimps/tabular` retains the general table and mapping
-operations. The initial db recipe uses explicit typed source-to-destination
+operations. The initial db profile uses explicit typed source-to-destination
 column routes and preserves raw numeric tokens until database conversion. It
 does not pass captured values through the materialized tabular table model.
 Packages use public exports when sharing behavior. Runtime-specific entry points
 load their own native or browser engine assets. The root entry point does not
 initialize an engine on import.
 
-## Import and delivery identity
+## Import and batch identity
 
 Separate the content hash, selected source capture, application receipt,
-generated row identity, and delivery event. Identical content with the same
+generated row identity, and batch event. Identical content with the same
 selection and import intent reuses its completed capture/application. An
-intentional new delivery references existing captures without duplicating row
-values. A retry key makes delivery recording idempotent.
+intentional new batch references existing captures without duplicating row
+values. A retry key makes batch recording idempotent.
 
 Append source observations for changed submissions. Do not infer deletion from
 an omitted row or turn a vendor identifier into an authoritative record key.
 Retain typed business tables and queryable provenance. Reported totals and
-coverage are delivery context, separate from measured row counts.
+coverage are batch context, separate from measured row counts.
 
 Preparation stores captured data and reviewed mapping decisions in a managed
 staging artifact. Applying rechecks the destination identity and relevant live
@@ -69,11 +69,11 @@ including source bindings and capture definitions. Each capture definition
 contains a checksum of its ordered row coordinates and serialized values.
 Approval references carry the metadata fingerprint. Inspection returns the
 reference, reviewed metadata, and capture definitions from one snapshot. Apply
-compares the approval with the same metadata snapshot used for its recipe,
+compares the approval with the same metadata snapshot used for its profile,
 decisions, and consumed capture definitions. A concurrent preparation cannot add
 captures to an already-read approval. Preparation and resolution compare the
 evaluated fingerprint inside the final metadata write transaction, rejecting
-stale review writes. Recipe replacement derives its omissions and review from
+stale review writes. Profile replacement derives its omissions and review from
 one snapshot. Preparation updates capture metadata and invalidates prior
 approval in the same transaction.
 
@@ -84,7 +84,7 @@ to establish their checksum, without parsing the workbook again. Apply verifies
 their rows on the first new table application, then shares that verification
 across routes in the same transaction. A fresh capture already present in the
 target follows this stored-capture path. Receipt-only retries, already-applied
-applications, and delivery-only memberships do not consume row values and keep
+applications, and batch-only memberships do not consume row values and keep
 their fast paths.
 
 One checksum per capture avoids storing a hash for each row. Verification during
@@ -117,15 +117,15 @@ External tools can query the resulting file. DuckDB UI is a candidate for that
 work, not an embedded dependency of ConsultChimps. Query editors, charts,
 analytical browsing, and general grid migration are paused. Their old APIs do
 not constrain the persistent database interface. Database creation, schemas,
-bounded import previews, delivery history, and export remain in scope.
+bounded import previews, batch history, and export remain in scope.
 
 ## Consequences and verification
 
 - Replace the spike's in-memory lifecycle and migrate active callers together
 - Retain useful behavioral tests and remove tests that only preserve replaced
   implementation details
-- Verify the same import, duplicate, delivery, schema, and recovery rules
-  against both engines
+- Verify the same import, duplicate, batch, schema, and recovery rules against
+  both engines
 - Verify reopen after close and interrupted work, and read exported databases
   with independent native engines
 - Measure browser support, memory, quota, and temporary disk costs before making

@@ -33,6 +33,7 @@ import {
   type TableSchema,
 } from "./schema.js";
 import { parseDatabaseSchema } from "./validators.js";
+import type { DatabaseWriteResult } from "./write-completion.js";
 
 export type SchemaConflict =
   | {
@@ -468,7 +469,9 @@ export async function applySchema(
     readonly database: Database;
     readonly plan: SchemaPlan;
   } & OperationControlOptions,
-): Promise<OperationResult<"tablesCreated" | "columnsAdded">> {
+): Promise<
+  OperationResult<"tablesCreated" | "columnsAdded"> & DatabaseWriteResult
+> {
   throwIfAborted(options.signal, "db.schema.apply");
   if (options.plan.state !== "ready") {
     throw databaseError(
@@ -489,7 +492,13 @@ export async function applySchema(
       "The schema plan belongs to a different database.",
     );
   }
+  const tablesCreated = plan.creates.length;
+  const columnsAdded = plan.adds.reduce(
+    (total, addition) => total + addition.columns.length,
+    0,
+  );
   const engine = engineOf(options.database);
+  let databaseWrite: DatabaseWriteResult["databaseWrite"] = "unchanged";
   await engine.transaction(async (transaction) => {
     await assertNoManagedDatabaseTriggers(transaction, options.database.format);
     const revisionRows = await transaction.query(
@@ -586,18 +595,17 @@ export async function applySchema(
       await transaction.execute(
         `UPDATE ${DATABASE_METADATA_TABLE} SET revision = revision + 1`,
       );
+      databaseWrite = "committed";
     }
   });
   return {
+    databaseWrite,
     operation: "db.schema.apply",
     artifacts: [],
     warnings: [],
     metrics: {
-      tablesCreated: plan.creates.length,
-      columnsAdded: plan.adds.reduce(
-        (total, addition) => total + addition.columns.length,
-        0,
-      ),
+      tablesCreated,
+      columnsAdded,
     },
   };
 }

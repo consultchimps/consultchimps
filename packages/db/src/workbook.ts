@@ -93,11 +93,11 @@ export async function createWorkbookImportSource(
       "Choose a whole header row number from 1 to 1048576.",
     );
   }
-  throwIfAborted(options.signal, "db.prepare");
+  throwIfAborted(options.signal, "db.import.prepare");
   if (options.selection && options.selectionKeys)
     throw new ConsultChimpsError(
       "DB_AMBIGUOUS_SELECTION",
-      "Choose either one workbook region or the selections from a recipe.",
+      "Choose either one workbook region or the selections from a profile.",
     );
   const inspection = await inspectWorkbookStream(options.bytes, {
     scratch: options.scratch,
@@ -126,7 +126,7 @@ export async function createWorkbookImportSource(
             "DB_SOURCE_CLOSED",
             "The workbook source is closed. Select it again before preparing another import.",
           );
-        throwIfAborted(controls.signal, "db.prepare");
+        throwIfAborted(controls.signal, "db.import.prepare");
         session ??= openWorkbookStream(options.bytes, {
           scratch: options.scratch,
           signal: controls.signal,

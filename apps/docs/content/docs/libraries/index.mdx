@@ -10,17 +10,17 @@ that can be reused in a server, desktop app, workflow runner, or another CLI.
 
 ## Package map
 
-| Package                   | Responsibility                                                    |
-| ------------------------- | ----------------------------------------------------------------- |
-| `@consultchimps/core`     | Shared result contracts and structured errors                     |
-| `@consultchimps/files`    | File discovery and safe output handling                           |
-| `@consultchimps/tabular`  | Runtime-neutral table union, grouping, and column mapping         |
-| `@consultchimps/theme`    | Runtime-neutral palette model and colour validation               |
-| `@consultchimps/db`       | Persistent SQLite/DuckDB databases, imports, and delivery history |
-| `@consultchimps/xlsx`     | Excel reading, writing, merging, consolidation, and splitting     |
-| `@consultchimps/pptx`     | PowerPoint template inspection and population                     |
-| `@consultchimps/pdf`      | PDF splitting and merging                                         |
-| `@consultchimps/messages` | Plain-language rendering of results and errors                    |
+| Package                   | Responsibility                                                 |
+| ------------------------- | -------------------------------------------------------------- |
+| `@consultchimps/core`     | Shared result contracts and structured errors                  |
+| `@consultchimps/files`    | File discovery and safe output handling                        |
+| `@consultchimps/tabular`  | Runtime-neutral table union, grouping, and column mapping      |
+| `@consultchimps/theme`    | Runtime-neutral palette model and colour validation            |
+| `@consultchimps/db`       | Persistent SQLite/DuckDB databases, imports, and batch history |
+| `@consultchimps/xlsx`     | Excel reading, writing, merging, consolidation, and splitting  |
+| `@consultchimps/pptx`     | PowerPoint template inspection and population                  |
+| `@consultchimps/pdf`      | PDF splitting and merging                                      |
+| `@consultchimps/messages` | Plain-language rendering of results and errors                 |
 
 ## Discover inputs
 
@@ -231,7 +231,7 @@ assigned in order rather than cycled.
 ## Build a local database
 
 `@consultchimps/db` provides persistent SQLite and DuckDB operations. Its root
-entry holds schemas, import recipes, capture and delivery contracts, and
+entry holds schemas, import profiles, capture and batch contracts, and
 operations shared by browser workers and Node.js. Use `@consultchimps/db/node`
 for filesystem factories and `@consultchimps/db/browser` for persistent browser
 storage adapters. Native and WebAssembly engine dependencies stay behind those
@@ -267,50 +267,102 @@ try {
 ```
 
 Import operations compose as `prepareImport`, `inspectImport`, `resolveImport`,
-and `applyImport`. A prepared import owns a separate durable staging database;
+and `applyImport`. A prepared batch owns a separate durable staging database;
 approval refers to its revision, target database, and `reviewFingerprint`. The
-fingerprint binds reviewed metadata, including the recipe, decisions, source
+fingerprint binds reviewed metadata, including the profile, decisions, source
 bindings, and capture definitions with row checksums, so changed mappings or
 captured rows cannot reuse an earlier approval unchanged. Apply verifies row
 coordinates and serialized values while copying fresh captures or consuming
 stored captures for new table applications. A mismatch rolls back the
 transaction before commit. Receipt-only retries do not rescan row contents.
 These integrity checks do not authenticate an artifact's origin. Prepared
-artifact format 3 rejects version 1 and 2 spike plans; regenerate those plans
-from their original sources. Use
+artifact format 3 rejects version 1 and 2 spike batches; regenerate those
+batches from their original sources. Use
 `resolveImport({ database, prepared, decisions, rebase: true })` to explicitly
 re-review a saved capture against a newer database baseline. Use
-`replaceImportRecipe({ database, prepared, recipe, rebase: true })` when the new
-recipe replaces all prior routes. It excludes omitted captured selections and
-stored routes that did not match a captured source.
-`inspectAppliedImportPlan({ database, planId, planRevision })` reads its applied
-recipe, decisions, and source bindings from the working database, including
-after the private plan file has been removed. `createWorkbookImportSource`
-bridges the streaming Excel reader into this pipeline. Applying a plan validates
-positive safe source-row coordinates and captured row counts before committing
-provenance. Stored byte and row counts must be nonnegative safe integers;
-capture reuse flags must be stored as 0 or 1. Invalid prepared rows return
-`DB_INVALID_PREPARED_IMPORT`; invalid reused database captures return
+`replaceImportProfile({ database, prepared, profile, rebase: true })` when the
+new profile replaces all prior routes. It excludes omitted captured selections
+and stored routes that did not match a captured source.
+`inspectAppliedImportBatch({ database, planId, planRevision })` reads its
+applied profile, decisions, and source bindings from the working database,
+including after the private batch file has been removed.
+
+`draftImportProfile({ sources, naming })` centralizes automatic destination
+names. `naming` is `{ kind: "source-or-selection" }`,
+`{ kind: "selection-label" }`, or `{ kind: "single-table", name: "datasets" }`.
+The single-table policy requires exactly one selected region. Selection-label
+prefixes use the first eight Unicode code points of the sanitized table name,
+then uppercase them. The other policies use word initials.
+
+Pass `reviewPage: { limit: 20 }` to `prepareImport` or `resolveImport` when the
+caller needs the updated `inspection` together with the authoritative prepared
+reference. Without `reviewPage`, these operations avoid reading preview rows. If
+the update succeeds but the final projection fails, the operation returns
+`DB_BATCH_REVIEW_REFRESH_REQUIRED` with `batchUpdated: true`; call
+`inspectImport` instead of repeating the update.
+
+`inspectImport` pages rows and routes independently. `page.limit` is from 1 to
+100; pass `nextCursor` as `page.cursor`. `routePage.limit` defaults to 50 and is
+also capped at 100; pass `nextRouteCursor` as `routePage.cursor`. A route cursor
+contains the batch identity, revision, and review fingerprint, so it becomes
+invalid when the review changes. `capturedRows` counts rows newly stored in the
+private batch, while `reviewRows` includes reused captures. Both totals count
+each capture once, even when multiple source aliases refer to it. Routes retain
+each alias and its per-route row count. `targetRevision` is the working database
+revision observed during inspection. When `application.state` is `"applied"`,
+its `captureIds` identify the captures in that applied batch.
+
+Schema application, import application, and batch recording results include
+`databaseWrite: "unchanged" | "committed"`. A successful write can commit only
+metadata, such as a zero-row receipt. To request persistence confirmation, call
+`checkpointDatabaseWrite({ database, result })`:
+
+```ts
+import {
+  checkpointDatabaseWrite,
+  type Database,
+  type ImportResult,
+} from "@consultchimps/db";
+
+async function confirmImportWrite(database: Database, result: ImportResult) {
+  const outcome = await checkpointDatabaseWrite({ database, result });
+  if (outcome.checkpoint.state === "checkpoint-required") {
+    console.error(outcome.checkpoint.code, outcome.checkpoint.message);
+  }
+  return outcome;
+}
+```
+
+The checkpoint is `{ state: "checkpoint-completed" }` or
+`{ state: "checkpoint-required", code: "DB_CHECKPOINT_REQUIRED", message, error }`.
+The helper attempts the checkpoint once and never repeats the database
+transaction. Call it for an unchanged replay too, because the original write may
+have committed before an earlier checkpoint failed. `createWorkbookImportSource`
+bridges the streaming Excel reader into this pipeline. Applying a batch
+validates positive safe source-row coordinates and captured row counts before
+committing provenance. Stored byte and row counts must be nonnegative safe
+integers; capture reuse flags must be stored as 0 or 1. Invalid prepared rows
+return `DB_INVALID_PREPARED_IMPORT`; invalid reused database captures return
 `DB_CORRUPT_DATABASE`. Other adapters can supply an `ImportSource` with
 random-access bytes and bounded region readers without importing CLI or browser
 code.
 
-Opening managed databases and prepared plans validates internal column order,
+Opening managed databases and prepared batches validates internal column order,
 storage types, nullability, and primary and unique keys. A changed internal
 layout returns `DB_CORRUPT_DATABASE` or `DB_INVALID_PREPARED_IMPORT` before the
 handle is returned. Restore a verified copy rather than rebuilding reserved
 tables.
 
-Opening checks source, capture, import, and delivery counters against their
-stored identifiers. A new table application checks row counters against the
-latest allocated row in each table, then checks its pending Record IDs for
-collisions with existing records, including records without import provenance.
-The row checks run inside the write transaction and are skipped for
-already-applied routes and read-only opening. SQLite can use the existing
-imported-row index; DuckDB checks the numeric imported-row column. These checks
-allow gaps and return `DB_CORRUPT_DATABASE` on a conflict without repairing
-counters. Preserve generated Record IDs and provenance when editing row values
-externally. This is not a full audit of arbitrary external Record ID edits.
+Opening checks source, capture, import, and batch counters against their stored
+identifiers. A new table application checks row counters against the latest
+allocated row in each table, then checks its pending Record IDs for collisions
+with existing records, including records without import provenance. The row
+checks run inside the write transaction and are skipped for already-applied
+routes and read-only opening. SQLite can use the existing imported-row index;
+DuckDB checks the numeric imported-row column. These checks allow gaps and
+return `DB_CORRUPT_DATABASE` on a conflict without repairing counters. Preserve
+generated Record IDs and provenance when editing row values externally. This is
+not a full audit of arbitrary external Record ID edits.
 
 Native staging errors report `DB_NATIVE_TEMPORARY_CLEANUP_REQUIRED` if private
 files or handles cannot be cleaned up, with the owned paths and failure causes.
@@ -330,9 +382,9 @@ returns `DB_NATIVE_HANDLE_CLEANUP_REQUIRED` and blocks replacement until the
 handle closes or the process restarts. Check these outcomes before repeating
 creation or export.
 
-In the browser, `BrowserDatabaseRuntime.listPreparedImports` returns readable
+In the browser, `BrowserDatabaseRuntime.listImportBatches` returns readable
 `imports` and structured `ignored` entries containing `name`, `code`, and
-`message`. An unsupported saved-plan version is reported without deleting it.
+`message`. An unsupported saved-batch version is reported without deleting it.
 
 Each inspected route distinguishes captured content reuse (`reused`) from
 destination-specific `applicationState`. With a target database, an
@@ -360,29 +412,28 @@ date system. An edited numeric token and ISO value are not independently checked
 for agreement by the DB package.
 
 Call `inspectImport({ database, prepared, page: { limit: 20 } })` to preview
-staged rows and reused captures. The database must have the plan's target ID.
+staged rows and reused captures. The database must have the batch's target ID.
 Without `database`, the result includes staged examples and
 `DB_PREVIEW_DATABASE_REQUIRED` entries in `previewWarnings` for reused
 selections. Pages contain at most 100 examples. Pass a returned `nextCursor` as
 `page.cursor` to continue; set both `page.source` and `page.selection` to filter
 one captured region.
 
-For a saved Node.js plan, call `prepareImportFile` from `@consultchimps/db/node`
-with `path`, `database`, `sources`, `recipe`, and `baselineRevision`. Optional
-fields are `overwrite`, `protectedInputPaths`, `signal`, and `onProgress`. It
-captures into a separate staging file, closes that file, and publishes it after
-preparation succeeds. Capture or source verification failures and cancellation
-before publication preserve an existing destination. The result contains the
-plan reference and final file artifact; use `openPreparedImport({ path })`
-before further inspection or application. List filesystem-backed source, recipe,
-and context paths in `protectedInputPaths`; opaque byte sources do not expose
-their original paths.
+For a saved Node.js batch, call `prepareImportFile` from
+`@consultchimps/db/node` with `path`, `database`, `sources`, `profile`, and
+`baselineRevision`. Optional fields are `overwrite`, `protectedInputPaths`,
+`signal`, and `onProgress`. It captures into a separate staging file, closes
+that file, and publishes it after preparation succeeds. Capture or source
+verification failures and cancellation before publication preserve an existing
+destination. The result contains the batch reference and final file artifact;
+use `openImportBatch({ path })` before further inspection or application. List
+filesystem-backed source, profile, and context paths in `protectedInputPaths`;
+opaque byte sources do not expose their original paths.
 
-`planSchema` and `applySchema` manage additive definitions. `recordDelivery` and
-`listDeliveries` keep delivery events distinct from source captures. These
-operations return structured values; file-producing operations identify their
-artifacts. Counts which may exceed JavaScript's exact integer range use
-`bigint`.
+`planSchema` and `applySchema` manage additive definitions. `recordBatch` and
+`listBatches` keep batch events distinct from source captures. These operations
+return structured values; file-producing operations identify their artifacts.
+Counts which may exceed JavaScript's exact integer range use `bigint`.
 
 Managed SQLite writes reject triggers on managed data and internal bookkeeping
 tables with `DB_SCHEMA_DRIFT`, including triggers added after opening a handle.
@@ -403,24 +454,23 @@ reused rows or recording a request receipt; a mismatch returns
 `DB_CORRUPT_DATABASE`.
 
 Request IDs identify retryable actions. `applyImport` rejects an ID already used
-by a standalone delivery with `DB_REQUEST_ID_CONFLICT`. `recordDelivery` cannot
-create a delivery under an import-only request ID. When an import also records a
-delivery, `recordDelivery` can return that existing event if its context and
-capture membership match. It does not add another event or change the import
-receipt.
+by a standalone batch with `DB_REQUEST_ID_CONFLICT`. `recordBatch` cannot create
+a batch under an import-only request ID. When an import also records a batch,
+`recordBatch` can return that existing event if its context and capture
+membership match. It does not add another event or change the import receipt.
 
-`applyImport` checks that the approved plan belongs to the target database
+`applyImport` checks that the approved batch belongs to the target database
 before returning a saved request receipt. Cross-format conversion copies the
-history but assigns a new database ID, so replaying the source plan returns
+history but assigns a new database ID, so replaying the source batch returns
 `DB_STALE_IMPORT_PLAN`. Prepare and review it for the converted database.
 
 Receipt-only retries compare their saved row total with application metadata.
 Negative or inconsistent totals return `DB_CORRUPT_DATABASE` without rescanning
 imported rows. DuckDB catalog fingerprints include views, so creating a view
-after review invalidates the schema or import plan before table writes.
+after review invalidates the schema or import batch before table writes.
 
 The applications in a retry receipt must match the reviewed capture and
-destination routes, including repeated routes. Their original request and plan
+destination routes, including repeated routes. Their original request and batch
 IDs can differ from the current receipt because later requests can reuse earlier
 applications. The returned capture IDs must match the saved source bindings.
 
@@ -441,11 +491,11 @@ Retry an explicit open to finish cleanup. Replacement stays blocked until those
 owners close or their page or worker context is reloaded.
 
 Successful `createDatabase` results include a warning with possible retained
-locations if temporary cleanup fails. `importDatabase` and
-`createPreparedImport` return handles rather than operation results, so they
-instead report `DB_BROWSER_PUBLICATION_CLEANUP_REQUIRED` with `published: true`.
-The public working copy remains stored. If `handleCloseFailed` is false, reopen
-the reported public `name` to continue; otherwise release its handles first.
+locations if temporary cleanup fails. `importDatabase` and `createImportBatch`
+return handles rather than operation results, so they instead report
+`DB_BROWSER_PUBLICATION_CLEANUP_REQUIRED` with `published: true`. The public
+working copy remains stored. If `handleCloseFailed` is false, reopen the
+reported public `name` to continue; otherwise release its handles first.
 
 In the browser runtime, `openDatabase({ name, readonly: true })` opens a
 read-only working copy for inspection or export. `exportDatabase` refuses a
@@ -483,14 +533,14 @@ same storage and open that logical name to inspect or export recoverable data
 after resolving the storage issue. A SQLite conversion name belongs to the
 pool's logical namespace; it is not the physical filename of an OPFS entry.
 
-Call `discardPreparedImport({ name })` to remove a closed private plan that the
-caller created and no longer needs. It rejects an open plan, database, or
+Call `discardImportBatch({ name })` to remove a closed private batch that the
+caller created and no longer needs. It rejects an open batch, database, or
 unrecognized artifact, and it does not remove database working copies.
 
 The former `Database.create()`, byte-based `Database.open()`, `serialize()`, and
 editable grid helpers have been removed from the spike. Open persistent handles
 and close them explicitly. The [database guide](/docs/tools/data-workspace)
-explains recipe, schema, delivery, and browser-copy semantics.
+explains profile, schema, batch, and browser-copy semantics.
 
 ### Stream workbook regions
 

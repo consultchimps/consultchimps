@@ -8,21 +8,21 @@ import {
   valueAsString,
 } from "../database.js";
 import { databaseError } from "../errors.js";
-import type { EngineTransaction } from "../internal/engine.js";
+import type { EngineRow, EngineTransaction } from "../internal/engine.js";
 import { canonicalJson } from "../internal/json.js";
 import { APPLICATION_TABLE, PLAN_TABLE } from "../metadata.js";
 import { identifierKey, type TableSchema } from "../schema.js";
-import { parseImportRecipe } from "../validators.js";
+import { parseImportProfile } from "../validators.js";
 import { effectiveMappingKey } from "./application-key.js";
 import { routeColumns, routeKey, type PreparedCapture } from "./planning.js";
-import type { ImportRecipe } from "./types.js";
+import type { ImportProfile } from "./types.js";
 
 function corruptHistory(message: string, cause?: unknown): never {
   throw databaseError("DB_CORRUPT_DATABASE", message, undefined, cause);
 }
 
 function destinationTable(
-  route: ImportRecipe["routes"][number],
+  route: ImportProfile["routes"][number],
 ): string | undefined {
   if (route.destination.kind === "existing-table") {
     return route.destination.table;
@@ -37,7 +37,7 @@ export function effectiveApplicationKey(options: {
   readonly captureId: string;
   readonly tableName: string;
   readonly schema: TableSchema;
-  readonly route: ImportRecipe["routes"][number];
+  readonly route: ImportProfile["routes"][number];
   readonly capture: PreparedCapture;
 }): string {
   return effectiveMappingKey({
@@ -57,18 +57,65 @@ export type ImportApplicationState =
     }
   | { readonly state: "mapping-conflict" };
 
-export async function inspectApplicationIdentity(options: {
-  readonly transaction: EngineTransaction;
+interface ApplicationIdentityInput {
   readonly captureId: string;
   readonly tableName: string;
   readonly schema: TableSchema;
-  readonly route: ImportRecipe["routes"][number];
+  readonly route: ImportProfile["routes"][number];
   readonly capture: PreparedCapture;
-}): Promise<ImportApplicationState> {
+}
+
+export async function inspectApplicationIdentity(
+  options: ApplicationIdentityInput & {
+    readonly transaction: EngineTransaction;
+  },
+): Promise<ImportApplicationState> {
   const applications = await options.transaction.query(
     `SELECT import_id, application_key, plan_id, plan_revision, row_count FROM ${APPLICATION_TABLE} WHERE capture_id = ? AND table_name = ? ORDER BY import_id`,
     [options.captureId, options.tableName],
   );
+  return evaluateApplicationIdentity(options, applications);
+}
+
+export async function inspectApplicationIdentities(options: {
+  readonly transaction: EngineTransaction;
+  readonly identities: readonly ApplicationIdentityInput[];
+}): Promise<readonly ImportApplicationState[]> {
+  if (options.identities.length === 0) return [];
+  const applications = await options.transaction.query(
+    `SELECT capture_id, table_name, import_id, application_key, plan_id, plan_revision, row_count FROM ${APPLICATION_TABLE} WHERE ${options.identities.map(() => "(capture_id = ? AND table_name = ?)").join(" OR ")} ORDER BY import_id`,
+    options.identities.flatMap((identity) => [
+      identity.captureId,
+      identity.tableName,
+    ]),
+  );
+  const grouped = new Map<string, EngineRow[]>();
+  for (const application of applications) {
+    const key = JSON.stringify([
+      application["capture_id"],
+      application["table_name"],
+    ]);
+    const rows = grouped.get(key) ?? [];
+    rows.push(application);
+    grouped.set(key, rows);
+  }
+  return Promise.all(
+    options.identities.map((identity) =>
+      evaluateApplicationIdentity(
+        { ...identity, transaction: options.transaction },
+        grouped.get(JSON.stringify([identity.captureId, identity.tableName])) ??
+          [],
+      ),
+    ),
+  );
+}
+
+async function evaluateApplicationIdentity(
+  options: ApplicationIdentityInput & {
+    readonly transaction: EngineTransaction;
+  },
+  applications: readonly EngineRow[],
+): Promise<ImportApplicationState> {
   if (applications.length > 1) {
     throw databaseError(
       "DB_CORRUPT_DATABASE",
@@ -101,8 +148,8 @@ export async function inspectApplicationIdentity(options: {
   const storedKey = await historicalEffectiveApplicationKey({
     transaction: options.transaction,
     storedKey: valueAsString(application["application_key"], "application key"),
-    planId: valueAsString(application["plan_id"], "plan ID"),
-    planRevision: valueAsBigInt(application["plan_revision"], "plan revision"),
+    planId: valueAsString(application["plan_id"], "batch ID"),
+    planRevision: valueAsBigInt(application["plan_revision"], "batch revision"),
     captureId: options.captureId,
     tableName: options.tableName,
     schema: options.schema,
@@ -120,7 +167,7 @@ export async function inspectApplicationIdentity(options: {
 function legacyApplicationKey(options: {
   readonly captureId: string;
   readonly tableName: string;
-  readonly route: ImportRecipe["routes"][number];
+  readonly route: ImportProfile["routes"][number];
   readonly capture: PreparedCapture;
 }): string {
   return bytesToHex(
@@ -142,7 +189,7 @@ function parseHistoryJson(value: unknown, field: string): unknown {
     return JSON.parse(valueAsString(value, field));
   } catch (cause) {
     return corruptHistory(
-      "The saved import application has invalid plan history. Restore a verified database copy before retrying.",
+      "The saved import application has invalid batch history. Restore a verified database copy before retrying.",
       cause,
     );
   }
@@ -227,20 +274,20 @@ export async function historicalEffectiveApplicationKey(options: {
   );
   if (
     rows.length !== 1 ||
-    valueAsString(rows[0]?.["state"], "plan state") !== "applied"
+    valueAsString(rows[0]?.["state"], "batch state") !== "applied"
   ) {
     return corruptHistory(
-      "The saved import application is missing its applied plan history. Restore a verified database copy before retrying.",
+      "The saved import application is missing its applied batch history. Restore a verified database copy before retrying.",
     );
   }
-  let recipe: ImportRecipe;
+  let profile: ImportProfile;
   try {
-    recipe = parseImportRecipe(
-      parseHistoryJson(rows[0]?.["recipe_json"], "import recipe"),
+    profile = parseImportProfile(
+      parseHistoryJson(rows[0]?.["recipe_json"], "import profile"),
     );
   } catch (cause) {
     return corruptHistory(
-      "The saved import application has invalid plan history. Restore a verified database copy before retrying.",
+      "The saved import application has invalid batch history. Restore a verified database copy before retrying.",
       cause,
     );
   }
@@ -248,7 +295,7 @@ export async function historicalEffectiveApplicationKey(options: {
     rows[0]?.["bindings_json"],
     options.captureId,
   );
-  const routes = recipe.routes.filter(
+  const routes = profile.routes.filter(
     (route) =>
       bindings.has(routeKey(route.source, route.selection)) &&
       destinationTable(route) !== undefined &&

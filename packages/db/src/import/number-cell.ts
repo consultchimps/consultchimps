@@ -20,7 +20,7 @@ export function assertValidImportNumberCell(
   if (owner === "prepared") {
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",
-      "The import plan contains an invalid captured number cell.",
+      "The import batch contains an invalid captured number cell.",
     );
   }
   throw databaseError(

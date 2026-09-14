@@ -9,9 +9,9 @@ import {
   prepareImport,
   resolveImport,
 } from "../src/import/operations.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
 import type { DatabaseEngine } from "../src/internal/engine.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 import { preparedEngineOf } from "../src/prepared.js";
 
 const directories: string[] = [];
@@ -24,7 +24,7 @@ afterEach(async () => {
   );
 });
 
-const recipe: ImportRecipe = {
+const profile: ImportProfile = {
   version: 1,
   routes: [
     {
@@ -105,10 +105,10 @@ for (const format of ["sqlite", "duckdb"] as const) {
       path: path.join(directory, `workspace.${format}`),
       format,
     });
-    const prepared = await createPreparedImport({
+    const prepared = await createImportBatch({
       path: path.join(directory, "review.ccplan"),
       database,
-      recipe,
+      profile,
       baselineRevision: 0n,
     });
     const engine = preparedEngineOf(prepared);
@@ -119,7 +119,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const initial = await prepareImport({
         database,
         prepared,
-        recipe,
+        profile,
         sources: [
           source({ key: "original", selection: "Inventory", value: "North" }),
         ],
@@ -148,7 +148,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const concurrent = await prepareImport({
         database,
         prepared,
-        recipe,
+        profile,
         sources: [
           source({ key: "additional", selection: "Extra", value: "South" }),
         ],

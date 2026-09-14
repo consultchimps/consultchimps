@@ -10,10 +10,7 @@ import type {
   EngineRow,
   EngineTransaction,
 } from "../src/internal/engine.js";
-import {
-  createPreparedImportHandle,
-  preparedEngineOf,
-} from "../src/prepared.js";
+import { createImportBatchHandle, preparedEngineOf } from "../src/prepared.js";
 
 interface ManagedHandle {
   readonly isOpen: boolean;
@@ -118,12 +115,12 @@ describe("managed handle closure", () => {
 
   test("keeps a prepared import registered until a retry confirms closure", async () => {
     await verifyRetryableClose(async (engine) => {
-      const handle = await createPreparedImportHandle({
+      const handle = await createImportBatchHandle({
         engine,
         databaseId: "DB-managed-close" as DatabaseId,
         baselineRevision: 0n,
         baselineSchemaFingerprint: "schema-fingerprint",
-        recipe: { version: 1, routes: [] },
+        profile: { version: 1, routes: [] },
       });
       return { handle, registered: () => preparedEngineOf(handle) };
     });
@@ -131,12 +128,12 @@ describe("managed handle closure", () => {
 
   test("shares a concurrent prepared-import close attempt", async () => {
     await verifyConcurrentClose((engine) =>
-      createPreparedImportHandle({
+      createImportBatchHandle({
         engine,
         databaseId: "DB-managed-close" as DatabaseId,
         baselineRevision: 0n,
         baselineSchemaFingerprint: "schema-fingerprint",
-        recipe: { version: 1, routes: [] },
+        profile: { version: 1, routes: [] },
       }),
     );
   });

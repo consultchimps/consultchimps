@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { afterEach, expect, test } from "vitest";
 import Sqlite from "better-sqlite3";
 
-import { createDatabase, createPreparedImport } from "@consultchimps/db/node";
+import { createDatabase, createImportBatch } from "@consultchimps/db/node";
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../dist/index.js", import.meta.url));
@@ -46,55 +46,69 @@ async function runFailure(args: readonly string[]): Promise<{
 test.each([
   "_consultchimps_prepared_captures",
   "_consultchimps_prepared_bindings",
-])("db inspect reports a damaged plan missing %s", async (missingTable) => {
-  const directory = await mkdtemp(path.join(tmpdir(), "cc-cli-plan-damage-"));
-  directories.push(directory);
-  const databasePath = path.join(directory, "workspace.sqlite");
-  const planPath = path.join(directory, "private-review.ccplan");
-  const { database } = await createDatabase({
-    path: databasePath,
-    format: "sqlite",
-  });
-  const plan = await createPreparedImport({
-    path: planPath,
-    database,
-    recipe: { version: 1, routes: [] },
-    baselineRevision: 0n,
-  });
-  const planId = plan.id;
-  await plan.close();
-  await database.close();
-  const sqlite = new Sqlite(planPath);
-  sqlite.exec(`DROP TABLE ${missingTable}`);
-  sqlite.close();
+])(
+  "db import inspect reports a damaged batch missing %s",
+  async (missingTable) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "cc-cli-plan-damage-"));
+    directories.push(directory);
+    const databasePath = path.join(directory, "workspace.sqlite");
+    const planPath = path.join(directory, "private-review.ccplan");
+    const { database } = await createDatabase({
+      path: databasePath,
+      format: "sqlite",
+    });
+    const plan = await createImportBatch({
+      path: planPath,
+      database,
+      profile: { version: 1, routes: [] },
+      baselineRevision: 0n,
+    });
+    const planId = plan.id;
+    await plan.close();
+    await database.close();
+    const sqlite = new Sqlite(planPath);
+    sqlite.exec(`DROP TABLE ${missingTable}`);
+    sqlite.close();
 
-  const jsonFailure = await runFailure(["--json", "db", "inspect", planPath]);
-  const expectedJson = {
-    ok: false,
-    error: {
-      code: "DB_INVALID_PREPARED_IMPORT",
-      message:
-        "This import plan is incomplete or damaged. Prepare the workbook again or restore a verified plan copy.",
-    },
-  };
-  expect(JSON.parse(jsonFailure.stdout)).toEqual(expectedJson);
-  expect(JSON.parse(jsonFailure.stderr)).toEqual(expectedJson);
+    const jsonFailure = await runFailure([
+      "--json",
+      "db",
+      "import",
+      "inspect",
+      planPath,
+    ]);
+    const expectedJson = {
+      ok: false,
+      error: {
+        code: "DB_INVALID_PREPARED_IMPORT",
+        message:
+          "This import batch is incomplete or damaged. Prepare the workbook again or restore a verified batch copy.",
+      },
+    };
+    expect(JSON.parse(jsonFailure.stdout)).toEqual(expectedJson);
+    expect(JSON.parse(jsonFailure.stderr)).toEqual(expectedJson);
 
-  const humanFailure = await runFailure(["db", "inspect", planPath]);
-  expect(humanFailure.stdout).toBe("");
-  expect(humanFailure.stderr).toContain(expectedJson.error.message);
-  expect(humanFailure.stderr).toContain("DB_INVALID_PREPARED_IMPORT");
+    const humanFailure = await runFailure([
+      "db",
+      "import",
+      "inspect",
+      planPath,
+    ]);
+    expect(humanFailure.stdout).toBe("");
+    expect(humanFailure.stderr).toContain(expectedJson.error.message);
+    expect(humanFailure.stderr).toContain("DB_INVALID_PREPARED_IMPORT");
 
-  for (const output of [
-    jsonFailure.stdout,
-    jsonFailure.stderr,
-    humanFailure.stderr,
-  ]) {
-    expect(output).not.toContain(planPath);
-    expect(output).not.toContain(path.basename(planPath));
-    expect(output).not.toContain(planId);
-    expect(output).not.toContain(missingTable);
-    expect(output).not.toContain("no such table");
-    expect(output).not.toContain("SQLITE_ERROR");
-  }
-});
+    for (const output of [
+      jsonFailure.stdout,
+      jsonFailure.stderr,
+      humanFailure.stderr,
+    ]) {
+      expect(output).not.toContain(planPath);
+      expect(output).not.toContain(path.basename(planPath));
+      expect(output).not.toContain(planId);
+      expect(output).not.toContain(missingTable);
+      expect(output).not.toContain("no such table");
+      expect(output).not.toContain("SQLITE_ERROR");
+    }
+  },
+);

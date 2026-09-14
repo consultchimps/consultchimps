@@ -3,19 +3,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   databaseClose: vi.fn(async () => undefined),
   firstClose: vi.fn<() => Promise<void>>(),
-  inspectAppliedImportPlan: vi.fn(async () => null),
+  inspectAppliedImportBatch: vi.fn(async () => null),
   inspectImport: vi.fn(),
-  listPreparedImports: vi.fn(),
-  openPreparedImport: vi.fn(),
+  listImportBatches: vi.fn(),
+  openImportBatch: vi.fn(),
   secondClose: vi.fn<() => Promise<void>>(),
 }));
 
 vi.mock("@consultchimps/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@consultchimps/db")>()),
-  inspectAppliedImportPlan: mocks.inspectAppliedImportPlan,
+  inspectAppliedImportBatch: mocks.inspectAppliedImportBatch,
   inspectDatabase: vi.fn(async () => ({
     completedImports: 0n,
-    deliveries: 0n,
+    recordedBatches: 0n,
     format: "sqlite",
     formatVersion: 1,
     id: "database-1",
@@ -34,8 +34,8 @@ vi.mock("@consultchimps/db/browser", () => ({
         id: "database-1",
       },
     })),
-    listPreparedImports: mocks.listPreparedImports,
-    openPreparedImport: mocks.openPreparedImport,
+    listImportBatches: mocks.listImportBatches,
+    openImportBatch: mocks.openImportBatch,
   })),
 }));
 
@@ -58,7 +58,6 @@ vi.mock(
   async () => import("../lib/workspace-replacement"),
 );
 vi.mock("@/lib/workspace-naming", () => ({
-  workspaceRecordIdPrefix: () => "DAT",
   workspaceWorkingCopyName: (value: string) => value,
 }));
 
@@ -71,14 +70,23 @@ interface WorkerMessage {
 
 function inspection(planId: string) {
   return {
+    application: { state: "pending" },
+    captureIds: [],
+    capturedRows: 0n,
     conflicts: [],
+    examples: [],
+    nextRouteCursor: undefined,
     prepared: {
       id: planId,
       planRevision: 1n,
+      reviewFingerprint: `fingerprint-${planId}`,
       state: "ready",
-      recipe: { version: 1, routes: [] },
     },
+    previewWarnings: [],
+    reviewRows: 0n,
+    routeCount: 0n,
     routes: [],
+    targetRevision: 0n,
   };
 }
 
@@ -120,7 +128,7 @@ describe("workspace worker saved-plan cleanup", () => {
     mocks.secondClose
       .mockRejectedValueOnce(new Error("Injected second plan close failure"))
       .mockResolvedValue(undefined);
-    mocks.openPreparedImport.mockImplementation(async ({ name }) =>
+    mocks.openImportBatch.mockImplementation(async ({ name }) =>
       name === "first.ccplan"
         ? { id: "first-plan", close: mocks.firstClose }
         : { id: "second-plan", close: mocks.secondClose },
@@ -128,7 +136,7 @@ describe("workspace worker saved-plan cleanup", () => {
   });
 
   it("withholds a successful listing and retries every retained plan close", async () => {
-    mocks.listPreparedImports
+    mocks.listImportBatches
       .mockResolvedValueOnce({
         imports: [
           {
@@ -174,15 +182,15 @@ describe("workspace worker saved-plan cleanup", () => {
     expect(mocks.firstClose).toHaveBeenCalledTimes(2);
     expect(mocks.secondClose).toHaveBeenCalledTimes(2);
     expect(mocks.firstClose.mock.invocationCallOrder[1]).toBeLessThan(
-      mocks.listPreparedImports.mock.invocationCallOrder[1]!,
+      mocks.listImportBatches.mock.invocationCallOrder[1]!,
     );
     expect(mocks.secondClose.mock.invocationCallOrder[1]).toBeLessThan(
-      mocks.listPreparedImports.mock.invocationCallOrder[1]!,
+      mocks.listImportBatches.mock.invocationCallOrder[1]!,
     );
   });
 
   it("drains a retained saved-plan handle during worker close", async () => {
-    mocks.listPreparedImports.mockResolvedValue({
+    mocks.listImportBatches.mockResolvedValue({
       imports: [
         {
           name: "second.ccplan",
@@ -214,5 +222,89 @@ describe("workspace worker saved-plan cleanup", () => {
     });
     expect(mocks.secondClose).toHaveBeenCalledTimes(2);
     expect(mocks.databaseClose).toHaveBeenCalledOnce();
+  });
+
+  it("loads each route page from the saved batch instead of cached worker state", async () => {
+    mocks.firstClose.mockReset().mockResolvedValue(undefined);
+    mocks.listImportBatches.mockResolvedValue({
+      imports: [
+        {
+          name: "first.ccplan",
+          databaseId: "database-1",
+          application: "pending",
+        },
+      ],
+      ignored: [],
+    });
+    mocks.inspectImport.mockImplementation(async ({ routePage }) => {
+      const next = routePage?.cursor === "route-page-2";
+      return {
+        ...inspection("first-plan"),
+        nextRouteCursor: next ? undefined : "route-page-2",
+        reviewRows: 51n,
+        routeCount: 51n,
+        routes: [
+          {
+            applicationState: "not-applied",
+            captureId: next ? "capture-51" : "capture-1",
+            columns: [],
+            destination: null,
+            destinationColumns: [],
+            displayName: "source.xlsx",
+            inferredColumns: [{ name: "Value", type: "text" }],
+            label: next ? "Sheet 51" : "Sheet 1",
+            rowCount: 1n,
+            source: "source-1",
+            selection: next ? "selection-51" : "selection-1",
+            suggestedDestination: {
+              kind: "new-table-infer",
+              name: next ? "Sheet_51" : "Sheet_1",
+              recordId: { prefix: "SHEET", padding: 6 },
+            },
+          },
+        ],
+      };
+    });
+    const { request } = await workerHarness();
+
+    await request({
+      id: 1,
+      type: "create",
+      name: "test.sqlite",
+      format: "sqlite",
+    });
+    await expect(
+      request({ id: 2, type: "listImports" }),
+    ).resolves.toMatchObject({
+      type: "importsListed",
+      plans: [
+        {
+          routeCursor: null,
+          nextRouteCursor: "route-page-2",
+          regions: [{ label: "Sheet 1" }],
+        },
+      ],
+    });
+    await expect(
+      request({
+        id: 3,
+        type: "inspectImport",
+        planId: "first-plan",
+        routeCursor: "route-page-2",
+      }),
+    ).resolves.toMatchObject({
+      type: "importInspected",
+      plan: {
+        routeCursor: "route-page-2",
+        nextRouteCursor: null,
+        routeCount: 51,
+        regions: [{ label: "Sheet 51" }],
+      },
+    });
+    expect(mocks.inspectImport).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        routePage: { limit: 50, cursor: "route-page-2" },
+      }),
+    );
   });
 });

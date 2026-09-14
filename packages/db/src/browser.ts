@@ -37,14 +37,14 @@ import {
 } from "./engines/duckdb/browser.js";
 import { BrowserSqliteEngine } from "./engines/sqlite/browser.js";
 import { databaseError } from "./errors.js";
-import { inspectAppliedImportPlan } from "./import/history.js";
+import { inspectAppliedImportBatch } from "./import/history.js";
 import {
-  createPreparedImportHandle,
-  openPreparedImportHandle,
+  createImportBatchHandle,
+  openImportBatchHandle,
   PREPARED_METADATA_TABLE,
   preparedEngineOf,
   preparedRef,
-  type PreparedImport,
+  type ImportBatch,
 } from "./prepared.js";
 import {
   BrowserExportCleanupError,
@@ -54,7 +54,7 @@ import {
   publishBrowserExport,
 } from "./browser-publication.js";
 import type { DatabaseFormat, DatabaseSchema } from "./schema.js";
-import type { ImportRecipe } from "./import/types.js";
+import type { ImportProfile } from "./import/types.js";
 import { DATABASE_METADATA_TABLE } from "./metadata.js";
 import { readSchemaFingerprint } from "./records.js";
 
@@ -148,10 +148,10 @@ export interface ImportBrowserDatabaseOptions extends OperationControlOptions {
   readonly overwrite?: boolean | undefined;
 }
 
-export interface CreateBrowserPreparedImportOptions extends OperationControlOptions {
+export interface CreateBrowserImportBatchOptions extends OperationControlOptions {
   readonly name: string;
   readonly database: Database;
-  readonly recipe: ImportRecipe;
+  readonly profile: ImportProfile;
   readonly baselineRevision: bigint;
   readonly overwrite?: boolean | undefined;
 }
@@ -164,22 +164,22 @@ export interface ExportBrowserDatabaseOptions extends OperationControlOptions {
   readonly overwrite?: boolean | undefined;
 }
 
-export interface BrowserPreparedImportSummary {
+export interface BrowserImportBatchSummary {
   readonly name: string;
   readonly id: string;
   readonly databaseId: string;
   readonly application: "applied" | "pending";
 }
 
-export interface BrowserIgnoredPreparedImport {
+export interface BrowserIgnoredImportBatch {
   readonly name: string;
   readonly code: string;
   readonly message: string;
 }
 
-export interface BrowserPreparedImportListing {
-  readonly imports: readonly BrowserPreparedImportSummary[];
-  readonly ignored: readonly BrowserIgnoredPreparedImport[];
+export interface BrowserImportBatchListing {
+  readonly imports: readonly BrowserImportBatchSummary[];
+  readonly ignored: readonly BrowserIgnoredImportBatch[];
 }
 
 export interface BrowserDatabaseRuntime {
@@ -191,16 +191,14 @@ export interface BrowserDatabaseRuntime {
     readonly readonly?: boolean | undefined;
   }): Promise<Database>;
   importDatabase(options: ImportBrowserDatabaseOptions): Promise<Database>;
-  createPreparedImport(
-    options: CreateBrowserPreparedImportOptions,
-  ): Promise<PreparedImport>;
-  openPreparedImport(options: {
-    readonly name: string;
-  }): Promise<PreparedImport>;
-  discardPreparedImport(options: { readonly name: string }): Promise<void>;
-  listPreparedImports(options: {
+  createImportBatch(
+    options: CreateBrowserImportBatchOptions,
+  ): Promise<ImportBatch>;
+  openImportBatch(options: { readonly name: string }): Promise<ImportBatch>;
+  discardImportBatch(options: { readonly name: string }): Promise<void>;
+  listImportBatches(options: {
     readonly database: Database;
-  }): Promise<BrowserPreparedImportListing>;
+  }): Promise<BrowserImportBatchListing>;
   exportDatabase(
     options: ExportBrowserDatabaseOptions,
   ): Promise<OperationResult<"bytesWritten">>;
@@ -739,7 +737,7 @@ export async function configureBrowserDatabaseRuntime(
     if (state.sqlite && state.sqliteKind !== "database") {
       const message =
         state.sqliteKind === "prepared"
-          ? "This browser working copy is an import plan, not a database. Choose another name."
+          ? "This browser working copy is an import batch, not a database. Choose another name."
           : "This browser working copy is not a recognized ConsultChimps database. Choose another name.";
       throw databaseError("DB_BROWSER_STORAGE_KIND_MISMATCH", message, {
         name,
@@ -757,8 +755,8 @@ export async function configureBrowserDatabaseRuntime(
       const actual = state.duckdb ? "database" : state.sqliteKind;
       const message =
         actual === "unknown"
-          ? "This browser working copy is not a recognized ConsultChimps import plan. Choose another name."
-          : "This browser working copy is a database, not an import plan. Choose another name.";
+          ? "This browser working copy is not a recognized ConsultChimps import batch. Choose another name."
+          : "This browser working copy is a database, not an import batch. Choose another name.";
       throw databaseError("DB_BROWSER_STORAGE_KIND_MISMATCH", message, {
         name,
         expected: "prepared",
@@ -905,7 +903,7 @@ export async function configureBrowserDatabaseRuntime(
         : ` The public working copy was published as "${publicName}" and remains available under that name.`;
     const recoveryGuidance =
       cleanup.candidateKind === "prepared"
-        ? `If it opens, use BrowserDatabaseRuntime.openPreparedImport({ name: "${cleanup.candidate}" }) to inspect or resume the candidate.`
+        ? `If it opens, use BrowserDatabaseRuntime.openImportBatch({ name: "${cleanup.candidate}" }) to inspect or resume the candidate.`
         : `If it opens, use BrowserDatabaseRuntime.openDatabase({ name: "${cleanup.candidate}" }) to inspect or export recoverable data.`;
     throw databaseError(
       "DB_BROWSER_CANDIDATE_CLEANUP_REQUIRED",
@@ -1189,13 +1187,13 @@ export async function configureBrowserDatabaseRuntime(
               : "Publishing the new working copy failed, and its public name was removed.";
         const openCandidate =
           candidateKind === "prepared"
-            ? `Use BrowserDatabaseRuntime.openPreparedImport({ name: "${candidate}" }) to inspect or resume a recoverable candidate.`
+            ? `Use BrowserDatabaseRuntime.openImportBatch({ name: "${candidate}" }) to inspect or resume a recoverable candidate.`
             : `Use BrowserDatabaseRuntime.openDatabase({ name: "${candidate}" }) to inspect or export a recoverable candidate.`;
         const openBackups = [
           ...(state.sqlite
             ? [
                 state.sqliteKind === "prepared"
-                  ? `Use BrowserDatabaseRuntime.openPreparedImport({ name: "${sqliteBackup}" }) for a retained SQLite backup.`
+                  ? `Use BrowserDatabaseRuntime.openImportBatch({ name: "${sqliteBackup}" }) for a retained SQLite backup.`
                   : `Use BrowserDatabaseRuntime.openDatabase({ name: "${sqliteBackup}" }) for a retained SQLite backup.`,
               ]
             : []),
@@ -1244,7 +1242,7 @@ export async function configureBrowserDatabaseRuntime(
       }
       const recoveryInstruction =
         state.sqliteKind === "prepared"
-          ? `Use BrowserDatabaseRuntime.openPreparedImport with ${sqliteBackup} to inspect or resume that backup before retrying.`
+          ? `Use BrowserDatabaseRuntime.openImportBatch with ${sqliteBackup} to inspect or resume that backup before retrying.`
           : `Use BrowserDatabaseRuntime.openDatabase with ${backups.join(" or ")} and export that backup before retrying.`;
       throw databaseError(
         "DB_BROWSER_REPLACEMENT_RECOVERY_REQUIRED",
@@ -1413,22 +1411,22 @@ export async function configureBrowserDatabaseRuntime(
     return withNameLock(name, () => createDatabaseUnlocked(create));
   };
 
-  const openPreparedImportUnlocked = async (open: {
+  const openImportBatchUnlocked = async (open: {
     readonly name: string;
-  }): Promise<PreparedImport> => {
+  }): Promise<ImportBatch> => {
     const name = storageName(open.name);
     const state = await storageState(name);
     if (!state.sqlite && !state.duckdb) {
       throw databaseError(
         "DB_BROWSER_STORAGE_MISSING",
-        "The browser import plan could not be found.",
+        "The browser import batch could not be found.",
         { name },
       );
     }
     assertPreparedStorageKind(name, state);
     const engine = sqliteEngine(name, false, "prepared");
     try {
-      const prepared = await openPreparedImportHandle(engine);
+      const prepared = await openImportBatchHandle(engine);
       registerOpenHandle(name, prepared, "prepared");
       return prepared;
     } catch (error) {
@@ -1441,19 +1439,19 @@ export async function configureBrowserDatabaseRuntime(
     }
   };
 
-  const openPreparedImport = (open: {
+  const openImportBatch = (open: {
     readonly name: string;
-  }): Promise<PreparedImport> => {
+  }): Promise<ImportBatch> => {
     const name = storageName(open.name);
     return withNameLock(name, async () => {
       await retryFailedOpenCleanup(name);
-      return openPreparedImportUnlocked(open);
+      return openImportBatchUnlocked(open);
     });
   };
 
-  const createPreparedImport = (
-    create: CreateBrowserPreparedImportOptions,
-  ): Promise<PreparedImport> => {
+  const createImportBatch = (
+    create: CreateBrowserImportBatchOptions,
+  ): Promise<ImportBatch> => {
     const name = storageName(create.name);
     return withNameLock(name, async () => {
       throwIfAborted(create.signal, "db.browser.plan");
@@ -1463,7 +1461,7 @@ export async function configureBrowserDatabaseRuntime(
       if (state.sqlite && create.overwrite !== true) {
         throw databaseError(
           "DB_OUTPUT_EXISTS",
-          "A browser import plan with this name already exists. Choose another name or allow replacement.",
+          "A browser import batch with this name already exists. Choose another name or allow replacement.",
           { name },
         );
       }
@@ -1474,16 +1472,16 @@ export async function configureBrowserDatabaseRuntime(
       );
       const candidate = `.consultchimps-plan-candidate-${globalThis.crypto.randomUUID()}.sqlite`;
       let engine: BrowserSqliteEngine | undefined;
-      let prepared: PreparedImport | undefined;
+      let prepared: ImportBatch | undefined;
       let candidateClosed = false;
       try {
         engine = sqliteEngine(candidate, false, "prepared");
-        prepared = await createPreparedImportHandle({
+        prepared = await createImportBatchHandle({
           engine,
           databaseId: create.database.id,
           baselineRevision: create.baselineRevision,
           baselineSchemaFingerprint,
-          recipe: create.recipe,
+          profile: create.profile,
         });
         await preparedEngineOf(prepared).checkpoint();
         await prepared.close();
@@ -1498,7 +1496,7 @@ export async function configureBrowserDatabaseRuntime(
             "error",
             candidate,
             state,
-            () => openPreparedImportUnlocked({ name }),
+            () => openImportBatchUnlocked({ name }),
             create.signal,
           )
         ).value;
@@ -1523,7 +1521,7 @@ export async function configureBrowserDatabaseRuntime(
     });
   };
 
-  const discardPreparedImport = (discard: {
+  const discardImportBatch = (discard: {
     readonly name: string;
   }): Promise<void> => {
     const name = storageName(discard.name);
@@ -1532,7 +1530,7 @@ export async function configureBrowserDatabaseRuntime(
       if (!state.sqlite && !state.duckdb) {
         throw databaseError(
           "DB_BROWSER_STORAGE_MISSING",
-          "The browser import plan could not be found.",
+          "The browser import batch could not be found.",
           { name },
         );
       }
@@ -1700,10 +1698,10 @@ export async function configureBrowserDatabaseRuntime(
         }
       });
     },
-    createPreparedImport,
-    openPreparedImport,
-    discardPreparedImport,
-    async listPreparedImports(listOptions) {
+    createImportBatch,
+    openImportBatch,
+    discardImportBatch,
+    async listImportBatches(listOptions) {
       const names = pool
         .getFileNames()
         .filter(
@@ -1713,13 +1711,13 @@ export async function configureBrowserDatabaseRuntime(
         )
         .map((name) => name.slice(1))
         .sort();
-      const imports: BrowserPreparedImportSummary[] = [];
-      const ignored: BrowserIgnoredPreparedImport[] = [];
+      const imports: BrowserImportBatchSummary[] = [];
+      const ignored: BrowserIgnoredImportBatch[] = [];
       for (const name of names) {
         await withNameLock(name, async () => {
           let engine: BrowserSqliteEngine | undefined;
-          let prepared: PreparedImport | undefined;
-          let summary: BrowserPreparedImportSummary | undefined;
+          let prepared: ImportBatch | undefined;
+          let summary: BrowserImportBatchSummary | undefined;
           let inspection:
             | { readonly status: "completed" }
             | { readonly status: "failed"; readonly error: unknown } = {
@@ -1728,11 +1726,11 @@ export async function configureBrowserDatabaseRuntime(
           try {
             await retryFailedOpenCleanup(name);
             engine = sqliteEngine(name, false, "inspection");
-            prepared = await openPreparedImportHandle(engine);
+            prepared = await openImportBatchHandle(engine);
             const ref = await preparedRef(prepared);
             const applied =
               ref.databaseId === listOptions.database.id &&
-              (await inspectAppliedImportPlan({
+              (await inspectAppliedImportBatch({
                 database: listOptions.database,
                 planId: ref.id,
                 planRevision: ref.planRevision,
@@ -1778,7 +1776,7 @@ export async function configureBrowserDatabaseRuntime(
                     name,
                     code: "DB_BROWSER_PREPARED_IMPORT_UNREADABLE",
                     message:
-                      "This saved import plan could not be reopened. Reload the workspace, then prepare the original sources again or restore a verified plan copy if it remains unavailable.",
+                      "This saved import batch could not be reopened. Reload the workspace, then prepare the original sources again or restore a verified batch copy if it remains unavailable.",
                   },
             );
           } else if (summary !== undefined) {

@@ -2,13 +2,13 @@ import type {
   ConversionPlan,
   ColumnDefinition,
   DatabaseInspection,
-  DeliveryPage,
+  BatchHistoryPage,
   ImportCell,
   ImportConflict,
   ImportDestination,
   ImportInspection,
-  PreparedImportRef,
-  ReadyImportRef,
+  ImportBatchRef,
+  ReadyImportBatchRef,
   SchemaConflict,
   SchemaPlan,
   TableSchema,
@@ -148,7 +148,7 @@ function routeDetails(route: ImportInspection["routes"][number]): string {
   return [
     `  ${compact(route.source)} / ${compact(route.label)}`,
     `    Selection key: ${compact(route.selection)}`,
-    `    Capture ID: ${compact(route.captureId)} (${route.reused ? "reused capture" : "captured in this plan"})`,
+    `    Capture ID: ${compact(route.captureId)} (${route.reused ? "reused capture" : "captured in this batch"})`,
     `    Rows: ${count(route.rowCount)}`,
     `    Destination: ${destination(route.destination)}`,
     `    Column mappings: ${summarizedList(mappings) || "None"}`,
@@ -190,8 +190,8 @@ export function formatDatabaseInspection(
     `Tables: ${count(inspection.tables.length)}`,
     `Completed source captures: ${count(inspection.captures)}`,
     `Completed imports: ${count(inspection.completedImports)}`,
-    `Recorded deliveries: ${count(inspection.deliveries)}`,
-    `Saved applied plans: ${count(inspection.appliedImportPlans)}`,
+    `Recorded batches: ${count(inspection.recordedBatches)}`,
+    `Saved applied batches: ${count(inspection.appliedImportBatches)}`,
   ];
   if (inspection.tables.length > 0) {
     lines.push(
@@ -205,18 +205,18 @@ export function formatDatabaseInspection(
   }
   lines.push(
     "Safety: This inspection did not change database tables or stored data.",
-    "Next: Prepare a workbook import, review a saved plan, or inspect delivery history.",
+    "Next: Prepare a workbook batch, review a saved batch, or inspect batch history.",
   );
   return `${lines.join("\n")}\n`;
 }
 
 export function formatImportInspection(inspection: ImportInspection): string {
   const lines = [
-    "Saved import plan inspection",
+    "Saved import batch inspection",
     `Status: ${status(inspection.prepared.state)}`,
-    `Plan revision: ${count(inspection.prepared.planRevision)}`,
-    `Rows newly captured in this plan: ${count(inspection.capturedRows)}`,
-    `Routes: ${count(inspection.routes.length)}`,
+    `Batch revision: ${count(inspection.prepared.planRevision)}`,
+    `Rows newly captured in this batch: ${count(inspection.capturedRows)}`,
+    `Routes shown: ${count(inspection.routes.length)} of ${count(inspection.routeCount)}`,
     `Conflicts requiring review: ${count(inspection.conflicts.length)}`,
   ];
   if (inspection.routes.length > 0) {
@@ -263,31 +263,37 @@ export function formatImportInspection(inspection: ImportInspection): string {
       "More preview rows are available. The --cursor option accepts this full value; quote it using your shell's rules.",
     );
   }
+  if (inspection.nextRouteCursor !== undefined) {
+    lines.push(
+      `Next route cursor (data): ${withoutTerminalControls(inspection.nextRouteCursor)}`,
+      "More routes are available. The --route-cursor option accepts this full value; quote it using your shell's rules.",
+    );
+  }
   lines.push(
     "Safety: This inspection did not change captured rows, routes, or decisions.",
     "Use --json to read full structured values and text marked [truncated].",
   );
   lines.push(
     inspection.prepared.state === "ready"
-      ? "Next: Apply this reviewed plan with consultchimps db apply."
-      : "Next: Correct the recipe and run consultchimps db resolve, then inspect the plan again.",
+      ? "Next: Apply this reviewed batch with consultchimps db import apply."
+      : "Next: Correct the profile and run consultchimps db import update, then inspect the batch again.",
   );
   return `${lines.join("\n")}\n`;
 }
 
 export function formatImportResolution(
-  prepared: PreparedImportRef | ReadyImportRef,
+  prepared: ImportBatchRef | ReadyImportBatchRef,
 ): string {
   return [
-    "Saved import plan resolution",
+    "Saved import batch update",
     `Status: ${status(prepared.state)}`,
-    `Plan revision: ${count(prepared.planRevision)}`,
+    `Batch revision: ${count(prepared.planRevision)}`,
     prepared.state === "ready"
       ? "The saved routing and column decisions are ready for application."
       : "Some routing or column decisions still require review.",
     prepared.state === "ready"
-      ? "Next: Inspect the revised plan, then apply it with consultchimps db apply."
-      : "Next: Inspect the remaining conflicts, correct the recipe, and run consultchimps db resolve again.",
+      ? "Next: Inspect the revised batch, then apply it with consultchimps db import apply."
+      : "Next: Inspect the remaining conflicts, correct the profile, and run consultchimps db import update again.",
     "Safety: No accepted database rows were changed.",
     "",
   ].join("\n");
@@ -331,15 +337,15 @@ export function formatSchemaPlan(plan: SchemaPlan): string {
   return `${lines.join("\n")}\n`;
 }
 
-export function formatDeliveryPage(page: DeliveryPage): string {
+export function formatDeliveryPage(page: BatchHistoryPage): string {
   const lines = [
-    "Delivery history",
-    `Deliveries shown: ${count(page.deliveries.length)}`,
+    "Batch history",
+    `Batches shown: ${count(page.batches.length)}`,
   ];
-  if (page.deliveries.length > 0) {
+  if (page.batches.length > 0) {
     lines.push(
-      "Recorded deliveries:",
-      ...page.deliveries.flatMap((delivery) => {
+      "Recorded batches:",
+      ...page.batches.flatMap((delivery) => {
         const scope =
           delivery.context.scope.kind === "partial"
             ? `Partial, ${compact(delivery.context.scope.description)}`
@@ -381,13 +387,13 @@ export function formatDeliveryPage(page: DeliveryPage): string {
   }
   if (page.nextCursor !== undefined) {
     lines.push(
-      `More deliveries are available. Continue with --cursor ${withoutTerminalControls(page.nextCursor)}.`,
+      `More batches are available. Continue with --cursor ${withoutTerminalControls(page.nextCursor)}.`,
     );
   }
   lines.push(
-    "Safety: Reading delivery history did not change database tables or stored data.",
-    "Use --json to read full structured delivery context and text marked [truncated].",
-    "Next: Use a delivery ID and its linked captures to review the recorded submission history.",
+    "Safety: Reading batch history did not change database tables or stored data.",
+    "Use --json to read full structured batch context and text marked [truncated].",
+    "Next: Use a batch ID and its linked captures to review the recorded submission history.",
   );
   return `${lines.join("\n")}\n`;
 }

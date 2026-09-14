@@ -211,25 +211,25 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
       "Inspect the database or prepare a workbook import before adding observations.",
     ],
   },
-  "db.prepare": {
+  "db.import.prepare": {
     title: "Your workbook import is captured for review.",
     summary: (result) => [
       `ConsultChimps captured ${quantity(metric(result, "rowsCaptured"), "source row")} in private staging storage.`,
       "The import has not added these rows to accepted database tables. The original workbooks were not changed.",
     ],
     nextSteps: () => [
-      "Review the proposed tables, types, mappings, and conflicts before applying the plan.",
-      "The saved plan can contain source values. Keep it with your confidential working files.",
+      "Review the proposed tables, types, mappings, and conflicts before applying the batch.",
+      "The saved batch can contain source values. Keep it with your confidential working files.",
     ],
   },
-  "db.apply": {
+  "db.import.apply": {
     title: "Your database import was applied.",
     summary: (result) => [
       `ConsultChimps added ${quantity(metric(result, "rowsImported"), "observation")} and reused ${quantity(metric(result, "rowsReused"), "previously imported observation")}.`,
       "Committed changes are stored in the working database. The original workbooks were not changed.",
     ],
     nextSteps: () => [
-      "Inspect the database and delivery history. You can reopen the database without importing the Excel files again.",
+      "Inspect the database and batch history. You can reopen the database without importing the Excel files again.",
     ],
   },
   "db.schema.apply": {
@@ -241,13 +241,13 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
       "Inspect the schema before preparing imports into its tables.",
     ],
   },
-  "db.delivery.record": {
-    title: "Your delivery was recorded.",
+  "db.import.record": {
+    title: "Your batch was recorded.",
     summary: () => [
-      "The delivery references existing source captures without adding their row values again.",
+      "The batch references existing source captures without adding their row values again.",
     ],
     nextSteps: () => [
-      "Review delivery history to see the submission context and referenced captures.",
+      "Review batch history to see the submission context and referenced captures.",
     ],
   },
   "db.export": {
@@ -473,12 +473,12 @@ const metricLabels: Readonly<Record<string, string>> = {
   rowsReused: "Observations reused without duplication",
   tablesCreated: "Database tables created",
   columnsAdded: "Database columns added",
-  deliveriesRecorded: "Deliveries recorded",
-  deliveriesReused: "Previously recorded deliveries reused",
+  batchesRecorded: "Batches recorded",
+  batchesReused: "Previously recorded batches reused",
   tablesConverted: "Database tables converted",
   rowsConverted: "Database rows converted",
   bytesWritten: "Bytes written to the exported database",
-  capturesLinked: "Source captures linked to the delivery",
+  capturesLinked: "Source captures linked to the batch",
   dataRows: "Data rows described",
   excelTables: "Excel Tables found",
   generatedSlides: "PowerPoint slides generated",
@@ -522,7 +522,7 @@ function artifactType(artifact: Artifact): string {
     return "SQLite database";
   if (artifact.mediaType === "application/vnd.duckdb") return "DuckDB database";
   if (artifact.mediaType === "application/vnd.consultchimps.import-plan")
-    return "Private captured import plan";
+    return "Private captured import batch";
   if (artifact.kind === "directory") {
     return "Folder";
   }
@@ -654,15 +654,15 @@ function recoverySteps(
   }
   if (code === "DB_IMPORT_NEEDS_REVIEW" || code === "DB_STALE_IMPORT_PLAN") {
     return [
-      "Inspect the saved import plan and its target database.",
-      "Resolve the reported conflicts or refresh the plan against the current database before applying it.",
-      "Keep the captured plan until the import has completed; it can contain data needed for review.",
+      "Inspect the saved import batch and its target database.",
+      "Resolve the reported conflicts or refresh the batch against the current database before applying it.",
+      "Keep the captured batch until the import has completed; it can contain data needed for review.",
     ];
   }
   if (code?.startsWith("DB_")) {
     return [
       "Check the database format, schema, and import options named in the message.",
-      "Keep your source files and saved plan while correcting the problem.",
+      "Keep your source files and saved batch while correcting the problem.",
       vocabulary.examplesReference,
     ];
   }

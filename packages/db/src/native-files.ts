@@ -131,7 +131,7 @@ export class NativeFileRegistry {
     if (this.#failedClosures.size > 0 || this.#unclosedOwners.size > 0) {
       throw databaseError(
         "DB_NATIVE_HANDLE_CLEANUP_REQUIRED",
-        "A database or import plan could not be registered or closed. File replacement is blocked because its filesystem identity could not be confirmed. Retry closing the handle if it is available, or restart the process before replacing files.",
+        "A database or import batch could not be registered or closed. File replacement is blocked because its filesystem identity could not be confirmed. Retry closing the handle if it is available, or restart the process before replacing files.",
         {
           paths: [
             ...new Set([
@@ -152,7 +152,7 @@ export class NativeFileRegistry {
     }
     throw databaseError(
       "DB_NATIVE_FILE_BUSY",
-      "Close the open database or import plan before replacing this file.",
+      "Close the open database or import batch before replacing this file.",
       { path: path.resolve(filePath) },
     );
   }
@@ -177,7 +177,7 @@ export class NativeFileRegistry {
       this.#failedClosures.set(handle, resolved);
       throw databaseError(
         "DB_NATIVE_HANDLE_CLEANUP_REQUIRED",
-        `${published ? "The file was saved, but its" : "The"} database or import-plan handle could not be registered or closed. File replacement is blocked until the handle closes. Retry closing it if available, or restart the process before reopening or replacing the reported file.`,
+        `${published ? "The file was saved, but its" : "The"} database or import-batch handle could not be registered or closed. File replacement is blocked until the handle closes. Retry closing it if available, or restart the process before reopening or replacing the reported file.`,
         {
           path: resolved,
           ...(published ? { published: true, output: resolved } : {}),

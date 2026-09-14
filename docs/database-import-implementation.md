@@ -13,7 +13,7 @@ Examples in this document are synthetic.
 
 Extend the existing `@consultchimps/db` package at `packages/db`. The package
 owns SQLite and DuckDB support, database creation, schema operations, imports,
-delivery records, and export. The CLI uses one `consultchimps db` command group.
+batch records, and export. The CLI uses one `consultchimps db` command group.
 There is no separate database-import package or parallel database product.
 
 Keep one working format per open database. Both formats are supported
@@ -70,7 +70,7 @@ explicit product decision. Do not schedule query editors, charts, general data
 grids, or analytical browsing as a later automatic phase. DuckDB UI is a
 candidate for external analysis, not a new embedded dependency or an approved
 replacement integration. The active browser scope is database creation/opening,
-schemas, import preparation and review, delivery history, and export. Bounded
+schemas, import preparation and review, batch history, and export. Bounded
 import previews remain in scope. Porting or expanding the spike's analytics UI
 is not a prerequisite for the storage and import work.
 
@@ -117,10 +117,10 @@ packages/db/src/
   records.ts               shared validated record operations
   bridge.ts                tabular integration
   import/
-    recipe.ts
+    profile.ts
     prepare.ts
     apply.ts
-    deliveries.ts
+    batches.ts
   conversion.ts
   metadata.ts
   errors.ts
@@ -153,7 +153,7 @@ scope:
 | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Database` and `SqlDatabase`                            | Replace the exposed SQLite-specific contract with one asynchronous database interface; keep raw engine handles internal                                  |
 | Schema and ID helpers                                   | Retain useful validation and identity rules, redesign types where necessary, and share them across engines                                               |
-| `importTables` and row insertion                        | Replace materialized/per-row execution with prepared imports and bounded bulk writes                                                                     |
+| `importTables` and row insertion                        | Replace materialized/per-row execution with prepared batches and bounded bulk writes                                                                     |
 | Record updates and table bridge                         | Move onto the same database contract; check numeric conversions when bridging to other tools                                                             |
 | Browser worker and protocol                             | Refactor to use the shared contract for either format                                                                                                    |
 | Grid, source controls, page state and navigation guards | Reuse source and import controls; analytics grid work is paused and does not block the persistent storage refactor                                       |
@@ -172,36 +172,35 @@ error. Do not invent provenance for older rows or overwrite source files.
 Use `/tools/db` under Online Tools for database management and imports. Adapt
 the controls needed for that scope to the persistent contract. Analytics and
 general grid editing remain paused; their migration does not define the new
-database API or block delivery.
+database API or block batch.
 
 ## Public operation contracts
 
-These names describe the intended interface. Concrete TypeScript types are
-implemented and tested before they become a published compatibility promise.
+These operations form the public database interface.
 
-| Operation         | Input                                                                  | Result and side effect                                                                                          |
-| ----------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `createDatabase`  | Destination, format, and optional schema                               | Creates a managed database in the selected SQLite or DuckDB format and returns an operation result              |
-| `inspectDatabase` | Open database handle                                                   | Schema, format version, table summaries, and import/delivery summaries without loading table contents           |
-| `planSchema`      | Database schema and proposed schema                                    | Validated additive schema changes or explicit conflicts; no database writes                                     |
-| `applySchema`     | Database and approved schema plan                                      | Transactional schema changes after checking the baseline                                                        |
-| `prepareImport`   | Database, source readers, recipe, and private staging destination      | A durable prepared import containing captured rows and a review plan; accepted database tables remain unchanged |
-| `inspectImport`   | Prepared import and page/cursor                                        | Counts, table routing, type choices, warnings, and bounded examples                                             |
-| `resolveImport`   | Prepared import and explicit mapping/routing decisions                 | A new validated plan revision, ready only when its conflicts are resolved                                       |
-| `applyImport`     | Database, prepared import, delivery intent, and operation controls     | Validates the baseline and atomically publishes observations, memberships, and receipts                         |
-| `recordDelivery`  | Database, existing capture references, delivery context, and retry key | Records another delivery without copying captured row values                                                    |
-| `listDeliveries`  | Database and filters/cursor                                            | Paginated event history and referenced captures                                                                 |
-| `planConversion`  | Source database and target format/options                              | Type, constraint, metadata, and engine-feature compatibility report; no output writes                           |
-| `exportDatabase`  | Database and destination                                               | Consistent same-format artifact, or a validated conversion to the selected output format                        |
+| Operation         | Input                                                               | Result and side effect                                                                                            |
+| ----------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `createDatabase`  | Destination, format, and optional schema                            | Creates a managed database in the selected SQLite or DuckDB format and returns an operation result                |
+| `inspectDatabase` | Open database handle                                                | Schema, format version, table summaries, and import/batch summaries without loading table contents                |
+| `planSchema`      | Database schema and proposed schema                                 | Validated additive schema changes or explicit conflicts; no database writes                                       |
+| `applySchema`     | Database and approved schema plan                                   | Transactional schema changes after checking the baseline                                                          |
+| `prepareImport`   | Database, source readers, profile, and private staging destination  | A durable prepared batch containing captured rows and an import review; accepted database tables remain unchanged |
+| `inspectImport`   | Prepared batch and page or cursor                                   | Counts, table routing, type choices, warnings, and bounded examples                                               |
+| `resolveImport`   | Prepared batch and explicit mapping or routing decisions            | A new validated batch revision, ready only when its conflicts are resolved                                        |
+| `applyImport`     | Database, prepared batch, batch context, and operation controls     | Validates the baseline and atomically publishes observations, memberships, and receipts                           |
+| `recordBatch`     | Database, existing capture references, batch context, and retry key | Records another batch without copying captured row values                                                         |
+| `listBatches`     | Database and filters/cursor                                         | Paginated event history and referenced captures                                                                   |
+| `planConversion`  | Source database and target format/options                           | Type, constraint, metadata, and engine-feature compatibility report; no output writes                             |
+| `exportDatabase`  | Database and destination                                            | Consistent same-format artifact, or a validated conversion to the selected output format                          |
 
 `prepareImport` deliberately says prepare rather than dry run: it writes staging
-data. Its review plan describes intended mutations. A recipe is reusable intent;
-a prepared import is a specific captured input and destination baseline.
-Changing reviewed mappings produces a new plan revision and invalidates the old
-approval. Data-dependent conversions must be revalidated against captured values
-rather than reparsing Excel unnecessarily.
+data. Its import review describes intended mutations. A profile is reusable
+intent; a prepared batch contains specific captured input for a destination
+baseline. Changing reviewed mappings produces a new batch revision and
+invalidates the old approval. Data-dependent conversions must be revalidated
+against captured values rather than reparsing Excel unnecessarily.
 
-Use opaque database and plan references. Prepared imports have `needs-review`
+Use opaque database and batch references. Prepared batches have `needs-review`
 and `ready` states; `applyImport` accepts a ready reference and rechecks its
 stored state at runtime. Runtime `openDatabase` returns a disposable database
 handle. Create and export also return structured operation results. Do not
@@ -213,8 +212,7 @@ bounded pages, not complete JavaScript arrays of imported rows.
 
 ## Command design
 
-There is currently no `db` group in the CLI. Add the following commands, with
-help examples and built-CLI tests. The executable remains `consultchimps`.
+The CLI exposes the following commands through the `consultchimps db` group.
 
 ```sh
 # Create an empty database, optionally with declared tables
@@ -229,27 +227,27 @@ consultchimps db schema apply inventory.duckdb --file schema.json --dry-run
 consultchimps db schema apply inventory.duckdb --file schema.json
 
 # Capture workbook data and produce a durable review artifact
-consultchimps db plan inventory.duckdb \
+consultchimps db import prepare inventory.duckdb \
   --input inventory=inputs/inventory.xlsx \
   --input attributes=inputs/attributes.xlsx \
-  --recipe import.json -o review.ccplan
+  --profile import.json -o review.ccplan
 
 # Inspect a saved review artifact without reading the original workbooks
-consultchimps db inspect review.ccplan --json
+consultchimps db import inspect review.ccplan --json
 
-# Apply the captured plan, including its approved delivery context
-consultchimps db apply inventory.duckdb --plan review.ccplan
+# Apply the captured plan, including its approved batch context
+consultchimps db import apply inventory.duckdb --batch review.ccplan
 
-# Convenience form for an already explicit recipe
-consultchimps db import inventory.duckdb \
+# Convenience form for an already explicit profile
+consultchimps db import run inventory.duckdb \
   --input inventory=inputs/inventory.xlsx \
-  --input attributes=inputs/attributes.xlsx --recipe import.json
+  --input attributes=inputs/attributes.xlsx --profile import.json
 
-# Record another delivery of previously captured data
-consultchimps db delivery record inventory.duckdb \
-  --capture CAP-0001 --context delivery.json --request-id receipt-example-2
+# Record another batch of previously captured data
+consultchimps db import record inventory.duckdb \
+  --capture CAP-0001 --context batch.json --request-id receipt-example-2
 
-consultchimps db deliveries inventory.duckdb --json
+consultchimps db import history inventory.duckdb --json
 consultchimps db export inventory.duckdb -o inventory-copy.duckdb
 
 # Review conversion, then create a SQLite copy
@@ -265,9 +263,9 @@ consultchimps db export inventory.sqlite --format duckdb -o inventory-copy.duckd
 or type conflicts; it does not infer approval or overwrite policy. For a single
 source region, provide `--sheet`, `--table`, or `--range` selection and a
 distinct `--into` destination flag. `--table` refers to an Excel Table, not a
-destination. Complex multiple-source routing belongs in a recipe.
+destination. Complex multiple-source routing belongs in a profile.
 
-Seeding uses `db import` with a recipe and known target schema. Do not create a
+Seeding uses `db import` with a profile and known target schema. Do not create a
 second seed implementation. Database creation can later offer an import shortcut
 by composing these operations, without another execution path.
 
@@ -278,18 +276,19 @@ deletion are separate later operations. Both working formats and validated
 conversion belong to this design; conversion is not implicit import behavior.
 
 `--json` returns structured data on stdout; progress and errors go to stderr.
-Recipes, schemas, context files, and review artifacts have versioned formats and
-reject unknown versions. Relative input bindings resolve against the recipe
+Profiles, schemas, context files, and review artifacts have versioned formats
+and reject unknown versions. Relative input bindings resolve against the profile
 location, with explicit CLI bindings available when files move.
 
-## Recipe and schema separation
+## Profile and schema separation
 
-A schema declares destination tables and types. A recipe selects source regions,
-routes them, refers to an existing `ColumnMapping`, and declares import intent.
-A delivery context records a business event. Do not mix machine paths, source
-matching, and relational constraints into one unversioned configuration file.
+A schema declares destination tables and types. A profile selects source
+regions, routes them, refers to an existing `ColumnMapping`, and declares import
+intent. A batch context records a business event. Do not mix machine paths,
+source matching, and relational constraints into one unversioned configuration
+file.
 
-Example recipe shape:
+Example profile shape:
 
 ```json
 {
@@ -308,14 +307,14 @@ Example recipe shape:
       "mapping": "attribute-columns.json"
     }
   ],
-  "delivery": { "kind": "new", "context": "delivery.json" }
+  "batch": { "kind": "new", "context": "batch.json" }
 }
 ```
 
 Bind logical input aliases with `--input`; do not guess bindings from sheet
 names. Positional paths and quoted globs are supported for simple selections
-without recipe aliases. `create` encountering an existing destination is a
-conflict. A saved recipe can explicitly permit create-if-absent with a declared
+without profile aliases. `create` encountering an existing destination is a
+conflict. A saved profile can explicitly permit create-if-absent with a declared
 schema and append only when compatible. This is a distinct validated choice, not
 a hidden change to `create` semantics.
 
@@ -333,16 +332,16 @@ extension; ambiguous names require the flag. Reject a conflicting flag and
 extension. On open, inspect file contents, not only the filename. An optional
 format flag asserts the expected format; it never requests conversion.
 
-The same `db import`, schema, delivery, and inspection commands operate on
-either managed format. Default export preserves format. `--format` on export
-requests conversion. Source identity, record IDs, delivery memberships, and
-receipt history are preserved only where the conversion contract can verify
-them. A cross-format conversion retains the newly created target database's ID
-and requires a new import review. A same-format export retains the source's
-logical database ID, revision, and schema so a saved review can resume after
-restoring or moving that snapshot. Applying still validates the saved revision
-and schema. These IDs identify logical databases, not physical files or locks
-across copies. Exported copies are independent and do not synchronize.
+The same `db import`, schema, batch, and inspection commands operate on either
+managed format. Default export preserves format. `--format` on export requests
+conversion. Source identity, record IDs, batch memberships, and receipt history
+are preserved only where the conversion contract can verify them. A cross-format
+conversion retains the newly created target database's ID and requires a new
+import review. A same-format export retains the source's logical database ID,
+revision, and schema so a saved review can resume after restoring or moving that
+snapshot. Applying still validates the saved revision and schema. These IDs
+identify logical databases, not physical files or locks across copies. Exported
+copies are independent and do not synchronize.
 
 Conversion is a schema-and-data operation, not a renamed file or a generic copy
 of SQL strings. `planConversion` must inspect:
@@ -379,17 +378,17 @@ User data stays in typed tables. Proposed reserved metadata tables describe:
 - Source contents identified by hash and byte length
 - Captures identified by selected region and reader interpretation
 - Applied imports, plan revisions, and successful application receipts
-- Delivery events, supplied filenames, coverage, and reported metrics
-- Membership links between deliveries and captured observations
+- Batch events, supplied filenames, coverage, and reported metrics
+- Membership links between batches and captured observations
 
 Names and layouts are versioned in the follow-up ADR before publication. Do not
-create one generic cell-value table or copy the database for every delivery.
+create one generic cell-value table or copy the database for every batch.
 Use-case terminology belongs in example schemas, not the reserved namespace.
 
-An accidental repeat application reuses its receipt. An intentional new delivery
-gets a new event and references the capture. Retrying that delivery operation
-with the same request ID creates neither another event nor another membership.
-File equality, application identity, and business event identity are distinct.
+An accidental repeat application reuses its receipt. An intentional new batch
+gets a new event and references the capture. Retrying that batch operation with
+the same request ID creates neither another event nor another membership. File
+equality, application identity, and business event identity are distinct.
 
 Generated record IDs remain independent of vendor identifiers. Identifier
 allocation and formatting are shared inside db; their representation can be
@@ -451,8 +450,8 @@ production version and offline asset requirements. The Excel extension is a
 benchmark candidate, not a replacement for the workbook conformance contract.
 
 Use `/tools/db` under Online Tools for database creation/opening, schema
-operations, import review, delivery history, and export. New and Open identify
-the database format and working location. Keep bounded previews and navigation
+operations, import review, batch history, and export. New and Open identify the
+database format and working location. Keep bounded previews and navigation
 protections needed by those operations. Analytics UI development, including
 migration of the general grid, is paused indefinitely. Do not preserve the old
 in-memory save lifecycle to keep paused UI code active.
@@ -464,14 +463,13 @@ operations against both engines; analytics UI acceptance is outside this scope.
 
 ## Documentation and verification
 
-Keep this proposal and the delivery plan under `docs/`. Record storage
-ownership, metadata versioning, persistence, and distribution in a follow-up
-ADR. Update xlsx architecture for its read-only bounded path and document the db
-package's new public contracts in its README. Add Changesets for affected public
-packages.
+Keep this proposal and the batch plan under `docs/`. Record storage ownership,
+metadata versioning, persistence, and distribution in a follow-up ADR. Update
+xlsx architecture for its read-only bounded path and document the db package's
+new public contracts in its README. Add Changesets for affected public packages.
 
-Ship a synthetic import tutorial, a recipe/schema reference, repeat-delivery and
-recovery how-to guides, and an explanation of captures versus deliveries. Update
+Ship a synthetic import tutorial, a profile/schema reference, repeat-batch and
+recovery how-to guides, and an explanation of captures versus batches. Update
 `apps/docs/content/docs/reference/cli.mdx`, the libraries guide, getting
 started, tool navigation, root README, and registry/category metadata together.
 Examples must execute in tests. Personal context does not enter docs or
@@ -479,30 +477,30 @@ fixtures.
 
 Verify through the public library, built CLI, and real browser. Test region
 selection, physical coordinates, exact numeric conversion, formula-cache and
-error handling, schema conflicts, source changes, repeat import, repeat
-delivery, stale plans, cancellation, reopen, and export. Verify the exported
-database with independent native DuckDB queries. Run small synthetic fixtures in
-CI and larger reproducible measurements separately; publish limitations rather
-than capacity claims. Useful existing database and document behavior remains
-covered by regression checks, with database contract tests exercised against
-both engines. Add acceptance checks that open and reopen persistent files
-without whole-file buffers, commit changes without full-database serialization,
-and export with bounded memory. Verify persistence after worker termination and
-recovery after interrupted writes. External analytics must read a consistent
+error handling, schema conflicts, source changes, repeat import, repeat batch,
+stale plans, cancellation, reopen, and export. Verify the exported database with
+independent native DuckDB queries. Run small synthetic fixtures in CI and larger
+reproducible measurements separately; publish limitations rather than capacity
+claims. Useful existing database and document behavior remains covered by
+regression checks, with database contract tests exercised against both engines.
+Add acceptance checks that open and reopen persistent files without whole-file
+buffers, commit changes without full-database serialization, and export with
+bounded memory. Verify persistence after worker termination and recovery after
+interrupted writes. External analytics must read a consistent
 closed/checkpointed artifact; do not assume concurrent external writers are
 safe.
 
 ## Applied principles
 
-- Foundational thinking: define source, prepared import, application receipt,
-  and delivery identities before implementing their storage.
+- Foundational thinking: define source, prepared batch, application receipt, and
+  batch identities before implementing their storage.
 - Subtract before you add: retire the in-memory lifecycle and remove analytics
-  UI migration from this delivery; reuse the db package and useful import rules.
+  UI migration from this batch; reuse the db package and useful import rules.
 - Redesign from first principles: treat SQLite and DuckDB as two supported
   formats in one package, with real capability and conversion contracts.
 - Migrate callers, then delete legacy APIs: refactor the spike and its callers
   together instead of maintaining an old SQLite path beside the new work.
 - Boundary discipline: keep filesystem and browser handles in runtime adapters;
-  validate recipes and schemas before shared operations use them.
+  validate profiles and schemas before shared operations use them.
 - Prove it works: require library, built-CLI, browser, and independent artifact
   evidence instead of calling a materialized reader streaming.

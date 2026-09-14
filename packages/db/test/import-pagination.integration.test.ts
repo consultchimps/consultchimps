@@ -15,7 +15,7 @@ import {
   preparedEngineOf,
   updatePreparedCaptureMetadata,
 } from "../src/prepared.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 
 const directories: string[] = [];
 
@@ -36,10 +36,10 @@ for (const format of ["sqlite", "duckdb"] as const) {
       format,
     });
     const baseline = await inspectDatabase({ database });
-    const prepared = await createPreparedImport({
+    const prepared = await createImportBatch({
       path: path.join(directory, "review.data"),
       database,
-      recipe: { version: 1, routes: [] },
+      profile: { version: 1, routes: [] },
       baselineRevision: baseline.revision,
     });
     try {

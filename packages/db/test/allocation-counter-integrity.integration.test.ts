@@ -10,8 +10,8 @@ import {
   prepareImport,
   resolveImport,
 } from "../src/import/operations.js";
-import { recordDelivery } from "../src/import/deliveries.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
+import { recordBatch } from "../src/import/deliveries.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
 import type { EngineTransaction } from "../src/internal/engine.js";
 import {
   APPLICATION_TABLE,
@@ -25,9 +25,9 @@ import {
 } from "../src/metadata.js";
 import {
   createDatabase,
-  createPreparedImport,
+  createImportBatch,
   openDatabase,
-  openPreparedImport,
+  openImportBatch,
 } from "../src/node.js";
 import type { DatabaseFormat } from "../src/schema.js";
 
@@ -38,7 +38,7 @@ let planTemplates: Record<DatabaseFormat, string>;
 let reusedPlanTemplates: Record<DatabaseFormat, string>;
 let widthPlanTemplates: Record<DatabaseFormat, string>;
 
-const initialRecipe: ImportRecipe = {
+const initialRecipe: ImportProfile = {
   version: 1,
   routes: [
     {
@@ -58,7 +58,7 @@ const initialRecipe: ImportRecipe = {
   ],
 };
 
-const nextRecipe: ImportRecipe = {
+const nextRecipe: ImportProfile = {
   version: 1,
   routes: [
     {
@@ -70,12 +70,12 @@ const nextRecipe: ImportRecipe = {
   ],
 };
 
-const reusedRecipe: ImportRecipe = {
+const reusedRecipe: ImportProfile = {
   ...nextRecipe,
   routes: [{ ...nextRecipe.routes[0]!, source: "initial" }],
 };
 
-const widthRecipe: ImportRecipe = {
+const widthRecipe: ImportProfile = {
   ...nextRecipe,
   routes: [{ ...nextRecipe.routes[0]!, source: "width" }],
 };
@@ -116,22 +116,22 @@ function source(key: string, input: string | readonly string[]): ImportSource {
 }
 
 async function prepareReady(options: {
-  readonly database: Parameters<typeof createPreparedImport>[0]["database"];
+  readonly database: Parameters<typeof createImportBatch>[0]["database"];
   readonly filePath: string;
-  readonly recipe: ImportRecipe;
+  readonly profile: ImportProfile;
   readonly source: ImportSource;
 }) {
-  const prepared = await createPreparedImport({
+  const prepared = await createImportBatch({
     path: options.filePath,
     database: options.database,
-    recipe: options.recipe,
+    profile: options.profile,
     baselineRevision: (await inspectDatabase({ database: options.database }))
       .revision,
   });
   await prepareImport({
     database: options.database,
     prepared,
-    recipe: options.recipe,
+    profile: options.profile,
     sources: [options.source],
   });
   const approved = await resolveImport({
@@ -157,7 +157,7 @@ beforeAll(async () => {
     const initial = await prepareReady({
       database,
       filePath: path.join(templateDirectory, `initial-${format}.ccplan`),
-      recipe: initialRecipe,
+      profile: initialRecipe,
       source: source("initial", "First"),
     });
     try {
@@ -166,7 +166,7 @@ beforeAll(async () => {
         prepared: initial.prepared,
         approved: initial.approved,
         requestId: `initial-${format}`,
-        delivery: { label: "Initial delivery", scope: { kind: "full" } },
+        batchContext: { label: "Initial delivery", scope: { kind: "full" } },
       });
     } finally {
       await initial.prepared.close();
@@ -178,7 +178,7 @@ beforeAll(async () => {
     const reused = await prepareReady({
       database,
       filePath: reusedPlanPath,
-      recipe: reusedRecipe,
+      profile: reusedRecipe,
       source: source("initial", "First"),
     });
     await reused.prepared.close();
@@ -186,7 +186,7 @@ beforeAll(async () => {
     const next = await prepareReady({
       database,
       filePath: planPath,
-      recipe: nextRecipe,
+      profile: nextRecipe,
       source: source("next", "Second"),
     });
     await next.prepared.close();
@@ -197,7 +197,7 @@ beforeAll(async () => {
     const width = await prepareReady({
       database,
       filePath: widthPlanPath,
-      recipe: widthRecipe,
+      profile: widthRecipe,
       source: source("width", ["Ninth", "Tenth", "Eleventh"]),
     });
     await width.prepared.close();
@@ -238,7 +238,7 @@ async function fixture(
   ]);
   return {
     database: await openDatabase({ path: databasePath }),
-    prepared: await openPreparedImport({ path: planPath }),
+    prepared: await openImportBatch({ path: planPath }),
   };
 }
 
@@ -575,7 +575,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const before = await stateSnapshot(database);
 
       await expect(
-        recordDelivery({
+        recordBatch({
           database,
           captureIds: [captureId],
           context: { label: "Next delivery", scope: { kind: "full" } },
@@ -612,13 +612,13 @@ for (const format of ["sqlite", "duckdb"] as const) {
           prepared,
           approved,
           requestId: `${format}-gap`,
-          delivery: { label: "Gap delivery", scope: { kind: "full" } },
+          batchContext: { label: "Gap delivery", scope: { kind: "full" } },
         }),
       ).resolves.toMatchObject({
         importIds: ["IMP-000003"],
         captureIds: ["CAP-000003"],
-        deliveryId: "DEL-000003",
-        metrics: { rowsImported: 1, rowsReused: 0, deliveriesRecorded: 1 },
+        batchId: "DEL-000003",
+        metrics: { rowsImported: 1, rowsReused: 0, batchesRecorded: 1 },
       });
       await expect(
         engineOf(database).query(

@@ -251,12 +251,14 @@ export class WorkspaceClient {
   async previewImport(
     planId: string,
     regionId: string,
+    routeCursor: string | null,
     cursor: string | null,
   ): Promise<WorkspacePreviewPage> {
     const event = await this.#request({
       type: "previewImport",
       planId,
       regionId,
+      routeCursor,
       cursor,
       limit: 25,
     });
@@ -264,13 +266,30 @@ export class WorkspaceClient {
     return event.page;
   }
 
+  async inspectImport(
+    planId: string,
+    routeCursor: string | null,
+  ): Promise<WorkspacePreparedImport> {
+    const event = await this.#request({
+      type: "inspectImport",
+      planId,
+      routeCursor,
+    });
+    if (event.type !== "importInspected") throw unexpected("import");
+    return event.plan;
+  }
+
   async resolveImport(
     planId: string,
+    reviewFingerprint: string,
+    routeCursor: string | null,
     decisions: readonly WorkspaceRouteDecision[],
   ): Promise<WorkspacePreparedImport> {
     const event = await this.#request({
       type: "resolveImport",
       planId,
+      reviewFingerprint,
+      routeCursor,
       decisions,
     });
     if (event.type !== "importResolved") throw unexpected("import");
@@ -279,11 +298,12 @@ export class WorkspaceClient {
 
   async applyImport(
     planId: string,
+    reviewFingerprint: string,
     delivery: WorkspaceDeliveryContext,
     options?: WorkspaceRunOptions,
   ): Promise<WorkspaceImportResult> {
     const event = await this.#request(
-      { type: "applyImport", planId, delivery },
+      { type: "applyImport", planId, reviewFingerprint, delivery },
       options,
     );
     if (event.type !== "importApplied") throw unexpected("import");
@@ -292,11 +312,12 @@ export class WorkspaceClient {
 
   async recordDelivery(
     planId: string,
+    reviewFingerprint: string,
     delivery: WorkspaceDeliveryContext,
     options?: WorkspaceRunOptions,
   ): Promise<WorkspaceImportResult> {
     const event = await this.#request(
-      { type: "recordDelivery", planId, delivery },
+      { type: "recordDelivery", planId, reviewFingerprint, delivery },
       options,
     );
     if (event.type !== "importApplied") throw unexpected("delivery");

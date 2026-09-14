@@ -55,8 +55,8 @@ export async function finishCliImport(
     options.temporaryPath === undefined
       ? ""
       : removal.status === "completed"
-        ? ` The private import-plan directory at "${options.temporaryPath}" was removed.`
-        : ` The private import-plan directory may remain at "${options.temporaryPath}". Restart the process before inspecting or removing it if its plan handle could not be closed.`;
+        ? ` The private saved-batch directory at "${options.temporaryPath}" was removed.`
+        : ` The private saved-batch directory may remain at "${options.temporaryPath}". Restart the process before inspecting or removing it if its batch handle could not be closed.`;
   const operationCompleted = options.outcome.status === "completed";
   const outcomeGuidance = operationCompleted
     ? "The database operation completed, but its local resources could not finish closing. Inspect the committed result before deciding whether to retry."

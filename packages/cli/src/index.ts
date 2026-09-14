@@ -262,7 +262,7 @@ program
     `
 Quick start:
   consultchimps db create -o inventory.duckdb
-  consultchimps db plan inventory.duckdb --input inventory.xlsx -o review.ccplan
+  consultchimps db import prepare inventory.duckdb --input inventory.xlsx -o review.ccplan
   consultchimps sheets inspect clients.xlsx
   consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
   consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx

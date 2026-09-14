@@ -9,7 +9,7 @@ import {
 import {
   createWorkbookImportSource,
   type WorkbookImportSource,
-  type ImportRecipe,
+  type ImportProfile,
 } from "@consultchimps/db";
 import {
   createScratchDirectory,
@@ -118,18 +118,18 @@ export async function readDbDocument(filePath: string): Promise<unknown> {
 export async function openDbInputs(
   options: DbInputOptions,
   controls: OperationControlOptions,
-  recipe?: ImportRecipe,
+  profile?: ImportProfile,
 ): Promise<OpenDbInputs> {
   const chosen = [options.sheet, options.table, options.range].filter(
     (value) => value !== undefined,
   );
   if (
     chosen.length > 1 ||
-    (chosen.length > 0 && (options.input.length !== 1 || recipe !== undefined))
+    (chosen.length > 0 && (options.input.length !== 1 || profile !== undefined))
   ) {
     throw new ConsultChimpsError(
       "DB_AMBIGUOUS_SELECTION",
-      "Use one region flag with one workbook, or save multiple source selections in an import recipe.",
+      "Use one region flag with one workbook, or save multiple source selections in an import profile.",
     );
   }
   const scratch = await createScratchDirectory(tmpdir());
@@ -162,7 +162,7 @@ export async function openDbInputs(
           bytes,
           scratch,
           selection,
-          selectionKeys: recipe?.routes
+          selectionKeys: profile?.routes
             .filter((route) => route.source === key)
             .map((route) => route.selection),
           hidden: options.hidden,

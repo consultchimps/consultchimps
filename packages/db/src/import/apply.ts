@@ -16,18 +16,17 @@ import {
 import type { EngineTransaction, EngineValue } from "../internal/engine.js";
 import { assertNoManagedDatabaseTriggers } from "../internal/database-layout.js";
 import { canonicalJson } from "../internal/json.js";
+import { DATABASE_STORAGE } from "../internal/storage-layouts.js";
+import { insertInternalRow } from "../internal/storage-schema.js";
 import {
-  APPLICATION_TABLE,
   CAPTURE_TABLE,
   COUNTERS_TABLE,
   DATABASE_METADATA_TABLE,
-  DELIVERY_MEMBERSHIP_TABLE,
   DELIVERY_TABLE,
   IMPORT_REQUEST_TABLE,
   PLAN_TABLE,
   SOURCE_CONTENT_TABLE,
   SOURCE_FILE_TABLE,
-  SOURCE_NAME_TABLE,
   CAPTURE_ROW_TABLE,
   TABLE_REGISTRY_TABLE,
 } from "../metadata.js";
@@ -42,8 +41,8 @@ import {
   sortTablesByReferences,
 } from "../records.js";
 import { formatRecordId, identifierKey, type TableSchema } from "../schema.js";
-import { parseDeliveryContext } from "../validators.js";
-import { parseStoredDeliveryContext } from "../internal/stored-delivery.js";
+import { parseBatchContext } from "../validators.js";
+import { parseStoredBatchContext } from "../internal/stored-delivery.js";
 import { parseImportCellsJson, valueForColumn } from "./inference.js";
 import {
   effectiveApplicationKey,
@@ -63,6 +62,7 @@ import {
   validatedReceiptRowCount,
 } from "./receipt.js";
 import type { ApplyImportOptions, ImportResult } from "./types.js";
+import type { DatabaseWriteResult } from "../write-completion.js";
 
 const CAPTURE_BATCH_ROWS = 2_000;
 
@@ -113,8 +113,8 @@ function assertCaptureRowChecksum(options: {
       ? "DB_INVALID_PREPARED_IMPORT"
       : "DB_CORRUPT_DATABASE",
     options.owner === "prepared-import"
-      ? "The import plan's captured rows do not match the reviewed row checksum. Regenerate the plan from its original sources or restore a verified plan copy."
-      : "A saved capture's rows do not match the reviewed row checksum. Restore a verified database copy or regenerate the import plan from its original sources.",
+      ? "The import batch's captured rows do not match the reviewed row checksum. Regenerate the batch from its original sources or restore a verified batch copy."
+      : "A saved capture's rows do not match the reviewed row checksum. Restore a verified database copy or regenerate the import batch from its original sources.",
     { captureId: options.captureId },
   );
 }
@@ -122,21 +122,21 @@ function assertCaptureRowChecksum(options: {
 export async function applyImport(
   options: ApplyImportOptions,
 ): Promise<ImportResult> {
-  throwIfAborted(options.signal, "db.apply");
+  throwIfAborted(options.signal, "db.import.apply");
   if (options.requestId.trim().length === 0) {
     throw databaseError(
       "DB_IMPORT_REQUEST_ID_REQUIRED",
-      "Give the import a request ID so retrying it cannot apply the same plan twice.",
+      "Give the import a request ID so retrying it cannot apply the same batch twice.",
     );
   }
   const delivery =
-    options.delivery === undefined
+    options.batchContext === undefined
       ? undefined
-      : parseDeliveryContext(options.delivery);
+      : parseBatchContext(options.batchContext);
   if (options.approved.state !== "ready") {
     throw databaseError(
       "DB_IMPORT_NEEDS_REVIEW",
-      "The import plan still needs review.",
+      "The import batch still needs review.",
     );
   }
   const preparedSnapshot = await readPreparedReviewSnapshot(
@@ -160,28 +160,30 @@ export async function applyImport(
   ) {
     throw databaseError(
       "DB_STALE_IMPORT_PLAN",
-      "The approved import plan is no longer current. Inspect and approve its latest revision.",
+      "The approved import batch is no longer current. Inspect and approve its latest revision.",
     );
   }
   const approved = actual;
   if (approved.databaseId !== options.database.id) {
     throw databaseError(
       "DB_STALE_IMPORT_PLAN",
-      "The approved import plan belongs to another database. Prepare it again for this database before applying.",
+      "The approved import batch belongs to another database. Prepare it again for this database before applying.",
     );
   }
   const target = engineOf(options.database);
   const preparedEngine = preparedEngineOf(options.prepared);
-  let recipe = preparedPlan.recipe;
+  let profile = preparedPlan.profile;
   const { conflicts, decisions } = preparedPlan;
   const captures = preparedSnapshot.captures;
   let rowsImported = 0;
   let rowsReused = 0;
   let tablesCreated = 0;
-  let deliveryId: string | undefined;
-  let deliveriesRecorded = 0;
+  let batchId: string | undefined;
+  let batchesRecorded = 0;
+  let databaseWrite: DatabaseWriteResult["databaseWrite"] = "unchanged";
   const importIds: string[] = [];
   const appliedCaptureIds = new Set<string>();
+  let captureIds: string[] = [];
   await target.transaction(async (transaction) => {
     const existingRequest = await transaction.query(
       `SELECT plan_id, plan_revision, import_ids_json, capture_ids_json, row_count FROM ${IMPORT_REQUEST_TABLE} WHERE request_id = ?`,
@@ -209,7 +211,7 @@ export async function applyImport(
         importIds: savedImportIds,
         captureIds: savedCaptureIds,
         storedRowCount: existingRequest[0]["row_count"],
-        recipe,
+        profile,
         planId: approved.id,
         planRevision: approved.planRevision,
       });
@@ -221,13 +223,13 @@ export async function applyImport(
         [options.requestId],
       );
       if (deliveries[0] !== undefined) {
-        deliveryId = valueAsString(deliveries[0]["delivery_id"], "delivery ID");
-        const storedDelivery = parseStoredDeliveryContext(
+        batchId = valueAsString(deliveries[0]["delivery_id"], "batch ID");
+        const storedDelivery = parseStoredBatchContext(
           deliveries[0]["context_json"],
         );
         await assertReceiptDeliveryMemberships({
           transaction,
-          deliveryId,
+          batchId,
           captureIds: savedCaptureIds,
         });
         if (
@@ -236,17 +238,18 @@ export async function applyImport(
         ) {
           throw databaseError(
             "DB_REQUEST_ID_CONFLICT",
-            "This request ID was already used with different delivery details. Choose a new request ID.",
+            "This request ID was already used with different batch details. Choose a new request ID.",
             { requestId: options.requestId },
           );
         }
       } else if (delivery !== undefined) {
         throw databaseError(
           "DB_REQUEST_ID_CONFLICT",
-          "This request ID was already used without delivery details. Choose a new request ID.",
+          "This request ID was already used without batch details. Choose a new request ID.",
           { requestId: options.requestId },
         );
       }
+      captureIds = [...appliedCaptureIds].sort();
       return;
     }
     const standaloneDelivery = await transaction.query(
@@ -256,7 +259,7 @@ export async function applyImport(
     if (standaloneDelivery.length > 0) {
       throw databaseError(
         "DB_REQUEST_ID_CONFLICT",
-        "This request ID was already used for a delivery. Choose a new request ID for the import.",
+        "This request ID was already used for a batch. Choose a new request ID for the import.",
         { requestId: options.requestId },
       );
     }
@@ -291,16 +294,16 @@ export async function applyImport(
         return [identifierKey(name), name] as const;
       }),
     );
-    for (const route of recipe.routes) {
+    for (const route of profile.routes) {
       if (route.destination.kind !== "new-table") continue;
       const name = route.destination.schema.name;
       if (!canonicalTableNames.has(identifierKey(name))) {
         canonicalTableNames.set(identifierKey(name), name);
       }
     }
-    recipe = {
-      ...recipe,
-      routes: recipe.routes.map((route) => {
+    profile = {
+      ...profile,
+      routes: profile.routes.map((route) => {
         if (route.destination.kind === "existing-table") {
           return {
             ...route,
@@ -338,9 +341,14 @@ export async function applyImport(
     for (const capture of captures) {
       const published = publishedCaptures.get(capture.captureId);
       if (published !== undefined) {
-        await transaction.execute(
-          `INSERT INTO ${SOURCE_NAME_TABLE} VALUES (?, ?) ON CONFLICT DO NOTHING`,
-          [published.sourceFileId, capture.displayName],
+        await insertInternalRow(
+          transaction,
+          DATABASE_STORAGE.tables.sourceNames,
+          {
+            source_file_id: published.sourceFileId,
+            display_name: capture.displayName,
+          },
+          { onConflict: "do-nothing" },
         );
         captureIdByBinding.set(
           routeKey(capture.sourceKey, capture.selectionKey),
@@ -357,9 +365,13 @@ export async function applyImport(
           [capture.contentHash],
         );
         if (contentRows.length === 0) {
-          await transaction.execute(
-            `INSERT INTO ${SOURCE_CONTENT_TABLE} VALUES (?, ?)`,
-            [capture.contentHash, capture.byteCount],
+          await insertInternalRow(
+            transaction,
+            DATABASE_STORAGE.tables.sourceContents,
+            {
+              content_hash: capture.contentHash,
+              byte_count: capture.byteCount,
+            },
           );
         }
         const fileRows = await transaction.query(
@@ -371,9 +383,14 @@ export async function applyImport(
             ? await allocate(transaction, "source_file", "SRC")
             : valueAsString(fileRows[0]["source_file_id"], "source file ID");
         if (fileRows.length === 0) {
-          await transaction.execute(
-            `INSERT INTO ${SOURCE_FILE_TABLE} VALUES (?, ?, ?)`,
-            [sourceFileId, capture.contentHash, capture.displayName],
+          await insertInternalRow(
+            transaction,
+            DATABASE_STORAGE.tables.sourceFiles,
+            {
+              source_file_id: sourceFileId,
+              content_hash: capture.contentHash,
+              display_name: capture.displayName,
+            },
           );
         }
         const existingCapture = await transaction.query(
@@ -385,19 +402,20 @@ export async function applyImport(
             ? await allocate(transaction, "capture", "CAP")
             : valueAsString(existingCapture[0]["capture_id"], "capture ID");
         if (existingCapture.length === 0) {
-          await transaction.execute(
-            `INSERT INTO ${CAPTURE_TABLE} (capture_id, source_file_id, source_key, selection_key, selection_label, reader_version, state, row_count, columns_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              targetCaptureId,
-              sourceFileId,
-              capture.sourceKey,
-              capture.selectionKey,
-              capture.selectionLabel,
-              capture.readerVersion,
-              "completed",
-              capture.rowCount,
-              JSON.stringify(capture.columns),
-            ],
+          await insertInternalRow(
+            transaction,
+            DATABASE_STORAGE.tables.captures,
+            {
+              capture_id: targetCaptureId,
+              source_file_id: sourceFileId,
+              source_key: capture.sourceKey,
+              selection_key: capture.selectionKey,
+              selection_label: capture.selectionLabel,
+              reader_version: capture.readerVersion,
+              state: "completed",
+              row_count: capture.rowCount,
+              columns_json: JSON.stringify(capture.columns),
+            },
           );
           let sourceRowCursor: bigint | undefined;
           let copiedRows = 0n;
@@ -411,7 +429,7 @@ export async function applyImport(
               limit: CAPTURE_BATCH_ROWS,
               owner: "prepared-import",
             });
-            throwIfAborted(options.signal, "db.apply");
+            throwIfAborted(options.signal, "db.import.apply");
             if (page.rows.length === 0) break;
             const rows = page.rows.map(({ row, sourceRow }) => {
               const valuesJson = valueAsString(
@@ -451,9 +469,14 @@ export async function applyImport(
           "A prepared capture is missing its target identity.",
         );
       }
-      await transaction.execute(
-        `INSERT INTO ${SOURCE_NAME_TABLE} VALUES (?, ?) ON CONFLICT DO NOTHING`,
-        [sourceFileId, capture.displayName],
+      await insertInternalRow(
+        transaction,
+        DATABASE_STORAGE.tables.sourceNames,
+        {
+          source_file_id: sourceFileId,
+          display_name: capture.displayName,
+        },
+        { onConflict: "do-nothing" },
       );
       captureIdByBinding.set(
         routeKey(capture.sourceKey, capture.selectionKey),
@@ -465,7 +488,7 @@ export async function applyImport(
       });
       appliedCaptureIds.add(targetCaptureId);
     }
-    const recipeJson = canonicalJson(recipe);
+    const recipeJson = canonicalJson(profile);
     const conflictsJson = canonicalJson(conflicts);
     const decisionsJson = canonicalJson(decisions);
     const bindingsJson = canonicalJson(
@@ -484,24 +507,25 @@ export async function applyImport(
       [approved.id, approved.planRevision],
     );
     if (savedPlan[0] === undefined) {
-      await transaction.execute(
-        `INSERT INTO ${PLAN_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          approved.id,
-          approved.planRevision,
-          approved.baselineRevision,
-          "applied",
-          recipeJson,
-          conflictsJson,
-          decisionsJson,
-          bindingsJson,
-        ],
+      await insertInternalRow(
+        transaction,
+        DATABASE_STORAGE.tables.importPlans,
+        {
+          plan_id: approved.id,
+          plan_revision: approved.planRevision,
+          baseline_revision: approved.baselineRevision,
+          state: "applied",
+          recipe_json: recipeJson,
+          conflicts_json: conflictsJson,
+          decisions_json: decisionsJson,
+          bindings_json: bindingsJson,
+        },
       );
     } else if (
       valueAsBigInt(savedPlan[0]["baseline_revision"], "baseline revision") !==
         approved.baselineRevision ||
-      valueAsString(savedPlan[0]["state"], "plan state") !== "applied" ||
-      valueAsString(savedPlan[0]["recipe_json"], "import recipe") !==
+      valueAsString(savedPlan[0]["state"], "batch state") !== "applied" ||
+      valueAsString(savedPlan[0]["recipe_json"], "import profile") !==
         recipeJson ||
       valueAsString(savedPlan[0]["conflicts_json"], "import conflicts") !==
         conflictsJson ||
@@ -512,7 +536,7 @@ export async function applyImport(
     ) {
       throw databaseError(
         "DB_IMPORT_PLAN_HISTORY_CONFLICT",
-        "This import plan revision conflicts with saved database history.",
+        "This import batch revision conflicts with saved database history.",
         { planId: approved.id },
       );
     }
@@ -529,7 +553,7 @@ export async function applyImport(
         ),
       );
     }
-    for (const route of recipe.routes) {
+    for (const route of profile.routes) {
       if (route.destination.kind === "new-table") {
         routeSchemas.set(
           identifierKey(route.destination.schema.name),
@@ -542,17 +566,17 @@ export async function applyImport(
         if (!routeSchemas.has(identifierKey(foreignKey.referencesTable))) {
           throw databaseError(
             "DB_FOREIGN_TABLE_NOT_FOUND",
-            "An import relationship refers to a table that does not exist or appear in this plan.",
+            "An import relationship refers to a table that does not exist or appear in this batch.",
             { table: schema.name, referencesTable: foreignKey.referencesTable },
           );
         }
       }
     }
-    const orderedRoutes = orderRoutesByReferences(recipe.routes, [
+    const orderedRoutes = orderRoutesByReferences(profile.routes, [
       ...routeSchemas.values(),
     ]);
     const plannedTableNames = new Set(
-      recipe.routes.flatMap((route) =>
+      profile.routes.flatMap((route) =>
         route.destination.kind === "new-table"
           ? [identifierKey(route.destination.schema.name)]
           : [],
@@ -686,7 +710,7 @@ export async function applyImport(
         ? undefined
         : createCaptureRowChecksum();
       while (true) {
-        throwIfAborted(options.signal, "db.apply");
+        throwIfAborted(options.signal, "db.import.apply");
         const page = await readSourceRowPage({
           engine: transaction,
           table: CAPTURE_ROW_TABLE,
@@ -695,7 +719,7 @@ export async function applyImport(
           limit: CAPTURE_BATCH_ROWS,
           owner: "database",
         });
-        throwIfAborted(options.signal, "db.apply");
+        throwIfAborted(options.signal, "db.import.apply");
         if (page.rows.length === 0) break;
         const output: Array<readonly EngineValue[]> = [];
         for (const { row, sourceRow } of page.rows) {
@@ -765,63 +789,70 @@ export async function applyImport(
         `UPDATE ${TABLE_REGISTRY_TABLE} SET next_record_id = ? WHERE table_name = ?`,
         [nextRecord, tableName],
       );
-      await transaction.execute(
-        `INSERT INTO ${APPLICATION_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          importId,
-          applicationKey,
-          options.requestId,
-          captureId,
-          tableName,
-          approved.id,
-          approved.planRevision,
-          capture.rowCount,
-        ],
+      await insertInternalRow(
+        transaction,
+        DATABASE_STORAGE.tables.importApplications,
+        {
+          import_id: importId,
+          application_key: applicationKey,
+          request_id: options.requestId,
+          capture_id: captureId,
+          table_name: tableName,
+          plan_id: approved.id,
+          plan_revision: approved.planRevision,
+          row_count: capture.rowCount,
+        },
       );
       importIds.push(importId);
     }
-    await transaction.execute(
-      `INSERT INTO ${IMPORT_REQUEST_TABLE} VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        options.requestId,
-        approved.id,
-        approved.planRevision,
-        JSON.stringify(importIds),
-        JSON.stringify([...appliedCaptureIds].sort()),
-        BigInt(rowsImported + rowsReused),
-      ],
+    await insertInternalRow(
+      transaction,
+      DATABASE_STORAGE.tables.importRequests,
+      {
+        request_id: options.requestId,
+        plan_id: approved.id,
+        plan_revision: approved.planRevision,
+        import_ids_json: JSON.stringify(importIds),
+        capture_ids_json: JSON.stringify([...appliedCaptureIds].sort()),
+        row_count: BigInt(rowsImported + rowsReused),
+      },
     );
     if (delivery !== undefined) {
-      deliveryId = await allocate(transaction, "delivery", "DEL");
-      deliveriesRecorded = 1;
-      await transaction.execute(
-        `INSERT INTO ${DELIVERY_TABLE} VALUES (?, ?, ?)`,
-        [deliveryId, options.requestId, canonicalJson(delivery)],
-      );
+      batchId = await allocate(transaction, "delivery", "DEL");
+      batchesRecorded = 1;
+      await insertInternalRow(transaction, DATABASE_STORAGE.tables.deliveries, {
+        delivery_id: batchId,
+        request_id: options.requestId,
+        context_json: canonicalJson(delivery),
+      });
       for (const captureId of new Set(captureIdByBinding.values())) {
-        await transaction.execute(
-          `INSERT INTO ${DELIVERY_MEMBERSHIP_TABLE} VALUES (?, ?)`,
-          [deliveryId, captureId],
+        await insertInternalRow(
+          transaction,
+          DATABASE_STORAGE.tables.deliveryMemberships,
+          { delivery_id: batchId, capture_id: captureId },
         );
       }
     }
+    captureIds = [...appliedCaptureIds].sort();
     await transaction.execute(
       `UPDATE ${DATABASE_METADATA_TABLE} SET revision = revision + 1`,
     );
-    throwIfAborted(options.signal, "db.apply");
+    databaseWrite = "committed";
+    throwIfAborted(options.signal, "db.import.apply");
   });
   return {
-    operation: "db.apply",
+    databaseWrite,
+    operation: "db.import.apply",
     artifacts: [],
     warnings: [],
     metrics: {
       rowsImported,
       rowsReused,
       tablesCreated,
-      deliveriesRecorded,
+      batchesRecorded,
     },
     importIds,
-    captureIds: [...appliedCaptureIds].sort(),
-    ...(deliveryId === undefined ? {} : { deliveryId }),
+    captureIds,
+    ...(batchId === undefined ? {} : { batchId }),
   };
 }

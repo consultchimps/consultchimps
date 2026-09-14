@@ -153,14 +153,15 @@ test.each([
     ],
   },
   {
-    option: "recipe",
+    option: "profile",
     args: (root: string, missing: string) => [
       "db",
-      "resolve",
+      "import",
+      "update",
       path.join(root, "database.sqlite"),
-      "--plan",
+      "--batch",
       path.join(root, "review.ccplan"),
-      "--recipe",
+      "--profile",
       missing,
     ],
   },
@@ -168,9 +169,10 @@ test.each([
     option: "context",
     args: (root: string, missing: string) => [
       "db",
+      "import",
       "apply",
       path.join(root, "database.sqlite"),
-      "--plan",
+      "--batch",
       path.join(root, "review.ccplan"),
       "--context",
       missing,
@@ -324,7 +326,10 @@ test("an existing workbook path containing an equals sign remains a plain path",
   await writeFile(path.join(root, source), workbook([["Name"], ["North"]]));
   await run(["create", "-o", database]);
 
-  const imported = await run(["import", database, "--input", source], root);
+  const imported = await run(
+    ["import", "run", database, "--input", source],
+    root,
+  );
 
   expect(imported["metrics"]).toMatchObject({ rowsImported: 1 });
   expect((await run(["inspect", database]))["tables"]).toEqual([
@@ -345,6 +350,7 @@ test("a hidden-only workbook requires explicit hidden-sheet selection", async ()
     "--json",
     "db",
     "import",
+    "run",
     database,
     "--input",
     source,
@@ -364,6 +370,7 @@ test("a hidden-only workbook requires explicit hidden-sheet selection", async ()
 
   const imported = await run([
     "import",
+    "run",
     database,
     "--input",
     source,
@@ -456,14 +463,14 @@ test("inspects an ordinary SQLite database without adopting or changing it", asy
   expect(await readFile(file)).toEqual(before);
 });
 
-test("inspects a read-only saved plan without changing its journal mode or files", async () => {
+test("inspects a read-only saved batch without changing its journal mode or files", async () => {
   const root = await directory();
   const database = path.join(root, "inventory.sqlite");
   const source = path.join(root, "inventory.xlsx");
   const plan = path.join(root, "review.ccplan");
   await writeFile(source, workbook([["Name"], ["Synthetic"]]));
   await run(["create", "-o", database]);
-  await run(["plan", database, "--input", source, "-o", plan]);
+  await run(["import", "prepare", database, "--input", source, "-o", plan]);
   const connection = new Sqlite(plan);
   try {
     connection.pragma("journal_mode = DELETE");
@@ -474,7 +481,7 @@ test("inspects a read-only saved plan without changing its journal mode or files
   const files = (await readdir(root)).sort();
   await chmod(plan, 0o444);
   try {
-    expect((await run(["inspect", plan]))["capturedRows"]).toBe("1");
+    expect((await run(["import", "inspect", plan]))["capturedRows"]).toBe("1");
     expect(await readFile(plan)).toEqual(before);
     expect((await readdir(root)).sort()).toEqual(files);
   } finally {
@@ -501,17 +508,31 @@ test("renders database review commands as labeled prose while JSON stays structu
     JSON.stringify({ label: "Synthetic delivery", scope: { kind: "full" } }),
   );
   await run(["create", "-o", database]);
-  await run(["plan", database, "--input", `inventory=${source}`, "-o", plan]);
+  await run([
+    "import",
+    "prepare",
+    database,
+    "--input",
+    `inventory=${source}`,
+    "-o",
+    plan,
+  ]);
 
-  const planInspection = await runHuman(["inspect", plan, "--limit", "25"]);
-  expect(planInspection).toContain("Saved import plan inspection");
-  expect(planInspection).toContain("Rows newly captured in this plan: 25");
+  const planInspection = await runHuman([
+    "import",
+    "inspect",
+    plan,
+    "--limit",
+    "25",
+  ]);
+  expect(planInspection).toContain("Saved import batch inspection");
+  expect(planInspection).toContain("Rows newly captured in this batch: 25");
   expect(planInspection).toContain("Bounded row preview:");
   expect(planInspection).toContain('Name="Region 1"');
   expect(planInspection).toContain("source row 26");
   expect(planInspection).toContain("Selection key:");
   expect(planInspection).toContain("Capture ID:");
-  expect(planInspection).toContain("captured in this plan");
+  expect(planInspection).toContain("captured in this batch");
   expect(planInspection).toContain("Column mappings: Name -> Name (text)");
   expect(planInspection).toContain(
     'Confirm the inferred schema for new table "inventory"',
@@ -522,12 +543,18 @@ test("renders database review commands as labeled prose while JSON stays structu
   );
   expect(planInspection).not.toContain('"capturedRows"');
 
-  const firstPreview = await run(["inspect", plan, "--limit", "20"]);
+  const firstPreview = await run(["import", "inspect", plan, "--limit", "20"]);
   const nextCursor = firstPreview["nextCursor"];
   if (typeof nextCursor !== "string") {
     throw new Error("The first preview page did not return a cursor.");
   }
-  const firstPreviewText = await runHuman(["inspect", plan, "--limit", "20"]);
+  const firstPreviewText = await runHuman([
+    "import",
+    "inspect",
+    plan,
+    "--limit",
+    "20",
+  ]);
   expect(firstPreviewText).toContain("More preview rows are available.");
   const shownCursor = /^Next preview cursor \(data\): (.+)$/mu.exec(
     firstPreviewText,
@@ -537,6 +564,7 @@ test("renders database review commands as labeled prose while JSON stays structu
   }
   expect(shownCursor).toContain("\\");
   const secondPreviewText = await runHuman([
+    "import",
     "inspect",
     plan,
     "--limit",
@@ -547,16 +575,23 @@ test("renders database review commands as labeled prose while JSON stays structu
   expect(secondPreviewText).toContain("source row 26");
   expect(secondPreviewText).not.toContain("source row 2:");
 
-  const resolution = await runHuman(["resolve", database, "--plan", plan]);
-  expect(resolution).toContain("Saved import plan resolution");
+  const resolution = await runHuman([
+    "import",
+    "update",
+    database,
+    "--batch",
+    plan,
+  ]);
+  expect(resolution).toContain("Saved import batch update");
   expect(resolution).toContain("Status: Ready");
   expect(resolution).toContain("No accepted database rows were changed.");
   expect(resolution).not.toContain('"planRevision"');
 
   const applied = await run([
+    "import",
     "apply",
     database,
-    "--plan",
+    "--batch",
     plan,
     "--context",
     context,
@@ -607,14 +642,20 @@ test("renders database review commands as labeled prose while JSON stays structu
   }
   const databaseInspection = await runHuman(["inspect", database]);
   expect(databaseInspection).toContain("Database inspection");
-  expect(databaseInspection).toContain("Recorded deliveries: 25");
+  expect(databaseInspection).toContain("Recorded batches: 25");
   expect(databaseInspection).toContain(
     "Safety: This inspection did not change database tables or stored data.",
   );
   expect(databaseInspection).not.toContain('"completedImports"');
 
-  const deliveries = await runHuman(["deliveries", database, "--limit", "25"]);
-  expect(deliveries).toContain("Delivery history");
+  const deliveries = await runHuman([
+    "import",
+    "history",
+    database,
+    "--limit",
+    "25",
+  ]);
+  expect(deliveries).toContain("Batch history");
   expect(deliveries).toContain("Synthetic delivery");
   expect(deliveries).toContain("DEL-000025");
   expect(deliveries).toContain("Scope: Partial, Selected regions");
@@ -689,7 +730,7 @@ test("renders database review commands as labeled prose while JSON stays structu
   );
   expect(exportReview).not.toContain('"sourceFormat"');
 
-  const jsonInspection = await run(["inspect", plan]);
+  const jsonInspection = await run(["import", "inspect", plan]);
   expect(jsonInspection).toMatchObject({
     capturedRows: "25",
     prepared: { state: "ready" },
@@ -709,7 +750,8 @@ test("escapes controls inside database report values while JSON preserves them",
   await writeFile(context, JSON.stringify({ label, scope: { kind: "full" } }));
   await run(["create", "-o", database]);
   await run([
-    "plan",
+    "import",
+    "prepare",
     database,
     "--input",
     `${sourceAlias}=${source}`,
@@ -717,27 +759,28 @@ test("escapes controls inside database report values while JSON preserves them",
     plan,
   ]);
 
-  const planText = await runHuman(["inspect", plan]);
+  const planText = await runHuman(["import", "inspect", plan]);
   expect(planText).toContain(
     "inventory\\u000ASafety: forged source\\u000D\\u0009\\u001B[31m",
   );
   expect(planText.split("\n")).not.toContain("Safety: forged source");
-  expect((await run(["inspect", plan]))["routes"]).toEqual([
+  expect((await run(["import", "inspect", plan]))["routes"]).toEqual([
     expect.objectContaining({ source: sourceAlias }),
   ]);
 
-  await run(["resolve", database, "--plan", plan]);
+  await run(["import", "update", database, "--batch", plan]);
   await run([
+    "import",
     "apply",
     database,
-    "--plan",
+    "--batch",
     plan,
     "--context",
     context,
     "--request-id",
     requestId,
   ]);
-  const deliveriesText = await runHuman(["deliveries", database]);
+  const deliveriesText = await runHuman(["import", "history", database]);
   expect(deliveriesText).toContain(
     "Synthetic delivery\\u000ASafety: forged delivery\\u000D\\u0009\\u001B[32m",
   );
@@ -746,8 +789,8 @@ test("escapes controls inside database report values while JSON preserves them",
   );
   expect(deliveriesText.split("\n")).not.toContain("Safety: forged delivery");
   expect(deliveriesText.split("\n")).not.toContain("Next: forged action");
-  const deliveryPage = await run(["deliveries", database]);
-  expect(deliveryPage["deliveries"]).toEqual([
+  const deliveryPage = await run(["import", "history", database]);
+  expect(deliveryPage["batches"]).toEqual([
     expect.objectContaining({
       requestId,
       context: expect.objectContaining({ label }),
@@ -789,16 +832,17 @@ for (const format of ["sqlite", "duckdb"] as const) {
     );
     await run(["create", "-o", database, "--format", format]);
     await run([
-      "plan",
+      "import",
+      "prepare",
       database,
       "--input",
       `ready=${readySource}`,
-      "--recipe",
+      "--profile",
       readyRecipe,
       "-o",
       readyPlan,
     ]);
-    expect(await run(["inspect", readyPlan])).toMatchObject({
+    expect(await run(["import", "inspect", readyPlan])).toMatchObject({
       prepared: { state: "ready" },
     });
 
@@ -812,7 +856,13 @@ for (const format of ["sqlite", "duckdb"] as const) {
     const filesBefore = (await readdir(root)).sort();
     await chmod(readyPlan, 0o444);
     try {
-      const applied = await run(["apply", database, "--plan", readyPlan]);
+      const applied = await run([
+        "import",
+        "apply",
+        database,
+        "--batch",
+        readyPlan,
+      ]);
       expect(applied["metrics"]).toMatchObject({ rowsImported: 1 });
       expect(await readFile(readyPlan)).toEqual(planBefore);
       expect((await readdir(root)).sort()).toEqual(filesBefore);
@@ -824,20 +874,27 @@ for (const format of ["sqlite", "duckdb"] as const) {
     const unresolvedPlan = path.join(root, "unresolved.ccplan");
     await writeFile(unresolvedSource, workbook([["Name"], ["South"]]));
     await run([
-      "plan",
+      "import",
+      "prepare",
       database,
       "--input",
       `unresolved=${unresolvedSource}`,
       "-o",
       unresolvedPlan,
     ]);
-    expect(await run(["inspect", unresolvedPlan])).toMatchObject({
+    expect(await run(["import", "inspect", unresolvedPlan])).toMatchObject({
       prepared: { state: "needs-review" },
     });
 
-    const resolved = await run(["apply", database, "--plan", unresolvedPlan]);
+    const resolved = await run([
+      "import",
+      "apply",
+      database,
+      "--batch",
+      unresolvedPlan,
+    ]);
     expect(resolved["metrics"]).toMatchObject({ rowsImported: 1 });
-    expect(await run(["inspect", unresolvedPlan])).toMatchObject({
+    expect(await run(["import", "inspect", unresolvedPlan])).toMatchObject({
       prepared: { state: "ready" },
     });
     expect((await run(["inspect", database]))["tables"]).toEqual([
@@ -969,15 +1026,21 @@ for (const format of ["sqlite", "duckdb"] as const) {
     const plan = path.join(root, "duplicate.ccplan");
     await writeFile(source, workbook([["Name"], ["North"], ["South"]]));
     await run(["create", "-o", database]);
-    await run(["import", database, "--input", source]);
-    await run(["plan", database, "--input", source, "-o", plan]);
+    await run(["import", "run", database, "--input", source]);
+    await run(["import", "prepare", database, "--input", source, "-o", plan]);
     await rm(source);
 
-    const offline = await run(["inspect", plan]);
+    const offline = await run(["import", "inspect", plan]);
     expect(offline["previewWarnings"]).toEqual([
       expect.objectContaining({ code: "DB_PREVIEW_DATABASE_REQUIRED" }),
     ]);
-    const preview = await run(["inspect", plan, "--database", database]);
+    const preview = await run([
+      "import",
+      "inspect",
+      plan,
+      "--database",
+      database,
+    ]);
     expect(preview["examples"]).toEqual([
       expect.objectContaining({
         sourceRow: 2,
@@ -991,7 +1054,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
     expect(preview["previewWarnings"]).toEqual([]);
   });
 
-  test(`${format}: re-reviews a stale saved plan without returning to Excel`, async () => {
+  test(`${format}: re-reviews a stale saved batch without returning to Excel`, async () => {
     const root = await directory();
     const database = path.join(root, `inventory.${format}`);
     const source = path.join(root, "inventory.xlsx");
@@ -1000,7 +1063,8 @@ for (const format of ["sqlite", "duckdb"] as const) {
     await run(["create", "-o", database]);
     await writeFile(source, workbook([["Name"], ["North"]]));
     await run([
-      "plan",
+      "import",
+      "prepare",
       database,
       "--input",
       `first=${source}`,
@@ -1009,7 +1073,8 @@ for (const format of ["sqlite", "duckdb"] as const) {
     ]);
     await writeFile(source, workbook([["Name"], ["South"]]));
     await run([
-      "plan",
+      "import",
+      "prepare",
       database,
       "--input",
       `second=${source}`,
@@ -1017,29 +1082,42 @@ for (const format of ["sqlite", "duckdb"] as const) {
       secondPlan,
     ]);
     await rm(source);
-    await run(["apply", database, "--plan", firstPlan]);
+    await run(["import", "apply", database, "--batch", firstPlan]);
     await expect(
       execute(process.execPath, [
         cli,
         "--json",
         "db",
+        "import",
         "apply",
         database,
-        "--plan",
+        "--batch",
         secondPlan,
       ]),
     ).rejects.toMatchObject({
       code: 1,
       stdout: expect.stringContaining("DB_STALE_IMPORT_PLAN"),
     });
-    await run(["resolve", database, "--plan", secondPlan]);
-    const applied = await run(["apply", database, "--plan", secondPlan]);
+    await run(["import", "update", database, "--batch", secondPlan]);
+    const applied = await run([
+      "import",
+      "apply",
+      database,
+      "--batch",
+      secondPlan,
+    ]);
     expect(applied["metrics"]).toMatchObject({ rowsImported: 1 });
     expect((await run(["inspect", database]))["tables"]).toEqual([
       expect.objectContaining({ name: "first", rowCount: "1" }),
       expect.objectContaining({ name: "second", rowCount: "1" }),
     ]);
-    const retried = await run(["apply", database, "--plan", secondPlan]);
+    const retried = await run([
+      "import",
+      "apply",
+      database,
+      "--batch",
+      secondPlan,
+    ]);
     expect(retried["captureIds"]).toEqual(applied["captureIds"]);
     expect(retried["metrics"]).toMatchObject({
       rowsImported: 0,
@@ -1062,7 +1140,8 @@ for (const format of ["sqlite", "duckdb"] as const) {
     );
     await run(["create", "-o", database, "--format", format]);
     const plan = await run([
-      "plan",
+      "import",
+      "prepare",
       database,
       "--input",
       `inventory=${source}`,
@@ -1070,20 +1149,34 @@ for (const format of ["sqlite", "duckdb"] as const) {
       prepared,
     ]);
     expect(plan["metrics"]).toMatchObject({ rowsCaptured: 2 });
-    const preview = await run(["inspect", prepared]);
+    const preview = await run(["import", "inspect", prepared]);
     expect(preview["capturedRows"]).toBe("2");
     const renamedPlan = path.join(root, "renamed-plan.sqlite");
     await copyFile(prepared, renamedPlan);
-    expect((await run(["inspect", renamedPlan]))["capturedRows"]).toBe("2");
+    expect(
+      (await run(["import", "inspect", renamedPlan]))["capturedRows"],
+    ).toBe("2");
     await rm(source);
-    const applied = await run(["apply", database, "--plan", prepared]);
+    const applied = await run([
+      "import",
+      "apply",
+      database,
+      "--batch",
+      prepared,
+    ]);
     expect(applied["metrics"]).toMatchObject({ rowsImported: 2 });
     const inspected = await run(["inspect", database]);
     expect(inspected["format"]).toBe(format);
     expect(inspected["tables"]).toEqual([
       expect.objectContaining({ rowCount: "2" }),
     ]);
-    const retried = await run(["apply", database, "--plan", prepared]);
+    const retried = await run([
+      "import",
+      "apply",
+      database,
+      "--batch",
+      prepared,
+    ]);
     expect(retried["metrics"]).toMatchObject({ rowsImported: 0 });
   });
 
@@ -1096,9 +1189,10 @@ for (const format of ["sqlite", "duckdb"] as const) {
     await copyFile(source, renamed);
     const original = await readFile(source);
     await run(["create", "-o", database]);
-    await run(["import", database, "--input", `inventory=${source}`]);
+    await run(["import", "run", database, "--input", `inventory=${source}`]);
     const repeated = await run([
       "import",
+      "run",
       database,
       "--input",
       `inventory=${renamed}`,
@@ -1160,10 +1254,11 @@ for (const format of ["sqlite", "duckdb"] as const) {
     await run(["create", "-o", database, "--schema", schema]);
     const first = await run([
       "import",
+      "run",
       database,
       "--input",
       `inventory=${source}`,
-      "--recipe",
+      "--profile",
       recipe,
       "--context",
       context,
@@ -1173,10 +1268,11 @@ for (const format of ["sqlite", "duckdb"] as const) {
     await writeFile(source, workbook([["Name"], ["North revised"], ["South"]]));
     const second = await run([
       "import",
+      "run",
       database,
       "--input",
       `inventory=${source}`,
-      "--recipe",
+      "--profile",
       recipe,
       "--context",
       context,
@@ -1189,7 +1285,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
     if (!Array.isArray(captures) || typeof captures[0] !== "string")
       throw new Error("Import did not report its capture.");
     const deliveryArguments = [
-      "delivery",
+      "import",
       "record",
       database,
       "--capture",
@@ -1200,21 +1296,21 @@ for (const format of ["sqlite", "duckdb"] as const) {
       "submission-c",
     ];
     const delivered = await run(deliveryArguments);
-    expect(delivered["metrics"]).toMatchObject({ deliveriesRecorded: 1 });
+    expect(delivered["metrics"]).toMatchObject({ batchesRecorded: 1 });
     const retried = await run(deliveryArguments);
-    expect(retried["metrics"]).toMatchObject({ deliveriesRecorded: 0 });
+    expect(retried["metrics"]).toMatchObject({ batchesRecorded: 0 });
     const before = await run(["inspect", database]);
     expect(before["tables"]).toEqual([
       expect.objectContaining({ name: "datasets", rowCount: "3" }),
     ]);
-    expect(before["deliveries"]).toBe("3");
+    expect(before["recordedBatches"]).toBe("3");
     await run(["export", database, "-o", converted]);
     const after = await run(["inspect", converted]);
     expect(after["format"]).toBe(targetFormat);
     expect(after["tables"]).toEqual(before["tables"]);
     expect(after["captures"]).toBe(before["captures"]);
-    expect(await run(["deliveries", converted])).toEqual(
-      await run(["deliveries", database]),
+    expect(await run(["import", "history", converted])).toEqual(
+      await run(["import", "history", database]),
     );
   });
 }
@@ -1224,15 +1320,41 @@ test("db help describes source-safe persistence and format choices", async () =>
     ["--help"],
     ["db", "--help"],
     ["db", "create", "--help"],
-    ["db", "plan", "--help"],
+    ["db", "import", "--help"],
+    ["db", "import", "prepare", "--help"],
   ]) {
     const result = await execute(process.execPath, [cli, ...args], {
       encoding: "utf8",
     });
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("consultchimps");
-    if (args[1] === "plan")
+    if (args[1] === "import" && args[2] === "prepare")
       expect(result.stdout).toMatch(/existing paths are used as\s+written/u);
+  }
+
+  const dbHelp = await execute(process.execPath, [cli, "db", "--help"], {
+    encoding: "utf8",
+  });
+  expect(dbHelp.stdout).toContain("import");
+  expect(dbHelp.stdout).not.toMatch(
+    /^\s+(plan|apply|resolve|deliveries|delivery)\b/mu,
+  );
+
+  const importHelp = await execute(
+    process.execPath,
+    [cli, "db", "import", "--help"],
+    { encoding: "utf8" },
+  );
+  for (const command of [
+    "prepare",
+    "inspect",
+    "update",
+    "apply",
+    "run",
+    "history",
+    "record",
+  ]) {
+    expect(importHelp.stdout).toMatch(new RegExp(`^  ${command}\\b`, "mu"));
   }
 });
 
@@ -1300,17 +1422,18 @@ test("one recipe can select several distinct regions in the same workbook", asyn
   );
   await run(["create", "-o", database]);
   await run([
-    "plan",
+    "import",
+    "prepare",
     database,
     "--input",
     `inventory=${source}`,
-    "--recipe",
+    "--profile",
     recipe,
     "-o",
     plan,
   ]);
   await rm(source);
-  await run(["apply", database, "--plan", plan]);
+  await run(["import", "apply", database, "--batch", plan]);
   expect((await run(["inspect", database]))["tables"]).toEqual([
     expect.objectContaining({ name: "left_side", rowCount: "1" }),
     expect.objectContaining({ name: "right_side", rowCount: "1" }),
@@ -1368,26 +1491,28 @@ test("a replacement recipe excludes routes it omits", async () => {
   );
   await run(["create", "-o", database]);
   await run([
-    "plan",
+    "import",
+    "prepare",
     database,
     "--input",
     `inventory=${source}`,
-    "--recipe",
+    "--profile",
     initialRecipe,
     "-o",
     plan,
   ]);
   const resolved = await run([
-    "resolve",
+    "import",
+    "update",
     database,
-    "--plan",
+    "--batch",
     plan,
-    "--recipe",
+    "--profile",
     replacementRecipe,
   ]);
   expect(resolved).toMatchObject({ state: "ready" });
   await rm(source);
-  const applied = await run(["apply", database, "--plan", plan]);
+  const applied = await run(["import", "apply", database, "--batch", plan]);
   expect(applied["metrics"]).toMatchObject({ rowsImported: 1 });
   expect((await run(["inspect", database]))["tables"]).toEqual([
     expect.objectContaining({ name: "left_side", rowCount: "1" }),
@@ -1434,25 +1559,27 @@ test("an empty replacement recipe excludes every captured route", async () => {
   );
   await run(["create", "-o", database]);
   await run([
-    "plan",
+    "import",
+    "prepare",
     database,
     "--input",
     `inventory=${source}`,
-    "--recipe",
+    "--profile",
     initialRecipe,
     "-o",
     plan,
   ]);
   const resolved = await run([
-    "resolve",
+    "import",
+    "update",
     database,
-    "--plan",
+    "--batch",
     plan,
-    "--recipe",
+    "--profile",
     replacementRecipe,
   ]);
   expect(resolved).toMatchObject({ state: "ready" });
-  const applied = await run(["apply", database, "--plan", plan]);
+  const applied = await run(["import", "apply", database, "--batch", plan]);
   expect(applied["metrics"]).toMatchObject({ rowsImported: 0 });
   expect((await run(["inspect", database]))["tables"]).toEqual([]);
 });
@@ -1464,7 +1591,15 @@ test("forced plan replacement preserves the old plan until capture succeeds", as
   const plan = path.join(root, "safe.ccplan");
   await writeFile(source, workbook([["Name"], ["North"]]));
   await run(["create", "-o", database]);
-  await run(["plan", database, "--input", `inventory=${source}`, "-o", plan]);
+  await run([
+    "import",
+    "prepare",
+    database,
+    "--input",
+    `inventory=${source}`,
+    "-o",
+    plan,
+  ]);
   const originalPlan = await readFile(plan);
   await writeFile(source, await workbookWithInvalidNumericCell());
   await expect(
@@ -1472,7 +1607,8 @@ test("forced plan replacement preserves the old plan until capture succeeds", as
       cli,
       "--json",
       "db",
-      "plan",
+      "import",
+      "prepare",
       database,
       "--input",
       `inventory=${source}`,
@@ -1485,7 +1621,7 @@ test("forced plan replacement preserves the old plan until capture succeeds", as
     stdout: expect.stringContaining("XLSX_READ_FAILED"),
   });
   expect(await readFile(plan)).toEqual(originalPlan);
-  expect((await run(["inspect", plan]))["capturedRows"]).toBe("1");
+  expect((await run(["import", "inspect", plan]))["capturedRows"]).toBe("1");
   expect(
     (await readdir(root)).filter((name) =>
       name.startsWith(`.${path.basename(plan)}.`),
@@ -1498,7 +1634,8 @@ test("forced plan replacement preserves the old plan until capture succeeds", as
       cli,
       "--json",
       "db",
-      "plan",
+      "import",
+      "prepare",
       database,
       "--input",
       `inventory=${source}`,
@@ -1514,7 +1651,8 @@ test("forced plan replacement preserves the old plan until capture succeeds", as
 
   await writeFile(source, workbook([["Name"], ["North"], ["South"]]));
   await run([
-    "plan",
+    "import",
+    "prepare",
     database,
     "--input",
     `inventory=${source}`,
@@ -1522,7 +1660,7 @@ test("forced plan replacement preserves the old plan until capture succeeds", as
     plan,
     "-f",
   ]);
-  expect((await run(["inspect", plan]))["capturedRows"]).toBe("2");
+  expect((await run(["import", "inspect", plan]))["capturedRows"]).toBe("2");
 });
 
 test("a recipe naming an unavailable source fails instead of accepting an empty import", async () => {
@@ -1556,10 +1694,11 @@ test("a recipe naming an unavailable source fails instead of accepting an empty 
       "--json",
       "db",
       "import",
+      "run",
       database,
       "--input",
       `inventory=${source}`,
-      "--recipe",
+      "--profile",
       recipe,
     ]),
   ).rejects.toMatchObject({
@@ -1610,19 +1749,20 @@ test("db inspect explains conflicting mappings for aliases of one capture", asyn
   );
   await run(["create", "-o", database]);
   await run([
-    "plan",
+    "import",
+    "prepare",
     database,
     "--input",
     `first-alias=${source}`,
     "--input",
     `second-alias=${source}`,
-    "--recipe",
+    "--profile",
     recipe,
     "-o",
     plan,
   ]);
 
-  const inspection = await run(["inspect", plan]);
+  const inspection = await run(["import", "inspect", plan]);
   expect(inspection).toMatchObject({
     prepared: { state: "needs-review" },
     conflicts: [
@@ -1630,7 +1770,7 @@ test("db inspect explains conflicting mappings for aliases of one capture", asyn
       { kind: "conflicting-application-mapping", source: "second-alias" },
     ],
   });
-  const report = await runHuman(["inspect", plan]);
+  const report = await runHuman(["import", "inspect", plan]);
   expect(report).toContain(
     'maps the same captured data differently for table "Records"',
   );

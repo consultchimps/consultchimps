@@ -9,20 +9,19 @@ import {
   validateDatabaseLayout,
   validateRegisteredTables,
 } from "./internal/database-layout.js";
+import { RetryableClose } from "./internal/retryable-close.js";
+import { DATABASE_STORAGE } from "./internal/storage-layouts.js";
+import {
+  createInternalTables,
+  insertInternalRow,
+} from "./internal/storage-schema.js";
 import {
   APPLICATION_TABLE,
   CAPTURE_TABLE,
-  COUNTERS_TABLE,
   DATABASE_FILE_FORMAT_VERSION,
   DATABASE_METADATA_TABLE,
-  DELIVERY_MEMBERSHIP_TABLE,
   DELIVERY_TABLE,
-  IMPORT_REQUEST_TABLE,
   PLAN_TABLE,
-  SOURCE_CONTENT_TABLE,
-  SOURCE_FILE_TABLE,
-  SOURCE_NAME_TABLE,
-  CAPTURE_ROW_TABLE,
   TABLE_REGISTRY_TABLE,
 } from "./metadata.js";
 import {
@@ -57,8 +56,8 @@ export interface DatabaseInspection {
   readonly tables: readonly DatabaseTableSummary[];
   readonly captures: bigint;
   readonly completedImports: bigint;
-  readonly deliveries: bigint;
-  readonly appliedImportPlans: bigint;
+  readonly recordedBatches: bigint;
+  readonly appliedImportBatches: bigint;
 }
 
 const engines = new WeakMap<Database, DatabaseEngine>();
@@ -76,8 +75,7 @@ class ManagedDatabase implements Database {
   readonly id: DatabaseId;
   readonly format: DatabaseFormat;
   readonly capabilities: DatabaseCapabilities;
-  #open = true;
-  #closing: Promise<void> | undefined;
+  readonly #lifecycle: RetryableClose;
 
   constructor(id: DatabaseId, engine: DatabaseEngine) {
     this.id = id;
@@ -89,31 +87,23 @@ class ManagedDatabase implements Database {
       interrupt: engine.interruptible,
     };
     engines.set(this, engine);
+    this.#lifecycle = new RetryableClose(async () => {
+      await engine.close();
+      engines.delete(this);
+    });
   }
 
   get isOpen(): boolean {
-    return this.#open;
+    return this.#lifecycle.isOpen;
   }
 
   async checkpoint(): Promise<void> {
-    assertOpen(this.#open);
+    assertOpen(this.#lifecycle.isOpen);
     await engineOf(this).checkpoint();
   }
 
   close(): Promise<void> {
-    if (this.#closing !== undefined) return this.#closing;
-    if (!this.#open) return Promise.resolve();
-    const closing = Promise.resolve()
-      .then(() => engineOf(this).close())
-      .then(() => {
-        this.#open = false;
-        engines.delete(this);
-      })
-      .finally(() => {
-        if (this.#closing === closing) this.#closing = undefined;
-      });
-    this.#closing = closing;
-    return closing;
+    return this.#lifecycle.close();
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
@@ -182,19 +172,13 @@ async function initializeMetadata(
   id: DatabaseId,
   format: DatabaseFormat,
 ): Promise<void> {
-  await transaction.execute(
-    `CREATE TABLE ${DATABASE_METADATA_TABLE} (database_id VARCHAR PRIMARY KEY, format VARCHAR NOT NULL, format_version BIGINT NOT NULL, revision BIGINT NOT NULL)`,
-  );
-  await transaction.execute(
-    `INSERT INTO ${DATABASE_METADATA_TABLE} VALUES (?, ?, ?, ?)`,
-    [id, format, BigInt(DATABASE_FILE_FORMAT_VERSION), 0n],
-  );
-  await transaction.execute(
-    `CREATE TABLE ${TABLE_REGISTRY_TABLE} (table_name VARCHAR PRIMARY KEY, schema_json VARCHAR NOT NULL, schema_version BIGINT NOT NULL, next_record_id BIGINT NOT NULL)`,
-  );
-  await transaction.execute(
-    `CREATE TABLE ${COUNTERS_TABLE} (counter_name VARCHAR PRIMARY KEY, next_value BIGINT NOT NULL)`,
-  );
+  await createInternalTables(transaction, DATABASE_STORAGE, format);
+  await insertInternalRow(transaction, DATABASE_STORAGE.tables.database, {
+    database_id: id,
+    format,
+    format_version: BigInt(DATABASE_FILE_FORMAT_VERSION),
+    revision: 0n,
+  });
   for (const counter of [
     "source_file",
     "capture",
@@ -203,43 +187,11 @@ async function initializeMetadata(
     "delivery",
     "imported_row",
   ]) {
-    await transaction.execute(`INSERT INTO ${COUNTERS_TABLE} VALUES (?, ?)`, [
-      counter,
-      1n,
-    ]);
+    await insertInternalRow(transaction, DATABASE_STORAGE.tables.counters, {
+      counter_name: counter,
+      next_value: 1n,
+    });
   }
-  await transaction.execute(
-    `CREATE TABLE ${SOURCE_CONTENT_TABLE} (content_hash VARCHAR PRIMARY KEY, byte_count BIGINT NOT NULL)`,
-  );
-  await transaction.execute(
-    `CREATE TABLE ${SOURCE_FILE_TABLE} (source_file_id VARCHAR PRIMARY KEY, content_hash VARCHAR NOT NULL, display_name VARCHAR NOT NULL, UNIQUE(content_hash))`,
-  );
-  await transaction.execute(
-    `CREATE TABLE ${SOURCE_NAME_TABLE} (source_file_id VARCHAR NOT NULL, display_name VARCHAR NOT NULL, PRIMARY KEY(source_file_id, display_name))`,
-  );
-  await transaction.execute(
-    `CREATE TABLE ${CAPTURE_TABLE} (capture_id VARCHAR PRIMARY KEY, source_file_id VARCHAR NOT NULL, source_key VARCHAR NOT NULL, selection_key VARCHAR NOT NULL, selection_label VARCHAR NOT NULL, reader_version VARCHAR NOT NULL, state VARCHAR NOT NULL, row_count BIGINT NOT NULL, columns_json VARCHAR NOT NULL, UNIQUE(source_file_id, selection_key, reader_version))`,
-  );
-  await transaction.execute(
-    `CREATE TABLE ${PLAN_TABLE} (plan_id VARCHAR NOT NULL, plan_revision BIGINT NOT NULL, baseline_revision BIGINT NOT NULL, state VARCHAR NOT NULL, recipe_json VARCHAR NOT NULL, conflicts_json VARCHAR NOT NULL, decisions_json VARCHAR NOT NULL, bindings_json VARCHAR NOT NULL, PRIMARY KEY(plan_id, plan_revision))`,
-  );
-  await transaction.execute(
-    format === "duckdb"
-      ? `CREATE TABLE ${CAPTURE_ROW_TABLE} (capture_id VARCHAR NOT NULL, source_row BIGINT NOT NULL, values_json VARCHAR NOT NULL)`
-      : `CREATE TABLE ${CAPTURE_ROW_TABLE} (capture_id VARCHAR NOT NULL, source_row BIGINT NOT NULL, values_json VARCHAR NOT NULL, PRIMARY KEY(capture_id, source_row))`,
-  );
-  await transaction.execute(
-    `CREATE TABLE ${APPLICATION_TABLE} (import_id VARCHAR PRIMARY KEY, application_key VARCHAR NOT NULL UNIQUE, request_id VARCHAR NOT NULL, capture_id VARCHAR NOT NULL, table_name VARCHAR NOT NULL, plan_id VARCHAR NOT NULL, plan_revision BIGINT NOT NULL, row_count BIGINT NOT NULL, UNIQUE(request_id, capture_id, table_name))`,
-  );
-  await transaction.execute(
-    `CREATE TABLE ${IMPORT_REQUEST_TABLE} (request_id VARCHAR PRIMARY KEY, plan_id VARCHAR NOT NULL, plan_revision BIGINT NOT NULL, import_ids_json VARCHAR NOT NULL, capture_ids_json VARCHAR NOT NULL, row_count BIGINT NOT NULL)`,
-  );
-  await transaction.execute(
-    `CREATE TABLE ${DELIVERY_TABLE} (delivery_id VARCHAR PRIMARY KEY, request_id VARCHAR NOT NULL UNIQUE, context_json VARCHAR NOT NULL)`,
-  );
-  await transaction.execute(
-    `CREATE TABLE ${DELIVERY_MEMBERSHIP_TABLE} (delivery_id VARCHAR NOT NULL, capture_id VARCHAR NOT NULL, PRIMARY KEY(delivery_id, capture_id))`,
-  );
 }
 
 export async function createDatabaseHandle(
@@ -394,10 +346,10 @@ export async function inspectDatabase(options: {
         applicationRows[0]?.["count"],
         "import count",
       ),
-      deliveries: valueAsBigInt(deliveryRows[0]?.["count"], "delivery count"),
-      appliedImportPlans: valueAsBigInt(
+      recordedBatches: valueAsBigInt(deliveryRows[0]?.["count"], "batch count"),
+      appliedImportBatches: valueAsBigInt(
         planRows[0]?.["count"],
-        "applied import plan count",
+        "applied import batch count",
       ),
     };
   });

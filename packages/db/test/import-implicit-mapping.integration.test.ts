@@ -6,8 +6,8 @@ import { afterEach, expect, test } from "vitest";
 
 import { engineOf, inspectDatabase } from "../src/database.js";
 import { applyImport, prepareImport } from "../src/import/operations.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 
 const directories: string[] = [];
 
@@ -57,9 +57,9 @@ function source(): ImportSource {
   };
 }
 
-function recipe(
-  columns: ImportRecipe["routes"][number]["columns"],
-): ImportRecipe {
+function profile(
+  columns: ImportProfile["routes"][number]["columns"],
+): ImportProfile {
   return {
     version: 1,
     routes: [
@@ -97,11 +97,11 @@ for (const format of ["sqlite", "duckdb"] as const) {
       },
     });
     const baselineRevision = (await inspectDatabase({ database })).revision;
-    const implicitRecipe = recipe([]);
-    const prepared = await createPreparedImport({
+    const implicitRecipe = profile([]);
+    const prepared = await createImportBatch({
       path: path.join(directory, "review.ccplan"),
       database,
-      recipe: implicitRecipe,
+      profile: implicitRecipe,
       baselineRevision,
     });
     try {
@@ -109,7 +109,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         prepareImport({
           database,
           prepared,
-          recipe: implicitRecipe,
+          profile: implicitRecipe,
           sources: [source()],
         }),
       ).rejects.toMatchObject({ code: "DB_INVALID_RECIPE" });
@@ -117,14 +117,14 @@ for (const format of ["sqlite", "duckdb"] as const) {
         [],
       );
 
-      const explicitRecipe = recipe([
+      const explicitRecipe = profile([
         { source: "Value", target: "Value", type: "text" },
         { source: "value", target: "Secondary", type: "text" },
       ]);
       const outcome = await prepareImport({
         database,
         prepared,
-        recipe: explicitRecipe,
+        profile: explicitRecipe,
         sources: [source()],
       });
       expect(outcome.prepared.state).toBe("ready");

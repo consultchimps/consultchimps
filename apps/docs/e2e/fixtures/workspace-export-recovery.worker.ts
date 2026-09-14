@@ -5,7 +5,7 @@ import {
   inspectDatabase,
   planSchema,
   prepareImport,
-  type ImportRecipe,
+  type ImportProfile,
   type ImportSource,
 } from "@consultchimps/db";
 import {
@@ -181,7 +181,7 @@ async function createSource(
       ],
     },
   });
-  const recipe: ImportRecipe = {
+  const profile: ImportProfile = {
     version: 1,
     routes: [
       {
@@ -227,17 +227,17 @@ async function createSource(
     ],
   };
   const baseline = await inspectDatabase({ database: created.database });
-  const prepared = await runtime.createPreparedImport({
+  const prepared = await runtime.createImportBatch({
     name: `${runId}-${format}-source.ccplan`,
     database: created.database,
-    recipe,
+    profile,
     baselineRevision: baseline.revision,
   });
   try {
     const outcome = await prepareImport({
       database: created.database,
       prepared,
-      recipe,
+      profile,
       sources: [source],
     });
     if (outcome.prepared.state !== "ready") {

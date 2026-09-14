@@ -1,4 +1,4 @@
-import { ConsultChimpsError } from "@consultchimps/core";
+import { ConsultChimpsError, OwnedResources } from "@consultchimps/core";
 
 interface DbInputCleanupResources {
   readonly workbooks: readonly (() => Promise<void>)[];
@@ -13,26 +13,28 @@ interface CleanupFailure {
 
 async function closeStage(
   stage: CleanupFailure["stage"],
-  closes: Array<() => Promise<void>>,
+  resources: OwnedResources<CleanupOwner>,
 ): Promise<readonly CleanupFailure[]> {
-  const attempted = closes.splice(0);
-  const results = await Promise.allSettled(
-    attempted.map(async (close) => close()),
-  );
-  return results.flatMap((result, index) => {
-    if (result.status === "fulfilled") return [];
-    const close = attempted[index];
-    if (close !== undefined) closes.push(close);
-    return [{ stage, error: result.reason }];
-  });
+  const failures = await resources.close();
+  return failures.map((failure) => ({ stage, error: failure.error }));
+}
+
+interface CleanupOwner {
+  close(): Promise<void>;
+}
+
+function cleanupOwners(
+  closes: readonly (() => Promise<void>)[],
+): OwnedResources<CleanupOwner> {
+  return new OwnedResources(closes.map((close) => ({ close })));
 }
 
 export function createDbInputCloser(
   resources: DbInputCleanupResources,
 ): () => Promise<void> {
-  const workbooks = [...resources.workbooks];
-  const files = [...resources.files];
-  const scratch = [resources.scratch];
+  const workbooks = cleanupOwners(resources.workbooks);
+  const files = cleanupOwners(resources.files);
+  const scratch = cleanupOwners([resources.scratch]);
   let closed = false;
   let closing: Promise<void> | undefined;
   return async () => {

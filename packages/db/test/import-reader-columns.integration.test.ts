@@ -6,8 +6,8 @@ import { afterEach, expect, test } from "vitest";
 
 import { inspectDatabase, valueAsBigInt } from "../src/database.js";
 import { prepareImport } from "../src/import/operations.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 import {
   PREPARED_BINDING_TABLE,
   PREPARED_CAPTURE_TABLE,
@@ -25,7 +25,7 @@ afterEach(async () => {
   );
 });
 
-const recipe: ImportRecipe = {
+const profile: ImportProfile = {
   version: 1,
   routes: [
     {
@@ -41,7 +41,7 @@ const recipe: ImportRecipe = {
   ],
 };
 
-const explicitRecipe: ImportRecipe = {
+const explicitRecipe: ImportProfile = {
   version: 1,
   routes: [
     {
@@ -60,11 +60,11 @@ const explicitRecipe: ImportRecipe = {
   ],
 };
 
-const reservedTargetRecipe: ImportRecipe = {
+const reservedTargetRecipe: ImportProfile = {
   version: 1,
   routes: [
     {
-      ...recipe.routes[0]!,
+      ...profile.routes[0]!,
       columns: [{ source: "record_id", target: "_import_id", type: "integer" }],
     },
   ],
@@ -179,10 +179,10 @@ for (const format of ["sqlite", "duckdb"] as const) {
       path: path.join(directory, `workspace.${format}`),
       format,
     });
-    const prepared = await createPreparedImport({
+    const prepared = await createImportBatch({
       path: path.join(directory, "review.ccplan"),
       database,
-      recipe,
+      profile,
       baselineRevision: (await inspectDatabase({ database })).revision,
     });
     const counters = { batches: 0, closes: 0 };
@@ -191,7 +191,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         prepareImport({
           database,
           prepared,
-          recipe,
+          profile,
           sources: [source(["Value", "value"], counters)],
         }),
       ).rejects.toMatchObject({ code: "DB_INVALID_RECIPE" });
@@ -202,7 +202,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         prepareImport({
           database,
           prepared,
-          recipe,
+          profile,
           sources: [source([""], counters)],
         }),
       ).rejects.toMatchObject({ code: "DB_INVALID_IDENTIFIER" });
@@ -213,7 +213,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         prepareImport({
           database,
           prepared,
-          recipe,
+          profile,
           sources: [source(["record_id"], counters)],
         }),
       ).rejects.toMatchObject({ code: "DB_DUPLICATE_COLUMN" });
@@ -224,7 +224,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         prepareImport({
           database,
           prepared,
-          recipe: reservedTargetRecipe,
+          profile: reservedTargetRecipe,
           sources: [source(["record_id"], counters)],
         }),
       ).rejects.toMatchObject({ code: "DB_DUPLICATE_COLUMN" });
@@ -234,7 +234,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const outcome = await prepareImport({
         database,
         prepared,
-        recipe: explicitRecipe,
+        profile: explicitRecipe,
         sources: [source(["record_id"], counters)],
       });
       expect(outcome.prepared.state).toBe("ready");
@@ -256,10 +256,10 @@ for (const format of ["sqlite", "duckdb"] as const) {
       path: path.join(directory, `workspace.${format}`),
       format,
     });
-    const prepared = await createPreparedImport({
+    const prepared = await createImportBatch({
       path: path.join(directory, "review.ccplan"),
       database,
-      recipe,
+      profile,
       baselineRevision: (await inspectDatabase({ database })).revision,
     });
     try {
@@ -268,7 +268,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         await prepareImport({
           database,
           prepared,
-          recipe,
+          profile,
           sources: [sourceWithUnexpectedCell(true)],
         });
       } catch (cause) {
@@ -291,7 +291,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const outcome = await prepareImport({
         database,
         prepared,
-        recipe,
+        profile,
         sources: [sourceWithUnexpectedCell(false)],
       });
       expect(outcome.result.metrics.rowsCaptured).toBe(2_001);

@@ -202,10 +202,10 @@ export const TOOLS: readonly ConsultTool[] = [
   {
     slug: "data-workspace",
     category: "Database",
-    title: "Import workbooks into a database",
+    title: "Prepare workbook batches for a database",
     tabLabel: "Database",
     description:
-      "Create persistent SQLite or DuckDB files, review Excel imports, and retain source captures and delivery history locally",
+      "Create persistent SQLite or DuckDB files, review workbook batches, and retain source captures and batch history locally",
     docHref: "/docs/tools/data-workspace",
     surfaces: {
       cli: "works",

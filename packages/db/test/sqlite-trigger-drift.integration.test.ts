@@ -11,8 +11,8 @@ import {
   prepareImport,
   resolveImport,
 } from "../src/import/operations.js";
-import { recordDelivery } from "../src/import/deliveries.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
+import { recordBatch } from "../src/import/deliveries.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
 import {
   APPLICATION_TABLE,
   DATABASE_METADATA_TABLE,
@@ -21,7 +21,7 @@ import {
 } from "../src/metadata.js";
 import {
   createDatabase,
-  createPreparedImport,
+  createImportBatch,
   openDatabase,
 } from "../src/node.js";
 import {
@@ -87,7 +87,7 @@ const inventorySchema = {
   foreignKeys: [],
 };
 
-const recipe: ImportRecipe = {
+const profile: ImportProfile = {
   version: 1,
   routes: [
     {
@@ -105,18 +105,18 @@ const recipe: ImportRecipe = {
 async function readyImport(
   directory: string,
   database: Database,
-  selectedRecipe = recipe,
+  selectedRecipe = profile,
 ) {
-  const prepared = await createPreparedImport({
+  const prepared = await createImportBatch({
     path: path.join(directory, `${crypto.randomUUID()}.ccplan`),
     database,
-    recipe: selectedRecipe,
+    profile: selectedRecipe,
     baselineRevision: (await inspectDatabase({ database })).revision,
   });
   await prepareImport({
     database,
     prepared,
-    recipe: selectedRecipe,
+    profile: selectedRecipe,
     sources: [source()],
   });
   const approved = await resolveImport({ database, prepared, decisions: [] });
@@ -137,7 +137,7 @@ async function emptyWriteState(database: Database) {
     rowCount: inspection.tables[0]?.rowCount ?? 0n,
     receipts: receipts[0]?.["count"],
     applications: applications[0]?.["count"],
-    deliveries: inspection.deliveries,
+    deliveries: inspection.recordedBatches,
   };
 }
 
@@ -187,11 +187,11 @@ test("a persistent trigger on a managed table is rejected before import writes",
   raw.close();
 
   const database = await openDatabase({ path: databasePath });
-  const existingRecipe: ImportRecipe = {
-    ...recipe,
+  const existingRecipe: ImportProfile = {
+    ...profile,
     routes: [
       {
-        ...recipe.routes[0]!,
+        ...profile.routes[0]!,
         destination: { kind: "existing-table", table: "Inventory" },
       },
     ],
@@ -267,7 +267,7 @@ test("TEMP triggers on managed tables are rejected while unmanaged triggers rema
       `CREATE TRIGGER suppress_delivery BEFORE INSERT ON ${DELIVERY_TABLE} BEGIN SELECT RAISE(IGNORE); END`,
     );
     await expect(
-      recordDelivery({
+      recordBatch({
         database,
         captureIds: applied.captureIds,
         requestId: "standalone-delivery",
@@ -286,11 +286,11 @@ test("TEMP triggers on managed tables are rejected while unmanaged triggers rema
     await first.prepared.close();
   }
   await engineOf(database).execute("DROP TRIGGER suppress_delivery");
-  const existingRecipe: ImportRecipe = {
-    ...recipe,
+  const existingRecipe: ImportProfile = {
+    ...profile,
     routes: [
       {
-        ...recipe.routes[0]!,
+        ...profile.routes[0]!,
         destination: { kind: "existing-table", table: "Inventory" },
       },
     ],
@@ -324,10 +324,10 @@ test("prepared-row triggers are rejected before captured rows are staged", async
     path: path.join(directory, "workspace.sqlite"),
     format: "sqlite",
   });
-  const prepared = await createPreparedImport({
+  const prepared = await createImportBatch({
     path: path.join(directory, "review.ccplan"),
     database,
-    recipe,
+    profile,
     baselineRevision: (await inspectDatabase({ database })).revision,
   });
   try {
@@ -335,7 +335,7 @@ test("prepared-row triggers are rejected before captured rows are staged", async
       `CREATE TRIGGER suppress_prepared_rows BEFORE INSERT ON ${PREPARED_ROW_TABLE} BEGIN SELECT RAISE(IGNORE); END`,
     );
     await expect(
-      prepareImport({ database, prepared, recipe, sources: [source()] }),
+      prepareImport({ database, prepared, profile, sources: [source()] }),
     ).rejects.toMatchObject({
       code: "DB_SCHEMA_DRIFT",
       details: {
@@ -361,11 +361,11 @@ test("prepared metadata triggers cannot publish a false ready review", async () 
     path: path.join(directory, "workspace.sqlite"),
     format: "sqlite",
   });
-  const emptyRecipe: ImportRecipe = { version: 1, routes: [] };
-  const prepared = await createPreparedImport({
+  const emptyRecipe: ImportProfile = { version: 1, routes: [] };
+  const prepared = await createImportBatch({
     path: path.join(directory, "review.ccplan"),
     database,
-    recipe: emptyRecipe,
+    profile: emptyRecipe,
     baselineRevision: (await inspectDatabase({ database })).revision,
   });
   try {
@@ -376,7 +376,7 @@ test("prepared metadata triggers cannot publish a false ready review", async () 
       prepareImport({
         database,
         prepared,
-        recipe: emptyRecipe,
+        profile: emptyRecipe,
         sources: [],
       }),
     ).rejects.toMatchObject({

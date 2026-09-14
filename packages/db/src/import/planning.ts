@@ -40,10 +40,13 @@ import {
 import type {
   ColumnRoute,
   ImportConflict,
-  ImportRecipe,
+  ImportProfile,
   PrepareImportOptions,
 } from "./types.js";
-import { validateColumnMappings, validateImportRecipe } from "../validators.js";
+import {
+  validateColumnMappings,
+  validateImportProfile,
+} from "../validators.js";
 import { effectiveMappingKey } from "./application-key.js";
 
 const REVIEW_BATCH_ROWS = 2_000;
@@ -72,7 +75,7 @@ function invalidPreparedCaptureField(
 ): ReturnType<typeof databaseError> {
   return databaseError(
     "DB_INVALID_PREPARED_IMPORT",
-    `The import plan has an invalid captured ${field}. Prepare the source again or restore a verified plan copy.`,
+    `The import batch has an invalid captured ${field}. Prepare the source again or restore a verified batch copy.`,
     { field },
     cause,
   );
@@ -107,9 +110,32 @@ export async function preparedCaptures(
 
 export async function preparedCapturesFromEngine(
   engine: Pick<DatabaseEngine, "query">,
+  page: {
+    readonly source?: string | undefined;
+    readonly selection?: string | undefined;
+    readonly after?:
+      { readonly source: string; readonly selection: string } | undefined;
+    readonly limit?: number | undefined;
+  } = {},
 ): Promise<PreparedCapture[]> {
+  const filters: string[] = [];
+  const values: (string | bigint)[] = [];
+  if (page.source !== undefined && page.selection !== undefined) {
+    filters.push("b.source_key = ? AND b.selection_key = ?");
+    values.push(page.source, page.selection);
+  }
+  if (page.after !== undefined) {
+    filters.push(
+      "(b.source_key > ? OR (b.source_key = ? AND b.selection_key > ?))",
+    );
+    values.push(page.after.source, page.after.source, page.after.selection);
+  }
+  const where = filters.length === 0 ? "" : ` WHERE ${filters.join(" AND ")}`;
+  const limit = page.limit === undefined ? "" : " LIMIT ?";
+  if (page.limit !== undefined) values.push(BigInt(page.limit));
   const rows = await engine.query(
-    `SELECT c.capture_id, c.source_file_id, b.source_key, b.display_name, b.selection_key, c.selection_label, c.reader_version, c.content_hash, c.byte_count, c.reused, c.row_count, c.columns_json, c.row_checksum FROM ${PREPARED_CAPTURE_TABLE} c JOIN ${PREPARED_BINDING_TABLE} b ON b.capture_id = c.capture_id ORDER BY b.source_key, b.selection_key`,
+    `SELECT c.capture_id, c.source_file_id, b.source_key, b.display_name, b.selection_key, c.selection_label, c.reader_version, c.content_hash, c.byte_count, c.reused, c.row_count, c.columns_json, c.row_checksum FROM ${PREPARED_CAPTURE_TABLE} c JOIN ${PREPARED_BINDING_TABLE} b ON b.capture_id = c.capture_id${where} ORDER BY b.source_key, b.selection_key${limit}`,
+    values,
   );
   return rows.map((row) => ({
     captureId: valueAsString(row["capture_id"], "capture ID"),
@@ -131,7 +157,7 @@ export async function preparedCapturesFromEngine(
       if (/^[0-9a-f]{64}$/u.test(checksum)) return checksum;
       throw databaseError(
         "DB_INVALID_PREPARED_IMPORT",
-        "The import plan has an invalid captured row checksum. Prepare the source again or restore a verified plan copy.",
+        "The import batch has an invalid captured row checksum. Prepare the source again or restore a verified batch copy.",
         { captureId: valueAsString(row["capture_id"], "capture ID") },
       );
     })(),
@@ -146,7 +172,7 @@ export function routeKey(source: string, selection: string): string {
 }
 
 export function routeColumns(
-  route: ImportRecipe["routes"][number],
+  route: ImportProfile["routes"][number],
   capture: PreparedCapture,
 ): readonly ColumnRoute[] {
   return route.columns.length === 0
@@ -162,7 +188,7 @@ function sourceRowNumber(value: unknown): number {
   const sourceRow = valueAsBigInt(value, "source row");
   const result = Number(sourceRow);
   if (!Number.isSafeInteger(result) || result < 1) {
-    throw new Error("The prepared import contains an invalid source row.");
+    throw new Error("The prepared batch contains an invalid source row.");
   }
   return result;
 }
@@ -188,7 +214,7 @@ async function* captureRows(options: {
   }
 }
 
-function destinationName(route: ImportRecipe["routes"][number]): string {
+function destinationName(route: ImportProfile["routes"][number]): string {
   return route.destination.kind === "new-table" ||
     route.destination.kind === "new-table-infer"
     ? route.destination.kind === "new-table"
@@ -239,9 +265,9 @@ export async function findReusableCapture(options: {
 }
 
 export function orderRoutesByReferences(
-  routes: readonly ImportRecipe["routes"][number][],
+  routes: readonly ImportProfile["routes"][number][],
   schemas: readonly TableSchema[],
-): readonly ImportRecipe["routes"][number][] {
+): readonly ImportProfile["routes"][number][] {
   const ordered = sortTablesByReferences(schemas);
   const rank = new Map(
     ordered.map((schema, index) => [identifierKey(schema.name), index]),
@@ -261,7 +287,7 @@ export function orderRoutesByReferences(
 async function plannedRecordRanges(options: {
   readonly database: PrepareImportOptions["database"];
   readonly captures: readonly PreparedCapture[];
-  readonly recipe: ImportRecipe;
+  readonly profile: ImportProfile;
   readonly schemas: readonly TableSchema[];
 }): Promise<ReadonlyMap<string, readonly (readonly [bigint, bigint])[]>> {
   const engine = engineOf(options.database);
@@ -280,7 +306,7 @@ async function plannedRecordRanges(options: {
   );
   const reservedCapturesByTable = new Map<string, Set<string>>();
   for (const route of orderRoutesByReferences(
-    options.recipe.routes,
+    options.profile.routes,
     options.schemas,
   )) {
     if (route.destination.kind === "new-table-infer") continue;
@@ -346,9 +372,9 @@ export async function evaluateConflicts(
   database: PrepareImportOptions["database"],
   prepared: PrepareImportOptions["prepared"],
   captures: readonly PreparedCapture[],
-  recipe: ImportRecipe,
+  profile: ImportProfile,
 ): Promise<ImportConflict[]> {
-  validateImportRecipe(recipe);
+  validateImportProfile(profile);
   const inspection = await inspectDatabase({ database });
   await assertRegisteredColumns(
     engineOf(database),
@@ -361,7 +387,7 @@ export async function evaluateConflicts(
   const proposedTables = new Map(tables);
   const plannedTables = new Map<string, TableSchema>();
   const conflictingPlannedTables = new Set<string>();
-  for (const route of recipe.routes) {
+  for (const route of profile.routes) {
     if (route.destination.kind === "new-table") {
       const key = identifierKey(route.destination.schema.name);
       const planned = plannedTables.get(key);
@@ -377,7 +403,7 @@ export async function evaluateConflicts(
     }
   }
   const routes = new Map(
-    recipe.routes.map((route) => [
+    profile.routes.map((route) => [
       routeKey(route.source, route.selection),
       route,
     ]),
@@ -400,7 +426,7 @@ export async function evaluateConflicts(
       routeKey(capture.sourceKey, capture.selectionKey),
     ),
   );
-  for (const route of recipe.routes) {
+  for (const route of profile.routes) {
     const key = routeKey(route.source, route.selection);
     if (capturedRoutes.has(key)) continue;
     addConflict(`source-selection:${key}`, {
@@ -409,7 +435,7 @@ export async function evaluateConflicts(
       selection: route.selection,
     });
   }
-  for (const route of recipe.routes) {
+  for (const route of profile.routes) {
     if (route.destination.kind !== "new-table") continue;
     for (const foreignKey of route.destination.schema.foreignKeys ?? []) {
       if (!proposedTables.has(identifierKey(foreignKey.referencesTable))) {
@@ -423,12 +449,12 @@ export async function evaluateConflicts(
   const applicationGroups = new Map<
     string,
     Array<{
-      readonly route: ImportRecipe["routes"][number];
+      readonly route: ImportProfile["routes"][number];
       readonly table: string;
       readonly key: string;
     }>
   >();
-  for (const route of recipe.routes) {
+  for (const route of profile.routes) {
     if (route.destination.kind === "new-table-infer") continue;
     const capture = captures.find(
       (candidate) =>
@@ -488,7 +514,7 @@ export async function evaluateConflicts(
   const plannedRanges = await plannedRecordRanges({
     database,
     captures,
-    recipe,
+    profile,
     schemas: [...proposedTables.values()],
   });
   for (const capture of captures) {

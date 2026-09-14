@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { WorkspaceImportDiagnostics } from "./workspace-import-diagnostics";
 
 describe("WorkspaceImportDiagnostics", () => {
-  it("names an unsupported saved plan and explains how to replace it", () => {
+  it("names an unsupported saved batch and explains how to replace it", () => {
     const legacyVersion = 2;
     const supportedVersion = legacyVersion + 1;
     const rendered = renderToStaticMarkup(
@@ -14,7 +14,7 @@ describe("WorkspaceImportDiagnostics", () => {
           {
             name: ".consultchimps-import-old.sqlite",
             code: "DB_UNSUPPORTED_PREPARED_IMPORT_VERSION",
-            message: `This import plan uses format version ${String(legacyVersion)}, but this build supports version ${String(supportedVersion)}. Regenerate the plan from its original sources with this build.`,
+            message: `This saved batch uses format version ${String(legacyVersion)}, but this build supports version ${String(supportedVersion)}. Regenerate the batch from its original sources with this build.`,
           },
         ],
       }),
@@ -23,7 +23,9 @@ describe("WorkspaceImportDiagnostics", () => {
     expect(rendered).toContain(".consultchimps-import-old.sqlite");
     expect(rendered).toContain(`format version ${String(legacyVersion)}`);
     expect(rendered).toContain(`supports version ${String(supportedVersion)}`);
-    expect(rendered).toContain("Regenerate the plan from its original sources");
+    expect(rendered).toContain(
+      "Regenerate the batch from its original sources",
+    );
     expect(rendered).toContain("DB_UNSUPPORTED_PREPARED_IMPORT_VERSION");
   });
 });

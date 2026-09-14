@@ -13,11 +13,11 @@ import {
 } from "../src/import/operations.js";
 import type {
   ImportCell,
-  ImportRecipe,
+  ImportProfile,
   ImportSource,
 } from "../src/import/types.js";
 import { createCaptureRowChecksum } from "../src/import/row-checksum.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 import {
   PREPARED_BINDING_TABLE,
   PREPARED_CAPTURE_TABLE,
@@ -69,7 +69,7 @@ function sourceWithSelections(
   };
 }
 
-function recipeFor(...selections: readonly string[]): ImportRecipe {
+function recipeFor(...selections: readonly string[]): ImportProfile {
   return {
     version: 1,
     routes: selections.map((selection) => ({
@@ -136,11 +136,11 @@ for (const format of ["sqlite", "duckdb"] as const) {
       path: path.join(directory, `workspace.${format}`),
       format,
     });
-    const recipe = recipeFor("Inventory", "Other");
-    const prepared = await createPreparedImport({
+    const profile = recipeFor("Inventory", "Other");
+    const prepared = await createImportBatch({
       path: path.join(directory, "review.data"),
       database,
-      recipe,
+      profile,
       baselineRevision: 0n,
     });
     const bytes = new TextEncoder().encode("synthetic duplicate identities");
@@ -189,7 +189,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         prepareImport({
           database,
           prepared,
-          recipe,
+          profile,
           sources: [duplicateSelections],
         }),
       ).rejects.toMatchObject({
@@ -215,7 +215,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         prepareImport({
           database,
           prepared,
-          recipe,
+          profile,
           sources: duplicateSources,
         }),
       ).rejects.toMatchObject({
@@ -240,7 +240,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const valid = await prepareImport({
         database,
         prepared,
-        recipe,
+        profile,
         sources: [
           sourceWithSelections([
             ["Inventory", { kind: "string", value: "First" }],
@@ -266,18 +266,18 @@ for (const format of ["sqlite", "duckdb"] as const) {
       path: path.join(directory, `workspace.${format}`),
       format,
     });
-    const recipe = recipeFor("Good", "Bad");
-    const prepared = await createPreparedImport({
+    const profile = recipeFor("Good", "Bad");
+    const prepared = await createImportBatch({
       path: path.join(directory, "review.data"),
       database,
-      recipe,
+      profile,
       baselineRevision: 0n,
     });
     try {
       await prepareImport({
         database,
         prepared,
-        recipe,
+        profile,
         sources: [
           sourceWithSelections([
             ["Good", { kind: "string", value: "kept only on success" }],
@@ -309,7 +309,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       });
       const alteredApproval = await updatePreparedPlan({
         prepared,
-        recipe,
+        profile,
         conflicts: [],
         ready: true,
       });
@@ -344,11 +344,11 @@ for (const format of ["sqlite", "duckdb"] as const) {
       path: path.join(directory, `workspace.${format}`),
       format,
     });
-    const recipe = recipeFor("Inventory");
-    const prepared = await createPreparedImport({
+    const profile = recipeFor("Inventory");
+    const prepared = await createImportBatch({
       path: path.join(directory, "review.data"),
       database,
-      recipe,
+      profile,
       baselineRevision: 0n,
     });
     const failure = new Error("synthetic later-batch failure");
@@ -356,7 +356,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
     const source = multiBatchSource({ shouldFail: () => fail, failure });
     try {
       await expect(
-        prepareImport({ database, prepared, recipe, sources: [source] }),
+        prepareImport({ database, prepared, profile, sources: [source] }),
       ).rejects.toBe(failure);
 
       const preparedEngine = preparedEngineOf(prepared);
@@ -380,7 +380,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const retried = await prepareImport({
         database,
         prepared,
-        recipe,
+        profile,
         sources: [source],
       });
       expect(retried.prepared.state).toBe("ready");
@@ -411,11 +411,11 @@ test("source mutation after parsing removes staged rows", async () => {
     path: path.join(directory, "workspace.sqlite"),
     format: "sqlite",
   });
-  const recipe = recipeFor("Inventory");
-  const prepared = await createPreparedImport({
+  const profile = recipeFor("Inventory");
+  const prepared = await createImportBatch({
     path: path.join(directory, "review.data"),
     database,
-    recipe,
+    profile,
     baselineRevision: 0n,
   });
   let verificationCount = 0;
@@ -424,7 +424,7 @@ test("source mutation after parsing removes staged rows", async () => {
       prepareImport({
         database,
         prepared,
-        recipe,
+        profile,
         sources: [
           sourceWithSelections(
             [["Inventory", { kind: "string", value: "North" }]],
@@ -458,11 +458,11 @@ test("reusing a prepared binding rejects changed source content", async () => {
     path: path.join(directory, "workspace.sqlite"),
     format: "sqlite",
   });
-  const recipe = recipeFor("Inventory");
-  const prepared = await createPreparedImport({
+  const profile = recipeFor("Inventory");
+  const prepared = await createImportBatch({
     path: path.join(directory, "review.data"),
     database,
-    recipe,
+    profile,
     baselineRevision: 0n,
   });
   try {
@@ -472,7 +472,7 @@ test("reusing a prepared binding rejects changed source content", async () => {
     await prepareImport({
       database,
       prepared,
-      recipe,
+      profile,
       sources: [original],
     });
     const changedBytes = new TextEncoder().encode("changed submission bytes");
@@ -480,7 +480,7 @@ test("reusing a prepared binding rejects changed source content", async () => {
       prepareImport({
         database,
         prepared,
-        recipe,
+        profile,
         sources: [
           {
             ...original,

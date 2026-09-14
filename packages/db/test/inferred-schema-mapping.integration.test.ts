@@ -10,9 +10,9 @@ import {
   prepareImport,
   resolveImport,
 } from "../src/import/operations.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
 import { preparedRef, readPreparedRecipe } from "../src/prepared.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 
 const directories: string[] = [];
 
@@ -62,8 +62,8 @@ function reservedHeadingSource(): ImportSource {
 }
 
 function inferredRecipe(
-  columns: ImportRecipe["routes"][number]["columns"],
-): ImportRecipe {
+  columns: ImportProfile["routes"][number]["columns"],
+): ImportProfile {
   return {
     version: 1,
     routes: [
@@ -83,7 +83,7 @@ function inferredRecipe(
 
 async function fixture(
   format: "sqlite" | "duckdb",
-  recipe: ImportRecipe,
+  profile: ImportProfile,
   suffix: string,
 ) {
   const directory = await mkdtemp(
@@ -94,10 +94,10 @@ async function fixture(
     path: path.join(directory, `workspace.${format}`),
     format,
   });
-  const prepared = await createPreparedImport({
+  const prepared = await createImportBatch({
     path: path.join(directory, "review.ccplan"),
     database,
-    recipe,
+    profile,
     baselineRevision: (await inspectDatabase({ database })).revision,
   });
   return { database, prepared };
@@ -107,15 +107,15 @@ describe.each(["sqlite", "duckdb"] as const)(
   "%s inferred schema mappings",
   (format) => {
     test("keeps an explicit rename through review and apply", async () => {
-      const recipe = inferredRecipe([
+      const profile = inferredRecipe([
         { source: "record_id", target: "vendor_id", type: "text" },
       ]);
-      const { database, prepared } = await fixture(format, recipe, "rename");
+      const { database, prepared } = await fixture(format, profile, "rename");
       try {
         const outcome = await prepareImport({
           database,
           prepared,
-          recipe,
+          profile,
           sources: [reservedHeadingSource()],
         });
         expect(outcome.prepared.state).toBe("needs-review");
@@ -156,14 +156,14 @@ describe.each(["sqlite", "duckdb"] as const)(
     });
 
     test("rejects an inferred reserved target without corrupting review metadata", async () => {
-      const recipe = inferredRecipe([]);
-      const { database, prepared } = await fixture(format, recipe, "reserved");
+      const profile = inferredRecipe([]);
+      const { database, prepared } = await fixture(format, profile, "reserved");
       try {
         await expect(
           prepareImport({
             database,
             prepared,
-            recipe,
+            profile,
             sources: [reservedHeadingSource()],
           }),
         ).rejects.toMatchObject({
@@ -175,7 +175,7 @@ describe.each(["sqlite", "duckdb"] as const)(
           planRevision: 1n,
         });
         expect(await readPreparedRecipe(prepared)).toEqual({
-          recipe,
+          profile,
           conflicts: [],
           decisions: [],
         });
@@ -186,15 +186,15 @@ describe.each(["sqlite", "duckdb"] as const)(
     });
 
     test("stores a missing source mapping as a readable review conflict", async () => {
-      const recipe = inferredRecipe([
+      const profile = inferredRecipe([
         { source: "missing", target: "vendor_id", type: "text" },
       ]);
-      const { database, prepared } = await fixture(format, recipe, "missing");
+      const { database, prepared } = await fixture(format, profile, "missing");
       try {
         const outcome = await prepareImport({
           database,
           prepared,
-          recipe,
+          profile,
           sources: [reservedHeadingSource()],
         });
         expect(outcome.prepared.state).toBe("needs-review");

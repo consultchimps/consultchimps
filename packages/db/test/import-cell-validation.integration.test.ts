@@ -13,15 +13,15 @@ import {
 } from "../src/import/operations.js";
 import type {
   ImportCell,
-  ImportRecipe,
+  ImportProfile,
   ImportSource,
 } from "../src/import/types.js";
 import {
   createDatabase,
-  createPreparedImport,
+  createImportBatch,
   exportDatabase,
   openDatabase,
-  openPreparedImport,
+  openImportBatch,
 } from "../src/node.js";
 import {
   PREPARED_BINDING_TABLE,
@@ -40,7 +40,7 @@ afterEach(async () => {
   );
 });
 
-const recipe: ImportRecipe = {
+const profile: ImportProfile = {
   version: 1,
   routes: [
     {
@@ -164,7 +164,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       path: path.join(directory, `workspace.${format}`),
       format,
     });
-    const customRecipe: ImportRecipe = {
+    const customRecipe: ImportProfile = {
       version: 1,
       routes: [
         {
@@ -191,10 +191,10 @@ for (const format of ["sqlite", "duckdb"] as const) {
       ],
     };
     const planPath = path.join(directory, "review.ccplan");
-    const prepared = await createPreparedImport({
+    const prepared = await createImportBatch({
       path: planPath,
       database,
-      recipe: customRecipe,
+      profile: customRecipe,
       baselineRevision: 0n,
     });
     const decodedDate = {
@@ -211,7 +211,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       await prepareImport({
         database,
         prepared,
-        recipe: customRecipe,
+        profile: customRecipe,
         sources: [
           {
             ...reader,
@@ -227,7 +227,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       });
       if (approved.state !== "ready") throw new Error("Fixture needs review");
       await prepared.close();
-      const reopened = await openPreparedImport({ path: planPath });
+      const reopened = await openImportBatch({ path: planPath });
       try {
         const result = await applyImport({
           database,
@@ -259,10 +259,10 @@ for (const format of ["sqlite", "duckdb"] as const) {
       path: path.join(directory, `workspace.${format}`),
       format,
     });
-    const prepared = await createPreparedImport({
+    const prepared = await createImportBatch({
       path: path.join(directory, "review.ccplan"),
       database,
-      recipe,
+      profile,
       baselineRevision: 0n,
     });
     const validCells = {
@@ -283,7 +283,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         prepareImport({
           database,
           prepared,
-          recipe,
+          profile,
           sources: [
             source({
               ...validCells,
@@ -311,7 +311,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
           prepareImport({
             database,
             prepared,
-            recipe,
+            profile,
             sources: [
               source({ ...validCells, Amount: { kind: "number", raw } }),
             ],
@@ -323,7 +323,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const preparedOutcome = await prepareImport({
         database,
         prepared,
-        recipe,
+        profile,
         sources: [source(validCells)],
       });
       expect(preparedOutcome.prepared.state).toBe("needs-review");

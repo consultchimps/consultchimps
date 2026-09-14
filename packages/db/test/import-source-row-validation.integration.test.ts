@@ -12,9 +12,9 @@ import {
   resolveImport,
 } from "../src/import/operations.js";
 import type {
-  ImportRecipe,
+  ImportProfile,
   ImportSource,
-  ReadyImportRef,
+  ReadyImportBatchRef,
 } from "../src/import/types.js";
 import {
   APPLICATION_TABLE,
@@ -30,8 +30,8 @@ import {
 } from "../src/metadata.js";
 import {
   createDatabase,
-  createPreparedImport,
-  openPreparedImport,
+  createImportBatch,
+  openImportBatch,
 } from "../src/node.js";
 import { PREPARED_ROW_TABLE } from "../src/prepared.js";
 import type { DatabaseFormat } from "../src/schema.js";
@@ -46,7 +46,7 @@ afterEach(async () => {
   );
 });
 
-const recipe: ImportRecipe = {
+const profile: ImportProfile = {
   version: 1,
   routes: [
     {
@@ -110,24 +110,24 @@ function importSource(rowCount = 1): ImportSource {
 }
 
 async function saveReadyPlan(options: {
-  readonly database: Parameters<typeof createPreparedImport>[0]["database"];
+  readonly database: Parameters<typeof createImportBatch>[0]["database"];
   readonly planPath: string;
   readonly rowCount?: number | undefined;
-  readonly importRecipe?: ImportRecipe | undefined;
+  readonly importRecipe?: ImportProfile | undefined;
   readonly baselineRevision?: bigint | undefined;
-}): Promise<ReadyImportRef> {
-  const importRecipe = options.importRecipe ?? recipe;
-  const prepared = await createPreparedImport({
+}): Promise<ReadyImportBatchRef> {
+  const importRecipe = options.importRecipe ?? profile;
+  const prepared = await createImportBatch({
     path: options.planPath,
     database: options.database,
-    recipe: importRecipe,
+    profile: importRecipe,
     baselineRevision: options.baselineRevision ?? 0n,
   });
   try {
     await prepareImport({
       database: options.database,
       prepared,
-      recipe: importRecipe,
+      profile: importRecipe,
       sources: [importSource(options.rowCount)],
     });
     const approved = await resolveImport({
@@ -142,11 +142,11 @@ async function saveReadyPlan(options: {
   }
 }
 
-const copyRecipe: ImportRecipe = {
+const copyRecipe: ImportProfile = {
   version: 1,
   routes: [
     {
-      ...recipe.routes[0]!,
+      ...profile.routes[0]!,
       destination: {
         kind: "new-table",
         schema: {
@@ -161,15 +161,15 @@ const copyRecipe: ImportRecipe = {
 };
 
 async function expectNoImportHistory(
-  database: Parameters<typeof createPreparedImport>[0]["database"],
+  database: Parameters<typeof createImportBatch>[0]["database"],
 ) {
   expect(await inspectDatabase({ database })).toMatchObject({
     revision: 0n,
     tables: [],
     captures: 0n,
     completedImports: 0n,
-    deliveries: 0n,
-    appliedImportPlans: 0n,
+    recordedBatches: 0n,
+    appliedImportBatches: 0n,
   });
   const tables = [
     SOURCE_CONTENT_TABLE,
@@ -244,7 +244,7 @@ for (const format of [
           await planEngine.close();
         }
 
-        const prepared = await openPreparedImport({ path: planPath });
+        const prepared = await openImportBatch({ path: planPath });
         try {
           await expect(
             applyImport({
@@ -262,7 +262,7 @@ for (const format of [
 
       const planPath = path.join(directory, "valid.ccplan");
       const approved = await saveReadyPlan({ database, planPath });
-      const prepared = await openPreparedImport({ path: planPath });
+      const prepared = await openImportBatch({ path: planPath });
       try {
         await expect(
           applyImport({
@@ -300,7 +300,7 @@ for (const format of [
         database,
         planPath: initialPath,
       });
-      const initialPlan = await openPreparedImport({ path: initialPath });
+      const initialPlan = await openImportBatch({ path: initialPath });
       let captureId: string;
       try {
         const applied = await applyImport({
@@ -326,7 +326,7 @@ for (const format of [
         `UPDATE ${CAPTURE_ROW_TABLE} SET source_row = 0 WHERE capture_id = ?`,
         [captureId],
       );
-      const copyPlan = await openPreparedImport({ path: copyPath });
+      const copyPlan = await openImportBatch({ path: copyPath });
       try {
         await expect(
           applyImport({

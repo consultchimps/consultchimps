@@ -6,14 +6,14 @@ import { afterEach, expect, test } from "vitest";
 
 import { inspectDatabase, valueAsBigInt } from "../src/database.js";
 import { prepareImport } from "../src/import/operations.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
 import {
   PREPARED_BINDING_TABLE,
   PREPARED_CAPTURE_TABLE,
   PREPARED_ROW_TABLE,
   preparedEngineOf,
-  type PreparedImport,
+  type ImportBatch,
 } from "../src/prepared.js";
 
 const directories: string[] = [];
@@ -26,7 +26,7 @@ afterEach(async () => {
   );
 });
 
-function recipe(...selections: readonly string[]): ImportRecipe {
+function profile(...selections: readonly string[]): ImportProfile {
   return {
     version: 1,
     routes: selections.map((selection) => ({
@@ -97,7 +97,7 @@ function source(options: {
   };
 }
 
-async function stagingState(prepared: PreparedImport): Promise<{
+async function stagingState(prepared: ImportBatch): Promise<{
   readonly bindings: readonly string[];
   readonly captures: readonly string[];
   readonly rows: bigint;
@@ -137,11 +137,11 @@ async function fixture(
       })),
     },
   });
-  const importRecipe = recipe(...selections);
-  const prepared = await createPreparedImport({
+  const importRecipe = profile(...selections);
+  const prepared = await createImportBatch({
     path: path.join(directory, "review.ccplan"),
     database,
-    recipe: importRecipe,
+    profile: importRecipe,
     baselineRevision: (await inspectDatabase({ database })).revision,
   });
   return { database, importRecipe, prepared };
@@ -166,7 +166,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
           prepareImport({
             database,
             prepared,
-            recipe: importRecipe,
+            profile: importRecipe,
             sources: [submission],
           }),
         ).rejects.toBe(closeFailure);
@@ -181,7 +181,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
       const outcome = await prepareImport({
         database,
         prepared,
-        recipe: importRecipe,
+        profile: importRecipe,
         sources: [submission],
       });
       expect(outcome.prepared.state).toBe("ready");
@@ -208,7 +208,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         await prepareImport({
           database,
           prepared,
-          recipe: importRecipe,
+          profile: importRecipe,
           sources: [
             source({
               selections: ["Inventory"],

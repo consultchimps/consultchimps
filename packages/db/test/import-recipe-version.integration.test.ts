@@ -6,10 +6,10 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import { inspectDatabase, type DatabaseId } from "../src/database.js";
 import type { DatabaseEngine } from "../src/internal/engine.js";
-import type { ImportRecipe } from "../src/import/types.js";
-import { createDatabase, createPreparedImport } from "../src/node.js";
-import { createPreparedImportHandle } from "../src/prepared.js";
-import { validateImportRecipe } from "../src/validators.js";
+import type { ImportProfile } from "../src/import/types.js";
+import { createDatabase, createImportBatch } from "../src/node.js";
+import { createImportBatchHandle } from "../src/prepared.js";
+import { validateImportProfile } from "../src/validators.js";
 
 const directories: string[] = [];
 
@@ -21,14 +21,14 @@ afterEach(async () => {
   );
 });
 
-const SYNTHETIC_DATABASE_ID = "DB-recipe-version" as DatabaseId;
+const SYNTHETIC_DATABASE_ID = "DB-profile-version" as DatabaseId;
 
-function unsupportedRecipe(): ImportRecipe {
+function unsupportedRecipe(): ImportProfile {
   // Simulates an untyped JavaScript caller crossing the public TypeScript contract.
-  return { version: 2, routes: [] } as unknown as ImportRecipe;
+  return { version: 2, routes: [] } as unknown as ImportProfile;
 }
 
-test("rejects an unsupported runtime recipe version before prepared schema staging", async () => {
+test("rejects an unsupported runtime profile version before prepared schema staging", async () => {
   let transactionCalls = 0;
   const unexpected = async (): Promise<never> => {
     throw new Error("The prepared engine must remain untouched");
@@ -49,27 +49,27 @@ test("rejects an unsupported runtime recipe version before prepared schema stagi
     close: async () => {},
   };
 
-  expect(() => validateImportRecipe(unsupportedRecipe())).toThrowError(
+  expect(() => validateImportProfile(unsupportedRecipe())).toThrowError(
     expect.objectContaining({ code: "DB_INVALID_RECIPE" }),
   );
   await expect(
-    createPreparedImportHandle({
+    createImportBatchHandle({
       engine,
       databaseId: SYNTHETIC_DATABASE_ID,
       baselineRevision: 0n,
       baselineSchemaFingerprint: "synthetic-fingerprint",
-      recipe: unsupportedRecipe(),
+      profile: unsupportedRecipe(),
     }),
   ).rejects.toMatchObject({ code: "DB_INVALID_RECIPE" });
   expect(transactionCalls).toBe(0);
 });
 
 describe.each(["sqlite", "duckdb"] as const)(
-  "%s prepared recipe version validation",
+  "%s prepared profile version validation",
   (format) => {
     test("preserves absent and existing destinations when the version is unsupported", async () => {
       const directory = await mkdtemp(
-        path.join(tmpdir(), "cc-recipe-version-"),
+        path.join(tmpdir(), "cc-profile-version-"),
       );
       directories.push(directory);
       const { database } = await createDatabase({
@@ -84,11 +84,11 @@ describe.each(["sqlite", "duckdb"] as const)(
       try {
         const baselineRevision = (await inspectDatabase({ database })).revision;
         await expect(
-          createPreparedImport({
+          createImportBatch({
             path: absentPath,
             database,
             baselineRevision,
-            recipe: unsupportedRecipe(),
+            profile: unsupportedRecipe(),
           }),
         ).rejects.toMatchObject({ code: "DB_INVALID_RECIPE" });
         await expect(access(absentPath)).rejects.toMatchObject({
@@ -96,11 +96,11 @@ describe.each(["sqlite", "duckdb"] as const)(
         });
 
         await expect(
-          createPreparedImport({
+          createImportBatch({
             path: existingPath,
             database,
             baselineRevision,
-            recipe: unsupportedRecipe(),
+            profile: unsupportedRecipe(),
             overwrite: true,
           }),
         ).rejects.toMatchObject({ code: "DB_INVALID_RECIPE" });
@@ -109,11 +109,11 @@ describe.each(["sqlite", "duckdb"] as const)(
         );
 
         const supportedPath = path.join(directory, "supported.ccplan");
-        const supported = await createPreparedImport({
+        const supported = await createImportBatch({
           path: supportedPath,
           database,
           baselineRevision,
-          recipe: { version: 1, routes: [] },
+          profile: { version: 1, routes: [] },
         });
         await supported.close();
         await expect(access(supportedPath)).resolves.toBeUndefined();

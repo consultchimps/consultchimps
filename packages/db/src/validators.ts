@@ -12,11 +12,11 @@ import {
 } from "./schema.js";
 import type {
   ColumnRoute,
-  DeliveryContext,
+  BatchContext,
   ImportConflict,
   ImportDecision,
   ImportDestination,
-  ImportRecipe,
+  ImportProfile,
   ImportRoute,
 } from "./import/types.js";
 
@@ -59,21 +59,21 @@ function validateImportRoute(route: ImportRoute): void {
   validateColumnMappings(route.source, route.selection, route.columns);
 }
 
-export function validateImportRecipe(recipe: ImportRecipe): void {
-  if (recipe.version !== 1) {
+export function validateImportProfile(profile: ImportProfile): void {
+  if (profile.version !== 1) {
     throw databaseError(
       "DB_INVALID_RECIPE",
-      "The import recipe must have version 1 and a routes array.",
+      "The import profile must have version 1 and a routes array.",
     );
   }
   const keys = new Set<string>();
-  for (const route of recipe.routes) {
+  for (const route of profile.routes) {
     validateImportRoute(route);
     const key = JSON.stringify([route.source, route.selection]);
     if (keys.has(key)) {
       throw databaseError(
         "DB_INVALID_RECIPE",
-        `The import recipe routes source "${route.source}" selection "${route.selection}" more than once.`,
+        `The import profile routes source "${route.source}" selection "${route.selection}" more than once.`,
         { source: route.source, selection: route.selection },
       );
     }
@@ -285,18 +285,18 @@ function parseRoute(value: unknown): ImportRoute {
   return parsed;
 }
 
-export function parseImportRecipe(value: unknown): ImportRecipe {
-  const document = objectValue(value, "import recipe");
+export function parseImportProfile(value: unknown): ImportProfile {
+  const document = objectValue(value, "import profile");
   if (document["version"] !== 1 || !Array.isArray(document["routes"])) {
     throw databaseError(
       "DB_INVALID_RECIPE",
-      "The import recipe must have version 1 and a routes array.",
+      "The import profile must have version 1 and a routes array.",
     );
   }
   const routes = document["routes"].map(parseRoute);
-  const recipe: ImportRecipe = { version: 1, routes };
-  validateImportRecipe(recipe);
-  return recipe;
+  const profile: ImportProfile = { version: 1, routes };
+  validateImportProfile(profile);
+  return profile;
 }
 
 function nonNegativeInteger(value: unknown, label: string): number {
@@ -316,7 +316,7 @@ export function parseImportConflicts(
   if (!Array.isArray(value)) {
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",
-      "The import plan conflicts must be a JSON array.",
+      "The import batch conflicts must be a JSON array.",
     );
   }
   return value.map((entry): ImportConflict => {
@@ -440,7 +440,7 @@ export function parseImportConflicts(
       default:
         throw databaseError(
           "DB_INVALID_PREPARED_IMPORT",
-          "The import plan contains an unknown conflict kind.",
+          "The import batch contains an unknown conflict kind.",
           { kind },
         );
     }
@@ -489,11 +489,11 @@ export function parseImportDecisions(
   return decisions;
 }
 
-export function parseDeliveryContext(value: unknown): DeliveryContext {
+export function parseBatchContext(value: unknown): BatchContext {
   const errorCode = "DB_INVALID_DELIVERY_CONTEXT";
-  const document = objectValue(value, "delivery context", errorCode);
-  const scope = objectValue(document["scope"], "delivery scope", errorCode);
-  let parsedScope: DeliveryContext["scope"];
+  const document = objectValue(value, "batch context", errorCode);
+  const scope = objectValue(document["scope"], "batch scope", errorCode);
+  let parsedScope: BatchContext["scope"];
   switch (scope["kind"]) {
     case "full":
       parsedScope = { kind: "full" };
@@ -503,7 +503,7 @@ export function parseDeliveryContext(value: unknown): DeliveryContext {
         kind: "partial",
         description: stringValue(
           scope["description"],
-          "partial delivery description",
+          "partial batch description",
           errorCode,
         ),
       };
@@ -511,11 +511,7 @@ export function parseDeliveryContext(value: unknown): DeliveryContext {
     case "changes":
       parsedScope = {
         kind: "changes",
-        baseline: stringValue(
-          scope["baseline"],
-          "delivery baseline",
-          errorCode,
-        ),
+        baseline: stringValue(scope["baseline"], "batch baseline", errorCode),
       };
       break;
     case "unknown":
@@ -524,7 +520,7 @@ export function parseDeliveryContext(value: unknown): DeliveryContext {
     default:
       throw databaseError(
         "DB_INVALID_DELIVERY_CONTEXT",
-        "The delivery scope must be full, partial, changes, or unknown.",
+        "The batch scope must be full, partial, changes, or unknown.",
       );
   }
   const effectiveDate = document["effectiveDate"];
@@ -545,7 +541,7 @@ export function parseDeliveryContext(value: unknown): DeliveryContext {
   let parsedAttributes:
     Record<string, string | number | boolean | null> | undefined;
   if (attributes !== undefined) {
-    const object = objectValue(attributes, "delivery attributes", errorCode);
+    const object = objectValue(attributes, "batch attributes", errorCode);
     parsedAttributes = Object.create(null) as Record<
       string,
       string | number | boolean | null
@@ -559,14 +555,14 @@ export function parseDeliveryContext(value: unknown): DeliveryContext {
       ) {
         throw databaseError(
           "DB_INVALID_DELIVERY_CONTEXT",
-          `The delivery attribute "${name}" must be text, a number, true, false, or null.`,
+          `The batch attribute "${name}" must be text, a number, true, false, or null.`,
           { attribute: name },
         );
       }
       if (typeof attribute === "number" && !Number.isFinite(attribute)) {
         throw databaseError(
           "DB_INVALID_DELIVERY_CONTEXT",
-          `The delivery attribute "${name}" must be a finite number.`,
+          `The batch attribute "${name}" must be a finite number.`,
           { attribute: name },
         );
       }
@@ -574,7 +570,7 @@ export function parseDeliveryContext(value: unknown): DeliveryContext {
     }
   }
   return {
-    label: stringValue(document["label"], "delivery label", errorCode),
+    label: stringValue(document["label"], "batch label", errorCode),
     scope: parsedScope,
     ...(effectiveDate === undefined ? {} : { effectiveDate }),
     ...(receivedDate === undefined ? {} : { receivedDate }),

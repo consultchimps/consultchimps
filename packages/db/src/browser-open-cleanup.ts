@@ -1,3 +1,5 @@
+import { OwnedResources } from "@consultchimps/core";
+
 export type BrowserOpenOwnerKind = "database" | "prepared" | "inspection";
 
 interface RetainedBrowserOpenOwner {
@@ -26,7 +28,10 @@ export class BrowserOpenCleanupError extends Error {
 }
 
 export class BrowserOpenCleanupRegistry {
-  readonly #owners = new Map<string, Set<RetainedBrowserOpenOwner>>();
+  readonly #owners = new Map<
+    string,
+    OwnedResources<RetainedBrowserOpenOwner>
+  >();
 
   has(storageName: string): boolean {
     return (this.#owners.get(storageName)?.size ?? 0) > 0;
@@ -40,10 +45,19 @@ export class BrowserOpenCleanupRegistry {
   ): BrowserOpenCleanupError {
     const owner: RetainedBrowserOpenOwner = {
       kind,
-      close,
       causes: [...causes],
+      async close() {
+        try {
+          await close();
+        } catch (error) {
+          owner.causes.push(error);
+          throw error;
+        }
+      },
     };
-    const owners = this.#owners.get(storageName) ?? new Set();
+    const owners =
+      this.#owners.get(storageName) ??
+      new OwnedResources<RetainedBrowserOpenOwner>();
     owners.add(owner);
     this.#owners.set(storageName, owners);
     return new BrowserOpenCleanupError(storageName, [owner]);
@@ -52,23 +66,15 @@ export class BrowserOpenCleanupRegistry {
   async retry(storageName: string): Promise<void> {
     const retained = this.#owners.get(storageName);
     if (retained === undefined || retained.size === 0) return;
-    const owners = [...retained];
-    const results = await Promise.allSettled(
-      owners.map(async (owner) => owner.close()),
-    );
-    const stillOpen: RetainedBrowserOpenOwner[] = [];
-    for (const [index, result] of results.entries()) {
-      const owner = owners[index];
-      if (owner === undefined) continue;
-      if (result.status === "fulfilled") retained.delete(owner);
-      else {
-        owner.causes.push(result.reason);
-        stillOpen.push(owner);
-      }
+    const failures = await retained.close();
+    if (retained.size === 0 && this.#owners.get(storageName) === retained) {
+      this.#owners.delete(storageName);
     }
-    if (retained.size === 0) this.#owners.delete(storageName);
-    if (stillOpen.length > 0) {
-      throw new BrowserOpenCleanupError(storageName, stillOpen);
+    if (failures.length > 0) {
+      throw new BrowserOpenCleanupError(
+        storageName,
+        failures.map((failure) => failure.resource),
+      );
     }
   }
 }

@@ -141,7 +141,7 @@ export function validatedImportDateIso(
   if (owner === "prepared") {
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",
-      "The import plan contains an invalid captured date cell.",
+      "The import batch contains an invalid captured date cell.",
     );
   }
   throw databaseError(

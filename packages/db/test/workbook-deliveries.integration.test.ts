@@ -10,18 +10,18 @@ import { writeTable } from "@consultchimps/xlsx";
 import { afterEach, expect, test } from "vitest";
 
 import { engineOf, inspectDatabase } from "../src/database.js";
-import { recordDelivery, listDeliveries } from "../src/import/deliveries.js";
+import { recordBatch, listBatches } from "../src/import/deliveries.js";
 import {
   prepareImport,
   inspectImport,
   resolveImport,
   applyImport,
 } from "../src/import/operations.js";
-import { draftImportRecipe } from "../src/import/recipe.js";
+import { draftImportProfile } from "../src/import/profile.js";
 import {
   createDatabase,
-  createPreparedImport,
-  openPreparedImport,
+  createImportBatch,
+  openImportBatch,
   exportDatabase,
   openDatabase,
 } from "../src/node.js";
@@ -66,12 +66,12 @@ for (const format of ["sqlite", "duckdb"] as const) {
         scratch,
         verifyUnchanged: () => bytes.verifyUnchanged(),
       });
-      const recipe = await draftImportRecipe({ sources: [workbook.source] });
+      const profile = await draftImportProfile({ sources: [workbook.source] });
       const planPath = path.join(directory, "review.ccplan");
-      const originalPlan = await createPreparedImport({
+      const originalPlan = await createImportBatch({
         path: planPath,
         database,
-        recipe,
+        profile,
         baselineRevision: 0n,
         protectedInputPaths: [input],
       });
@@ -79,7 +79,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         const captured = await prepareImport({
           database,
           prepared: originalPlan,
-          recipe,
+          profile,
           sources: [workbook.source],
         });
         expect(captured.result.metrics.rowsCaptured).toBe(2);
@@ -90,7 +90,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         await scratch.close();
       }
       await rm(input);
-      const prepared = await openPreparedImport({ path: planPath });
+      const prepared = await openImportBatch({ path: planPath });
       try {
         const preview = await inspectImport({ prepared, page: { limit: 1 } });
         expect(preview.examples).toHaveLength(1);
@@ -118,13 +118,13 @@ for (const format of ["sqlite", "duckdb"] as const) {
           scope: { kind: "partial" as const, description: "Selected records" },
           attributes: { reportedCount: 8 },
         };
-        const first = await recordDelivery({
+        const first = await recordBatch({
           database,
           captureIds: applied.captureIds,
           context,
           requestId: "delivery-a",
         });
-        const retried = await recordDelivery({
+        const retried = await recordBatch({
           database,
           captureIds: [...applied.captureIds, ...applied.captureIds],
           context: {
@@ -134,77 +134,77 @@ for (const format of ["sqlite", "duckdb"] as const) {
           },
           requestId: "delivery-a",
         });
-        expect(first.delivery.reusedCaptureIds).toEqual([]);
-        expect(retried.delivery).toEqual(first.delivery);
-        expect(retried.metrics.deliveriesRecorded).toBe(0);
-        const repeated = await recordDelivery({
+        expect(first.batch.reusedCaptureIds).toEqual([]);
+        expect(retried.batch).toEqual(first.batch);
+        expect(retried.metrics.batchesRecorded).toBe(0);
+        const repeated = await recordBatch({
           database,
           captureIds: applied.captureIds,
           context,
           requestId: "delivery-b",
         });
-        expect(repeated.delivery.reusedCaptureIds).toEqual(applied.captureIds);
-        const firstPage = await listDeliveries({ database, limit: 1 });
-        const secondPage = await listDeliveries({
+        expect(repeated.batch.reusedCaptureIds).toEqual(applied.captureIds);
+        const firstPage = await listBatches({ database, limit: 1 });
+        const secondPage = await listBatches({
           database,
           limit: 1,
           cursor: firstPage.nextCursor,
         });
-        expect(firstPage.deliveries[0]?.id).toBe(first.delivery.id);
-        expect(firstPage.deliveries[0]?.reusedCaptureIds).toEqual([]);
-        expect(secondPage.deliveries[0]?.requestId).toBe("delivery-b");
-        expect(secondPage.deliveries[0]?.reusedCaptureIds).toEqual(
+        expect(firstPage.batches[0]?.id).toBe(first.batch.id);
+        expect(firstPage.batches[0]?.reusedCaptureIds).toEqual([]);
+        expect(secondPage.batches[0]?.requestId).toBe("delivery-b");
+        expect(secondPage.batches[0]?.reusedCaptureIds).toEqual(
           applied.captureIds,
         );
         expect(secondPage.nextCursor).toBeUndefined();
         expect(
           (
-            await recordDelivery({
+            await recordBatch({
               database,
               captureIds: applied.captureIds,
               context,
               requestId: "delivery-a",
             })
-          ).delivery.reusedCaptureIds,
+          ).batch.reusedCaptureIds,
         ).toEqual([]);
         await engineOf(database).execute(
           `UPDATE ${COUNTERS_TABLE} SET next_value = ? WHERE counter_name = ?`,
           [999_999n, "delivery"],
         );
-        const lastPadded = await recordDelivery({
+        const lastPadded = await recordBatch({
           database,
           captureIds: applied.captureIds,
           context,
           requestId: "delivery-999999",
         });
-        const firstUnpadded = await recordDelivery({
+        const firstUnpadded = await recordBatch({
           database,
           captureIds: applied.captureIds,
           context,
           requestId: "delivery-1000000",
         });
-        expect(lastPadded.delivery.id).toBe("DEL-999999");
-        expect(firstUnpadded.delivery.id).toBe("DEL-1000000");
-        const naturalFirstPage = await listDeliveries({
+        expect(lastPadded.batch.id).toBe("DEL-999999");
+        expect(firstUnpadded.batch.id).toBe("DEL-1000000");
+        const naturalFirstPage = await listBatches({
           database,
           limit: 3,
         });
-        expect(
-          naturalFirstPage.deliveries.map((delivery) => delivery.id),
-        ).toEqual(["DEL-000001", "DEL-000002", "DEL-999999"]);
-        const naturalSecondPage = await listDeliveries({
+        expect(naturalFirstPage.batches.map((delivery) => delivery.id)).toEqual(
+          ["DEL-000001", "DEL-000002", "DEL-999999"],
+        );
+        const naturalSecondPage = await listBatches({
           database,
           limit: 1,
           cursor: naturalFirstPage.nextCursor,
         });
         expect(
-          naturalSecondPage.deliveries.map((delivery) => delivery.id),
+          naturalSecondPage.batches.map((delivery) => delivery.id),
         ).toEqual(["DEL-1000000"]);
-        expect(naturalSecondPage.deliveries[0]?.reusedCaptureIds).toEqual(
+        expect(naturalSecondPage.batches[0]?.reusedCaptureIds).toEqual(
           applied.captureIds,
         );
         await expect(
-          recordDelivery({
+          recordBatch({
             database,
             captureIds: applied.captureIds,
             context: { ...context, label: "Changed" },
@@ -212,7 +212,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
           }),
         ).rejects.toMatchObject({ code: "DB_REQUEST_ID_CONFLICT" });
         await expect(
-          recordDelivery({
+          recordBatch({
             database,
             captureIds: ["CAP-missing"],
             context,
@@ -220,7 +220,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
           }),
         ).rejects.toMatchObject({ code: "DB_CAPTURE_NOT_FOUND" });
         await expect(
-          recordDelivery({
+          recordBatch({
             database,
             captureIds: [],
             context,
@@ -228,27 +228,27 @@ for (const format of ["sqlite", "duckdb"] as const) {
           }),
         ).rejects.toMatchObject({ code: "DB_DELIVERY_CAPTURE_REQUIRED" });
         await expect(
-          recordDelivery({
+          recordBatch({
             database,
             captureIds: applied.captureIds,
             context,
             requestId: " ",
           }),
         ).rejects.toMatchObject({ code: "DB_DELIVERY_REQUEST_ID_REQUIRED" });
+        await expect(listBatches({ database, limit: 0 })).rejects.toMatchObject(
+          { code: "DB_INVALID_PAGE_SIZE" },
+        );
         await expect(
-          listDeliveries({ database, limit: 0 }),
-        ).rejects.toMatchObject({ code: "DB_INVALID_PAGE_SIZE" });
-        await expect(
-          listDeliveries({ database, limit: 1, cursor: "DEL-1junk" }),
+          listBatches({ database, limit: 1, cursor: "DEL-1junk" }),
         ).rejects.toMatchObject({ code: "DB_INVALID_CURSOR" });
         const inspection = await inspectDatabase({ database });
         expect(inspection.tables[0]?.rowCount).toBe(2n);
-        expect(inspection.deliveries).toBe(4n);
+        expect(inspection.recordedBatches).toBe(4n);
         await expect(
-          createPreparedImport({
+          createImportBatch({
             path: databasePath,
             database,
-            recipe,
+            profile,
             baselineRevision: inspection.revision,
             overwrite: true,
           }),
@@ -258,7 +258,7 @@ for (const format of ["sqlite", "duckdb"] as const) {
         const reopened = await openDatabase({ path: output });
         try {
           expect(
-            (await inspectDatabase({ database: reopened })).deliveries,
+            (await inspectDatabase({ database: reopened })).recordedBatches,
           ).toBe(4n);
         } finally {
           await reopened.close();

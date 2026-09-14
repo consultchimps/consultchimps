@@ -5,11 +5,12 @@ import type {
 } from "@consultchimps/core";
 
 import type { Database, DatabaseId } from "../database.js";
-import type { PreparedImport } from "../prepared.js";
+import type { ImportBatch } from "../prepared.js";
 import type { ColumnDefinition, TableSchema } from "../schema.js";
+import type { DatabaseWriteResult } from "../write-completion.js";
 
 declare const preparedImportIdBrand: unique symbol;
-export type PreparedImportId = string & {
+export type ImportBatchId = string & {
   readonly [preparedImportIdBrand]: true;
 };
 
@@ -81,10 +82,15 @@ export interface ImportRoute {
   readonly columns: readonly ColumnRoute[];
 }
 
-export interface ImportRecipe {
+export interface ImportProfile {
   readonly version: 1;
   readonly routes: readonly ImportRoute[];
 }
+
+export type ImportNaming =
+  | { readonly kind: "source-or-selection" }
+  | { readonly kind: "selection-label" }
+  | { readonly kind: "single-table"; readonly name: string };
 
 export type ImportConflict =
   | {
@@ -174,8 +180,8 @@ export type ImportConflict =
   | { readonly kind: "table-exists"; readonly table: string }
   | { readonly kind: "table-not-found"; readonly table: string };
 
-export interface PreparedImportRef {
-  readonly id: PreparedImportId;
+export interface ImportBatchRef {
+  readonly id: ImportBatchId;
   readonly databaseId: DatabaseId;
   readonly planRevision: bigint;
   readonly baselineRevision: bigint;
@@ -184,8 +190,8 @@ export interface PreparedImportRef {
   readonly state: "needs-review";
 }
 
-export interface ReadyImportRef {
-  readonly id: PreparedImportId;
+export interface ReadyImportBatchRef {
+  readonly id: ImportBatchId;
   readonly databaseId: DatabaseId;
   readonly planRevision: bigint;
   readonly baselineRevision: bigint;
@@ -209,7 +215,7 @@ export type ImportDecision =
       readonly reason: string;
     };
 
-export interface PreparedImportPage {
+export interface ImportBatchPage {
   readonly limit: number;
   readonly cursor?: string | undefined;
   readonly source?: string | undefined;
@@ -224,10 +230,18 @@ export interface ImportExample {
 }
 
 export interface ImportInspection {
-  readonly prepared: PreparedImportRef | ReadyImportRef;
+  readonly prepared: ImportBatchRef | ReadyImportBatchRef;
+  readonly application:
+    | { readonly state: "not-checked" | "pending" }
+    | { readonly state: "applied"; readonly captureIds: readonly string[] };
+  readonly targetRevision: bigint | null;
   readonly conflicts: readonly ImportConflict[];
   readonly capturedRows: bigint;
+  readonly reviewRows: bigint;
+  readonly routeCount: bigint;
+  readonly captureIds: readonly string[];
   readonly routes: readonly ImportRouteInspection[];
+  readonly nextRouteCursor?: string | undefined;
   readonly examples: readonly ImportExample[];
   readonly previewWarnings: readonly {
     readonly code: "DB_PREVIEW_DATABASE_REQUIRED";
@@ -238,7 +252,7 @@ export interface ImportInspection {
   readonly nextCursor?: string | undefined;
 }
 
-export interface AppliedImportPlanBinding {
+export interface AppliedImportBatchBinding {
   readonly source: string;
   readonly displayName: string;
   readonly selection: string;
@@ -246,19 +260,20 @@ export interface AppliedImportPlanBinding {
   readonly captureId: string;
 }
 
-export interface AppliedImportPlan {
-  readonly id: PreparedImportId;
+export interface AppliedImportBatch {
+  readonly id: ImportBatchId;
   readonly planRevision: bigint;
   readonly baselineRevision: bigint;
   readonly state: "applied";
-  readonly recipe: ImportRecipe;
+  readonly profile: ImportProfile;
   readonly conflicts: readonly ImportConflict[];
   readonly decisions: readonly ImportDecision[];
-  readonly bindings: readonly AppliedImportPlanBinding[];
+  readonly bindings: readonly AppliedImportBatchBinding[];
 }
 
 export interface ImportRouteInspection {
   readonly source: string;
+  readonly displayName: string;
   readonly selection: string;
   readonly label: string;
   readonly captureId: string;
@@ -273,9 +288,14 @@ export interface ImportRouteInspection {
   readonly destination: ImportDestination | null;
   readonly columns: readonly ColumnRoute[];
   readonly inferredColumns: readonly ColumnDefinition[];
+  readonly destinationColumns: readonly ColumnDefinition[];
+  readonly suggestedDestination: Extract<
+    ImportDestination,
+    { readonly kind: "new-table-infer" }
+  >;
 }
 
-export interface DeliveryContext {
+export interface BatchContext {
   readonly label: string;
   readonly effectiveDate?: string | undefined;
   readonly receivedDate?: string | undefined;
@@ -289,51 +309,62 @@ export interface DeliveryContext {
   >;
 }
 
-export interface DeliveryRecord {
+export interface BatchRecord {
   readonly id: string;
   readonly requestId: string;
-  readonly context: DeliveryContext;
+  readonly context: BatchContext;
   readonly captureIds: readonly string[];
   readonly reusedCaptureIds: readonly string[];
 }
 
-export interface DeliveryPage {
-  readonly deliveries: readonly DeliveryRecord[];
+export interface BatchHistoryPage {
+  readonly batches: readonly BatchRecord[];
   readonly nextCursor?: string | undefined;
 }
 
 export interface PrepareImportOptions extends OperationControlOptions {
   readonly database: Database;
-  readonly prepared: PreparedImport;
+  readonly prepared: ImportBatch;
   readonly sources: readonly ImportSource[];
-  readonly recipe: ImportRecipe;
+  readonly profile: ImportProfile;
+  readonly reviewPage?: ImportBatchPage | undefined;
 }
 
 export interface PrepareImportOutcome {
-  readonly prepared: PreparedImportRef | ReadyImportRef;
+  readonly prepared: ImportBatchRef | ReadyImportBatchRef;
   readonly result: OperationResult<
     "sourcesRead" | "sourcesReused" | "rowsCaptured" | "conflicts"
   >;
 }
 
+export interface ImportReviewOutcome {
+  readonly prepared: ImportBatchRef | ReadyImportBatchRef;
+  readonly inspection: ImportInspection;
+}
+
+export interface PrepareImportReviewOutcome
+  extends PrepareImportOutcome, ImportReviewOutcome {}
+
 export interface ApplyImportOptions extends OperationControlOptions {
   readonly database: Database;
-  readonly prepared: PreparedImport;
-  readonly approved: ReadyImportRef;
+  readonly prepared: ImportBatch;
+  readonly approved: ReadyImportBatchRef;
   readonly requestId: string;
-  readonly delivery?: DeliveryContext | undefined;
+  readonly batchContext?: BatchContext | undefined;
 }
 
 export interface ImportResult extends OperationResult<
-  "rowsImported" | "rowsReused" | "tablesCreated" | "deliveriesRecorded"
+  "rowsImported" | "rowsReused" | "tablesCreated" | "batchesRecorded"
 > {
+  readonly databaseWrite: DatabaseWriteResult["databaseWrite"];
   readonly importIds: readonly string[];
   readonly captureIds: readonly string[];
-  readonly deliveryId?: string | undefined;
+  readonly batchId?: string | undefined;
 }
 
-export interface DeliveryResult extends OperationResult<
-  "deliveriesRecorded" | "capturesLinked"
+export interface BatchRecordResult extends OperationResult<
+  "batchesRecorded" | "capturesLinked"
 > {
-  readonly delivery: DeliveryRecord;
+  readonly databaseWrite: DatabaseWriteResult["databaseWrite"];
+  readonly batch: BatchRecord;
 }

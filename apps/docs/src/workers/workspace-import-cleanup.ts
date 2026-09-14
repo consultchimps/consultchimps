@@ -1,6 +1,8 @@
-import { ConsultChimpsError, isConsultChimpsError } from "@consultchimps/core";
-
-import { closeTrackedResources } from "../lib/workspace-replacement";
+import {
+  ConsultChimpsError,
+  isConsultChimpsError,
+  OwnedResources,
+} from "@consultchimps/core";
 
 export interface RetryableCleanupOwner {
   close(): Promise<void>;
@@ -11,7 +13,7 @@ export interface CleanupFailure {
 }
 
 export class RetryableCleanupOwners {
-  readonly #owners = new Map<symbol, RetryableCleanupOwner>();
+  readonly #owners = new OwnedResources<RetryableCleanupOwner>();
   #closing: Promise<void> | undefined;
 
   get size(): number {
@@ -19,14 +21,19 @@ export class RetryableCleanupOwners {
   }
 
   retain(owner: RetryableCleanupOwner): void {
-    this.#owners.set(Symbol(), owner);
+    this.#owners.add(owner);
   }
 
   close(): Promise<void> {
     if (this.#closing !== undefined) return this.#closing;
-    const attempt = closeTrackedResources({
-      resources: this.#owners,
-      close: async (owner) => owner.close(),
+    const attempt = this.#owners.close().then((failures) => {
+      if (failures.length === 1) throw failures[0]!.error;
+      if (failures.length > 1) {
+        throw new AggregateError(
+          failures.map((failure) => failure.error),
+          "Closing retained import resources failed",
+        );
+      }
     });
     this.#closing = attempt;
     void attempt.then(
@@ -45,15 +52,12 @@ export async function closeAndRetainFailures(
   owners: readonly RetryableCleanupOwner[],
   retained: RetryableCleanupOwners,
 ): Promise<void> {
-  const results = await Promise.allSettled(
-    owners.map(async (owner) => owner.close()),
-  );
-  const failures: unknown[] = [];
-  for (const [index, result] of results.entries()) {
-    if (result.status === "fulfilled") continue;
-    retained.retain(owners[index]!);
-    failures.push(result.reason);
+  const pending = new OwnedResources(owners);
+  const failed = await pending.close();
+  for (const failure of failed) {
+    retained.retain(failure.resource);
   }
+  const failures = failed.map((failure) => failure.error);
   if (failures.length === 1) throw failures[0];
   if (failures.length > 1)
     throw new AggregateError(failures, "Workbook source cleanup failed");
@@ -94,7 +98,7 @@ export function importCleanupError(options: {
   ];
   return new ConsultChimpsError(
     "DB_BROWSER_IMPORT_CLEANUP_REQUIRED",
-    `${options.preparationCompleted ? "The import was prepared, but success was not reported because" : "Preparing the import failed, and"} its private workbook or plan resources could not finish cleanup. Retry preparing the import to finish the retained cleanup before opening the sources again.`,
+    `${options.preparationCompleted ? "The batch was prepared, but success was not reported because" : "Preparing the batch failed, and"} its private workbook or batch resources could not finish cleanup. Retry preparing the batch to finish the retained cleanup before opening the sources again.`,
     {
       details: {
         preparationCompleted: options.preparationCompleted,
@@ -116,7 +120,7 @@ export function savedPlanCleanupError(options: {
 }): ConsultChimpsError {
   return new ConsultChimpsError(
     "DB_BROWSER_IMPORT_CLEANUP_REQUIRED",
-    "Saved import plans could not finish releasing their private resources. Choose Retry saved imports to finish cleanup before reopening those plans.",
+    "Saved batches could not finish releasing their private resources. Choose Retry saved batches to finish cleanup before reopening them.",
     {
       details: {
         savedPlanCleanupFailed: true,
@@ -124,7 +128,7 @@ export function savedPlanCleanupError(options: {
       },
       cause: new AggregateError(
         [...options.operationFailures, ...options.cleanupFailures],
-        "Saved import plan inspection cleanup failed",
+        "Saved batch inspection cleanup failed",
       ),
     },
   );

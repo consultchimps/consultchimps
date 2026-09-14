@@ -7,11 +7,11 @@ import { afterEach, expect, test } from "vitest";
 import { inspectDatabase } from "../src/database.js";
 import { NodeSqliteEngine } from "../src/engines/sqlite/node.js";
 import { prepareImport } from "../src/import/operations.js";
-import type { ImportRecipe, ImportSource } from "../src/import/types.js";
+import type { ImportProfile, ImportSource } from "../src/import/types.js";
 import {
   createDatabase,
-  createPreparedImport,
-  openPreparedImport,
+  createImportBatch,
+  openImportBatch,
 } from "../src/node.js";
 import { PREPARED_ROW_TABLE } from "../src/prepared.js";
 
@@ -25,7 +25,7 @@ afterEach(async () => {
   );
 });
 
-const recipe: ImportRecipe = {
+const profile: ImportProfile = {
   version: 1,
   routes: [
     {
@@ -87,17 +87,17 @@ test.each(["sqlite", "duckdb"] as const)(
     const databasePath = path.join(directory, `workspace.${format}`);
     const planPath = path.join(directory, "review.ccplan");
     const { database } = await createDatabase({ path: databasePath, format });
-    const prepared = await createPreparedImport({
+    const prepared = await createImportBatch({
       path: planPath,
       database,
-      recipe,
+      profile,
       baselineRevision: (await inspectDatabase({ database })).revision,
     });
     try {
       const outcome = await prepareImport({
         database,
         prepared,
-        recipe,
+        profile,
         sources: [source()],
       });
       expect(outcome.prepared.state).toBe("ready");
@@ -106,7 +106,7 @@ test.each(["sqlite", "duckdb"] as const)(
       await database.close();
     }
 
-    const valid = await openPreparedImport({ path: planPath, readonly: true });
+    const valid = await openImportBatch({ path: planPath, readonly: true });
     await valid.close();
 
     const damaged = NodeSqliteEngine.open(planPath);
@@ -123,7 +123,7 @@ test.each(["sqlite", "duckdb"] as const)(
 
     for (const readonly of [false, true]) {
       await expect(
-        openPreparedImport({ path: planPath, readonly }),
+        openImportBatch({ path: planPath, readonly }),
       ).rejects.toMatchObject({
         code: "DB_INVALID_PREPARED_IMPORT",
         message: expect.stringContaining(

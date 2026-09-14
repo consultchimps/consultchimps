@@ -3,14 +3,14 @@ import { expect, test } from "@playwright/test";
 import {
   applyImport,
   inspectDatabase,
-  listDeliveries,
+  listBatches,
   prepareImport,
-  recordDelivery,
+  recordBatch,
   resolveImport,
-  type ImportRecipe,
+  type ImportProfile,
   type ImportSource,
 } from "@consultchimps/db";
-import { createDatabase, createPreparedImport } from "@consultchimps/db/node";
+import { createDatabase, createImportBatch } from "@consultchimps/db/node";
 
 test("shows changes baselines and partial descriptions from an opened database", async ({
   page,
@@ -56,7 +56,7 @@ test("shows changes baselines and partial descriptions from an opened database",
       },
     ],
   };
-  const recipe: ImportRecipe = {
+  const profile: ImportProfile = {
     version: 1,
     routes: [
       {
@@ -75,14 +75,14 @@ test("shows changes baselines and partial descriptions from an opened database",
       },
     ],
   };
-  const prepared = await createPreparedImport({
+  const prepared = await createImportBatch({
     path: planPath,
     database,
-    recipe,
+    profile,
     baselineRevision: 0n,
   });
   try {
-    await prepareImport({ database, prepared, sources: [source], recipe });
+    await prepareImport({ database, prepared, sources: [source], profile });
     const approved = await resolveImport({
       database,
       prepared,
@@ -96,7 +96,7 @@ test("shows changes baselines and partial descriptions from an opened database",
       prepared,
       approved,
       requestId: "changes-delivery",
-      delivery: {
+      batchContext: {
         label: "Changes delivery",
         scope: { kind: "changes", baseline: "DEL-BASELINE-42" },
         attributes: {
@@ -106,7 +106,7 @@ test("shows changes baselines and partial descriptions from an opened database",
         },
       },
     });
-    await recordDelivery({
+    await recordBatch({
       database,
       captureIds: applied.captureIds,
       requestId: "partial-delivery",
@@ -123,7 +123,7 @@ test("shows changes baselines and partial descriptions from an opened database",
         },
       },
     });
-    await recordDelivery({
+    await recordBatch({
       database,
       captureIds: applied.captureIds,
       requestId: "label-only-delivery",
@@ -174,14 +174,14 @@ test("shows changes baselines and partial descriptions from an opened database",
       destination: { kind: "existing-table" as const, table: "Inventory" },
       columns: [{ source: "Value", target: "Value", type: "text" as const }],
     });
-    const mixedRecipe: ImportRecipe = {
+    const mixedProfile: ImportProfile = {
       version: 1,
       routes: [existingRoute(source), existingRoute(changedSource)],
     };
-    const mixedPrepared = await createPreparedImport({
+    const mixedPrepared = await createImportBatch({
       path: mixedPlanPath,
       database,
-      recipe: mixedRecipe,
+      profile: mixedProfile,
       baselineRevision: (await inspectDatabase({ database })).revision,
     });
     try {
@@ -189,7 +189,7 @@ test("shows changes baselines and partial descriptions from an opened database",
         database,
         prepared: mixedPrepared,
         sources: [source, changedSource],
-        recipe: mixedRecipe,
+        profile: mixedProfile,
       });
       const mixedApproved = await resolveImport({
         database,
@@ -204,19 +204,19 @@ test("shows changes baselines and partial descriptions from an opened database",
         prepared: mixedPrepared,
         approved: mixedApproved,
         requestId: "mixed-delivery",
-        delivery: {
+        batchContext: {
           label: "Mixed delivery",
           scope: { kind: "full" },
         },
       });
       expect(mixed.metrics).toMatchObject({ rowsImported: 1, rowsReused: 1 });
-      const history = await listDeliveries({ database, limit: 10 });
-      expect(history.deliveries.at(-1)).toMatchObject({
+      const history = await listBatches({ database, limit: 10 });
+      expect(history.batches.at(-1)).toMatchObject({
         context: { label: "Mixed delivery" },
         captureIds: expect.arrayContaining([...mixed.captureIds]),
         reusedCaptureIds: [applied.captureIds[0]],
       });
-      expect(history.deliveries.at(-1)?.captureIds).toHaveLength(2);
+      expect(history.batches.at(-1)?.captureIds).toHaveLength(2);
     } finally {
       await mixedPrepared.close();
     }

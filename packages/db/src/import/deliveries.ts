@@ -10,7 +10,9 @@ import { assertMetadataAllocationCounters } from "../internal/allocation-counter
 import { assertNoManagedDatabaseTriggers } from "../internal/database-layout.js";
 import type { EngineTransaction } from "../internal/engine.js";
 import { canonicalJson } from "../internal/json.js";
-import { parseStoredDeliveryContext } from "../internal/stored-delivery.js";
+import { DATABASE_STORAGE } from "../internal/storage-layouts.js";
+import { insertInternalRow } from "../internal/storage-schema.js";
+import { parseStoredBatchContext } from "../internal/stored-delivery.js";
 import {
   CAPTURE_TABLE,
   COUNTERS_TABLE,
@@ -19,23 +21,23 @@ import {
   DELIVERY_TABLE,
   IMPORT_REQUEST_TABLE,
 } from "../metadata.js";
-import type { DeliveryContext, DeliveryPage, DeliveryRecord } from "./types.js";
-import { parseDeliveryContext } from "../validators.js";
-import type { DeliveryResult } from "./types.js";
+import type { BatchContext, BatchHistoryPage, BatchRecord } from "./types.js";
+import { parseBatchContext } from "../validators.js";
+import type { BatchRecordResult } from "./types.js";
 
 const DELIVERY_PRECEDES =
   "(LENGTH(prior.delivery_id) < LENGTH(membership.delivery_id) OR (LENGTH(prior.delivery_id) = LENGTH(membership.delivery_id) AND prior.delivery_id < membership.delivery_id))";
 
 async function deliveryMemberships(
   reader: Pick<EngineTransaction, "query">,
-  deliveryId: string,
+  batchId: string,
 ): Promise<{
   readonly captureIds: readonly string[];
   readonly reusedCaptureIds: readonly string[];
 }> {
   const rows = await reader.query(
     `SELECT membership.capture_id, CASE WHEN EXISTS (SELECT 1 FROM ${DELIVERY_MEMBERSHIP_TABLE} AS prior WHERE prior.capture_id = membership.capture_id AND ${DELIVERY_PRECEDES}) THEN 1 ELSE 0 END AS reused_capture FROM ${DELIVERY_MEMBERSHIP_TABLE} AS membership WHERE membership.delivery_id = ? ORDER BY membership.capture_id`,
-    [deliveryId],
+    [batchId],
   );
   const captureIds: string[] = [];
   const reusedCaptureIds: string[] = [];
@@ -57,10 +59,7 @@ async function allocateDelivery(
     `SELECT next_value FROM ${COUNTERS_TABLE} WHERE counter_name = ?`,
     ["delivery"],
   );
-  const next = valueAsPositiveBigInt(
-    rows[0]?.["next_value"],
-    "delivery counter",
-  );
+  const next = valueAsPositiveBigInt(rows[0]?.["next_value"], "batch counter");
   await transaction.execute(
     `UPDATE ${COUNTERS_TABLE} SET next_value = ? WHERE counter_name = ?`,
     [next + 1n, "delivery"],
@@ -68,23 +67,23 @@ async function allocateDelivery(
   return `DEL-${next.toString().padStart(6, "0")}`;
 }
 
-export async function recordDelivery(options: {
+export async function recordBatch(options: {
   readonly database: Database;
   readonly captureIds: readonly string[];
-  readonly context: DeliveryContext;
+  readonly context: BatchContext;
   readonly requestId: string;
-}): Promise<DeliveryResult> {
-  const context = parseDeliveryContext(options.context);
+}): Promise<BatchRecordResult> {
+  const context = parseBatchContext(options.context);
   if (options.requestId.trim().length === 0) {
     throw databaseError(
       "DB_DELIVERY_REQUEST_ID_REQUIRED",
-      "Give the delivery a request ID so retrying it cannot create a duplicate event.",
+      "Give the batch a request ID so retrying it cannot create a duplicate event.",
     );
   }
   if (options.captureIds.length === 0) {
     throw databaseError(
       "DB_DELIVERY_CAPTURE_REQUIRED",
-      "Choose at least one completed capture for this delivery.",
+      "Choose at least one completed capture for this batch.",
     );
   }
   return engineOf(options.database).transaction(async (transaction) => {
@@ -98,15 +97,12 @@ export async function recordDelivery(options: {
         ? undefined
         : {
             row: existing[0],
-            context: parseStoredDeliveryContext(existing[0]["context_json"]),
+            context: parseStoredBatchContext(existing[0]["context_json"]),
           };
     if (existingDelivery !== undefined) {
-      const id = valueAsString(
-        existingDelivery.row["delivery_id"],
-        "delivery ID",
-      );
+      const id = valueAsString(existingDelivery.row["delivery_id"], "batch ID");
       const memberships = await deliveryMemberships(transaction, id);
-      const delivery: DeliveryRecord = {
+      const delivery: BatchRecord = {
         id,
         requestId: options.requestId,
         context: existingDelivery.context,
@@ -119,19 +115,20 @@ export async function recordDelivery(options: {
       ) {
         throw databaseError(
           "DB_REQUEST_ID_CONFLICT",
-          "This request ID was already used with different delivery details. Choose a new request ID.",
+          "This request ID was already used with different batch details. Choose a new request ID.",
           { requestId: options.requestId },
         );
       }
       return {
-        operation: "db.delivery.record",
+        databaseWrite: "unchanged",
+        operation: "db.import.record",
         artifacts: [],
         warnings: [],
         metrics: {
-          deliveriesRecorded: 0,
+          batchesRecorded: 0,
           capturesLinked: delivery.captureIds.length,
         },
-        delivery,
+        batch: delivery,
       };
     }
     const importReceipts = await transaction.query(
@@ -141,7 +138,7 @@ export async function recordDelivery(options: {
     if (importReceipts.length > 0) {
       throw databaseError(
         "DB_REQUEST_ID_CONFLICT",
-        "This request ID was already used for an import. Choose a new request ID for the delivery.",
+        "This request ID was already used for an import. Choose a new request ID for the batch.",
         { requestId: options.requestId },
       );
     }
@@ -160,21 +157,23 @@ export async function recordDelivery(options: {
       }
     }
     const id = await allocateDelivery(transaction);
-    await transaction.execute(
-      `INSERT INTO ${DELIVERY_TABLE} VALUES (?, ?, ?)`,
-      [id, options.requestId, canonicalJson(context)],
-    );
+    await insertInternalRow(transaction, DATABASE_STORAGE.tables.deliveries, {
+      delivery_id: id,
+      request_id: options.requestId,
+      context_json: canonicalJson(context),
+    });
     for (const captureId of uniqueCaptures) {
-      await transaction.execute(
-        `INSERT INTO ${DELIVERY_MEMBERSHIP_TABLE} VALUES (?, ?)`,
-        [id, captureId],
+      await insertInternalRow(
+        transaction,
+        DATABASE_STORAGE.tables.deliveryMemberships,
+        { delivery_id: id, capture_id: captureId },
       );
     }
     const memberships = await deliveryMemberships(transaction, id);
     await transaction.execute(
       `UPDATE ${DATABASE_METADATA_TABLE} SET revision = revision + 1`,
     );
-    const delivery: DeliveryRecord = {
+    const delivery: BatchRecord = {
       id,
       requestId: options.requestId,
       context,
@@ -182,23 +181,24 @@ export async function recordDelivery(options: {
       reusedCaptureIds: memberships.reusedCaptureIds,
     };
     return {
-      operation: "db.delivery.record",
+      databaseWrite: "committed",
+      operation: "db.import.record",
       artifacts: [],
       warnings: [],
       metrics: {
-        deliveriesRecorded: 1,
+        batchesRecorded: 1,
         capturesLinked: uniqueCaptures.length,
       },
-      delivery,
+      batch: delivery,
     };
   });
 }
 
-export async function listDeliveries(options: {
+export async function listBatches(options: {
   readonly database: Database;
   readonly limit: number;
   readonly cursor?: string | undefined;
-}): Promise<DeliveryPage> {
+}): Promise<BatchHistoryPage> {
   if (
     !Number.isInteger(options.limit) ||
     options.limit < 1 ||
@@ -206,11 +206,11 @@ export async function listDeliveries(options: {
   ) {
     throw databaseError(
       "DB_INVALID_PAGE_SIZE",
-      "Choose a delivery page size from 1 to 100.",
+      "Choose a batch page size from 1 to 100.",
     );
   }
   if (options.cursor !== undefined && !/^DEL-\d+$/u.test(options.cursor)) {
-    throw databaseError("DB_INVALID_CURSOR", "The delivery cursor is invalid.");
+    throw databaseError("DB_INVALID_CURSOR", "The batch cursor is invalid.");
   }
   const engine = engineOf(options.database);
   const cursorClause =
@@ -228,20 +228,20 @@ export async function listDeliveries(options: {
           BigInt(options.limit + 1),
         ],
   );
-  const deliveries: DeliveryRecord[] = [];
+  const deliveries: BatchRecord[] = [];
   for (const row of rows.slice(0, options.limit)) {
-    const id = valueAsString(row["delivery_id"], "delivery ID");
+    const id = valueAsString(row["delivery_id"], "batch ID");
     const memberships = await deliveryMemberships(engine, id);
     deliveries.push({
       id,
-      requestId: valueAsString(row["request_id"], "delivery request ID"),
-      context: parseStoredDeliveryContext(row["context_json"]),
+      requestId: valueAsString(row["request_id"], "batch request ID"),
+      context: parseStoredBatchContext(row["context_json"]),
       captureIds: memberships.captureIds,
       reusedCaptureIds: memberships.reusedCaptureIds,
     });
   }
   return {
-    deliveries,
+    batches: deliveries,
     ...(rows.length > options.limit
       ? { nextCursor: deliveries[deliveries.length - 1]?.id }
       : {}),

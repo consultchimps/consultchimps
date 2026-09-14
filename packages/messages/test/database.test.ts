@@ -2,9 +2,9 @@ import { expect, test } from "vitest";
 
 import { formatHumanError, formatHumanResult } from "../src/index.js";
 
-test("a prepared import is described as private staging, not an applied import", () => {
+test("a prepared batch is described as private staging, not an applied import", () => {
   const text = formatHumanResult({
-    operation: "db.prepare",
+    operation: "db.import.prepare",
     artifacts: [
       {
         kind: "file",
@@ -22,7 +22,7 @@ test("a prepared import is described as private staging, not an applied import",
   });
   expect(text).toContain("captured 1,250 source rows");
   expect(text).toContain("has not added these rows");
-  expect(text).toContain("Private captured import plan");
+  expect(text).toContain("Private captured import batch");
   expect(text).toContain("Import conflicts requiring review: 1");
   expect(text).toContain("Source files with new captures: 1");
   expect(text).toContain("Source files with reused captures: 1");
@@ -31,14 +31,14 @@ test("a prepared import is described as private staging, not an applied import",
 
 test("applied imports explain duplication and durable database changes", () => {
   const text = formatHumanResult({
-    operation: "db.apply",
+    operation: "db.import.apply",
     artifacts: [],
     warnings: [],
     metrics: {
       rowsImported: 0,
       rowsReused: 300000,
       tablesCreated: 0,
-      deliveriesRecorded: 1,
+      batchesRecorded: 1,
     },
   });
   expect(text).toContain("reused 300,000 previously imported observations");
@@ -72,14 +72,14 @@ test.each(["application/vnd.sqlite3", "application/vnd.duckdb"])(
   },
 );
 
-test("recorded deliveries use a plain-language capture metric", () => {
+test("recorded batches use a plain-language capture metric", () => {
   const text = formatHumanResult({
-    operation: "db.delivery.record",
+    operation: "db.import.record",
     artifacts: [],
     warnings: [],
-    metrics: { deliveriesRecorded: 1, deliveriesReused: 0, capturesLinked: 3 },
+    metrics: { batchesRecorded: 1, batchesReused: 0, capturesLinked: 3 },
   });
-  expect(text).toContain("Source captures linked to the delivery: 3");
+  expect(text).toContain("Source captures linked to the batch: 3");
   expect(text).not.toContain("capturesLinked");
 });
 
@@ -90,5 +90,5 @@ test.each([
 ])("database recovery keeps captured inputs for %s", (code) => {
   const text = formatHumanError("Review is required.", code);
   expect(text).toContain(code);
-  expect(text).toMatch(/plan/i);
+  expect(text).toMatch(/batch/i);
 });

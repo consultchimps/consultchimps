@@ -57,25 +57,31 @@ storage and import identity. Analytics UI work is paused indefinitely.
   import, it is the authoritative working copy for subsequent queries and edits.
 - **Database import**: the introduction of selected source data into a database.
   Continuing work on that database does not require repeating the import.
-- **Import recipe**: reusable source selection, table routing, mapping,
-  matching, and conflict rules for database imports.
-- **Import plan**: the proposed table and record changes for particular captured
-  sources against a particular database baseline, derived from an import recipe.
+- **Import profile**: reusable source selection, table routing, mapping,
+  matching, and conflict settings for database imports. Avoid recipe.
+- **Import batch**: a particular group of source files and their captured data,
+  import settings, context, and processing history. Distinct batches can refer
+  to the same file contents without duplicating captured rows.
+- **Prepared batch**: a batch whose captured data and proposed changes are saved
+  for review against a particular database baseline.
+- **Import review**: the proposed table and record changes, conflicts, and
+  duplicate-handling results for a prepared batch.
 - **Import ID**: an identifier assigned by ConsultChimps to a captured database
   import, independent of identifiers in the source files.
 - **Imported Row ID**: an identifier assigned by ConsultChimps to a captured
   source row. Distinct imported rows can later be found to describe one entity.
 - **Source File ID**: an identifier for a captured file, distinct from its
   display filename and from an import that may include several files.
-- **Delivery event**: a recorded touch point when a vendor supplies or reaffirms
-  a deliverable or claim. Separate events can reference the same file contents.
+- **Batch record**: a recorded touch point when a source supplies or reaffirms
+  information. Separate records can reference the same captured contents, while
+  a retry of the same recording operation reuses its existing record.
 - **Deliverable scope**: the entity, deliverable type, phase, sprint, and
   covered population that a submission describes. Coverage can be full, partial,
   an explicit set of changes, or unknown.
 - **Reported metric**: a vendor's stated count with its unit, scope, and date,
   distinct from a count calculated from delivered rows.
-- **Delivery membership**: the association between a delivery event and the
-  captured observations or relationship assertions it supplied.
+- **Batch membership**: the association between a batch record and the captured
+  observations or relationship assertions it supplied.
 - **Source observation**: what a source row reported in a particular file and
   import context. Later classifications do not replace that observation.
 - **Current inventory view**: the inventory selected as current under an

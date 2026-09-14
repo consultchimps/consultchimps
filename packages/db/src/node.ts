@@ -31,9 +31,9 @@ import { NodeDuckDbEngine } from "./engines/duckdb/node.js";
 import { NodeSqliteEngine } from "./engines/sqlite/node.js";
 import {
   PREPARED_METADATA_TABLE,
-  createPreparedImportHandle,
-  openPreparedImportHandle,
-  type PreparedImport,
+  createImportBatchHandle,
+  openImportBatchHandle,
+  type ImportBatch,
 } from "./prepared.js";
 import { DATABASE_METADATA_TABLE } from "./metadata.js";
 import type { DatabaseFormat, DatabaseSchema } from "./schema.js";
@@ -42,7 +42,7 @@ import { prepareImport } from "./import/prepare.js";
 import { NativeFileRegistry } from "./native-files.js";
 import { failAfterNativeArtifactCleanup } from "./native-artifact-cleanup.js";
 import type {
-  ImportRecipe,
+  ImportProfile,
   ImportSource,
   PrepareImportOutcome,
 } from "./import/types.js";
@@ -73,7 +73,7 @@ async function closeNativeReadOwner(options: {
     nativeFiles.retainUnclosedOwner(options.path, options.owner);
     throw databaseError(
       "DB_NATIVE_HANDLE_CLEANUP_REQUIRED",
-      "The database or import plan could not be closed after opening or inspection. Restart the process before reopening or replacing the reported file. File replacement is blocked in this runtime.",
+      "The database or import batch could not be closed after opening or inspection. Restart the process before reopening or replacing the reported file. File replacement is blocked in this runtime.",
       { path: options.path, closeFailed: true },
       new AggregateError(
         [
@@ -265,7 +265,7 @@ async function inspectFileKindUnlocked(options: {
       retainInitializationFailure(input, cause);
       throw databaseError(
         "DB_UNSUPPORTED_FILE_FORMAT",
-        "This file is not a supported ConsultChimps database or import plan.",
+        "This file is not a supported ConsultChimps database or import batch.",
         { path: input },
         cause,
       );
@@ -286,7 +286,7 @@ async function inspectFileKindUnlocked(options: {
     if (isDatabase && isPrepared) {
       throw databaseError(
         "DB_UNSUPPORTED_FILE_FORMAT",
-        "This file has conflicting ConsultChimps database and import plan markers.",
+        "This file has conflicting ConsultChimps database and import batch markers.",
         { path: input },
       );
     }
@@ -301,10 +301,10 @@ async function inspectFileKindUnlocked(options: {
       if (format !== "sqlite") {
         throw databaseError(
           "DB_INVALID_PREPARED_IMPORT",
-          "A ConsultChimps import plan must use its supported SQLite storage format.",
+          "A ConsultChimps import batch must use its supported SQLite storage format.",
         );
       }
-      const prepared = await openPreparedImportHandle(engine);
+      const prepared = await openImportBatchHandle(engine);
       owner = prepared;
       return {
         kind: "prepared-import",
@@ -455,14 +455,14 @@ export async function openDatabase(options: {
   );
 }
 
-export async function createPreparedImport(options: {
+export async function createImportBatch(options: {
   readonly path: string;
   readonly database: Database;
-  readonly recipe: ImportRecipe;
+  readonly profile: ImportProfile;
   readonly baselineRevision: bigint;
   readonly overwrite?: boolean | undefined;
   readonly protectedInputPaths?: readonly string[] | undefined;
-}): Promise<PreparedImport> {
+}): Promise<ImportBatch> {
   const output = await ensureParentDirectory(options.path);
   const databasePath = databasePaths.get(options.database);
   const publication = await nativeFiles.planPublication({
@@ -481,11 +481,11 @@ export async function createPreparedImport(options: {
   await assertNativeTemporaryAvailable(storagePaths);
   let stage: "preparation" | "publication" = "preparation";
   let engine: NodeSqliteEngine | undefined;
-  let prepared: PreparedImport | undefined;
+  let prepared: ImportBatch | undefined;
   let candidateClosed = false;
   try {
     engine = NodeSqliteEngine.create(temporary);
-    prepared = await createPreparedImportHandle({
+    prepared = await createImportBatchHandle({
       engine,
       databaseId: options.database.id,
       baselineRevision: options.baselineRevision,
@@ -493,7 +493,7 @@ export async function createPreparedImport(options: {
         engineOf(options.database),
         options.database.format,
       ),
-      recipe: options.recipe,
+      profile: options.profile,
     });
     engine = undefined;
     await prepared.close();
@@ -503,7 +503,7 @@ export async function createPreparedImport(options: {
     return await nativeFiles.publishAndOpen({
       temporary,
       plan: publication,
-      open: () => openPreparedImportUnlocked({ path: output }),
+      open: () => openImportBatchUnlocked({ path: output }),
     });
   } catch (error) {
     const candidatePrepared = prepared;
@@ -532,7 +532,7 @@ export interface PrepareImportFileOptions extends OperationControlOptions {
   readonly path: string;
   readonly database: Database;
   readonly sources: readonly ImportSource[];
-  readonly recipe: ImportRecipe;
+  readonly profile: ImportProfile;
   readonly baselineRevision: bigint;
   readonly overwrite?: boolean | undefined;
   readonly protectedInputPaths?: readonly string[] | undefined;
@@ -541,7 +541,7 @@ export interface PrepareImportFileOptions extends OperationControlOptions {
 export async function prepareImportFile(
   options: PrepareImportFileOptions,
 ): Promise<PrepareImportOutcome> {
-  throwIfAborted(options.signal, "db.prepare");
+  throwIfAborted(options.signal, "db.import.prepare");
   const output = await ensureParentDirectory(options.path);
   const databasePath = databasePaths.get(options.database);
   const publication = await nativeFiles.planPublication({
@@ -560,7 +560,7 @@ export async function prepareImportFile(
   await assertNativeTemporaryAvailable(storagePaths);
   let stage: "preparation" | "publication" = "preparation";
   let engine: NodeSqliteEngine | undefined;
-  let prepared: PreparedImport | undefined;
+  let prepared: ImportBatch | undefined;
   let candidateClosed = false;
   try {
     await nativeFiles.planPublication({
@@ -572,7 +572,7 @@ export async function prepareImportFile(
       overwrite: false,
     });
     engine = NodeSqliteEngine.create(temporary);
-    prepared = await createPreparedImportHandle({
+    prepared = await createImportBatchHandle({
       engine,
       databaseId: options.database.id,
       baselineRevision: options.baselineRevision,
@@ -580,21 +580,21 @@ export async function prepareImportFile(
         engineOf(options.database),
         options.database.format,
       ),
-      recipe: options.recipe,
+      profile: options.profile,
     });
     engine = undefined;
     const outcome = await prepareImport({
       database: options.database,
       prepared,
       sources: options.sources,
-      recipe: options.recipe,
+      profile: options.profile,
       signal: options.signal,
       onProgress: options.onProgress,
     });
     await prepared.close();
     candidateClosed = true;
     prepared = undefined;
-    throwIfAborted(options.signal, "db.prepare");
+    throwIfAborted(options.signal, "db.import.prepare");
     stage = "publication";
     await nativeFiles.publish({ temporary, plan: publication });
     return {
@@ -633,10 +633,10 @@ export async function prepareImportFile(
   }
 }
 
-async function openPreparedImportUnlocked(options: {
+async function openImportBatchUnlocked(options: {
   readonly path: string;
   readonly readonly?: boolean | undefined;
-}): Promise<PreparedImport> {
+}): Promise<ImportBatch> {
   const input = path.resolve(options.path);
   let engine: NodeSqliteEngine;
   try {
@@ -645,13 +645,13 @@ async function openPreparedImportUnlocked(options: {
     retainInitializationFailure(input, cause);
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",
-      "The import plan could not be opened. Check that the file exists, that you have access to it, and that it is a saved ConsultChimps .ccplan file. Restore a verified copy or prepare the workbook again if it is damaged.",
+      "The import batch could not be opened. Check that the file exists, that you have access to it, and that it is a saved ConsultChimps .ccplan file. Restore a verified copy or prepare the workbook again if it is damaged.",
       undefined,
       cause,
     );
   }
   try {
-    const prepared = await openPreparedImportHandle(engine);
+    const prepared = await openImportBatchHandle(engine);
     return prepared;
   } catch (error) {
     await closeNativeReadOwner({
@@ -663,13 +663,13 @@ async function openPreparedImportUnlocked(options: {
   }
 }
 
-export async function openPreparedImport(options: {
+export async function openImportBatch(options: {
   readonly path: string;
   readonly readonly?: boolean | undefined;
-}): Promise<PreparedImport> {
+}): Promise<ImportBatch> {
   const input = path.resolve(options.path);
   return nativeFiles.open(input, () =>
-    openPreparedImportUnlocked({ path: input, readonly: options.readonly }),
+    openImportBatchUnlocked({ path: input, readonly: options.readonly }),
   );
 }
 

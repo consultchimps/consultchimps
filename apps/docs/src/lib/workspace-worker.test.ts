@@ -138,7 +138,7 @@ describe("WorkspaceClient", () => {
       name: ".consultchimps-import-old.sqlite",
       code: "DB_UNSUPPORTED_PREPARED_IMPORT_VERSION",
       message:
-        "This import plan uses format version 1, but this build supports version 2. Regenerate the plan from its original sources with this build.",
+        "This import batch uses format version 1, but this build supports version 3. Regenerate the batch from its original sources with this build.",
     };
     ScriptedWorker.latest?.reply(0, {
       type: "importsListed",
@@ -212,7 +212,7 @@ describe("WorkspaceClient", () => {
     ScriptedWorker.latest?.reply(0, {
       type: "schemaApplied",
       result: {
-        summary: EMPTY_SUMMARY,
+        summary: { state: "updated", value: EMPTY_SUMMARY },
         checkpoint: {
           state: "failed",
           code: "DB_BROWSER_SCHEMA_PERSISTENCE_REQUIRED",
@@ -222,7 +222,7 @@ describe("WorkspaceClient", () => {
     });
 
     await expect(applied).resolves.toEqual({
-      summary: EMPTY_SUMMARY,
+      summary: { state: "updated", value: EMPTY_SUMMARY },
       checkpoint: {
         state: "failed",
         code: "DB_BROWSER_SCHEMA_PERSISTENCE_REQUIRED",

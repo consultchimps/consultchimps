@@ -9,10 +9,6 @@ function truncateUtf16(value: string, maximumUnits: number): string {
   return result;
 }
 
-export function workspaceRecordIdPrefix(tableName: string): string {
-  return [...tableName].slice(0, 8).join("").toUpperCase();
-}
-
 export function workspaceWorkingCopyName(
   fileName: string,
   uniqueId = globalThis.crypto.randomUUID(),

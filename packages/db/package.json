@@ -1,7 +1,7 @@
 {
   "name": "@consultchimps/db",
   "version": "0.1.0",
-  "description": "Persistent local SQLite and DuckDB databases, imports, deliveries, and validated conversion for ConsultChimps.",
+  "description": "Persistent local SQLite and DuckDB databases, imports, batch history, and validated conversion for ConsultChimps.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
