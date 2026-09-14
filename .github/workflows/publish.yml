@@ -24,7 +24,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [blacksmith-4vcpu-ubuntu-2404, blacksmith-4vcpu-windows-2025, blacksmith-6vcpu-macos-15]
+        os:
+          - blacksmith-4vcpu-ubuntu-2404
+          - blacksmith-4vcpu-windows-2025
+          - blacksmith-6vcpu-macos-15
     permissions:
       contents: read
     steps:
