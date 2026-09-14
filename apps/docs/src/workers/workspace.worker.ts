@@ -72,6 +72,7 @@ import type {
   WorkspacePreviewPage,
   WorkspaceProgress,
   WorkspaceRouteDecision,
+  WorkspaceSchemaApplication,
   WorkspaceSchemaPlan,
   WorkspaceSummary,
 } from "@/lib/workspace-protocol";
@@ -727,12 +728,25 @@ async function handleSchema(
     throw new Error("Review the schema again before applying it");
   }
   await applySchema({ database: current().database, plan, signal });
-  await current().database.checkpoint();
   schemaPlans.delete(command.planId);
+  const summary = await summaryOf(current());
+  let checkpoint: WorkspaceSchemaApplication["checkpoint"] = {
+    state: "saved",
+  };
+  try {
+    await current().database.checkpoint();
+  } catch {
+    checkpoint = {
+      state: "failed",
+      code: "DB_BROWSER_SCHEMA_PERSISTENCE_REQUIRED",
+      message:
+        "The schema changes were applied, but the browser could not finish saving the database. Keep this tab open and export the database again to retry saving it. Do not apply the schema changes again",
+    };
+  }
   scope.postMessage({
     type: "schemaApplied",
     id,
-    summary: await summaryOf(current()),
+    result: { summary, checkpoint },
   });
 }
 

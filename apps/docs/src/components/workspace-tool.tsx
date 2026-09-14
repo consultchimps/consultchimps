@@ -10,7 +10,7 @@ import {
 } from "@/components/tool-kit";
 import { WorkspaceImport } from "@/components/workspace-import";
 import { WorkspaceSchemaReview } from "@/components/workspace-schema-review";
-import { isConsultChimpsError } from "@consultchimps/core";
+import { ConsultChimpsError, isConsultChimpsError } from "@consultchimps/core";
 import type {
   WorkspaceDatabaseFormat,
   WorkspaceDeliveryPage,
@@ -483,12 +483,24 @@ export function WorkspaceTool() {
   const applySchema = useCallback(async () => {
     if (schemaPlan === null || !schemaPlan.ready) return;
     const revision = schemaReviewRevisionRef.current;
-    const next = await runLong("Applying schema", (options) =>
+    const result = await runLong("Applying schema", (options) =>
       client().applySchema(schemaPlan.id, options),
     );
-    if (next === null || revision !== schemaReviewRevisionRef.current) return;
-    setSummary(next);
+    if (result === null || revision !== schemaReviewRevisionRef.current) return;
+    setSummary(result.summary);
     invalidateSchemaReview();
+    if (result.checkpoint.state === "failed") {
+      setStatus({
+        kind: "error",
+        message: describeFailure(
+          new ConsultChimpsError(
+            result.checkpoint.code,
+            result.checkpoint.message,
+          ),
+        ),
+      });
+      return;
+    }
     setStatus({
       kind: "notice",
       message: "Applied the reviewed schema changes",

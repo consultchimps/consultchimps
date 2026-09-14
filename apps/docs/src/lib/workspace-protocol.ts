@@ -73,6 +73,17 @@ export interface WorkspaceSchemaPlan {
   readonly ready: boolean;
 }
 
+export interface WorkspaceSchemaApplication {
+  readonly summary: WorkspaceSummary;
+  readonly checkpoint:
+    | { readonly state: "saved" }
+    | {
+        readonly state: "failed";
+        readonly code: "DB_BROWSER_SCHEMA_PERSISTENCE_REQUIRED";
+        readonly message: string;
+      };
+}
+
 export interface WorkspaceDeliveryContext {
   readonly requestId: string;
   readonly vendor: string;
@@ -290,7 +301,7 @@ export type WorkspaceEvent =
     })
   | (WorkspaceEventBase & {
       readonly type: "schemaApplied";
-      readonly summary: WorkspaceSummary;
+      readonly result: WorkspaceSchemaApplication;
     })
   | (WorkspaceEventBase & {
       readonly type: "importPrepared";

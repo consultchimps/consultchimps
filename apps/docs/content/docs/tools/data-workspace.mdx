@@ -231,6 +231,12 @@ The browser lists the tables and columns proposed for creation before approval,
 including their types and constraints. Editing the schema document requires a
 new review.
 
+If `DB_BROWSER_SCHEMA_PERSISTENCE_REQUIRED` appears, the schema changes were
+applied, but the browser could not finish saving the database. The table list
+reflects the applied changes, and the previous review is cleared. Keep the tab
+open and export the database again to retry saving it. Do not reapply those
+schema changes.
+
 ```json
 {
   "version": 1,

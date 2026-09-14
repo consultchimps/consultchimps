@@ -204,6 +204,33 @@ describe("WorkspaceClient", () => {
     },
   );
 
+  it("returns a committed schema result when persistence still needs recovery", async () => {
+    const client = new WorkspaceClient();
+    const applied = client.applySchema("schema-plan");
+    await settle();
+
+    ScriptedWorker.latest?.reply(0, {
+      type: "schemaApplied",
+      result: {
+        summary: EMPTY_SUMMARY,
+        checkpoint: {
+          state: "failed",
+          code: "DB_BROWSER_SCHEMA_PERSISTENCE_REQUIRED",
+          message: "The schema was applied but could not be saved",
+        },
+      },
+    });
+
+    await expect(applied).resolves.toEqual({
+      summary: EMPTY_SUMMARY,
+      checkpoint: {
+        state: "failed",
+        code: "DB_BROWSER_SCHEMA_PERSISTENCE_REQUIRED",
+        message: "The schema was applied but could not be saved",
+      },
+    });
+  });
+
   it("rejects pending work when terminated", async () => {
     const client = new WorkspaceClient();
     const create = client.create("sqlite", "one.sqlite");

@@ -14,6 +14,7 @@ import type {
   WorkspaceProgress,
   WorkspaceRouteDecision,
   WorkspaceSchemaDocument,
+  WorkspaceSchemaApplication,
   WorkspaceSchemaPlan,
   WorkspaceSummary,
 } from "./workspace-protocol";
@@ -220,10 +221,10 @@ export class WorkspaceClient {
   async applySchema(
     planId: string,
     options?: WorkspaceRunOptions,
-  ): Promise<WorkspaceSummary> {
+  ): Promise<WorkspaceSchemaApplication> {
     const event = await this.#request({ type: "applySchema", planId }, options);
     if (event.type !== "schemaApplied") throw unexpected("schema");
-    return event.summary;
+    return event.result;
   }
 
   async prepareImport(
