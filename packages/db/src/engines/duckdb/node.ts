@@ -150,6 +150,9 @@ export class NodeDuckDbEngine implements DatabaseEngine {
   readonly #readonly: boolean;
   #tail: Promise<void> = Promise.resolve();
   #closed = false;
+  #closeStarted = false;
+  #connectionClosed = false;
+  #instanceClosed = false;
 
   private constructor(
     instance: DuckDBInstance,
@@ -199,7 +202,10 @@ export class NodeDuckDbEngine implements DatabaseEngine {
     }
   }
 
-  async #exclusive<T>(work: () => Promise<T>): Promise<T> {
+  async #exclusive<T>(
+    work: () => Promise<T>,
+    allowCloseRetry = false,
+  ): Promise<T> {
     const previous = this.#tail;
     let release: () => void = () => undefined;
     this.#tail = new Promise<void>((resolve) => {
@@ -207,7 +213,9 @@ export class NodeDuckDbEngine implements DatabaseEngine {
     });
     await previous;
     try {
-      if (this.#closed) throw new Error("DuckDB engine is closed");
+      if ((this.#closed || this.#closeStarted) && !allowCloseRetry) {
+        throw new Error("DuckDB engine is closed");
+      }
       return await work();
     } finally {
       release();
@@ -307,6 +315,7 @@ export class NodeDuckDbEngine implements DatabaseEngine {
     }
 
     const appender = await this.#connection.createAppender(options.table);
+    let operationFailure: { readonly error: unknown } | undefined;
     try {
       for (let index = 0; index < options.rows.length; index += 1) {
         if (index % APPENDER_FLUSH_ROWS === 0) {
@@ -322,14 +331,32 @@ export class NodeDuckDbEngine implements DatabaseEngine {
         }
       }
       throwIfAborted(options.signal, "db.bulk-insert");
-      appender.closeSync();
     } catch (error) {
-      try {
-        appender.closeSync();
-      } catch {
-        // Keep the insertion or cancellation error that caused cleanup.
-      }
-      throw error;
+      operationFailure = { error };
+    }
+    try {
+      appender.closeSync();
+    } catch (cleanupError) {
+      throw databaseError(
+        "DB_DUCKDB_APPENDER_CLEANUP_FAILED",
+        "DuckDB could not release its bulk insertion appender. Close the database before retrying. If cleanup still fails, restart the process.",
+        {
+          path: this.#path,
+          table: options.table,
+          storagePaths: [this.#path, `${this.#path}.wal`, `${this.#path}.tmp`],
+          closeFailed: true,
+        },
+        new AggregateError(
+          [
+            ...(operationFailure === undefined ? [] : [operationFailure.error]),
+            cleanupError,
+          ],
+          "DuckDB appender cleanup failed.",
+        ),
+      );
+    }
+    if (operationFailure !== undefined) {
+      throw operationFailure.error;
     }
   }
 
@@ -447,9 +474,41 @@ export class NodeDuckDbEngine implements DatabaseEngine {
 
   async close(): Promise<void> {
     await this.#exclusive(async () => {
-      this.#connection.closeSync();
-      this.#instance.closeSync();
-      this.#closed = true;
-    });
+      this.#closeStarted = true;
+      const failures: unknown[] = [];
+      if (!this.#connectionClosed) {
+        try {
+          this.#connection.closeSync();
+          this.#connectionClosed = true;
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+      if (!this.#instanceClosed) {
+        try {
+          this.#instance.closeSync();
+          this.#instanceClosed = true;
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+      this.#closed = this.#connectionClosed && this.#instanceClosed;
+      if (failures.length > 0) {
+        throw databaseError(
+          "DB_DUCKDB_CLOSE_CLEANUP_FAILED",
+          "DuckDB could not release all database resources. Retry closing the database. If cleanup still fails, restart the process before removing its files.",
+          {
+            path: this.#path,
+            storagePaths: [
+              this.#path,
+              `${this.#path}.wal`,
+              `${this.#path}.tmp`,
+            ],
+            closeFailed: true,
+          },
+          new AggregateError(failures, "DuckDB database cleanup failed."),
+        );
+      }
+    }, true);
   }
 }

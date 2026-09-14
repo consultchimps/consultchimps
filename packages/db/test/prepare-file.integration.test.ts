@@ -3,11 +3,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { ConsultChimpsError } from "@consultchimps/core";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 
 import { inspectDatabase } from "../src/database.js";
 import { inspectImport } from "../src/import/inspection.js";
 import type { ImportProfile, ImportSource } from "../src/import/types.js";
+import { NodeSqliteEngine } from "../src/engines/sqlite/node.js";
 import {
   createDatabase,
   createImportBatch,
@@ -185,6 +186,41 @@ test("source verification failure after capture does not publish a replacement p
     expect(verifications).toBe(2);
     await expectOriginalPlan(fixture);
   } finally {
+    await fixture.database.close();
+  }
+});
+
+test("checkpoint failure discards the private batch without replacing the output", async () => {
+  const fixture = await existingPlan();
+  const checkpointFailure = new Error("Injected batch checkpoint failure");
+  const checkpoint = vi
+    .spyOn(NodeSqliteEngine.prototype, "checkpoint")
+    .mockRejectedValueOnce(checkpointFailure);
+  try {
+    await expect(
+      prepareImportFile({
+        path: fixture.planPath,
+        database: fixture.database,
+        sources: [source(async () => undefined)],
+        profile,
+        baselineRevision: fixture.baselineRevision,
+        overwrite: true,
+      }),
+    ).rejects.toMatchObject({
+      code: "DB_IMPORT_PREPARATION_DISCARDED",
+      details: {
+        batchDiscarded: true,
+        batchPublished: false,
+      },
+      cause: {
+        code: "DB_BATCH_CHECKPOINT_REQUIRED",
+        cause: checkpointFailure,
+      },
+    });
+    expect(checkpoint).toHaveBeenCalledOnce();
+    await expectOriginalPlan(fixture);
+  } finally {
+    checkpoint.mockRestore();
     await fixture.database.close();
   }
 });

@@ -301,6 +301,14 @@ the update succeeds but the final projection fails, the operation returns
 `DB_BATCH_REVIEW_REFRESH_REQUIRED` with `batchUpdated: true`; call
 `inspectImport` instead of repeating the update.
 
+If preparation commits its batch update but checkpointing fails,
+`DB_BATCH_CHECKPOINT_REQUIRED` includes `batchUpdated: true`,
+`checkpointRequired: true`, the batch ID and revision, and the original cause.
+Keep a caller-owned batch open and inspect its current review before continuing.
+This error does not confirm persistence through abrupt termination. File and
+browser adapters discard their private staging before publication when cleanup
+succeeds, reporting `DB_IMPORT_PREPARATION_DISCARDED` with retry guidance.
+
 `inspectImport` pages rows and routes independently. `page.limit` is from 1 to
 100; pass `nextCursor` as `page.cursor`. `routePage.limit` defaults to 50 and is
 also capped at 100; pass `nextRouteCursor` as `routePage.cursor`. A route cursor

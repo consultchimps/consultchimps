@@ -102,6 +102,15 @@ returns batch metadata and staged rows, with `DB_PREVIEW_DATABASE_REQUIRED`
 entries in `previewWarnings` for reused selections. The target database must
 match the batch's database ID.
 
+`prepareImport` can report `DB_BATCH_CHECKPOINT_REQUIRED` after its capture and
+review updates commit. The error preserves its checkpoint cause and includes
+`batchUpdated: true`, `checkpointRequired: true`, the batch ID, and its
+revision. For a caller-owned handle, keep it open and inspect the current review
+before continuing. The error does not confirm persistence through abrupt
+termination. File and browser preparation adapters own their private staging; if
+they discard it successfully before publication, they report
+`DB_IMPORT_PREPARATION_DISCARDED` and preparation can be retried.
+
 Pass `reviewPage` to `prepareImport` or `resolveImport` to receive the updated
 batch reference and its `inspection` in one result. Omitting it returns only the
 updated reference (and preparation metrics for `prepareImport`). If the batch

@@ -203,6 +203,23 @@ function postError(id: number, error: unknown): void {
   });
 }
 
+function discardedImportPreparation(error: unknown): unknown {
+  if (
+    !isConsultChimpsError(error) ||
+    error.code !== "DB_BATCH_CHECKPOINT_REQUIRED"
+  ) {
+    return error;
+  }
+  return new ConsultChimpsError(
+    "DB_IMPORT_PREPARATION_DISCARDED",
+    "Import preparation updated its private batch, but saving did not finish. The private batch was discarded, no batch was published, and the working database was not changed. Retry preparation",
+    {
+      details: { batchDiscarded: true, batchPublished: false },
+      cause: error,
+    },
+  );
+}
+
 async function closeImports(): Promise<void> {
   await closeTrackedResources({
     resources: imports,
@@ -933,7 +950,7 @@ async function prepareSources(
         preparationCompleted: operationFailure === undefined,
       });
     }
-    throw operationFailure!.error;
+    throw discardedImportPreparation(operationFailure!.error);
   }
 
   if (completed === undefined) {

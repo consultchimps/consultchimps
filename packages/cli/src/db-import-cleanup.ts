@@ -1,4 +1,4 @@
-import { ConsultChimpsError } from "@consultchimps/core";
+import { ConsultChimpsError, isConsultChimpsError } from "@consultchimps/core";
 
 export type CliImportOutcome =
   | { readonly status: "completed" }
@@ -47,7 +47,23 @@ export async function finishCliImport(
   );
   if (removal.status === "failed") cleanupFailures.push(removal.error);
   if (cleanupFailures.length === 0 && removal.status !== "skipped") {
-    if (options.outcome.status === "failed") throw options.outcome.error;
+    if (options.outcome.status === "failed") {
+      if (
+        options.temporaryPath !== undefined &&
+        isConsultChimpsError(options.outcome.error) &&
+        options.outcome.error.code === "DB_BATCH_CHECKPOINT_REQUIRED"
+      ) {
+        throw new ConsultChimpsError(
+          "DB_IMPORT_PREPARATION_DISCARDED",
+          "Import preparation updated its private batch, but saving did not finish. The private batch was discarded, no batch was published, and no rows were applied to the working database. Retry the import run.",
+          {
+            details: { batchDiscarded: true, batchPublished: false },
+            cause: options.outcome.error,
+          },
+        );
+      }
+      throw options.outcome.error;
+    }
     return;
   }
 

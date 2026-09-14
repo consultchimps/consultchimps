@@ -1,3 +1,4 @@
+import { ConsultChimpsError } from "@consultchimps/core";
 import { expect, test, vi } from "vitest";
 
 import { finishCliImport } from "./db-import-cleanup.js";
@@ -73,8 +74,49 @@ test("removes a closed private batch even when the database close fails", async 
   expect(removeTemporary).toHaveBeenCalledOnce();
 });
 
+test("reports a discarded batch after checkpoint failure and successful cleanup", async () => {
+  const checkpointFailure = new ConsultChimpsError(
+    "DB_BATCH_CHECKPOINT_REQUIRED",
+    "Injected committed batch checkpoint failure.",
+  );
+
+  await expect(
+    finishCliImport({
+      outcome: { status: "failed", error: checkpointFailure },
+      temporaryPath: "/synthetic/cc-import-plan-private",
+      closePrepared: async () => undefined,
+      closeInputs: async () => undefined,
+      closeDatabase: async () => undefined,
+      removeTemporary: async () => undefined,
+    }),
+  ).rejects.toMatchObject({
+    code: "DB_IMPORT_PREPARATION_DISCARDED",
+    details: { batchDiscarded: true, batchPublished: false },
+    cause: checkpointFailure,
+  });
+});
+
+test("keeps a caller-owned checkpoint failure when there is no private batch", async () => {
+  const checkpointFailure = new ConsultChimpsError(
+    "DB_BATCH_CHECKPOINT_REQUIRED",
+    "Injected committed batch checkpoint failure.",
+  );
+
+  await expect(
+    finishCliImport({
+      outcome: { status: "failed", error: checkpointFailure },
+      closeInputs: async () => undefined,
+      closeDatabase: async () => undefined,
+      removeTemporary: async () => undefined,
+    }),
+  ).rejects.toBe(checkpointFailure);
+});
+
 test("preserves operation and removal failures after confirmed closes", async () => {
-  const operationFailure = new Error("Injected import failure");
+  const operationFailure = new ConsultChimpsError(
+    "DB_BATCH_CHECKPOINT_REQUIRED",
+    "Injected committed batch checkpoint failure.",
+  );
   const removalFailure = new Error("Injected directory removal failure");
 
   let failure: unknown;

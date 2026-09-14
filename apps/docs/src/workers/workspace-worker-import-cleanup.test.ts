@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   sourceClose: vi.fn<() => Promise<void>>(),
   inspectDatabase: vi.fn(),
   inspectImport: vi.fn(),
+  prepareImport: vi.fn(),
 }));
 
 vi.mock("@consultchimps/db", async (importOriginal) => {
@@ -76,7 +77,10 @@ vi.mock("@consultchimps/db", async (importOriginal) => {
     })),
     inspectDatabase: mocks.inspectDatabase,
     inspectImport: mocks.inspectImport,
-    prepareImport: vi.fn(async () => ({ prepared, inspection })),
+    prepareImport: mocks.prepareImport.mockImplementation(async () => ({
+      prepared,
+      inspection,
+    })),
   };
 });
 
@@ -238,6 +242,72 @@ describe("workspace worker import cleanup", () => {
     expect(mocks.sourceClose.mock.invocationCallOrder[1]).toBeLessThan(
       mocks.createWorkbookImportSource.mock.invocationCallOrder[1]!,
     );
+  });
+
+  it("reports a discarded private batch when its committed preparation cannot checkpoint", async () => {
+    const { ConsultChimpsError } = await import("@consultchimps/core");
+    mocks.sourceClose.mockResolvedValue(undefined);
+    mocks.createWorkbookImportSource.mockResolvedValue({
+      close: mocks.sourceClose,
+      inspection: { namedRanges: [], sheets: [], tables: [] },
+      source: {
+        key: "source-1",
+        selections: [{ key: '{"sheet":"Data","headerRow":1}', label: "Data" }],
+      },
+    });
+    const checkpointFailure = new ConsultChimpsError(
+      "DB_BATCH_CHECKPOINT_REQUIRED",
+      "Injected committed batch checkpoint failure.",
+      {
+        details: {
+          batchUpdated: true,
+          checkpointRequired: true,
+          batchId: "plan-1",
+          planRevision: "2",
+        },
+      },
+    );
+    mocks.prepareImport.mockRejectedValueOnce(checkpointFailure);
+
+    let receive!: (event: MessageEvent<Record<string, unknown>>) => void;
+    const waiters = new Map<number, (message: WorkerMessage) => void>();
+    vi.stubGlobal("self", {
+      addEventListener(
+        _type: "message",
+        listener: (event: MessageEvent<Record<string, unknown>>) => void,
+      ) {
+        receive = listener;
+      },
+      postMessage(message: WorkerMessage) {
+        if (message.type !== "progress") waiters.get(message.id)?.(message);
+      },
+    });
+    await import("./workspace.worker");
+    const request = (command: Record<string, unknown>) =>
+      new Promise<WorkerMessage>((resolve) => {
+        waiters.set(command["id"] as number, resolve);
+        receive({ data: command } as MessageEvent<Record<string, unknown>>);
+      });
+
+    await request({
+      id: 1,
+      type: "create",
+      name: "test.sqlite",
+      format: "sqlite",
+    });
+    await expect(
+      request({
+        id: 2,
+        type: "prepareImport",
+        sources: [{ file: new File(["synthetic"], "source.xlsx") }],
+      }),
+    ).resolves.toMatchObject({
+      type: "error",
+      code: "DB_IMPORT_PREPARATION_DISCARDED",
+      message: expect.stringContaining("working database was not changed"),
+    });
+    expect(mocks.preparedClose).toHaveBeenCalledOnce();
+    expect(mocks.discardImportBatch).toHaveBeenCalledOnce();
   });
 
   it("reports a committed apply when summary refresh fails and still checkpoints", async () => {

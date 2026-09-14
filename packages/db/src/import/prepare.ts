@@ -545,7 +545,21 @@ export async function prepareImport(
     ready: conflicts.length === 0,
     expectedReviewFingerprint: reviewSnapshot.review.prepared.reviewFingerprint,
   });
-  await preparedEngine.checkpoint();
+  try {
+    await preparedEngine.checkpoint();
+  } catch (cause) {
+    throw databaseError(
+      "DB_BATCH_CHECKPOINT_REQUIRED",
+      "The batch was updated, but its checkpoint failed. Keep the batch open and inspect its current review before continuing.",
+      {
+        batchUpdated: true,
+        checkpointRequired: true,
+        batchId: prepared.id,
+        planRevision: prepared.planRevision.toString(),
+      },
+      cause,
+    );
+  }
   const result: PrepareImportOutcome["result"] = {
     operation: "db.import.prepare",
     artifacts: [],

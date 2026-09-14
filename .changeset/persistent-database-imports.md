@@ -114,3 +114,8 @@ Verify batch capture memberships before returning an import retry receipt.
 Reject worksheet aliases and require supported OOXML relationship role URIs.
 Preserve orphaned browser DuckDB recovery files by refusing publication over
 incomplete storage.
+
+Report committed batch updates when preparation checkpointing fails. Distinguish
+caller-owned batches from private staging discarded before publication. Preserve
+DuckDB appender operation and cleanup failures together, and retry only the
+remaining native resources after a partially failed database close.

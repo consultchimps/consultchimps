@@ -7,6 +7,10 @@ const fakes = vi.hoisted(() => ({
   duckInterrupt: vi.fn(),
   duckConnectionClose: vi.fn(),
   duckInstanceClose: vi.fn(),
+  duckAppenderAppend: vi.fn(),
+  duckAppenderEndRow: vi.fn(),
+  duckAppenderFlush: vi.fn(),
+  duckAppenderClose: vi.fn(),
   duckConnect: vi.fn(async (connection: unknown) => connection),
   duckCreate: vi.fn(),
   onDuckCopy: (): void => {},
@@ -40,6 +44,12 @@ vi.mock("@duckdb/node-api", () => {
     runAndReadAll: fakes.duckRead,
     interrupt: fakes.duckInterrupt,
     closeSync: fakes.duckConnectionClose,
+    createAppender: vi.fn(async () => ({
+      appendValue: fakes.duckAppenderAppend,
+      endRow: fakes.duckAppenderEndRow,
+      flushSync: fakes.duckAppenderFlush,
+      closeSync: fakes.duckAppenderClose,
+    })),
   };
   return {
     blobValue: (value: unknown) => value,
@@ -95,6 +105,113 @@ test("DuckDB preserves connection and cleanup failures during creation", async (
     connectionFailure,
     cleanupFailure,
   ]);
+});
+
+test("DuckDB preserves insertion and appender cleanup failures", async () => {
+  const insertionFailure = new Error("append failed");
+  const cleanupFailure = new Error("appender close failed");
+  fakes.duckRead.mockResolvedValue({
+    getRowObjects: () => [{ name: "value" }],
+  });
+  fakes.duckAppenderAppend.mockImplementationOnce(() => {
+    throw insertionFailure;
+  });
+  fakes.duckAppenderClose.mockImplementationOnce(() => {
+    throw cleanupFailure;
+  });
+  const engine = await NodeDuckDbEngine.create("source.duckdb");
+  try {
+    const failure = await engine
+      .bulkInsert({ table: "Records", columns: ["value"], rows: [[1n]] })
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      code: "DB_DUCKDB_APPENDER_CLEANUP_FAILED",
+      details: { table: "Records", closeFailed: true },
+    });
+    expect((failure as Error).cause).toBeInstanceOf(AggregateError);
+    expect(((failure as Error).cause as AggregateError).errors).toEqual([
+      insertionFailure,
+      cleanupFailure,
+    ]);
+    expect(fakes.duckAppenderClose).toHaveBeenCalledOnce();
+  } finally {
+    await engine.close();
+  }
+});
+
+test("DuckDB preserves cancellation and appender cleanup failures", async () => {
+  const controller = new AbortController();
+  const cleanupFailure = new Error("appender close failed");
+  fakes.duckRead.mockResolvedValue({
+    getRowObjects: () => [{ name: "value" }],
+  });
+  fakes.duckAppenderAppend.mockImplementationOnce(() => {
+    controller.abort("cancelled during insertion");
+  });
+  fakes.duckAppenderClose.mockImplementationOnce(() => {
+    throw cleanupFailure;
+  });
+  const engine = await NodeDuckDbEngine.create("source.duckdb");
+  try {
+    const failure = await engine
+      .bulkInsert({
+        table: "Records",
+        columns: ["value"],
+        rows: [[1n]],
+        signal: controller.signal,
+      })
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      code: "DB_DUCKDB_APPENDER_CLEANUP_FAILED",
+    });
+    expect((failure as Error).cause).toBeInstanceOf(AggregateError);
+    const causes = ((failure as Error).cause as AggregateError).errors;
+    expect(causes[0]).toMatchObject({ code: "OPERATION_ABORTED" });
+    expect(causes[1]).toBe(cleanupFailure);
+  } finally {
+    await engine.close();
+  }
+});
+
+test("DuckDB close retries only resources whose close is unconfirmed", async () => {
+  const connectionFailure = new Error("connection close failed");
+  fakes.duckConnectionClose.mockImplementationOnce(() => {
+    throw connectionFailure;
+  });
+  const engine = await NodeDuckDbEngine.create("source.duckdb");
+
+  const failure = await engine.close().catch((error: unknown) => error);
+  expect(failure).toMatchObject({
+    code: "DB_DUCKDB_CLOSE_CLEANUP_FAILED",
+    details: { path: "source.duckdb", closeFailed: true },
+  });
+  expect(((failure as Error).cause as AggregateError).errors).toEqual([
+    connectionFailure,
+  ]);
+  expect(fakes.duckConnectionClose).toHaveBeenCalledOnce();
+  expect(fakes.duckInstanceClose).toHaveBeenCalledOnce();
+
+  await engine.close();
+  expect(fakes.duckConnectionClose).toHaveBeenCalledTimes(2);
+  expect(fakes.duckInstanceClose).toHaveBeenCalledOnce();
+});
+
+test("DuckDB close does not repeat a successful connection close", async () => {
+  const instanceFailure = new Error("instance close failed");
+  fakes.duckInstanceClose.mockImplementationOnce(() => {
+    throw instanceFailure;
+  });
+  const engine = await NodeDuckDbEngine.create("source.duckdb");
+
+  await expect(engine.close()).rejects.toMatchObject({
+    code: "DB_DUCKDB_CLOSE_CLEANUP_FAILED",
+  });
+  expect(fakes.duckConnectionClose).toHaveBeenCalledOnce();
+  expect(fakes.duckInstanceClose).toHaveBeenCalledOnce();
+
+  await engine.close();
+  expect(fakes.duckConnectionClose).toHaveBeenCalledOnce();
+  expect(fakes.duckInstanceClose).toHaveBeenCalledTimes(2);
 });
 
 test("SQLite backup stops from its progress boundary", async () => {

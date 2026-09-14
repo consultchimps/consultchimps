@@ -95,6 +95,25 @@ function nativeTemporaryPaths(
     : [temporary, `${temporary}.wal`, `${temporary}.tmp`];
 }
 
+function discardedImportPreparation(cause: unknown, output: string): unknown {
+  if (
+    !isConsultChimpsError(cause) ||
+    cause.code !== "DB_BATCH_CHECKPOINT_REQUIRED"
+  ) {
+    return cause;
+  }
+  return databaseError(
+    "DB_IMPORT_PREPARATION_DISCARDED",
+    "Import preparation updated its private batch, but saving did not finish. The private batch was discarded, no batch was published, the working database was unchanged, and any existing output was preserved. Retry preparation.",
+    {
+      batchDiscarded: true,
+      batchPublished: false,
+      output,
+    },
+    cause,
+  );
+}
+
 async function removeNativeTemporary(paths: readonly string[]): Promise<void> {
   const removals = await Promise.allSettled(
     paths.map((filePath) =>
@@ -613,23 +632,29 @@ export async function prepareImportFile(
   } catch (error) {
     const candidatePrepared = prepared;
     const candidateEngine = engine;
-    return failAfterNativeArtifactCleanup({
-      operation: "prepare",
-      stage,
-      kind: "prepared",
-      format: "sqlite",
-      temporaryPath: temporary,
-      storagePaths,
-      cause: error,
-      close: candidateClosed
-        ? []
-        : candidatePrepared !== undefined
-          ? [() => candidatePrepared.close()]
-          : candidateEngine === undefined
-            ? []
-            : [() => candidateEngine.close()],
-      remove: () => removeNativeTemporary(storagePaths),
-    });
+    try {
+      return await failAfterNativeArtifactCleanup({
+        operation: "prepare",
+        stage,
+        kind: "prepared",
+        format: "sqlite",
+        temporaryPath: temporary,
+        storagePaths,
+        cause: error,
+        close: candidateClosed
+          ? []
+          : candidatePrepared !== undefined
+            ? [() => candidatePrepared.close()]
+            : candidateEngine === undefined
+              ? []
+              : [() => candidateEngine.close()],
+        remove: () => removeNativeTemporary(storagePaths),
+      });
+    } catch (cleanupError) {
+      throw cleanupError === error
+        ? discardedImportPreparation(error, output)
+        : cleanupError;
+    }
   }
 }
 
