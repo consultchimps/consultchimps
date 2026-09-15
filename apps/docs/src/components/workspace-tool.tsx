@@ -27,6 +27,11 @@ import {
   retainBrowserExportLease,
 } from "@/lib/workspace-files";
 import {
+  claimDatabaseTool,
+  type DatabaseToolOwnership,
+  waitForDatabaseTool,
+} from "@/lib/workspace-ownership";
+import {
   Database,
   Download,
   FilePlus,
@@ -38,6 +43,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const DATABASE_ACCEPT = ".sqlite,.sqlite3,.db,.duckdb";
+const CONFLICT_NOTICE_GRACE_MILLISECONDS = 300;
 const RECENT_DATABASES_KEY = "consultchimps.workspace.databases.v1";
 const DEFAULT_SCHEMA = `{
   "version": 1,
@@ -261,12 +267,60 @@ export function WorkspaceTool() {
   const [recentDatabases, setRecentDatabases] = useState<
     readonly RecentDatabase[]
   >([]);
+  const [ownership, setOwnership] = useState<DatabaseToolOwnership | null>(
+    null,
+  );
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       setRecentDatabases(readRecentDatabases());
     }, 0);
     return () => window.clearTimeout(timeout);
+  }, []);
+
+  // Claim the tool for this page before any engine starts. A conflict keeps
+  // the page waiting in the background and takes over when the other tab
+  // releases the lock. The claim is held until the page unmounts.
+  //
+  // The conflict notice is shown after a short grace period: a remount (React
+  // StrictMode in development, Fast Refresh) can see its own previous claim
+  // still held for a few milliseconds, and the background wait then takes
+  // over at once. A real conflict with another tab outlasts the grace period.
+  useEffect(() => {
+    const controller = new AbortController();
+    let release: (() => void) | null = null;
+    let conflictTimer: number | null = null;
+    const accept = (result: DatabaseToolOwnership): boolean => {
+      if (controller.signal.aborted) {
+        if (result.state === "owned") result.release();
+        return false;
+      }
+      if (conflictTimer !== null) {
+        window.clearTimeout(conflictTimer);
+        conflictTimer = null;
+      }
+      if (result.state === "owned") release = result.release;
+      if (result.state === "conflict") {
+        conflictTimer = window.setTimeout(() => {
+          conflictTimer = null;
+          setOwnership(result);
+        }, CONFLICT_NOTICE_GRACE_MILLISECONDS);
+      } else {
+        setOwnership(result);
+      }
+      return true;
+    };
+    void claimDatabaseTool()
+      .then(async (result) => {
+        if (!accept(result) || result.state !== "conflict") return;
+        accept(await waitForDatabaseTool(controller.signal));
+      })
+      .catch(() => accept({ state: "unavailable" }));
+    return () => {
+      controller.abort();
+      if (conflictTimer !== null) window.clearTimeout(conflictTimer);
+      release?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -558,7 +612,8 @@ export function WorkspaceTool() {
     [client, reportError, runLong],
   );
 
-  const disabled = busy !== null;
+  const tabConflict = ownership?.state === "conflict";
+  const disabled = busy !== null || ownership === null || tabConflict;
   return (
     <ToolShell
       description="Create or open a persistent local database, review workbook batches, record batch context, and export a portable copy"
@@ -567,6 +622,23 @@ export function WorkspaceTool() {
       kicker="Local database"
       title="Database"
     >
+      {tabConflict ? (
+        <section
+          className={`${sectionClass} border-fd-primary/40`}
+          data-testid="workspace-tab-conflict"
+          role="alert"
+        >
+          <h2 className="font-display text-xl font-semibold">
+            The database tool is open in another tab
+          </h2>
+          <p className="mt-2 text-sm text-fd-muted-foreground">
+            This browser can run the database tool in one tab or window at a
+            time, because the working database keeps exclusive file handles.
+            Finish your work in the other tab or close it. This page takes over
+            on its own once the other tab lets go
+          </p>
+        </section>
+      ) : null}
       <section className={sectionClass} data-testid="workspace-start">
         <div className="grid gap-6 lg:grid-cols-2">
           <div>
@@ -687,7 +759,8 @@ export function WorkspaceTool() {
         <p className="mt-4 text-sm text-fd-muted-foreground">
           The working database stays in origin-private browser storage. Opening
           a file copies it there in bounded chunks and leaves the selected file
-          unchanged
+          unchanged. Verified in Chromium-based desktop browsers such as Chrome
+          and Edge. Use the tool in one tab at a time
         </p>
         {recentDatabases.length === 0 ? null : (
           <div className="mt-5" data-testid="workspace-recent">
