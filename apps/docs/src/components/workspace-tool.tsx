@@ -18,6 +18,7 @@ import type {
   WorkspaceBatchPage,
   WorkspaceBatchSummary,
   WorkspaceProgress,
+  WorkspaceRowsPage,
   WorkspaceSchemaDocument,
   WorkspaceSchemaPlan,
   WorkspaceStoredDatabase,
@@ -42,10 +43,17 @@ import {
   FolderOpen,
   LoaderCircle,
   RefreshCw,
+  Table2,
   Trash2,
   TriangleAlert,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 const DATABASE_ACCEPT = ".sqlite,.sqlite3,.db,.duckdb";
 const CONFLICT_NOTICE_GRACE_MILLISECONDS = 300;
@@ -65,7 +73,8 @@ const DEFAULT_SCHEMA = `{
 }`;
 
 /** The part of the page whose controls produced a notice or error. */
-type StatusSection = "start" | "schema" | "import" | "history" | "export";
+type StatusSection =
+  "start" | "browse" | "schema" | "import" | "history" | "export";
 
 interface WorkspaceStatus {
   readonly kind: "error" | "notice" | "cancelled";
@@ -300,7 +309,15 @@ function ProgressNotice({
   );
 }
 
-function Summary({ summary }: { readonly summary: WorkspaceSummary }) {
+function Summary({
+  summary,
+  disabled,
+  onBrowse,
+}: {
+  readonly summary: WorkspaceSummary;
+  readonly disabled: boolean;
+  readonly onBrowse: (table: string) => void;
+}) {
   return (
     <section className={sectionClass} data-testid="workspace-summary">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -366,10 +383,155 @@ function Summary({ summary }: { readonly summary: WorkspaceSummary }) {
                   .map((column) => `${column.name} (${column.type})`)
                   .join(", ")}
               </p>
+              <button
+                className={`${compactButtonClass} mt-3`}
+                data-testid="workspace-table-browse"
+                disabled={disabled}
+                onClick={() => onBrowse(table.name)}
+                type="button"
+              >
+                <Table2 aria-hidden="true" className="size-3.5" />
+                Browse rows
+              </button>
             </article>
           ))}
         </div>
       )}
+    </section>
+  );
+}
+
+function cellText(value: boolean | null | number | string): string {
+  if (value === null) return "";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  return String(value);
+}
+
+/**
+ * A bounded, read-only look at one table's stored rows: one page at a time,
+ * ordered by record id. Nothing here edits, sorts, or filters.
+ */
+function RowBrowser({
+  page,
+  loading,
+  disabled,
+  onFirst,
+  onNext,
+  onClose,
+  notice,
+}: {
+  readonly page: WorkspaceRowsPage | null;
+  readonly loading: boolean;
+  readonly disabled: boolean;
+  readonly onFirst: () => void;
+  readonly onNext: (cursor: string) => void;
+  readonly onClose: () => void;
+  readonly notice: ReactNode;
+}) {
+  const nextCursor = page?.nextCursor ?? null;
+  return (
+    <section className={sectionClass} data-testid="workspace-browse">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="font-display text-xl font-semibold">
+            {page === null ? "Rows" : `Rows in ${page.table}`}
+          </h2>
+          <p className="mt-1 text-sm text-fd-muted-foreground">
+            Read-only. Rows appear in record ID order, 50 at a time
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {page?.cursor === null || page === null ? null : (
+            <button
+              className={secondaryButtonClass}
+              data-testid="workspace-browse-first"
+              disabled={disabled || loading}
+              onClick={onFirst}
+              type="button"
+            >
+              First rows
+            </button>
+          )}
+          {nextCursor === null ? null : (
+            <button
+              className={secondaryButtonClass}
+              data-testid="workspace-browse-next"
+              disabled={disabled || loading}
+              onClick={() => onNext(nextCursor)}
+              type="button"
+            >
+              Next rows
+            </button>
+          )}
+          <button
+            className={secondaryButtonClass}
+            data-testid="workspace-browse-close"
+            onClick={onClose}
+            type="button"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+      {loading && page === null ? (
+        <p className="mt-4 text-sm text-fd-muted-foreground" role="status">
+          Loading rows
+        </p>
+      ) : page === null ? null : page.rows.length === 0 ? (
+        <p
+          className="mt-4 text-sm text-fd-muted-foreground"
+          data-testid="workspace-browse-empty"
+        >
+          {page.cursor === null ? "This table has no rows yet" : "No more rows"}
+        </p>
+      ) : (
+        <>
+          <p
+            className="mt-4 text-xs text-fd-muted-foreground"
+            data-testid="workspace-browse-count"
+          >
+            Showing {page.rows.length.toLocaleString()}{" "}
+            {page.rows.length === 1 ? "row" : "rows"}
+            {page.nextCursor === null ? "" : ", more follow"}
+          </p>
+          <div className="mt-2 overflow-x-auto rounded-lg border">
+            <table className="min-w-full text-left text-xs">
+              <thead>
+                <tr>
+                  {page.columns.map((column) => (
+                    <th className="bg-fd-muted p-2" key={column.name}>
+                      {column.name}
+                      <span className="ml-1 font-normal text-fd-muted-foreground">
+                        {column.type}
+                      </span>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {page.rows.map((row, index) => (
+                  <tr
+                    className="border-t"
+                    data-testid="workspace-browse-row"
+                    key={`${page.cursor ?? "first"}:${String(index)}`}
+                  >
+                    {row.map((cell, columnIndex) => (
+                      <td
+                        className="max-w-64 truncate p-2 font-mono"
+                        key={`${String(index)}:${String(columnIndex)}`}
+                        title={cellText(cell)}
+                      >
+                        {cellText(cell)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      {notice}
     </section>
   );
 }
@@ -420,6 +582,18 @@ export function WorkspaceTool() {
   const [ownership, setOwnership] = useState<DatabaseToolOwnership | null>(
     null,
   );
+  // The panel is tagged with the workspace generation it was opened for, so
+  // a different database (or none) hides it without an effect.
+  const [browse, setBrowse] = useState<{
+    readonly generation: number;
+    readonly table: string;
+    readonly page: WorkspaceRowsPage | null;
+    readonly loading: boolean;
+  } | null>(null);
+  // Mirrors the browse state for callbacks captured before it changed, so a
+  // reload requested by an operation that finishes after Close cannot reopen
+  // the panel. It is written wherever the state is, never during render.
+  const browseLatestRef = useRef<typeof browse>(null);
 
   // Claim the tool for this page before any engine starts. A conflict keeps
   // the page waiting in the background and takes over when the other tab
@@ -817,6 +991,57 @@ export function WorkspaceTool() {
     [client, refreshCopies, runLong],
   );
 
+  // The row browser shows one table's page at a time. Only the latest
+  // request may publish, and the panel follows the database: a new
+  // generation closes it, and applied batches or schema changes reload its
+  // first page so it never shows rows the database no longer has.
+  const browseRequestRef = useRef(0);
+  const browseRows = useCallback(
+    async (table: string, cursor: string | null) => {
+      const generation = workspaceGeneration;
+      const request = browseRequestRef.current + 1;
+      browseRequestRef.current = request;
+      const previous = browseLatestRef.current;
+      const opening =
+        previous !== null &&
+        previous.table === table &&
+        previous.generation === generation
+          ? { ...previous, loading: true }
+          : { generation, table, page: null, loading: true };
+      browseLatestRef.current = opening;
+      setBrowse(opening);
+      try {
+        const page = await client().readRows(table, cursor);
+        if (browseRequestRef.current !== request) return;
+        const loaded = { generation, table, page, loading: false };
+        browseLatestRef.current = loaded;
+        setBrowse(loaded);
+      } catch (error) {
+        if (browseRequestRef.current !== request) return;
+        const settled =
+          browseLatestRef.current === null
+            ? null
+            : { ...browseLatestRef.current, loading: false };
+        browseLatestRef.current = settled;
+        setBrowse(settled);
+        reportError(error, "browse");
+      }
+    },
+    [client, reportError, workspaceGeneration],
+  );
+  const closeBrowser = useCallback(() => {
+    browseRequestRef.current += 1;
+    browseLatestRef.current = null;
+    setBrowse(null);
+    setStatus((current) => (current?.section === "browse" ? null : current));
+  }, []);
+  const refreshBrowser = useCallback(() => {
+    const open = browseLatestRef.current;
+    if (open !== null && open.generation === workspaceGeneration) {
+      void browseRows(open.table, null);
+    }
+  }, [browseRows, workspaceGeneration]);
+
   const planSchema = useCallback(async () => {
     try {
       const revision = schemaReviewRevisionRef.current;
@@ -875,7 +1100,15 @@ export function WorkspaceTool() {
       section: "schema",
       message: "Applied the reviewed schema changes",
     });
-  }, [client, invalidateSchemaReview, reportError, runLong, schemaPlan]);
+    refreshBrowser();
+  }, [
+    client,
+    invalidateSchemaReview,
+    refreshBrowser,
+    reportError,
+    runLong,
+    schemaPlan,
+  ]);
 
   // The refresh reports where the error that offered it was shown.
   const refreshSummary = useCallback(
@@ -1232,7 +1465,23 @@ export function WorkspaceTool() {
         </section>
       ) : (
         <>
-          <Summary summary={summary} />
+          <Summary
+            disabled={disabled}
+            onBrowse={(table) => void browseRows(table, null)}
+            summary={summary}
+          />
+          {browse === null ||
+          browse.generation !== workspaceGeneration ? null : (
+            <RowBrowser
+              disabled={disabled}
+              loading={browse.loading}
+              notice={statusFor("browse")}
+              onClose={closeBrowser}
+              onFirst={() => void browseRows(browse.table, null)}
+              onNext={(cursor) => void browseRows(browse.table, cursor)}
+              page={browse.page}
+            />
+          )}
           <section className={sectionClass} data-testid="workspace-schema">
             <h2 className="font-display text-xl font-semibold">Schema</h2>
             <p className="mt-2 text-sm text-fd-muted-foreground">
@@ -1291,7 +1540,10 @@ export function WorkspaceTool() {
             key={workspaceGeneration}
             notice={statusFor("import")}
             summary={summary}
-            onBatchRecorded={reloadBatches}
+            onBatchRecorded={() => {
+              reloadBatches();
+              refreshBrowser();
+            }}
             onSummary={(next) => {
               setSummary(next);
               invalidateSchemaReview();

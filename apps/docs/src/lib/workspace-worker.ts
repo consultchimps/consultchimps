@@ -14,6 +14,7 @@ import type {
   WorkspacePreviewPage,
   WorkspaceProgress,
   WorkspaceRouteDecision,
+  WorkspaceRowsPage,
   WorkspaceSchemaDocument,
   WorkspaceSchemaApplication,
   WorkspaceSchemaPlan,
@@ -351,6 +352,20 @@ export class WorkspaceClient {
   async close(): Promise<void> {
     const event = await this.#request({ type: "close" });
     if (event.type !== "closed") throw unexpected("close");
+  }
+
+  async readRows(
+    table: string,
+    cursor: string | null,
+  ): Promise<WorkspaceRowsPage> {
+    const event = await this.#request({
+      type: "readRows",
+      table,
+      cursor,
+      limit: 50,
+    });
+    if (event.type !== "rows") throw unexpected("rows");
+    return event.page;
   }
 
   async refreshSummary(

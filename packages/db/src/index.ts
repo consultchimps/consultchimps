@@ -21,6 +21,13 @@ export {
   type SchemaPlan,
 } from "./records.js";
 export {
+  readTableRows,
+  type TableRowsColumn,
+  type TableRowsPage,
+  type TableRowsPageOptions,
+  type TableRowValue,
+} from "./rows.js";
+export {
   assertRecordIdConfig,
   assertSafeIdentifier,
   formatRecordId,

@@ -299,6 +299,17 @@ content does not imply that loading it into another table adds no rows.
 capture IDs that also appeared in an earlier batch as `reusedCaptureIds`,
 including when that earlier batch is on another page.
 
+`readTableRows({ database, table, page })` returns one page of a managed table's
+stored rows for a bounded, read-only look at the data. Rows come in Record ID
+order (shorter IDs first, then text order, like batch history). The page carries
+the Record ID, the table's declared columns in order, and the source file ID,
+with 64-bit integers as decimal strings and a boolean column's 0 and 1 as false
+and true. `page.limit` is from 1 to 200 (default 50); pass `nextCursor` back as
+`page.cursor`. An unknown table reports `DB_TABLE_NOT_FOUND`, a bad page size
+`DB_INVALID_PAGE_SIZE`, a malformed or foreign cursor `DB_INVALID_CURSOR`, and a
+registered table whose storage no longer matches its declaration
+`DB_SCHEMA_DRIFT`. Nothing is written.
+
 Cross-format export checks stored values against the registered logical schema
 as it copies bounded batches. External edits that violate those types stop the
 conversion before publication instead of relying on the destination engine to

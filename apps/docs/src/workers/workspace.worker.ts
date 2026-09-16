@@ -11,6 +11,7 @@ import {
   parseDatabaseSchema,
   planSchema,
   prepareImport,
+  readTableRows,
   recordBatch,
   resolveImport,
   type ColumnDefinition,
@@ -1483,6 +1484,28 @@ async function handle(id: number, command: WorkspaceCommand): Promise<void> {
           summary: await summaryOf(current()),
         });
         return;
+      case "readRows": {
+        const page = await readTableRows({
+          database: current().database,
+          table: command.table,
+          page: {
+            limit: command.limit,
+            ...(command.cursor === null ? {} : { cursor: command.cursor }),
+          },
+        });
+        scope.postMessage({
+          type: "rows",
+          id,
+          page: {
+            table: page.table,
+            columns: page.columns,
+            rows: page.rows,
+            cursor: command.cursor,
+            nextCursor: page.nextCursor ?? null,
+          },
+        });
+        return;
+      }
       // Listing runs on its own when the page loads, and removal never
       // needs another tab's handles, so neither waits for a busy pool. A
       // fast failure here leaves the next user action free to start the
