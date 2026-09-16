@@ -284,8 +284,13 @@ describe("readPbiModelPart", () => {
   });
 
   it("finds the real end-of-directory record behind a decoy in the archive comment", async () => {
+    // A 22-byte comment that is itself a syntactically complete record whose
+    // own comment length (0) also reaches the end of input.
     const decoy = "PK\u0005\u0006" + "\0".repeat(18);
     const input = await fixture({ comment: decoy });
+    expect(readPbiModelPart(input)).toEqual(model);
+    // A decoy carrying a multi-disk field is skipped the same way.
+    new DataView(input.buffer).setUint16(input.length - 22 + 4, 1, true);
     expect(readPbiModelPart(input)).toEqual(model);
   });
 
