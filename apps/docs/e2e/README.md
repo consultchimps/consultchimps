@@ -59,8 +59,8 @@ command when `out/` is missing.
   blocking incompatible schema changes before any write.
 - `workspace-import.spec.ts`: preparing several workbooks together, reviewing
   table routes and bounded row previews, importing through both database
-  engines, skipping a repeated capture, recording a separate delivery against
-  reused captured rows, appending a changed submission, reopening saved import
+  engines, skipping a repeated import batch, recording the same rows again
+  without adding them twice, appending a changed submission, reopening saved
   reviews after a worker restart without the Excel files, cancelling workbook
   preparation, resuming an interrupted SQLite apply after its transaction rolls
   back, and recovering a committed receipt after its worker reply is lost.
@@ -201,10 +201,11 @@ stored plan and `workspace-import-apply` publishes only a ready revision. After
 reopening a working database, `workspace-import-resume` restores a saved review
 from browser storage without selecting the source workbook again.
 
-Delivery details live under `workspace-delivery-context`. A duplicate capture
-renders `workspace-import-duplicate`; `workspace-delivery-record-reuse` records
-another touch point without copying rows. The paged history loads on its own
-when a database opens and after each applied or recorded batch;
+The "About this import batch" fields live under `workspace-delivery-context`
+(the test IDs keep their original spelling). A repeated import batch renders
+`workspace-import-duplicate`; `workspace-delivery-record-reuse` records the same
+rows again without adding them twice. The paged import history loads on its own
+when a database opens and after each applied or recorded import batch;
 `workspace-deliveries-refresh` reloads it into `workspace-delivery` entries,
 `workspace-deliveries-loading` shows while it loads, and a failed load renders
 `workspace-deliveries-error` inside the section. Export uses

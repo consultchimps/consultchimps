@@ -15,8 +15,8 @@ import { ConsultChimpsError, isConsultChimpsError } from "@consultchimps/core";
 import type {
   WorkspaceDatabaseFormat,
   WorkspaceDatabaseListing,
-  WorkspaceDeliveryPage,
-  WorkspaceDeliverySummary,
+  WorkspaceBatchPage,
+  WorkspaceBatchSummary,
   WorkspaceProgress,
   WorkspaceSchemaDocument,
   WorkspaceSchemaPlan,
@@ -330,14 +330,12 @@ function Summary({ summary }: { readonly summary: WorkspaceSummary }) {
           <dd data-testid="workspace-table-count">{summary.tables.length}</dd>
         </div>
         <div>
-          <dt className="text-fd-muted-foreground">Applied batches</dt>
+          <dt className="text-fd-muted-foreground">Imports applied</dt>
           <dd>{summary.importCount}</dd>
         </div>
         <div>
-          <dt className="text-fd-muted-foreground">Recorded batches</dt>
-          <dd data-testid="workspace-delivery-count">
-            {summary.deliveryCount}
-          </dd>
+          <dt className="text-fd-muted-foreground">Imports recorded</dt>
+          <dd data-testid="workspace-delivery-count">{summary.batchCount}</dd>
         </div>
         <div>
           <dt className="text-fd-muted-foreground">Format version</dt>
@@ -376,7 +374,7 @@ function Summary({ summary }: { readonly summary: WorkspaceSummary }) {
   );
 }
 
-function deliveryScopeText(scope: WorkspaceDeliverySummary["scope"]): string {
+function batchScopeText(scope: WorkspaceBatchSummary["scope"]): string {
   switch (scope.kind) {
     case "full":
       return "Full coverage";
@@ -393,7 +391,7 @@ export function WorkspaceTool() {
   const clientRef = useRef<WorkspaceClient | null>(null);
   const openInputRef = useRef<HTMLInputElement | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
-  const deliveriesRequestRef = useRef(0);
+  const batchesRequestRef = useRef(0);
   const exportLeaseReleasesRef = useRef<Set<() => void>>(new Set());
   const schemaReviewRevisionRef = useRef(0);
   const [summary, setSummary] = useState<WorkspaceSummary | null>(null);
@@ -411,11 +409,9 @@ export function WorkspaceTool() {
   const [schemaPlan, setSchemaPlan] = useState<WorkspaceSchemaPlan | null>(
     null,
   );
-  const [deliveries, setDeliveries] = useState<WorkspaceDeliveryPage | null>(
-    null,
-  );
-  const [deliveriesLoading, setDeliveriesLoading] = useState(false);
-  const [deliveriesError, setDeliveriesError] = useState<string | null>(null);
+  const [batches, setBatches] = useState<WorkspaceBatchPage | null>(null);
+  const [batchesLoading, setBatchesLoading] = useState(false);
+  const [batchesError, setBatchesError] = useState<string | null>(null);
   const [copies, setCopies] = useState<WorkspaceDatabaseListing | null>(null);
   const [copiesError, setCopiesError] = useState<string | null>(null);
   const [storageUsage, setStorageUsage] = useState<StorageUsage | null>(null);
@@ -563,11 +559,11 @@ export function WorkspaceTool() {
     [reportError],
   );
 
-  const clearDeliveries = useCallback(() => {
-    deliveriesRequestRef.current += 1;
-    setDeliveries(null);
-    setDeliveriesLoading(false);
-    setDeliveriesError(null);
+  const clearBatches = useCallback(() => {
+    batchesRequestRef.current += 1;
+    setBatches(null);
+    setBatchesLoading(false);
+    setBatchesError(null);
   }, []);
 
   const invalidateSchemaReview = useCallback(() => {
@@ -633,36 +629,36 @@ export function WorkspaceTool() {
     return () => window.removeEventListener("beforeunload", hold);
   }, [busy, reviewActive]);
 
-  // Batch history loads on its own whenever a database is opened and after
-  // every applied or recorded batch, so the count in the summary and the
-  // list below it never disagree until someone clicks Refresh. A load that
+  // Import history loads on its own whenever a database is opened and after
+  // every applied or recorded import batch, so the count in the summary and
+  // the list below it never disagree until someone clicks Refresh. A load that
   // fails reports inside the history section rather than through the page
   // status: it often runs in the background, and must not replace the notice
   // or error of the action that started it.
-  const loadDeliveries = useCallback(
+  const loadBatches = useCallback(
     async (cursor: string | null) => {
-      const request = deliveriesRequestRef.current + 1;
-      deliveriesRequestRef.current = request;
-      setDeliveriesLoading(true);
-      setDeliveriesError(null);
+      const request = batchesRequestRef.current + 1;
+      batchesRequestRef.current = request;
+      setBatchesLoading(true);
+      setBatchesError(null);
       try {
-        const page = await client().listDeliveries(cursor);
-        if (deliveriesRequestRef.current === request) setDeliveries(page);
+        const page = await client().listBatches(cursor);
+        if (batchesRequestRef.current === request) setBatches(page);
       } catch (error) {
-        if (deliveriesRequestRef.current === request) {
-          setDeliveriesError(describeFailure(error));
+        if (batchesRequestRef.current === request) {
+          setBatchesError(describeFailure(error));
         }
       } finally {
-        if (deliveriesRequestRef.current === request) {
-          setDeliveriesLoading(false);
+        if (batchesRequestRef.current === request) {
+          setBatchesLoading(false);
         }
       }
     },
     [client],
   );
-  const reloadDeliveries = useCallback(() => {
-    void loadDeliveries(null);
-  }, [loadDeliveries]);
+  const reloadBatches = useCallback(() => {
+    void loadBatches(null);
+  }, [loadBatches]);
   const runImportOperation = useCallback(
     <T,>(
       label: string,
@@ -683,19 +679,19 @@ export function WorkspaceTool() {
     setWorkspaceGeneration((current) => current + 1);
     remember(created);
     invalidateSchemaReview();
-    clearDeliveries();
-    void loadDeliveries(null);
+    clearBatches();
+    void loadBatches(null);
     setStatus({
       kind: "notice",
       section: "start",
       message: "Created a persistent browser working database",
     });
   }, [
-    clearDeliveries,
+    clearBatches,
     client,
     format,
     invalidateSchemaReview,
-    loadDeliveries,
+    loadBatches,
     name,
     remember,
     runLong,
@@ -721,8 +717,8 @@ export function WorkspaceTool() {
       setWorkspaceGeneration((current) => current + 1);
       remember(opened);
       invalidateSchemaReview();
-      clearDeliveries();
-      void loadDeliveries(null);
+      clearBatches();
+      void loadBatches(null);
       setStatus({
         kind: "notice",
         section: "start",
@@ -730,10 +726,10 @@ export function WorkspaceTool() {
       });
     },
     [
-      clearDeliveries,
+      clearBatches,
       client,
       invalidateSchemaReview,
-      loadDeliveries,
+      loadBatches,
       openName,
       openOverwrite,
       remember,
@@ -751,8 +747,8 @@ export function WorkspaceTool() {
       setWorkspaceGeneration((current) => current + 1);
       remember(opened);
       invalidateSchemaReview();
-      clearDeliveries();
-      void loadDeliveries(null);
+      clearBatches();
+      void loadBatches(null);
       setStatus({
         kind: "notice",
         section: "start",
@@ -760,10 +756,10 @@ export function WorkspaceTool() {
       });
     },
     [
-      clearDeliveries,
+      clearBatches,
       client,
       invalidateSchemaReview,
-      loadDeliveries,
+      loadBatches,
       remember,
       runLong,
     ],
@@ -783,7 +779,7 @@ export function WorkspaceTool() {
     setSummary(null);
     setWorkspaceGeneration((current) => current + 1);
     invalidateSchemaReview();
-    clearDeliveries();
+    clearBatches();
     if (closed !== null) {
       setStatus({
         kind: "notice",
@@ -793,7 +789,7 @@ export function WorkspaceTool() {
     }
     void refreshCopies();
   }, [
-    clearDeliveries,
+    clearBatches,
     client,
     invalidateSchemaReview,
     refreshCopies,
@@ -935,7 +931,7 @@ export function WorkspaceTool() {
     ) : null;
   return (
     <ToolShell
-      description="Create or open a persistent local database, review workbook batches, record batch context, and export a portable copy"
+      description="Create or open a persistent local database, review import batches, record their context, and export a portable copy"
       guideHref="/docs/tools/data-workspace"
       guideLabel="Read the database guide"
       kicker="Local database"
@@ -1295,7 +1291,7 @@ export function WorkspaceTool() {
             key={workspaceGeneration}
             notice={statusFor("import")}
             summary={summary}
-            onBatchRecorded={reloadDeliveries}
+            onBatchRecorded={reloadBatches}
             onSummary={(next) => {
               setSummary(next);
               invalidateSchemaReview();
@@ -1309,89 +1305,89 @@ export function WorkspaceTool() {
             <div className="flex items-center justify-between gap-4">
               <div>
                 <h2 className="font-display text-xl font-semibold">
-                  Batch history
+                  Import history
                 </h2>
                 <p className="mt-1 text-sm text-fd-muted-foreground">
-                  Batch records stay separate from captured file contents
+                  Import history stays separate from the stored rows
                 </p>
               </div>
               <button
                 className={secondaryButtonClass}
                 data-testid="workspace-deliveries-refresh"
-                disabled={disabled || deliveriesLoading}
-                onClick={() => void loadDeliveries(null)}
+                disabled={disabled || batchesLoading}
+                onClick={() => void loadBatches(null)}
                 type="button"
               >
                 <RefreshCw aria-hidden="true" className="size-4" />
                 Refresh
               </button>
             </div>
-            {deliveriesError === null ? null : (
+            {batchesError === null ? null : (
               <div
                 className="mt-4 rounded-lg border-2 border-fd-primary bg-fd-primary/10 px-4 py-3"
                 data-testid="workspace-deliveries-error"
                 role="alert"
               >
                 <p className="text-sm font-semibold">
-                  The batch history could not be loaded
+                  The import history could not be loaded
                 </p>
                 <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs leading-6">
-                  {deliveriesError}
+                  {batchesError}
                 </pre>
               </div>
             )}
-            {deliveries === null ? (
-              deliveriesLoading ? (
+            {batches === null ? (
+              batchesLoading ? (
                 <p
                   className="mt-4 text-sm text-fd-muted-foreground"
                   data-testid="workspace-deliveries-loading"
                   role="status"
                 >
-                  Loading batch history
+                  Loading import history
                 </p>
               ) : null
-            ) : deliveries.deliveries.length === 0 ? (
+            ) : batches.batches.length === 0 ? (
               <p className="mt-4 text-sm text-fd-muted-foreground">
-                No batches recorded
+                No import batches recorded
               </p>
             ) : (
               <ol className="mt-4 space-y-3">
-                {deliveries.deliveries.map((delivery) => (
+                {batches.batches.map((record) => (
                   <li
                     className="rounded-lg border p-4"
                     data-testid="workspace-delivery"
-                    key={delivery.id}
+                    key={record.id}
                   >
                     <div className="flex justify-between gap-3">
-                      <span className="font-semibold">{delivery.label}</span>
+                      <span className="font-semibold">{record.label}</span>
                       <span className="font-mono text-xs text-fd-muted-foreground">
-                        {delivery.id}
+                        {record.id}
                       </span>
                     </div>
                     <p className="mt-1 text-sm">
-                      {delivery.vendor || "Unspecified vendor"} ·{" "}
-                      {delivery.entity || "Unspecified entity"} ·{" "}
-                      {delivery.phase || "Unspecified phase"} ·{" "}
-                      {deliveryScopeText(delivery.scope)}
+                      {record.vendor || "No sender recorded"} ·{" "}
+                      {record.entity || "Nothing recorded for Covers"} ·{" "}
+                      {record.phase || "No period or phase recorded"} ·{" "}
+                      {batchScopeText(record.scope)}
                     </p>
-                    {delivery.reusedCapture ? (
+                    {record.reusedCapture ? (
                       <p className="mt-1 text-xs text-fd-muted-foreground">
-                        Includes previously captured data
+                        Includes rows recorded earlier
                       </p>
                     ) : null}
                   </li>
                 ))}
               </ol>
             )}
-            {deliveries?.nextCursor === null || deliveries === null ? null : (
+            {batches?.nextCursor === null || batches === null ? null : (
               <button
                 className={`${secondaryButtonClass} mt-4`}
                 data-testid="workspace-deliveries-next"
-                disabled={disabled || deliveriesLoading}
-                onClick={() => void loadDeliveries(deliveries.nextCursor)}
+                disabled={disabled || batchesLoading}
+                onClick={() => void loadBatches(batches.nextCursor)}
                 type="button"
               >
-                Next batches
+                Next import batches
               </button>
             )}
             {statusFor("history")}

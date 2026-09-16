@@ -242,14 +242,11 @@ test("shows changes baselines and partial descriptions from an opened database",
     "Partial coverage: Selected business units",
   );
   await expect(deliveries.nth(2)).toContainText("September client handoff");
-  await expect(deliveries.nth(2)).toContainText("Unspecified vendor");
+  await expect(deliveries.nth(2)).toContainText("No sender recorded");
   await expect(deliveries.nth(2)).toContainText("Full coverage");
   await expect(deliveries.nth(3)).toContainText("Mixed delivery");
   await expect(deliveries.nth(3)).toContainText(
-    "Includes previously captured data",
-  );
-  await expect(deliveries.nth(3)).not.toContainText(
-    "without adding observation rows",
+    "Includes rows recorded earlier",
   );
   const screenshotPath = testInfo.outputPath("delivery-history-labels.png");
   await page

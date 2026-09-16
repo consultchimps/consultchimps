@@ -9,7 +9,7 @@ import {
 import { WorkspaceImportDiagnostics } from "@/components/workspace-import-diagnostics";
 import { WORKBOOK_FILES } from "@/lib/accepted-files";
 import type {
-  WorkspaceDeliveryContext,
+  WorkspaceBatchContext,
   WorkspaceImportFile,
   WorkspaceImportListing,
   WorkspacePreparedImport,
@@ -74,11 +74,14 @@ const COLUMN_TYPES = [
 
 const PENDING_IMPORTS_KEY = "consultchimps.workspace.pending-imports.v1";
 
+// The saved request keeps its original "delivery" field name and its
+// "delivery" operation value so requests written by earlier releases still
+// parse; everything else in this file uses the batch vocabulary.
 interface PendingImportRequest {
   readonly databaseId: string;
   readonly planId: string;
   readonly reviewFingerprint?: string | undefined;
-  readonly delivery: WorkspaceDeliveryContext;
+  readonly delivery: WorkspaceBatchContext;
   readonly operation?: "apply" | "delivery" | undefined;
 }
 
@@ -87,15 +90,11 @@ function isPendingImportRequest(value: unknown): value is PendingImportRequest {
     return false;
   }
   const request = value as Record<string, unknown>;
-  const delivery = request["delivery"];
-  if (
-    typeof delivery !== "object" ||
-    delivery === null ||
-    Array.isArray(delivery)
-  ) {
+  const batch = request["delivery"];
+  if (typeof batch !== "object" || batch === null || Array.isArray(batch)) {
     return false;
   }
-  const context = delivery as Record<string, unknown>;
+  const context = batch as Record<string, unknown>;
   return (
     typeof request["databaseId"] === "string" &&
     typeof request["planId"] === "string" &&
@@ -185,7 +184,7 @@ async function executePendingImport<T>(
   }
 }
 
-function emptyDelivery(): WorkspaceDeliveryContext {
+function emptyBatch(): WorkspaceBatchContext {
   return {
     requestId: "",
     vendor: "",
@@ -278,8 +277,7 @@ export function WorkspaceImport({
   );
   const [resolving, setResolving] = useState(false);
   const [preview, setPreview] = useState<WorkspacePreviewPage | null>(null);
-  const [delivery, setDelivery] =
-    useState<WorkspaceDeliveryContext>(emptyDelivery);
+  const [batch, setBatch] = useState<WorkspaceBatchContext>(emptyBatch);
   const [result, setResult] = useState<string | null>(null);
 
   useEffect(() => {
@@ -323,7 +321,7 @@ export function WorkspaceImport({
 
   const retrySavedPlans = useCallback(async () => {
     if (busy || resolving || plan !== null) return;
-    const listing = await runLong("Loading saved batch reviews", () =>
+    const listing = await runLong("Loading saved reviews", () =>
       client().listImports(),
     );
     if (listing !== null) acceptSavedPlans(listing);
@@ -349,8 +347,8 @@ export function WorkspaceImport({
       setPlan(null);
       setPreview(null);
       setResult(null);
-      setDelivery({
-        ...emptyDelivery(),
+      setBatch({
+        ...emptyBatch(),
         requestId: `delivery-${globalThis.crypto.randomUUID()}`,
       });
     },
@@ -376,7 +374,7 @@ export function WorkspaceImport({
       role: source.role,
       revision: source.revision,
     }));
-    const prepared = await runLong("Preparing batch", (options) =>
+    const prepared = await runLong("Preparing the import batch", (options) =>
       client().prepareImport(selected, options),
     );
     if (prepared === null) return;
@@ -493,7 +491,7 @@ export function WorkspaceImport({
   const loadRoutePage = useCallback(
     async (routeCursor: string | null) => {
       if (busy || plan === null || resolving || mappingDirty) return;
-      const inspected = await runLong("Loading batch routes", () =>
+      const inspected = await runLong("Loading routes", () =>
         client().inspectImport(plan.id, routeCursor),
       );
       if (inspected === null) return;
@@ -509,186 +507,132 @@ export function WorkspaceImport({
     [busy, client, mappingDirty, plan, resolving, runLong],
   );
 
-  const apply = useCallback(async () => {
-    if (plan === null || plan.state !== "ready" || !reviewIsCurrent) return;
-    const pending = pendingImport(summary.databaseId, plan.id);
-    const request = pending?.delivery ?? delivery;
-    const operation = pending?.operation ?? "apply";
-    const reviewFingerprint =
-      pending?.reviewFingerprint ?? plan.reviewFingerprint;
-    setDelivery(request);
-    const applied = await runLong("Applying batch", (options) =>
-      executePendingImport(
-        {
-          databaseId: summary.databaseId,
-          planId: plan.id,
-          reviewFingerprint,
-          delivery: request,
-          operation,
-        },
-        () =>
-          operation === "delivery"
-            ? client().recordDelivery(
-                plan.id,
-                reviewFingerprint,
-                request,
-                options,
-              )
-            : client().applyImport(
-                plan.id,
-                reviewFingerprint,
-                request,
-                options,
-              ),
-      ),
-    );
-    if (applied === null) return;
-    clearPendingImport(summary.databaseId, plan.id);
-    lastCompletedRequest.current = {
-      planId: plan.id,
-      requestId: request.requestId,
-    };
-    setSavedPlans((current) =>
-      current.filter((candidate) => candidate.id !== plan.id),
-    );
-    if (applied.summary.state === "updated") {
-      onSummary(applied.summary.value);
-    }
-    onBatchRecorded();
-    setResult(
-      applied.outcome === "duplicate"
-        ? `This capture was already applied. Added 0 rows and skipped ${applied.skippedRows.toLocaleString()} rows`
-        : `Added ${applied.appendedRows.toLocaleString()} rows and skipped ${applied.skippedRows.toLocaleString()} rows that were already stored`,
-    );
-    setPlan({
-      ...plan,
-      application: "applied",
-      duplicateOf: applied.outcome === "duplicate" ? applied.importId : null,
-      captureIds: applied.captureIds,
-    });
-    if (applied.checkpoint.state === "failed") {
-      reportError(
-        new ConsultChimpsError(
-          applied.checkpoint.code,
-          applied.checkpoint.message,
+  // Apply and record again differ only in the operation they choose, the
+  // request ID a repeat run needs, and the sentence they report. Everything
+  // else, including the saved pending request, has to behave identically.
+  const submit = useCallback(
+    async (intent: "apply" | "record-again") => {
+      if (plan === null || plan.state !== "ready") return;
+      const pending = pendingImport(summary.databaseId, plan.id);
+      const operation: "apply" | "delivery" =
+        pending === null
+          ? intent === "record-again" && plan.application === "applied"
+            ? "delivery"
+            : "apply"
+          : (pending.operation ?? "apply");
+      if ((intent === "apply" || operation === "apply") && !reviewIsCurrent) {
+        return;
+      }
+      const completed = lastCompletedRequest.current;
+      const repeat =
+        intent === "record-again" &&
+        completed?.planId === plan.id &&
+        completed.requestId === batch.requestId;
+      const request =
+        pending?.delivery ??
+        (repeat
+          ? {
+              ...batch,
+              requestId: `delivery-${globalThis.crypto.randomUUID()}`,
+            }
+          : batch);
+      const reviewFingerprint =
+        pending?.reviewFingerprint ?? plan.reviewFingerprint;
+      setBatch(request);
+      const label =
+        intent === "apply" ? "Applying import batch" : "Recording import batch";
+      const recorded = await runLong(label, (options) =>
+        executePendingImport(
+          {
+            databaseId: summary.databaseId,
+            planId: plan.id,
+            reviewFingerprint,
+            delivery: request,
+            operation,
+          },
+          () =>
+            operation === "delivery"
+              ? client().recordBatch(
+                  plan.id,
+                  reviewFingerprint,
+                  request,
+                  options,
+                )
+              : client().applyImport(
+                  plan.id,
+                  reviewFingerprint,
+                  request,
+                  options,
+                ),
         ),
       );
-    } else if (applied.summary.state === "refresh-required") {
-      reportError(
-        new ConsultChimpsError(applied.summary.code, applied.summary.message),
+      if (recorded === null) return;
+      clearPendingImport(summary.databaseId, plan.id);
+      lastCompletedRequest.current = {
+        planId: plan.id,
+        requestId: request.requestId,
+      };
+      setSavedPlans((current) =>
+        current.filter((candidate) => candidate.id !== plan.id),
       );
-    }
-  }, [
-    client,
-    delivery,
-    onSummary,
-    onBatchRecorded,
-    plan,
-    reportError,
-    reviewIsCurrent,
-    runLong,
-    summary.databaseId,
-  ]);
+      if (recorded.summary.state === "updated") {
+        onSummary(recorded.summary.value);
+      }
+      onBatchRecorded();
+      setResult(
+        intent === "apply"
+          ? recorded.outcome === "duplicate"
+            ? "This import batch was already applied; nothing was added"
+            : `Added ${recorded.appendedRows.toLocaleString()} rows and skipped ${recorded.skippedRows.toLocaleString()} rows that were already stored`
+          : recorded.appendedRows > 0
+            ? `Added ${recorded.appendedRows.toLocaleString()} rows and recorded this import batch`
+            : recorded.batchesRecorded > 0
+              ? "Recorded this import batch again without adding rows"
+              : "This import batch was already recorded",
+      );
+      setPlan({
+        ...plan,
+        application: "applied",
+        ...(intent === "apply"
+          ? {
+              duplicateOf:
+                recorded.outcome === "duplicate" ? recorded.importId : null,
+            }
+          : {}),
+        captureIds: recorded.captureIds,
+      });
+      if (recorded.checkpoint.state === "failed") {
+        reportError(
+          new ConsultChimpsError(
+            recorded.checkpoint.code,
+            recorded.checkpoint.message,
+          ),
+        );
+      } else if (recorded.summary.state === "refresh-required") {
+        reportError(
+          new ConsultChimpsError(
+            recorded.summary.code,
+            recorded.summary.message,
+          ),
+        );
+      }
+    },
+    [
+      batch,
+      client,
+      onSummary,
+      onBatchRecorded,
+      plan,
+      reportError,
+      reviewIsCurrent,
+      runLong,
+      summary.databaseId,
+    ],
+  );
 
-  const recordAgain = useCallback(async () => {
-    if (plan === null || plan.state !== "ready" || resolving) return;
-    const pending = pendingImport(summary.databaseId, plan.id);
-    const operation =
-      pending === null
-        ? plan.application === "applied"
-          ? "delivery"
-          : "apply"
-        : (pending.operation ?? "apply");
-    if (operation === "apply" && !reviewIsCurrent) return;
-    const completed = lastCompletedRequest.current;
-    const request =
-      pending?.delivery ??
-      (completed?.planId === plan.id &&
-      completed.requestId === delivery.requestId
-        ? {
-            ...delivery,
-            requestId: `delivery-${globalThis.crypto.randomUUID()}`,
-          }
-        : delivery);
-    const reviewFingerprint =
-      pending?.reviewFingerprint ?? plan.reviewFingerprint;
-    setDelivery(request);
-    const recorded = await runLong("Recording batch", (options) =>
-      executePendingImport(
-        {
-          databaseId: summary.databaseId,
-          planId: plan.id,
-          reviewFingerprint,
-          delivery: request,
-          operation,
-        },
-        () =>
-          operation === "delivery"
-            ? client().recordDelivery(
-                plan.id,
-                reviewFingerprint,
-                request,
-                options,
-              )
-            : client().applyImport(
-                plan.id,
-                reviewFingerprint,
-                request,
-                options,
-              ),
-      ),
-    );
-    if (recorded === null) return;
-    clearPendingImport(summary.databaseId, plan.id);
-    lastCompletedRequest.current = {
-      planId: plan.id,
-      requestId: request.requestId,
-    };
-    setSavedPlans((current) =>
-      current.filter((candidate) => candidate.id !== plan.id),
-    );
-    if (recorded.summary.state === "updated") {
-      onSummary(recorded.summary.value);
-    }
-    onBatchRecorded();
-    setResult(
-      recorded.deliveriesRecorded > 0
-        ? "Recorded a separate batch event and reused the captured rows"
-        : "This batch was already recorded; reused the captured rows without adding another event",
-    );
-    setPlan({
-      ...plan,
-      application: "applied",
-      captureIds: recorded.captureIds,
-    });
-    if (recorded.checkpoint.state === "failed") {
-      reportError(
-        new ConsultChimpsError(
-          recorded.checkpoint.code,
-          recorded.checkpoint.message,
-        ),
-      );
-    } else if (recorded.summary.state === "refresh-required") {
-      reportError(
-        new ConsultChimpsError(recorded.summary.code, recorded.summary.message),
-      );
-    }
-  }, [
-    client,
-    delivery,
-    onSummary,
-    onBatchRecorded,
-    plan,
-    reportError,
-    reviewIsCurrent,
-    resolving,
-    runLong,
-    summary.databaseId,
-  ]);
-
-  const setDeliveryField = useCallback(
-    (field: keyof WorkspaceDeliveryContext, value: string) => {
-      setDelivery((current) => ({
+  const setBatchField = useCallback(
+    (field: keyof WorkspaceBatchContext, value: string) => {
+      setBatch((current) => ({
         ...current,
         [field]:
           (field === "effectiveDate" || field === "receivedDate") &&
@@ -702,11 +646,11 @@ export function WorkspaceImport({
 
   return (
     <section className={sectionClass} data-testid="workspace-import">
-      <h2 className="font-display text-xl font-semibold">Prepare a batch</h2>
+      <h2 className="font-display text-xl font-semibold">Import workbooks</h2>
       <p className="mt-2 text-sm text-fd-muted-foreground">
-        Choose one or more Excel workbooks. The worker hashes and reads them in
-        bounded batches, then holds a durable batch review without changing
-        accepted tables
+        Choose one or more Excel workbooks. They are read together as one import
+        batch and held for review, so the database changes only when you apply
+        it
       </p>
       <div className="mt-4 flex flex-wrap gap-3">
         <button
@@ -743,7 +687,7 @@ export function WorkspaceImport({
           ) : (
             <PackageCheck aria-hidden="true" className="size-4" />
           )}
-          Prepare batch review
+          Read and review
         </button>
       </div>
 
@@ -755,16 +699,16 @@ export function WorkspaceImport({
           onClick={() => void retrySavedPlans()}
           type="button"
         >
-          Retry saved batches
+          Retry saved reviews
         </button>
       ) : null}
 
       {savedPlans.length === 0 ? null : (
         <div className="mt-4 rounded-lg border p-4">
-          <h3 className="font-semibold">Saved batch reviews</h3>
+          <h3 className="font-semibold">Saved reviews</h3>
           <p className="mt-1 text-xs text-fd-muted-foreground">
-            Captured rows stay in browser storage, so you can resume without
-            choosing the original workbook again
+            Rows stay in browser storage, so you can resume without choosing the
+            original workbook again
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {savedPlans.map((saved) => (
@@ -780,9 +724,9 @@ export function WorkspaceImport({
                   setDecisions(savedDecisions);
                   setPreview(null);
                   setResult(null);
-                  setDelivery(
+                  setBatch(
                     pending?.delivery ?? {
-                      ...emptyDelivery(),
+                      ...emptyBatch(),
                       requestId: `delivery-${globalThis.crypto.randomUUID()}`,
                     },
                   );
@@ -790,8 +734,8 @@ export function WorkspaceImport({
                 type="button"
               >
                 {saved.application === "applied"
-                  ? "Finish recovery "
-                  : "Resume "}
+                  ? "Finish recording "
+                  : "Resume review "}
                 {saved.regions.map((region) => region.fileName).join(", ")}
               </button>
             ))}
@@ -858,8 +802,8 @@ export function WorkspaceImport({
               className="mt-3 rounded-lg border bg-fd-muted/40 p-3 text-sm"
               data-testid="workspace-import-duplicate"
             >
-              The same captured contents and selection were already applied.
-              Applying again adds no observation rows
+              The same rows and mappings were already applied. Applying again
+              adds no rows
             </p>
           )}
           {pendingRequest === null || plan.application === "applied" ? null : (
@@ -868,11 +812,11 @@ export function WorkspaceImport({
               data-testid="workspace-import-mapping-locked"
               role="status"
             >
-              The route and column mapping are locked while a recorded request
-              for this batch is still pending. Finish it with{" "}
+              The route and column mapping are locked while a saved request for
+              this import batch is still pending. Finish it with{" "}
               {pendingRequest.operation === "delivery"
-                ? "Record batch again"
-                : "Apply batch"}
+                ? "Record again without adding rows"
+                : "Apply import batch"}
             </p>
           )}
           <div className="mt-4 space-y-4">
@@ -1080,7 +1024,7 @@ export function WorkspaceImport({
               role="status"
             >
               The route or column mapping changed. Update the review before
-              applying this batch
+              applying this import batch
             </p>
           ) : null}
 
@@ -1136,59 +1080,62 @@ export function WorkspaceImport({
             className="mt-6 grid gap-3 rounded-lg border p-4 sm:grid-cols-2"
             data-testid="workspace-delivery-context"
           >
-            <legend className="px-2 font-semibold">Batch context</legend>
+            <legend className="px-2 font-semibold">
+              About this import batch
+            </legend>
             <label className="text-xs">
-              Request ID
+              Reference
               <input
                 className={`${inputClass} mt-1`}
                 onChange={(event) =>
-                  setDeliveryField("requestId", event.target.value)
+                  setBatchField("requestId", event.target.value)
                 }
-                value={delivery.requestId}
+                value={batch.requestId}
               />
+              <span className="mt-1 block text-fd-muted-foreground">
+                Used to avoid recording the same import twice
+              </span>
             </label>
             <label className="text-xs">
-              Vendor
+              Sent by
               <input
                 className={`${inputClass} mt-1`}
                 data-testid="workspace-delivery-vendor"
                 onChange={(event) =>
-                  setDeliveryField("vendor", event.target.value)
+                  setBatchField("vendor", event.target.value)
                 }
-                value={delivery.vendor}
+                value={batch.vendor}
               />
             </label>
             <label className="text-xs">
-              Entity
+              Covers
               <input
                 className={`${inputClass} mt-1`}
                 data-testid="workspace-delivery-entity"
                 onChange={(event) =>
-                  setDeliveryField("entity", event.target.value)
+                  setBatchField("entity", event.target.value)
                 }
-                value={delivery.entity}
+                value={batch.entity}
               />
             </label>
             <label className="text-xs">
-              Phase or sprint
+              Period or phase
               <input
                 className={`${inputClass} mt-1`}
                 data-testid="workspace-delivery-phase"
-                onChange={(event) =>
-                  setDeliveryField("phase", event.target.value)
-                }
-                value={delivery.phase}
+                onChange={(event) => setBatchField("phase", event.target.value)}
+                value={batch.phase}
               />
             </label>
             <label className="text-xs">
-              Coverage
+              How complete
               <select
                 className={`${inputClass} mt-1`}
                 data-testid="workspace-delivery-coverage"
                 onChange={(event) =>
-                  setDeliveryField("coverage", event.target.value)
+                  setBatchField("coverage", event.target.value)
                 }
-                value={delivery.coverage}
+                value={batch.coverage}
               >
                 <option value="unknown">Unknown</option>
                 <option value="full">Full snapshot</option>
@@ -1196,43 +1143,41 @@ export function WorkspaceImport({
               </select>
             </label>
             <label className="text-xs">
-              Effective date
+              Data as of
               <input
                 className={`${inputClass} mt-1`}
                 onChange={(event) =>
-                  setDeliveryField("effectiveDate", event.target.value)
+                  setBatchField("effectiveDate", event.target.value)
                 }
                 type="date"
-                value={delivery.effectiveDate ?? ""}
+                value={batch.effectiveDate ?? ""}
               />
             </label>
             <label className="text-xs">
-              Received date
+              Received on
               <input
                 className={`${inputClass} mt-1`}
                 onChange={(event) =>
-                  setDeliveryField("receivedDate", event.target.value)
+                  setBatchField("receivedDate", event.target.value)
                 }
                 type="date"
-                value={delivery.receivedDate ?? ""}
+                value={batch.receivedDate ?? ""}
               />
             </label>
             <label className="text-xs sm:col-span-2">
               Note
               <input
                 className={`${inputClass} mt-1`}
-                onChange={(event) =>
-                  setDeliveryField("note", event.target.value)
-                }
-                value={delivery.note}
+                onChange={(event) => setBatchField("note", event.target.value)}
+                value={batch.note}
               />
-              {delivery.coverage === "partial" ? (
+              {batch.coverage === "partial" ? (
                 <span
                   className="mt-1 block text-fd-muted-foreground"
                   data-testid="workspace-delivery-partial-hint"
                 >
-                  For a partial snapshot the note describes what the batch
-                  covers
+                  For a partial snapshot the note describes what this import
+                  batch covers
                 </span>
               ) : null}
             </label>
@@ -1246,13 +1191,13 @@ export function WorkspaceImport({
                 result !== null ||
                 plan.state !== "ready" ||
                 !reviewIsCurrent ||
-                delivery.requestId.trim() === ""
+                batch.requestId.trim() === ""
               }
-              onClick={() => void apply()}
+              onClick={() => void submit("apply")}
               type="button"
             >
               <PackageCheck aria-hidden="true" className="size-4" />
-              Apply batch
+              Apply import batch
             </button>
             {plan.application !== "applied" &&
             plan.duplicateOf === null ? null : (
@@ -1264,13 +1209,13 @@ export function WorkspaceImport({
                   resolving ||
                   plan.state !== "ready" ||
                   (plan.application === "pending" && !reviewIsCurrent) ||
-                  delivery.requestId.trim() === ""
+                  batch.requestId.trim() === ""
                 }
-                onClick={() => void recordAgain()}
+                onClick={() => void submit("record-again")}
                 type="button"
               >
                 <Truck aria-hidden="true" className="size-4" />
-                Record batch again
+                Record again without adding rows
               </button>
             )}
           </div>

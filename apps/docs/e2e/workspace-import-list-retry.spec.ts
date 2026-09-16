@@ -28,7 +28,7 @@ async function failFirstSavedPlanListing(page: Page): Promise<void> {
                   type: "error",
                   code: "DB_BROWSER_IMPORT_CLEANUP_REQUIRED",
                   message:
-                    "Saved batches could not finish releasing their private resources. Choose Retry saved batches to finish cleanup before reopening them.",
+                    "Saved reviews could not finish releasing their private resources. Choose Retry saved reviews to finish cleanup before reopening them.",
                 },
               }),
             );
@@ -98,7 +98,7 @@ test("retries a failed saved import listing from the database page", async ({
   await page.getByTestId("workspace-reopen").first().click();
   await expect(page.getByTestId("workspace-import-retry-saved")).toBeVisible();
   await expect(page.getByTestId("workspace-error")).toContainText(
-    "Choose Retry saved batches",
+    "Choose Retry saved reviews",
   );
 
   await page.getByTestId("workspace-import-retry-saved").click();

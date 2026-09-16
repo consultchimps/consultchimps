@@ -269,7 +269,7 @@ describe("workspace worker engine start", () => {
       request({ id: 3, type: "refreshSummary" }),
     ).resolves.toMatchObject({
       type: "ready",
-      summary: { importCount: 2, deliveryCount: 3 },
+      summary: { importCount: 2, batchCount: 3 },
     });
   });
 

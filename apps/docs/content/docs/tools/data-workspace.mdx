@@ -2,7 +2,7 @@
 title: Database
 description:
   Create persistent SQLite and DuckDB databases, review Excel imports, and
-  record batch history locally.
+  record import history locally.
 icon: Database
 ---
 
@@ -10,25 +10,43 @@ icon: Database
 tables, and import Excel workbooks. The CLI exposes the same operations under
 `consultchimps db`.
 
-The working database stores accepted rows and import history. Excel files are
-inputs, not the continuing source of truth. A saved import batch contains the
-captured values needed to review and apply an import after the original
-workbooks are no longer available.
+## Words used on this page
 
-In the browser, reopen the working database after a reload and choose **Resume**
-under **Saved import reviews**. The database tool discovers its saved batches in
-browser storage and reconstructs the review from captured rows, so it does not
+The browser tool uses these words, and so does this guide:
+
+- **Working copy**: the database stored in this browser
+- **Import batch**: workbooks read together, reviewed, and then applied or
+  recorded
+- **Review**: the routes and column mappings of an import batch before it is
+  applied
+- **Apply**: add the batch's rows to the database and record it
+- **Record again**: record the same rows as a new event without adding them
+  twice
+- **Rows**: rows added, skipped, or reviewed
+- **Import history**: the recorded import batches
+
+The CLI keeps its own command names, and a saved review file still carries the
+`.ccplan` extension.
+
+The working database stores accepted rows and import history. Excel files are
+inputs, not the continuing source of truth. A saved import batch holds the rows
+needed to review and apply an import after the original workbooks are no longer
+available.
+
+In the browser, reopen the working copy after a reload and choose **Resume
+review** under **Saved reviews**. The database tool finds its saved reviews in
+browser storage and rebuilds the review from the stored rows, so it does not
 need to read the Excel files again.
 
 Browser preparation reports success after closing its workbook sources. If
-`DB_BROWSER_IMPORT_CLEANUP_REQUIRED` appears, retry **Prepare review** to finish
-releasing retained workbook or private-batch resources. Preparation retries that
-cleanup before opening new sources. Keep the tab open while retrying so the
-worker retains the handles needed for cleanup.
+`DB_BROWSER_IMPORT_CLEANUP_REQUIRED` appears, choose **Read and review** again
+to finish releasing retained workbook or private-batch resources. Preparation
+retries that cleanup before opening new sources. Keep the tab open while
+retrying so the worker retains the handles needed for cleanup.
 
-The browser disables application while destination, column mapping, or type
-decisions differ from the accepted review. Review the edited decisions again
-before applying them.
+The browser disables **Apply import batch** while destination, column mapping,
+or type decisions differ from the accepted review. Choose **Update review** to
+review the edited decisions again before applying them.
 
 ## Choose a database format
 
@@ -314,10 +332,10 @@ selection but map it differently into the same table, the batch needs review.
 Correct the mappings or select separate destination tables before applying;
 matching alias routes can reuse one application.
 
-The browser's no-new-observation-rows notice requires the reviewed captures,
-destination tables, and mappings to match existing applications. Reusing source
-content alone does not meet that condition. Editing a route hides the notice
-until the updated review confirms reuse.
+The browser's "adds no rows" notice requires the reviewed rows, destination
+tables, and mappings to match an earlier application. Reusing source content
+alone does not meet that condition. Editing a route hides the notice until the
+updated review confirms reuse.
 
 The browser distinguishes selected workbooks that share a filename. Their roles
 and revisions remain separate source details, while matching content can still
@@ -374,19 +392,20 @@ Batch labels, partial descriptions, and change baselines must contain text.
 Reported numeric attributes must be finite. Invalid context is rejected before
 an import or batch event changes the database.
 
-When you leave a completed event's request ID unchanged, the browser's **Record
-another batch** action generates a fresh ID. An interrupted request keeps its
-saved ID for recovery. Replaying an existing ID reports that the event was
-already recorded.
+The browser calls the request ID **Reference**. When you leave a completed
+event's reference unchanged, **Record again without adding rows** generates a
+fresh one. An interrupted request keeps its saved reference for recovery.
+Replaying an existing reference reports that the event was already recorded.
 
-The browser's batch history loads its first page on its own when a database is
-opened and again after each applied or recorded batch. Choose **Refresh** to
-reload the first page and **Next batches** to view the next page. Each page
-contains up to 25 events. Opening another database replaces the previous
+The browser's import history loads its first page on its own when a database is
+opened and again after each applied or recorded import batch. Choose **Refresh**
+to reload the first page and **Next import batches** to view the next page. Each
+page contains up to 25 events. Opening another database replaces the previous
 database's history. Every notice or error appears under the part of the page
 whose action produced it, and an error that asks for a refreshed summary offers
-**Refresh summary** in place. The reuse notice means an event includes a capture
-seen in an earlier batch. The same event can also include newly imported rows.
+**Refresh summary** in place. The reuse notice means an event includes rows
+recorded in an earlier import batch. The same event can also include newly
+imported rows.
 
 ## Export a copy or convert the format
 
@@ -494,13 +513,13 @@ back on a mismatch before commit. Receipt-only retries do not rescan rows. These
 checks are not digital signatures. Version 1 and 2 spike batches must be
 regenerated from the original sources; working database files keep their format.
 
-Saved import reviews use the same browser storage. If a tab closes or an apply
-is cancelled, reopen the working database and resume the saved review. A
-cancelled apply rolls back its transaction, so retrying the batch does not keep
-a partly written batch.
+Saved reviews use the same browser storage. If a tab closes or an apply is
+cancelled, reopen the working copy and resume the saved review. A cancelled
+apply rolls back its transaction, so retrying the import batch does not keep a
+partly written batch.
 
 If loading saved reviews reports a cleanup failure, keep the tab open and choose
-**Retry saved imports**. The tool retries retained handles before listing the
+**Retry saved reviews**. The tool retries retained handles before listing the
 reviews again.
 
 A saved batch containing rows from an unfinished capture is rejected when it
@@ -509,11 +528,11 @@ Opening the damaged batch does not delete it.
 
 The browser saves an import request before applying it. If the database commits
 but the worker response is lost, reopen the database and choose **Finish
-recovery**. The workspace replays the same request ID and returns its saved
-receipt instead of adding the rows or batch again. If that request returns
-`DB_STALE_IMPORT_PLAN`, the tool clears the pending request and unlocks the
-review controls. Load the current saved review, update its mapping if needed,
-and review it again before applying.
+recording**. The workspace replays the same reference and returns its saved
+receipt instead of adding the rows or the import batch again. If that request
+returns `DB_STALE_IMPORT_PLAN`, the tool clears the pending request and unlocks
+the review controls. Load the current saved review, update its mapping if
+needed, and review it again before applying.
 
 The CLI works directly with the named database file. Use one writer at a time,
 close a database in other applications before modifying it, and retain the

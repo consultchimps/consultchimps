@@ -101,7 +101,7 @@ test.describe("database tool feedback", () => {
 
     // History loaded without a click on Refresh.
     await expect(page.getByTestId("workspace-deliveries")).toContainText(
-      "No batches recorded",
+      "No import batches recorded",
     );
 
     // A schema error renders inside the schema section with the error style.

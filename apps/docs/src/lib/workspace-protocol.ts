@@ -22,7 +22,7 @@ export interface WorkspaceSummary {
   readonly workingCopyName: string;
   readonly tables: readonly WorkspaceTableSummary[];
   readonly importCount: number;
-  readonly deliveryCount: number;
+  readonly batchCount: number;
 }
 
 export interface WorkspaceSchemaColumn {
@@ -92,7 +92,7 @@ export type WorkspaceSummaryRefresh =
       readonly message: string;
     };
 
-export interface WorkspaceDeliveryContext {
+export interface WorkspaceBatchContext {
   readonly requestId: string;
   readonly vendor: string;
   readonly entity: string;
@@ -189,7 +189,7 @@ export interface WorkspaceImportResult {
   readonly appendedRows: number;
   readonly skippedRows: number;
   readonly schemaChanges: number;
-  readonly deliveriesRecorded: number;
+  readonly batchesRecorded: number;
   readonly captureIds: readonly string[];
   readonly summary: WorkspaceSummaryRefresh;
   readonly checkpoint:
@@ -201,7 +201,7 @@ export interface WorkspaceImportResult {
       };
 }
 
-export interface WorkspaceDeliverySummary {
+export interface WorkspaceBatchSummary {
   readonly id: string;
   readonly requestId: string;
   readonly label: string;
@@ -219,8 +219,8 @@ export interface WorkspaceDeliverySummary {
   readonly reusedCapture: boolean;
 }
 
-export interface WorkspaceDeliveryPage {
-  readonly deliveries: readonly WorkspaceDeliverySummary[];
+export interface WorkspaceBatchPage {
+  readonly batches: readonly WorkspaceBatchSummary[];
   readonly nextCursor: string | null;
 }
 
@@ -313,16 +313,16 @@ export type WorkspaceCommand =
       readonly type: "applyImport";
       readonly planId: string;
       readonly reviewFingerprint: string;
-      readonly delivery: WorkspaceDeliveryContext;
+      readonly batch: WorkspaceBatchContext;
     })
   | (WorkspaceCommandBase & {
-      readonly type: "recordDelivery";
+      readonly type: "recordBatch";
       readonly planId: string;
       readonly reviewFingerprint: string;
-      readonly delivery: WorkspaceDeliveryContext;
+      readonly batch: WorkspaceBatchContext;
     })
   | (WorkspaceCommandBase & {
-      readonly type: "listDeliveries";
+      readonly type: "listBatches";
       readonly cursor: string | null;
       readonly limit: number;
     })
@@ -379,8 +379,8 @@ export type WorkspaceEvent =
       readonly result: WorkspaceImportResult;
     })
   | (WorkspaceEventBase & {
-      readonly type: "deliveries";
-      readonly page: WorkspaceDeliveryPage;
+      readonly type: "batches";
+      readonly page: WorkspaceBatchPage;
     })
   | (WorkspaceEventBase & {
       readonly type: "exported";

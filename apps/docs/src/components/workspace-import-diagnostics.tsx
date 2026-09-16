@@ -13,8 +13,9 @@ export function WorkspaceImportDiagnostics({
       role="status"
     >
       <p>
-        {ignoredPlans.length.toLocaleString()} saved batch files could not be
-        reopened
+        {ignoredPlans.length.toLocaleString()}{" "}
+        {ignoredPlans.length === 1 ? "saved review" : "saved reviews"} could not
+        be reopened
       </p>
       <ul className="mt-2 space-y-2">
         {ignoredPlans.map((ignored) => (
