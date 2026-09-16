@@ -270,6 +270,19 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
+  packages/pbi:
+    dependencies:
+      '@consultchimps/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      jszip:
+        specifier: 3.10.1
+        version: 3.10.1
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+
   packages/pdf:
     dependencies:
       '@consultchimps/core':
