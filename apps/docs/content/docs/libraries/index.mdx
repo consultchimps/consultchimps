@@ -22,6 +22,67 @@ that can be reused in a server, desktop app, workflow runner, or another CLI.
 | `@consultchimps/pdf`      | PDF splitting and merging                                      |
 | `@consultchimps/messages` | Plain-language rendering of results and errors                 |
 
+## Read a temporary SQLite catalog
+
+`@consultchimps/db/sqlite-read` opens SQLite bytes for read-only queries without
+creating a managed database or a persistent browser copy. Install the pinned
+`@sqlite.org/sqlite-wasm` peer dependency to use this entry in Node or a
+browser.
+
+```ts
+import { openReadOnlySqlite } from "@consultchimps/db/sqlite-read";
+
+const reader = await openReadOnlySqlite(catalogBytes);
+try {
+  const result = reader.query(
+    "SELECT name FROM sqlite_schema WHERE type = ? ORDER BY name",
+    ["table"],
+  );
+  console.log(result.columns, result.rows);
+} finally {
+  reader.close();
+}
+```
+
+Node resolves `sqlite3.wasm` beside the installed peer package. Browser callers
+supply `runtime: { locateFile: () => sqliteWasmUrl }`, or
+`runtime: { wasmBinary }` to avoid fetching the binary. A locator receives the
+asset name the runtime requests, `sqlite3.wasm` for the pinned build; the
+documentation site serves that asset under `/database-wasm/sqlite3.wasm`, with
+its deployment base path prepended.
+
+Each reader owns an independent runtime, including when a preceding runtime
+failed to load. SQLite integers are returned as `bigint`, floating-point values
+as `number`, blobs as independent `Uint8Array` values, and SQL NULL as `null`.
+
+Queries accept one SELECT or VALUES statement and positional parameters. Writes,
+attachments, PRAGMA statements, EXPLAIN, and multiple statements are refused.
+The one exception is the read-only `data_version` PRAGMA, which FTS5 cursors
+issue internally, so FTS5 tables are readable; R\*Tree tables are refused
+because their cursors prepare writes. Limits bound the catalog size, SQLite
+allocator, the caller's SQL text, result rows, accounted result storage, and
+SQLite virtual-machine steps. Opening a catalog never fails because a query
+limit is small. Exceeding a limit returns `DB_SQLITE_READ_LIMIT_EXCEEDED` rather
+than a truncated result.
+
+The default limits are 32 MiB for `maxDatabaseBytes`, 64 MiB for
+`maxSqliteBytes`, 64 KiB for `maxSqlBytes`, 10,000 for `maxRows`, 4 MiB for
+`maxResultBytes`, and 1,000,000 for `maxSteps`. Supply positive integers no
+greater than 2,147,483,647 to override them. Options are validated before
+reading catalog bytes or invoking a locator.
+
+Opening validates the file header, deserializes the file, and parses the schema.
+It does not scan every page, so corruption that SQLite does not detect can
+surface as query data or as `DB_SQLITE_READ_QUERY_FAILED` on a later query. The
+error objects carry no paths or upstream text; the SQLite runtime itself logs a
+failed WebAssembly load to the console.
+
+These limits do not represent total browser memory. `wasmMemoryBytes` reports
+the reader's current linear-memory reservation while open; the host must also
+account for initialization, input buffers, JavaScript objects, and retained
+results. `close()` frees the catalog buffer and drops the runtime reference;
+garbage collection controls when the engine's linear memory is reclaimed.
+
 ## Discover inputs
 
 ```ts

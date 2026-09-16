@@ -1,7 +1,8 @@
 # Power BI table export
 
 Status: Proposed. The initial decisions followed a reading spike. The
-clarifications below address review findings before acceptance.
+clarifications below address review findings before acceptance. The SQLite
+runtime decision now follows the persistent database replacement in ADR 0005.
 
 Consultants receive Power BI files (`.pbix`) whose data they need in Excel, and
 the only supported way to get it out is to open the file in Power BI Desktop on
@@ -15,14 +16,14 @@ Services backup, compressed with Microsoft's XPress9 algorithm, holding a SQLite
 catalog and one VertiPaq column store per column. An earlier spike rejected
 reading these rows because no JavaScript XPress9 decompressor exists. That was
 the wrong conclusion drawn from a true fact. Microsoft's reference decompressor
-is MIT-licensed C, and C compiles to WebAssembly the same way the sql.js engine
-the toolkit already ships does. A second spike (2026-09-10, ten public Microsoft
-sample files) proved the whole pipeline: nine of nine `.pbix` files, sixty-two
-tables and 808,559 rows decoded cell for cell identically to an independent
-reader (pbixray), in a Web Worker in headless Chromium with no cross-origin
-isolation headers, then written to byte-deterministic workbooks that a
-third-party reader round-tripped with no differences. The tenth file, a `.pbit`
-template, carries no model and is the refusal case.
+is MIT-licensed C, and C compiles to WebAssembly the same way the SQLite engine
+does. A second spike (2026-09-10, ten public Microsoft sample files) proved the
+whole pipeline: nine of nine `.pbix` files, sixty-two tables and 808,559 rows
+decoded cell for cell identically to an independent reader (pbixray), in a Web
+Worker in headless Chromium with no cross-origin isolation headers, then written
+to byte-deterministic workbooks that a third-party reader round-tripped with no
+differences. The tenth file, a `.pbit` template, carries no model and is the
+refusal case.
 
 Query definitions (the Power Query M code) are a different reading and are not
 in scope: modern `.pbix` files no longer carry them as a separate part, so that
@@ -37,12 +38,22 @@ as another input format.
 **Decision: a new package `@consultchimps/pbi`.** It carries a WebAssembly
 artifact and a vendored third-party C source tree, and neither belongs in a
 package whose consumers expect pure TypeScript. It depends on
-`@consultchimps/db` for the sql.js boundary (the catalog inside the model is
-SQLite) and on `@consultchimps/xlsx` for the workbook writer. No new npm
-dependency enters the graph: the runtime stack is sql.js and jszip at the exact
-versions the repository already pins.
+`@consultchimps/db/sqlite-read` for temporary, read-only catalog queries and on
+`@consultchimps/xlsx` for the workbook writer. The catalog inside the model is
+SQLite, but it is not a managed ConsultChimps database. The reader uses the
+official `@sqlite.org/sqlite-wasm` runtime already pinned by the workspace,
+rather than restoring the sql.js APIs removed by ADR 0005. The ZIP dependency
+remains jszip at the repository's pinned version.
 
-## Decision 2: only the decompressor is WebAssembly, and its binary is committed
+The SQLite reader opens an independent in-memory copy, accepts one read-only
+statement at a time, and frees its catalog buffer on close. It needs neither
+DuckDB nor persistent workspace storage. Its limits cover catalog bytes, the
+SQLite allocator, query text, returned rows, accounted result storage, and
+virtual-machine steps. They do not replace the full-pipeline memory envelope
+below. Runtime initialization, reserved WASM pages, JavaScript structures, and
+retained results still count toward that envelope.
+
+## Decision 2: reuse SQLite WASM and commit the XPress9 binary
 
 The XPress9 decoder is three C files from Microsoft (under MIT, obtained from
 the `xpress9-python` repository at a recorded commit) plus a short shim, built
@@ -61,7 +72,7 @@ the built `.wasm`, and have CI rebuild it and assert identical bytes.**
 Contributors do not need a 700 MB toolchain to build the repository, the
 reproducibility check keeps the committed binary honest, and a vendored copy is
 safer than a submodule pointing at one person's repository. The binary is served
-from our own origin as a static asset, never a CDN, exactly as the sql.js binary
+from our own origin as a static asset, never a CDN, exactly as the SQLite binary
 is. The Microsoft copyright and MIT text are reproduced in
 `THIRD-PARTY-LICENSES.md` and beside the vendored source, and the ported Huffman
 kernel attributes its origin in its file header.
@@ -76,16 +87,17 @@ outputs with the committed binary. Toolchain upgrades update the pin and rebuilt
 binary together in a reviewed PR.
 
 The byte engine's options include `runtime?: PbiRuntimeConfig`. This public type
-has `sql?: SqlEngineConfig`, reusing `@consultchimps/db`, and
-`xpress9?: Xpress9RuntimeConfig`. `Xpress9RuntimeConfig` offers
+has `sql?: SqliteReadRuntimeConfig`, reusing `@consultchimps/db/sqlite-read`,
+and `xpress9?: Xpress9RuntimeConfig`. `Xpress9RuntimeConfig` offers
 `locateFile?: (fileName: string) => string` and `wasmBinary?: Uint8Array`. For
 each explicitly supplied runtime config, require exactly one source: a locator
 function or nonempty binary bytes. Reject malformed or conflicting sources with
-`PBI_INVALID_OPTIONS` before processing input. The locator receives the fixed
-asset name, `sql-wasm.wasm` or `xpress9.wasm`; injected bytes require no fetch.
-A browser caller must configure both runtimes. Omitting configuration in Node
-resolves sql.js beside its installed package and XPress9 beside the installed
-`@consultchimps/pbi` package, independent of the process directory.
+`PBI_INVALID_OPTIONS` before processing input. The locator receives the asset
+name its runtime requests, `sqlite3.wasm` or `xpress9.wasm`; injected bytes
+require no fetch. A browser caller must configure both runtimes. Omitting
+configuration in Node resolves SQLite WASM beside its installed peer package and
+XPress9 beside the installed `@consultchimps/pbi` package, independent of the
+process directory.
 
 Validate all supplied options structurally before invoking a locator, loading a
 runtime, reading input, or allocating export buffers. Collect every applicable
@@ -114,17 +126,24 @@ provide their own mapping or inject the binaries directly into the byte engine.
 Configuration belongs to that engine invocation; a custom runtime must not
 silently reuse a cached binary from a different configuration.
 
-The pinned sql.js loader caches its first initialization internally, so merely
-calling it again with custom options does not establish that isolation. Build
-item 1 must repair this at the database boundary before exposing runtime
-configuration: use isolated runtime instances or reject incompatible
-reconfiguration explicitly. The Power BI boundary reports such a conflict as
-`PBI_RUNTIME_UNAVAILABLE` at the load stage and suggests using the original
-configuration or a fresh worker/process. A same-process fixture initializes the
-default or one custom source, then requests different bytes or a different
-locator. It must use the requested source or fail explicitly, never silently
-return the first runtime. Test both successful and failed first initialization;
-separate-process injection tests do not prove this behavior.
+The database boundary now exposes `openReadOnlySqlite` through its independent
+`sqlite-read` entry. Each reader owns a fresh official SQLite WASM instance, so
+runtime-source isolation does not depend on a shared initialization cache.
+Same-process tests cover different locators, injected bytes, and a failed load
+followed by a valid load. A browser-worker test covers a non-root asset mapping,
+read-only queries, integer fidelity, query limits, and cleanup without OPFS
+files or cross-origin isolation headers.
+
+The site already copies `sqlite3.wasm` through
+`scripts/copy-database-browser-assets.ts` to `public/database-wasm`. Power BI
+reuses that asset, with the deployment base path, rather than initializing the
+persistent database runtime or requiring DuckDB assets. Its future catalog
+adapter maps the reader's controlled errors into the Power BI refusal contract:
+runtime failures to `PBI_RUNTIME_UNAVAILABLE`, capacity failures to
+`PBI_EXPORT_LIMIT_EXCEEDED`, and unreadable catalog data to
+`PBI_MODEL_UNREADABLE`. A cleanup failure must remain a failure and direct the
+host to release the worker. The low-level reader's limits do not yet establish
+the browser export capacity defaults required by build item 8.
 
 Unavailable, failed-to-load, or invalid WebAssembly produces
 `PBI_RUNTIME_UNAVAILABLE`, with a controlled runtime label and load, compile, or
@@ -694,8 +713,8 @@ an independent review before push:
    same-origin copy script, and the licence attributions.
 3. XPress9 chunk framing (single and multithreaded), the backup container, and a
    golden hash test per fixture.
-4. Catalog over sql.js: storage schema, legacy schema fallbacks, the table and
-   column model, and the hidden-object rule.
+4. Catalog through `@consultchimps/db/sqlite-read`: storage schema, legacy
+   schema fallbacks, the table and column model, and the hidden-object rule.
 5. VertiPaq decoding: segment metadata, run-length and bit-packed columns,
    numeric dictionaries, value encoding, nulls.
 6. String dictionaries: the Huffman kernel port and all three page encodings.
