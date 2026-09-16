@@ -35,6 +35,7 @@ import {
   waitForDatabaseTool,
 } from "@/lib/workspace-ownership";
 import {
+  CircleCheck,
   Database,
   Download,
   FilePlus,
@@ -57,15 +58,76 @@ const DEFAULT_SCHEMA = `{
       "recordId": { "prefix": "DATASET", "padding": 6 },
       "columns": [
         { "name": "dataset_name", "type": "text", "nullable": false },
-        { "name": "reported_cde", "type": "boolean" }
+        { "name": "is_active", "type": "boolean" }
       ]
     }
   ]
 }`;
 
+/** The part of the page whose controls produced a notice or error. */
+type StatusSection = "start" | "schema" | "import" | "history" | "export";
+
 interface WorkspaceStatus {
-  readonly kind: "error" | "notice";
+  readonly kind: "error" | "notice" | "cancelled";
+  readonly section: StatusSection;
   readonly message: string;
+  /** A recovery the reader can take from the notice itself. */
+  readonly action?: { readonly label: string; readonly run: () => void };
+}
+
+const STATUS_HEADINGS: Record<WorkspaceStatus["kind"], string> = {
+  error: "Something went wrong",
+  notice: "Done",
+  cancelled: "Cancelled",
+};
+
+function StatusNotice({
+  status,
+  disabled,
+}: {
+  readonly status: WorkspaceStatus;
+  readonly disabled: boolean;
+}) {
+  const error = status.kind === "error";
+  return (
+    <div
+      className={
+        error
+          ? "mt-4 rounded-lg border-2 border-fd-primary bg-fd-primary/10 px-4 py-3"
+          : "mt-4 rounded-lg border border-fd-primary/40 bg-fd-accent/30 px-4 py-3"
+      }
+      data-section={status.section}
+      data-testid={error ? "workspace-error" : "workspace-notice"}
+      role={error ? "alert" : "status"}
+    >
+      <div className="flex items-center gap-2 text-sm font-semibold">
+        {error ? (
+          <TriangleAlert
+            aria-hidden="true"
+            className="size-4 text-fd-primary"
+          />
+        ) : (
+          <CircleCheck aria-hidden="true" className="size-4 text-fd-primary" />
+        )}
+        {STATUS_HEADINGS[status.kind]}
+      </div>
+      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs leading-6">
+        {status.message}
+      </pre>
+      {status.action === undefined ? null : (
+        <button
+          className={`${secondaryButtonClass} mt-3`}
+          data-testid="workspace-status-action"
+          disabled={disabled}
+          onClick={status.action.run}
+          type="button"
+        >
+          <RefreshCw aria-hidden="true" className="size-4" />
+          {status.action.label}
+        </button>
+      )}
+    </div>
+  );
 }
 
 interface StorageUsage {
@@ -353,6 +415,7 @@ export function WorkspaceTool() {
     null,
   );
   const [deliveriesLoading, setDeliveriesLoading] = useState(false);
+  const [deliveriesError, setDeliveriesError] = useState<string | null>(null);
   const [copies, setCopies] = useState<WorkspaceDatabaseListing | null>(null);
   const [copiesError, setCopiesError] = useState<string | null>(null);
   const [storageUsage, setStorageUsage] = useState<StorageUsage | null>(null);
@@ -471,14 +534,40 @@ export function WorkspaceTool() {
     [],
   );
 
-  const reportError = useCallback((error: unknown) => {
-    setStatus({ kind: "error", message: describeFailure(error) });
+  // A summary that could not be refreshed gets its recovery attached here, in
+  // one place, whichever operation reported it. The action is reached through
+  // a ref because it runs a long operation that itself reports errors.
+  const refreshSummaryRef = useRef<(section: StatusSection) => void>(
+    () => undefined,
+  );
+  const reportError = useCallback((error: unknown, section: StatusSection) => {
+    const refreshRequired =
+      isConsultChimpsError(error) &&
+      error.code === "DB_BROWSER_SUMMARY_REFRESH_REQUIRED";
+    setStatus({
+      kind: "error",
+      section,
+      message: describeFailure(error),
+      ...(refreshRequired
+        ? {
+            action: {
+              label: "Refresh summary",
+              run: () => refreshSummaryRef.current(section),
+            },
+          }
+        : {}),
+    });
   }, []);
+  const reportImportError = useCallback(
+    (error: unknown) => reportError(error, "import"),
+    [reportError],
+  );
 
   const clearDeliveries = useCallback(() => {
     deliveriesRequestRef.current += 1;
     setDeliveries(null);
     setDeliveriesLoading(false);
+    setDeliveriesError(null);
   }, []);
 
   const invalidateSchemaReview = useCallback(() => {
@@ -493,10 +582,14 @@ export function WorkspaceTool() {
         readonly signal: AbortSignal;
         readonly onProgress: (next: WorkspaceProgress) => void;
       }) => Promise<T>,
-      options: { readonly cancellable?: boolean } = {},
+      options: {
+        readonly cancellable?: boolean;
+        readonly section?: StatusSection;
+      } = {},
     ): Promise<T | null> => {
       const controller = new AbortController();
       controllerRef.current = controller;
+      const section = options.section ?? "start";
       setBusy(label);
       setCancellable(options.cancellable !== false);
       setProgress(null);
@@ -512,12 +605,13 @@ export function WorkspaceTool() {
           (isConsultChimpsError(error) && error.code === "OPERATION_ABORTED")
         ) {
           setStatus({
-            kind: "notice",
+            kind: "cancelled",
+            section,
             message:
               "Cancelled. The accepted database state was left unchanged",
           });
         } else {
-          reportError(error);
+          reportError(error, section);
         }
         return null;
       } finally {
@@ -539,6 +633,47 @@ export function WorkspaceTool() {
     return () => window.removeEventListener("beforeunload", hold);
   }, [busy, reviewActive]);
 
+  // Batch history loads on its own whenever a database is opened and after
+  // every applied or recorded batch, so the count in the summary and the
+  // list below it never disagree until someone clicks Refresh. A load that
+  // fails reports inside the history section rather than through the page
+  // status: it often runs in the background, and must not replace the notice
+  // or error of the action that started it.
+  const loadDeliveries = useCallback(
+    async (cursor: string | null) => {
+      const request = deliveriesRequestRef.current + 1;
+      deliveriesRequestRef.current = request;
+      setDeliveriesLoading(true);
+      setDeliveriesError(null);
+      try {
+        const page = await client().listDeliveries(cursor);
+        if (deliveriesRequestRef.current === request) setDeliveries(page);
+      } catch (error) {
+        if (deliveriesRequestRef.current === request) {
+          setDeliveriesError(describeFailure(error));
+        }
+      } finally {
+        if (deliveriesRequestRef.current === request) {
+          setDeliveriesLoading(false);
+        }
+      }
+    },
+    [client],
+  );
+  const reloadDeliveries = useCallback(() => {
+    void loadDeliveries(null);
+  }, [loadDeliveries]);
+  const runImportOperation = useCallback(
+    <T,>(
+      label: string,
+      run: (options: {
+        readonly signal: AbortSignal;
+        readonly onProgress: (next: WorkspaceProgress) => void;
+      }) => Promise<T>,
+    ) => runLong(label, run, { section: "import" }),
+    [runLong],
+  );
+
   const create = useCallback(async () => {
     const created = await runLong("Creating database", (options) =>
       client().create(format, name.trim(), options),
@@ -549,8 +684,10 @@ export function WorkspaceTool() {
     remember(created);
     invalidateSchemaReview();
     clearDeliveries();
+    void loadDeliveries(null);
     setStatus({
       kind: "notice",
+      section: "start",
       message: "Created a persistent browser working database",
     });
   }, [
@@ -558,6 +695,7 @@ export function WorkspaceTool() {
     client,
     format,
     invalidateSchemaReview,
+    loadDeliveries,
     name,
     remember,
     runLong,
@@ -584,8 +722,10 @@ export function WorkspaceTool() {
       remember(opened);
       invalidateSchemaReview();
       clearDeliveries();
+      void loadDeliveries(null);
       setStatus({
         kind: "notice",
+        section: "start",
         message: `Opened "${file.name}" as browser working copy "${opened.workingCopyName}". The selected file will not change`,
       });
     },
@@ -593,6 +733,7 @@ export function WorkspaceTool() {
       clearDeliveries,
       client,
       invalidateSchemaReview,
+      loadDeliveries,
       openName,
       openOverwrite,
       remember,
@@ -611,12 +752,21 @@ export function WorkspaceTool() {
       remember(opened);
       invalidateSchemaReview();
       clearDeliveries();
+      void loadDeliveries(null);
       setStatus({
         kind: "notice",
+        section: "start",
         message: `Reopened "${workingCopyName}" from browser storage`,
       });
     },
-    [clearDeliveries, client, invalidateSchemaReview, remember, runLong],
+    [
+      clearDeliveries,
+      client,
+      invalidateSchemaReview,
+      loadDeliveries,
+      remember,
+      runLong,
+    ],
   );
 
   // The page drops its view of the database whether or not the worker
@@ -637,6 +787,7 @@ export function WorkspaceTool() {
     if (closed !== null) {
       setStatus({
         kind: "notice",
+        section: "start",
         message: `Closed "${closedName}". It stays in browser storage until you delete it`,
       });
     }
@@ -662,6 +813,7 @@ export function WorkspaceTool() {
       forgetRecent(workingCopyName);
       setStatus({
         kind: "notice",
+        section: "start",
         message: `Deleted "${workingCopyName}" from browser storage. Files you opened or exported are not affected`,
       });
       void refreshCopies();
@@ -674,26 +826,31 @@ export function WorkspaceTool() {
       const revision = schemaReviewRevisionRef.current;
       const schema = parseSchema(schemaText);
       setSchemaPlan(null);
-      const plan = await runLong("Reviewing schema", (options) =>
-        client().planSchema(schema, options),
+      const plan = await runLong(
+        "Reviewing schema",
+        (options) => client().planSchema(schema, options),
+        { section: "schema" },
       );
       if (plan === null || revision !== schemaReviewRevisionRef.current) return;
       setSchemaPlan(plan);
       setStatus({
         kind: "notice",
+        section: "schema",
         message: plan.ready
           ? "Schema review is ready to apply"
           : "Schema conflicts need a decision before anything can change",
       });
     } catch (error) {
-      reportError(error);
+      reportError(error, "schema");
     }
   }, [client, reportError, runLong, schemaText]);
 
   const applySchema = useCallback(async () => {
     if (schemaPlan === null || !schemaPlan.ready) return;
-    const result = await runLong("Applying schema", (options) =>
-      client().applySchema(schemaPlan.id, options),
+    const result = await runLong(
+      "Applying schema",
+      (options) => client().applySchema(schemaPlan.id, options),
+      { section: "schema" },
     );
     if (result === null) return;
     if (result.summary.state === "updated") {
@@ -701,56 +858,57 @@ export function WorkspaceTool() {
     }
     invalidateSchemaReview();
     if (result.checkpoint.state === "failed") {
-      setStatus({
-        kind: "error",
-        message: describeFailure(
-          new ConsultChimpsError(
-            result.checkpoint.code,
-            result.checkpoint.message,
-          ),
+      reportError(
+        new ConsultChimpsError(
+          result.checkpoint.code,
+          result.checkpoint.message,
         ),
-      });
+        "schema",
+      );
       return;
     }
     if (result.summary.state === "refresh-required") {
-      setStatus({
-        kind: "error",
-        message: describeFailure(
-          new ConsultChimpsError(result.summary.code, result.summary.message),
-        ),
-      });
+      reportError(
+        new ConsultChimpsError(result.summary.code, result.summary.message),
+        "schema",
+      );
       return;
     }
     setStatus({
       kind: "notice",
+      section: "schema",
       message: "Applied the reviewed schema changes",
     });
-  }, [client, invalidateSchemaReview, runLong, schemaPlan]);
+  }, [client, invalidateSchemaReview, reportError, runLong, schemaPlan]);
 
-  const loadDeliveries = useCallback(
-    async (cursor: string | null) => {
-      const request = deliveriesRequestRef.current + 1;
-      deliveriesRequestRef.current = request;
-      setDeliveriesLoading(true);
-      try {
-        const page = await client().listDeliveries(cursor);
-        if (deliveriesRequestRef.current === request) setDeliveries(page);
-      } catch (error) {
-        if (deliveriesRequestRef.current === request) reportError(error);
-      } finally {
-        if (deliveriesRequestRef.current === request) {
-          setDeliveriesLoading(false);
-        }
-      }
+  // The refresh reports where the error that offered it was shown.
+  const refreshSummary = useCallback(
+    async (section: StatusSection) => {
+      const refreshed = await runLong(
+        "Refreshing summary",
+        (options) => client().refreshSummary(options),
+        { cancellable: false, section },
+      );
+      if (refreshed === null) return;
+      setSummary(refreshed);
+      setStatus({
+        kind: "notice",
+        section,
+        message: "Refreshed the database summary",
+      });
     },
-    [client, reportError],
+    [client, runLong],
   );
+  useEffect(() => {
+    refreshSummaryRef.current = (section) => void refreshSummary(section);
+  }, [refreshSummary]);
 
   const exportDatabase = useCallback(
     async (targetFormat: WorkspaceDatabaseFormat) => {
       const exported = await runLong(
         "Creating a consistent export",
         (options) => client().export(targetFormat, options),
+        { section: "export" },
       );
       if (exported === null) return;
       try {
@@ -759,10 +917,11 @@ export function WorkspaceTool() {
         );
         setStatus({
           kind: "notice",
+          section: "export",
           message: `Exported an independent ${exported.format} copy. Later browser changes will not update it`,
         });
       } catch (error) {
-        reportError(error);
+        reportError(error, "export");
       }
     },
     [client, reportError, runLong],
@@ -770,11 +929,15 @@ export function WorkspaceTool() {
 
   const tabConflict = ownership?.state === "conflict";
   const disabled = busy !== null || ownership === null || tabConflict;
+  const statusFor = (section: StatusSection) =>
+    status?.section === section ? (
+      <StatusNotice disabled={disabled} status={status} />
+    ) : null;
   return (
     <ToolShell
       description="Create or open a persistent local database, review workbook batches, record batch context, and export a portable copy"
-      guideHref="/docs/getting-started"
-      guideLabel="Read the getting started guide"
+      guideHref="/docs/tools/data-workspace"
+      guideLabel="Read the database guide"
       kicker="Local database"
       title="Database"
     >
@@ -1049,6 +1212,7 @@ export function WorkspaceTool() {
             )}
           </div>
         )}
+        {statusFor("start")}
       </section>
 
       {progress === null ? null : <ProgressNotice progress={progress} />}
@@ -1090,6 +1254,7 @@ export function WorkspaceTool() {
                 if (hadReview) {
                   setStatus({
                     kind: "notice",
+                    section: "schema",
                     message:
                       "Schema document changed. Review it again before applying",
                   });
@@ -1121,20 +1286,23 @@ export function WorkspaceTool() {
             {schemaPlan === null ? null : (
               <WorkspaceSchemaReview plan={schemaPlan} />
             )}
+            {statusFor("schema")}
           </section>
 
           <WorkspaceImport
             busy={disabled}
             client={client}
             key={workspaceGeneration}
+            notice={statusFor("import")}
             summary={summary}
+            onBatchRecorded={reloadDeliveries}
             onSummary={(next) => {
               setSummary(next);
               invalidateSchemaReview();
             }}
             onReviewState={setReviewActive}
-            reportError={reportError}
-            runLong={runLong}
+            reportError={reportImportError}
+            runLong={runImportOperation}
           />
 
           <section className={sectionClass} data-testid="workspace-deliveries">
@@ -1158,7 +1326,31 @@ export function WorkspaceTool() {
                 Refresh
               </button>
             </div>
-            {deliveries === null ? null : deliveries.deliveries.length === 0 ? (
+            {deliveriesError === null ? null : (
+              <div
+                className="mt-4 rounded-lg border-2 border-fd-primary bg-fd-primary/10 px-4 py-3"
+                data-testid="workspace-deliveries-error"
+                role="alert"
+              >
+                <p className="text-sm font-semibold">
+                  The batch history could not be loaded
+                </p>
+                <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs leading-6">
+                  {deliveriesError}
+                </pre>
+              </div>
+            )}
+            {deliveries === null ? (
+              deliveriesLoading ? (
+                <p
+                  className="mt-4 text-sm text-fd-muted-foreground"
+                  data-testid="workspace-deliveries-loading"
+                  role="status"
+                >
+                  Loading batch history
+                </p>
+              ) : null
+            ) : deliveries.deliveries.length === 0 ? (
               <p className="mt-4 text-sm text-fd-muted-foreground">
                 No batches recorded
               </p>
@@ -1202,6 +1394,7 @@ export function WorkspaceTool() {
                 Next batches
               </button>
             )}
+            {statusFor("history")}
           </section>
 
           <section className={sectionClass} data-testid="workspace-export">
@@ -1238,21 +1431,9 @@ export function WorkspaceTool() {
                 Convert to {summary.format === "sqlite" ? "DuckDB" : "SQLite"}
               </button>
             </div>
+            {statusFor("export")}
           </section>
         </>
-      )}
-
-      {status === null ? null : (
-        <pre
-          aria-live="polite"
-          className="overflow-x-auto whitespace-pre-wrap rounded-lg border border-fd-primary/40 bg-fd-accent/30 px-4 py-3 text-xs leading-6"
-          data-testid={
-            status.kind === "error" ? "workspace-error" : "workspace-notice"
-          }
-          role={status.kind === "error" ? "alert" : "status"}
-        >
-          {status.message}
-        </pre>
       )}
     </ToolShell>
   );

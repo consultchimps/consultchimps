@@ -23,7 +23,7 @@ const SCHEMA = {
       recordId: { prefix: "DATASET", padding: 6 },
       columns: [
         { name: "name", type: "text", nullable: false },
-        { name: "reported_cde", type: "boolean" },
+        { name: "is_active", type: "boolean" },
       ],
     },
   ],

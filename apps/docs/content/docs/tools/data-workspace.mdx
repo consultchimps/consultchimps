@@ -259,8 +259,8 @@ new review.
 If `DB_BROWSER_SCHEMA_PERSISTENCE_REQUIRED` appears, the schema changes were
 applied, but the browser could not finish saving the database. The table list
 reflects the applied changes, and the previous review is cleared. Keep the tab
-open and export the database again to retry saving it. Do not reapply those
-schema changes.
+open, choose **Export sqlite** or **Export duckdb** to save a copy, then reload
+the page. Do not reapply those schema changes.
 
 ```json
 {
@@ -328,12 +328,13 @@ bindings in the database. Removing the private batch file does not remove that
 applied audit history.
 
 In an external SQL tool, group observations by `_source_file_id` to compare
-submitted files. For a table named `attributes` with a boolean `is_cde` column:
+submitted files. For a table named `attributes` with a boolean `is_active`
+column:
 
 ```sql
 SELECT _source_file_id,
        COUNT(*) AS attribute_rows,
-       SUM(CASE WHEN is_cde THEN 1 ELSE 0 END) AS reported_cde_rows
+       SUM(CASE WHEN is_active THEN 1 ELSE 0 END) AS active_rows
 FROM attributes
 GROUP BY _source_file_id;
 ```
@@ -378,10 +379,13 @@ another batch** action generates a fresh ID. An interrupted request keeps its
 saved ID for recovery. Replaying an existing ID reports that the event was
 already recorded.
 
-In the browser's batch history, choose **Refresh** to load the first page and
-**Next batches** to view the next page. Each page contains up to 25 events.
-Refreshing returns to the first page; opening another database clears the
-previous database's history. The reuse notice means an event includes a capture
+The browser's batch history loads its first page on its own when a database is
+opened and again after each applied or recorded batch. Choose **Refresh** to
+reload the first page and **Next batches** to view the next page. Each page
+contains up to 25 events. Opening another database replaces the previous
+database's history. Every notice or error appears under the part of the page
+whose action produced it, and an error that asks for a refreshed summary offers
+**Refresh summary** in place. The reuse notice means an event includes a capture
 seen in an earlier batch. The same event can also include newly imported rows.
 
 ## Export a copy or convert the format

@@ -35,7 +35,9 @@ test.describe("database tool tab ownership", () => {
     await expect(conflict).toBeVisible();
 
     await first.close();
-    await expect(conflict).toHaveCount(0);
+    // A closed tab releases its Web Lock after about 1.5 s on an idle
+    // machine and later under load; the takeover is automatic either way.
+    await expect(conflict).toHaveCount(0, { timeout: 60_000 });
     await expect(second.getByTestId("workspace-new")).toBeEnabled();
     await second.getByTestId("workspace-new-name").fill("ownership-b.sqlite");
     await second.getByTestId("workspace-new").click();

@@ -203,11 +203,22 @@ from browser storage without selecting the source workbook again.
 
 Delivery details live under `workspace-delivery-context`. A duplicate capture
 renders `workspace-import-duplicate`; `workspace-delivery-record-reuse` records
-another touch point without copying rows. `workspace-deliveries-refresh` reads
-the paged history into `workspace-delivery` entries. Export uses
+another touch point without copying rows. The paged history loads on its own
+when a database opens and after each applied or recorded batch;
+`workspace-deliveries-refresh` reloads it into `workspace-delivery` entries,
+`workspace-deliveries-loading` shows while it loads, and a failed load renders
+`workspace-deliveries-error` inside the section. Export uses
 `workspace-export-same` or `workspace-export-convert`. Long operations report
-through `workspace-progress` and `workspace-cancel`; outcomes use
-`workspace-notice` and `workspace-error`.
+through `workspace-progress` and `workspace-cancel` (hidden for operations that
+cannot be cancelled); outcomes use `workspace-notice` and `workspace-error`,
+rendered under the section that produced them with a `data-section` attribute
+(`start`, `schema`, `import`, `history`, `export`). An error that can be
+recovered in place carries `workspace-status-action`, for example "Refresh
+summary". The working-copy list uses `workspace-copy`, `workspace-reopen`,
+`workspace-close`, `workspace-copy-delete`, `workspace-copy-delete-confirm`, and
+`workspace-copy-delete-cancel`, with `workspace-storage-usage` for the browser's
+storage estimate. A second tab of the same origin shows `workspace-tab-conflict`
+until the first closes.
 
 The preview and results panels also carry accessible names, so
 `getByRole("region", { name: "Results" })` works where a role-based query reads

@@ -844,15 +844,14 @@ async function handleSchema(
     database: current().database,
     result,
   });
-  const summary = await refreshSummary();
+  const summary = await summaryAfterWrite();
   const checkpoint: WorkspaceSchemaApplication["checkpoint"] =
     checkpointed.checkpoint.state === "checkpoint-completed"
       ? { state: "saved" }
       : {
           state: "failed",
           code: "DB_BROWSER_SCHEMA_PERSISTENCE_REQUIRED",
-          message:
-            "The schema changes were applied, but the browser could not finish saving the database. Keep this tab open and export the database again to retry saving it. Do not apply the schema changes again",
+          message: `The schema changes were applied, but the browser could not finish saving the database. Keep this tab open and choose Export ${current().database.format} to save a copy, then reload the page. Do not apply the schema changes again`,
         };
   scope.postMessage({
     type: "schemaApplied",
@@ -1234,7 +1233,7 @@ function checkpointDto(
       };
 }
 
-async function refreshSummary(): Promise<WorkspaceImportResult["summary"]> {
+async function summaryAfterWrite(): Promise<WorkspaceImportResult["summary"]> {
   try {
     return { state: "updated", value: await summaryOf(current()) };
   } catch {
@@ -1242,7 +1241,7 @@ async function refreshSummary(): Promise<WorkspaceImportResult["summary"]> {
       state: "refresh-required",
       code: "DB_BROWSER_SUMMARY_REFRESH_REQUIRED",
       message:
-        "The database operation completed, but the browser could not refresh its summary. Keep this tab open and reopen the database view before continuing",
+        "The database operation completed, but the browser could not refresh its summary. Keep this tab open and choose Refresh summary before continuing",
     };
   }
 }
@@ -1278,7 +1277,7 @@ async function applyImportBatch(
     database: current().database,
     result,
   });
-  const summary = await refreshSummary();
+  const summary = await summaryAfterWrite();
   scope.postMessage({
     type: "importApplied",
     id,
@@ -1291,7 +1290,6 @@ async function applyImportBatch(
           : "applied",
       appendedRows: result.metrics.rowsImported,
       skippedRows: result.metrics.rowsReused,
-      unresolvedRows: 0,
       schemaChanges: result.metrics.tablesCreated,
       deliveriesRecorded: result.metrics.batchesRecorded,
       captureIds: result.captureIds,
@@ -1335,7 +1333,7 @@ async function recordPreparedDelivery(
     database: current().database,
     result: record,
   });
-  const summary = await refreshSummary();
+  const summary = await summaryAfterWrite();
   scope.postMessage({
     type: "importApplied",
     id,
@@ -1345,7 +1343,6 @@ async function recordPreparedDelivery(
       outcome: "duplicate",
       appendedRows: 0,
       skippedRows: boundedNumber(inspection.reviewRows, "review row count"),
-      unresolvedRows: 0,
       schemaChanges: 0,
       deliveriesRecorded: record.metrics.batchesRecorded,
       captureIds: record.batch.captureIds,
@@ -1478,6 +1475,13 @@ async function handle(id: number, command: WorkspaceCommand): Promise<void> {
         return;
       case "reopen":
         await handleReopen(id, command, controller.signal);
+        return;
+      case "refreshSummary":
+        scope.postMessage({
+          type: "ready",
+          id,
+          summary: await summaryOf(current()),
+        });
         return;
       // Listing runs on its own when the page loads, and removal never
       // needs another tab's handles, so neither waits for a busy pool. A
