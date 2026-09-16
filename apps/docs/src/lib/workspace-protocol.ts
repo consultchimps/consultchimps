@@ -188,7 +188,6 @@ export interface WorkspaceImportResult {
   readonly outcome: "applied" | "duplicate";
   readonly appendedRows: number;
   readonly skippedRows: number;
-  readonly unresolvedRows: number;
   readonly schemaChanges: number;
   readonly deliveriesRecorded: number;
   readonly captureIds: readonly string[];
@@ -272,6 +271,7 @@ export type WorkspaceCommand =
       readonly readonly?: boolean;
     })
   | (WorkspaceCommandBase & { readonly type: "listDatabases" })
+  | (WorkspaceCommandBase & { readonly type: "refreshSummary" })
   | (WorkspaceCommandBase & {
       readonly type: "removeDatabase";
       readonly name: string;

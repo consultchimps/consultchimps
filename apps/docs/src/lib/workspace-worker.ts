@@ -353,6 +353,14 @@ export class WorkspaceClient {
     if (event.type !== "closed") throw unexpected("close");
   }
 
+  async refreshSummary(
+    options?: WorkspaceRunOptions,
+  ): Promise<WorkspaceSummary> {
+    const event = await this.#request({ type: "refreshSummary" }, options);
+    if (event.type !== "ready") throw unexpected("summary");
+    return event.summary;
+  }
+
   async listDatabases(): Promise<WorkspaceDatabaseListing> {
     const event = await this.#request({ type: "listDatabases" });
     if (event.type !== "databases") throw unexpected("listing");

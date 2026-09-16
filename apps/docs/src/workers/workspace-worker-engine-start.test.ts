@@ -245,6 +245,34 @@ describe("workspace worker engine start", () => {
     });
   });
 
+  it("refreshes the summary of the open database and refuses without one", async () => {
+    mocks.configureBrowserDatabaseRuntime.mockResolvedValue(runtimeStub());
+    const { request } = await workerHarness();
+
+    await expect(
+      request({ id: 1, type: "refreshSummary" }),
+    ).resolves.toMatchObject({
+      type: "error",
+      message: expect.stringContaining("Create or open a database"),
+    });
+    await request({ id: 2, ...CREATE });
+    mocks.inspectDatabase.mockResolvedValueOnce({
+      completedImports: 2n,
+      recordedBatches: 3n,
+      format: "sqlite",
+      formatVersion: 1,
+      id: "database-1",
+      revision: 5n,
+      tables: [],
+    });
+    await expect(
+      request({ id: 3, type: "refreshSummary" }),
+    ).resolves.toMatchObject({
+      type: "ready",
+      summary: { importCount: 2, deliveryCount: 3 },
+    });
+  });
+
   it("starts the engine once for successive commands", async () => {
     mocks.configureBrowserDatabaseRuntime.mockResolvedValue(runtimeStub());
     const { request } = await workerHarness();

@@ -26,8 +26,14 @@ import {
   PackageCheck,
   Truck,
 } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
-import { useEffect } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 interface ImportSourceState {
   readonly id: string;
@@ -41,6 +47,8 @@ interface WorkspaceImportProps {
   readonly client: () => WorkspaceClient;
   readonly summary: WorkspaceSummary;
   readonly onSummary: (summary: WorkspaceSummary) => void;
+  /** A batch was applied or recorded, whether or not the summary refreshed. */
+  readonly onBatchRecorded: () => void;
   readonly reportError: (error: unknown) => void;
   readonly onReviewState: (active: boolean) => void;
   readonly runLong: <T>(
@@ -50,6 +58,8 @@ interface WorkspaceImportProps {
       readonly onProgress: (progress: WorkspaceProgress) => void;
     }) => Promise<T>,
   ) => Promise<T | null>;
+  /** The page's notice or error for this section, rendered at its end. */
+  readonly notice?: ReactNode;
 }
 
 const COLUMN_TYPES = [
@@ -243,9 +253,11 @@ export function WorkspaceImport({
   client,
   summary,
   onSummary,
+  onBatchRecorded,
   reportError,
   onReviewState,
   runLong,
+  notice,
 }: WorkspaceImportProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const lastCompletedRequest = useRef<{
@@ -542,10 +554,11 @@ export function WorkspaceImport({
     if (applied.summary.state === "updated") {
       onSummary(applied.summary.value);
     }
+    onBatchRecorded();
     setResult(
       applied.outcome === "duplicate"
         ? `This capture was already applied. Added 0 rows and skipped ${applied.skippedRows.toLocaleString()} rows`
-        : `Added ${applied.appendedRows.toLocaleString()} rows, skipped ${applied.skippedRows.toLocaleString()}, and left ${applied.unresolvedRows.toLocaleString()} subject links unresolved`,
+        : `Added ${applied.appendedRows.toLocaleString()} rows and skipped ${applied.skippedRows.toLocaleString()} rows that were already stored`,
     );
     setPlan({
       ...plan,
@@ -569,6 +582,7 @@ export function WorkspaceImport({
     client,
     delivery,
     onSummary,
+    onBatchRecorded,
     plan,
     reportError,
     reviewIsCurrent,
@@ -636,6 +650,7 @@ export function WorkspaceImport({
     if (recorded.summary.state === "updated") {
       onSummary(recorded.summary.value);
     }
+    onBatchRecorded();
     setResult(
       recorded.deliveriesRecorded > 0
         ? "Recorded a separate batch event and reused the captured rows"
@@ -662,6 +677,7 @@ export function WorkspaceImport({
     client,
     delivery,
     onSummary,
+    onBatchRecorded,
     plan,
     reportError,
     reviewIsCurrent,
@@ -844,6 +860,19 @@ export function WorkspaceImport({
             >
               The same captured contents and selection were already applied.
               Applying again adds no observation rows
+            </p>
+          )}
+          {pendingRequest === null || plan.application === "applied" ? null : (
+            <p
+              className="mt-3 text-sm text-fd-muted-foreground"
+              data-testid="workspace-import-mapping-locked"
+              role="status"
+            >
+              The route and column mapping are locked while a recorded request
+              for this batch is still pending. Finish it with{" "}
+              {pendingRequest.operation === "delivery"
+                ? "Record batch again"
+                : "Apply batch"}
             </p>
           )}
           <div className="mt-4 space-y-4">
@@ -1197,6 +1226,15 @@ export function WorkspaceImport({
                 }
                 value={delivery.note}
               />
+              {delivery.coverage === "partial" ? (
+                <span
+                  className="mt-1 block text-fd-muted-foreground"
+                  data-testid="workspace-delivery-partial-hint"
+                >
+                  For a partial snapshot the note describes what the batch
+                  covers
+                </span>
+              ) : null}
             </label>
           </fieldset>
           <div className="mt-4 flex flex-wrap gap-3">
@@ -1246,6 +1284,7 @@ export function WorkspaceImport({
           )}
         </div>
       )}
+      {notice}
     </section>
   );
 }
