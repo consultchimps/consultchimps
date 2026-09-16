@@ -231,6 +231,63 @@ try {
     },
   );
 
+  // This subpath must import without the optional WASM peer installed. Loading
+  // the reader then uses that peer explicitly, from a non-workspace directory.
+  execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `
+    import assert from "node:assert/strict";
+    await assert.rejects(import("@sqlite.org/sqlite-wasm"), { code: "ERR_MODULE_NOT_FOUND" });
+    await import("@consultchimps/db/sqlite-read");
+  `,
+    ],
+    { cwd: consumerDirectory, stdio: "inherit" },
+  );
+  const sqlitePeer = (
+    JSON.parse(
+      readFileSync(
+        path.join(workspaceRoot, "packages/db/package.json"),
+        "utf8",
+      ),
+    ) as { peerDependencies: Record<string, string> }
+  ).peerDependencies["@sqlite.org/sqlite-wasm"]!;
+  execFileSync(
+    npmCommand,
+    [
+      ...npmArguments,
+      "install",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      `@sqlite.org/sqlite-wasm@${sqlitePeer}`,
+    ],
+    { cwd: consumerDirectory, stdio: "inherit" },
+  );
+  execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `
+    import assert from "node:assert/strict";
+    import initialize from "@sqlite.org/sqlite-wasm";
+    import { openReadOnlySqlite } from "@consultchimps/db/sqlite-read";
+    const sqlite = await initialize();
+    const source = new sqlite.oo1.DB(":memory:");
+    source.exec("CREATE TABLE example (id INTEGER); INSERT INTO example VALUES(9223372036854775807)");
+    const bytes = sqlite.capi.sqlite3_js_db_export(source.pointer);
+    source.close();
+    const reader = await openReadOnlySqlite(bytes);
+    try { assert.equal(reader.query("SELECT id FROM example").rows[0][0], 9223372036854775807n); }
+    finally { reader.close(); }
+  `,
+    ],
+    { cwd: consumerDirectory, stdio: "inherit" },
+  );
+
   process.stdout.write(
     `Validated ${tarballs.length} package tarballs and consultchimps ${installedVersion}.\n`,
   );
