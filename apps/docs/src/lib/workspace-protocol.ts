@@ -232,6 +232,22 @@ export interface WorkspaceProgress {
   readonly message: string;
 }
 
+export interface WorkspaceStoredDatabase {
+  readonly name: string;
+  readonly format: WorkspaceDatabaseFormat;
+}
+
+export interface WorkspaceIgnoredDatabase {
+  readonly name: string;
+  readonly code: string;
+  readonly message: string;
+}
+
+export interface WorkspaceDatabaseListing {
+  readonly databases: readonly WorkspaceStoredDatabase[];
+  readonly ignored: readonly WorkspaceIgnoredDatabase[];
+}
+
 interface WorkspaceCommandBase {
   readonly id: number;
 }
@@ -254,6 +270,11 @@ export type WorkspaceCommand =
       readonly type: "reopen";
       readonly name: string;
       readonly readonly?: boolean;
+    })
+  | (WorkspaceCommandBase & { readonly type: "listDatabases" })
+  | (WorkspaceCommandBase & {
+      readonly type: "removeDatabase";
+      readonly name: string;
     })
   | (WorkspaceCommandBase & {
       readonly type: "planSchema";
@@ -368,6 +389,11 @@ export type WorkspaceEvent =
       readonly format: WorkspaceDatabaseFormat;
     })
   | (WorkspaceEventBase & { readonly type: "closed" })
+  | (WorkspaceEventBase & {
+      readonly type: "databases";
+      readonly listing: WorkspaceDatabaseListing;
+    })
+  | (WorkspaceEventBase & { readonly type: "databaseRemoved" })
   | (WorkspaceEventBase & {
       readonly type: "progress";
       readonly progress: WorkspaceProgress;

@@ -2328,3 +2328,120 @@ describe("browser database runtime", () => {
     await created.database.close();
   });
 });
+
+describe("browser working copy listing and removal", () => {
+  test("lists stored working copies by name and leaves private files out", async () => {
+    const runtime = await createRuntime();
+    const created = await runtime.createDatabase({
+      name: "Beta.sqlite",
+      format: "sqlite",
+    });
+    await created.database.close();
+    harness.persist("/.consultchimps-import-abc.sqlite", new Uint8Array(64));
+    harness.persist("/.consultchimps-backup-abc.sqlite", new Uint8Array(64));
+    const directory = await harness.directory("consultchimps", "databases");
+    for (const name of [
+      "alpha.duckdb",
+      "alpha.duckdb.wal",
+      ".consultchimps-create-abc.duckdb",
+      ".consultchimps-export-snapshot-abc.duckdb",
+      "orphan.duckdb.wal",
+    ]) {
+      await directory.getFileHandle(name, { create: true });
+    }
+
+    await expect(runtime.listDatabases()).resolves.toEqual({
+      databases: [
+        { name: "Beta.sqlite", format: "sqlite" },
+        { name: "alpha.duckdb", format: "duckdb" },
+      ],
+      ignored: [
+        {
+          name: "orphan.duckdb.wal",
+          code: "DB_BROWSER_INCOMPLETE_STORAGE",
+          message: expect.stringContaining("no matching database file"),
+        },
+      ],
+    });
+  });
+
+  test("reports a name stored in both formats as ambiguous", async () => {
+    const runtime = await createRuntime();
+    const created = await runtime.createDatabase({
+      name: "both.db",
+      format: "sqlite",
+    });
+    await created.database.close();
+    const directory = await harness.directory("consultchimps", "databases");
+    await directory.getFileHandle("both.db", { create: true });
+
+    const listing = await runtime.listDatabases();
+    expect(listing.databases).toEqual([]);
+    expect(listing.ignored).toMatchObject([
+      { name: "both.db", code: "DB_AMBIGUOUS_BROWSER_STORAGE" },
+    ]);
+  });
+
+  test("removes a closed SQLite working copy and refuses an open one", async () => {
+    const runtime = await createRuntime();
+    const created = await runtime.createDatabase({
+      name: "remove-me.sqlite",
+      format: "sqlite",
+    });
+    await expect(
+      runtime.removeDatabase({ name: "remove-me.sqlite" }),
+    ).rejects.toMatchObject({ code: "DB_BROWSER_DATABASE_BUSY" });
+    expect(harness.databases.has("/remove-me.sqlite")).toBe(true);
+
+    await created.database.close();
+    await runtime.removeDatabase({ name: "remove-me.sqlite" });
+    expect(harness.databases.has("/remove-me.sqlite")).toBe(false);
+    await expect(runtime.listDatabases()).resolves.toEqual({
+      databases: [],
+      ignored: [],
+    });
+    await expect(
+      runtime.removeDatabase({ name: "remove-me.sqlite" }),
+    ).rejects.toMatchObject({ code: "DB_BROWSER_STORAGE_MISSING" });
+  });
+
+  test("removes DuckDB files including an orphaned write-ahead log", async () => {
+    const runtime = await createRuntime();
+    const directory = await harness.directory("consultchimps", "databases");
+    for (const name of [
+      "stale.duckdb",
+      "stale.duckdb.wal",
+      "orphan.duckdb.wal",
+    ]) {
+      await directory.getFileHandle(name, { create: true });
+    }
+
+    await runtime.removeDatabase({ name: "stale.duckdb" });
+    expect(directory.files.has("stale.duckdb")).toBe(false);
+    expect(directory.files.has("stale.duckdb.wal")).toBe(false);
+    expect(directory.files.has("orphan.duckdb.wal")).toBe(true);
+
+    await runtime.removeDatabase({ name: "orphan.duckdb.wal" });
+    expect(directory.files.has("orphan.duckdb.wal")).toBe(false);
+    await expect(runtime.listDatabases()).resolves.toEqual({
+      databases: [],
+      ignored: [],
+    });
+  });
+});
+
+describe("browser working copy listing of unusable names", () => {
+  test("reports a stored name outside the normalized form instead of listing it", async () => {
+    const runtime = await createRuntime();
+    const decomposed = "caf\u0065\u0301.sqlite";
+    harness.persist(`/${decomposed}`, new Uint8Array(64));
+    harness.persist("/bad name.sqlite", new Uint8Array(64));
+
+    const listing = await runtime.listDatabases();
+    expect(listing.databases).toEqual([]);
+    expect(listing.ignored).toMatchObject([
+      { name: "bad name.sqlite", code: "DB_INVALID_STORAGE_NAME" },
+      { name: decomposed, code: "DB_INVALID_STORAGE_NAME" },
+    ]);
+  });
+});

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  compactButtonClass,
   describeFailure,
   inputClass,
   primaryButtonClass,
@@ -13,11 +14,13 @@ import { WorkspaceSchemaReview } from "@/components/workspace-schema-review";
 import { ConsultChimpsError, isConsultChimpsError } from "@consultchimps/core";
 import type {
   WorkspaceDatabaseFormat,
+  WorkspaceDatabaseListing,
   WorkspaceDeliveryPage,
   WorkspaceDeliverySummary,
   WorkspaceProgress,
   WorkspaceSchemaDocument,
   WorkspaceSchemaPlan,
+  WorkspaceStoredDatabase,
   WorkspaceSummary,
 } from "@/lib/workspace-protocol";
 import { WorkspaceClient } from "@/lib/workspace-worker";
@@ -38,6 +41,7 @@ import {
   FolderOpen,
   LoaderCircle,
   RefreshCw,
+  Trash2,
   TriangleAlert,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -64,27 +68,111 @@ interface WorkspaceStatus {
   readonly message: string;
 }
 
-interface RecentDatabase {
-  readonly name: string;
-  readonly format: WorkspaceDatabaseFormat;
+interface StorageUsage {
+  readonly usage: number | null;
+  readonly quota: number | null;
 }
 
-function readRecentDatabases(): RecentDatabase[] {
+/**
+ * The working copies themselves come from browser storage. This remembered
+ * list of names only orders them, most recently used first, so a copy that
+ * was removed behind the tool's back never shows up and a copy created
+ * elsewhere does. Entries written by earlier versions carried a format as
+ * well; only the name is read.
+ */
+function readRecentNames(): string[] {
   try {
     const stored: unknown = JSON.parse(
       window.localStorage.getItem(RECENT_DATABASES_KEY) ?? "[]",
     );
     if (!Array.isArray(stored)) return [];
-    return stored.flatMap((entry): RecentDatabase[] => {
-      if (!isRecord(entry) || typeof entry["name"] !== "string") return [];
-      const format = entry["format"];
-      return format === "sqlite" || format === "duckdb"
-        ? [{ name: entry["name"], format }]
-        : [];
-    });
+    return stored.flatMap((entry): string[] =>
+      isRecord(entry) && typeof entry["name"] === "string"
+        ? [entry["name"]]
+        : [],
+    );
   } catch {
     return [];
   }
+}
+
+function writeRecentNames(names: readonly string[]): void {
+  try {
+    window.localStorage.setItem(
+      RECENT_DATABASES_KEY,
+      JSON.stringify(names.map((name) => ({ name }))),
+    );
+  } catch {
+    // Ordering is a convenience; storage that refuses it changes nothing.
+  }
+}
+
+function markRecent(name: string): void {
+  writeRecentNames(
+    [name, ...readRecentNames().filter((entry) => entry !== name)].slice(0, 8),
+  );
+}
+
+function forgetRecent(name: string): void {
+  writeRecentNames(readRecentNames().filter((entry) => entry !== name));
+}
+
+// Names outside the recent list keep the runtime's own order (code units),
+// so the page and the runtime agree on "alphabetical".
+function orderByRecentUse(
+  stored: readonly WorkspaceStoredDatabase[],
+): readonly WorkspaceStoredDatabase[] {
+  const rank = new Map(readRecentNames().map((name, index) => [name, index]));
+  return [...stored].sort((left, right) => {
+    const leftRank = rank.get(left.name) ?? Number.POSITIVE_INFINITY;
+    const rightRank = rank.get(right.name) ?? Number.POSITIVE_INFINITY;
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    return left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
+  });
+}
+
+async function readStorageUsage(): Promise<StorageUsage | null> {
+  const storage: unknown = navigator.storage;
+  if (
+    typeof storage !== "object" ||
+    storage === null ||
+    !("estimate" in storage) ||
+    typeof storage.estimate !== "function"
+  ) {
+    return null;
+  }
+  try {
+    const estimate: unknown = await (
+      storage.estimate as () => Promise<unknown>
+    ).call(storage);
+    if (!isRecord(estimate)) return null;
+    const usage = estimate["usage"];
+    const quota = estimate["quota"];
+    return {
+      usage: typeof usage === "number" ? usage : null,
+      quota: typeof quota === "number" ? quota : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function formatBytes(bytes: number): string {
+  const units = ["bytes", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${unit === 0 ? String(Math.round(value)) : value.toFixed(1)} ${units[unit]}`;
+}
+
+function storageUsageText(usage: StorageUsage): string | null {
+  if (usage.usage === null) return null;
+  return usage.quota === null
+    ? `Browser storage used by this site: ${formatBytes(usage.usage)}`
+    : `Browser storage used by this site: ${formatBytes(usage.usage)} of ${formatBytes(usage.quota)} available`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -253,6 +341,7 @@ export function WorkspaceTool() {
   const [openName, setOpenName] = useState("");
   const [openOverwrite, setOpenOverwrite] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [cancellable, setCancellable] = useState(true);
   const [progress, setProgress] = useState<WorkspaceProgress | null>(null);
   const [reviewActive, setReviewActive] = useState(false);
   const [status, setStatus] = useState<WorkspaceStatus | null>(null);
@@ -264,19 +353,14 @@ export function WorkspaceTool() {
     null,
   );
   const [deliveriesLoading, setDeliveriesLoading] = useState(false);
-  const [recentDatabases, setRecentDatabases] = useState<
-    readonly RecentDatabase[]
-  >([]);
+  const [copies, setCopies] = useState<WorkspaceDatabaseListing | null>(null);
+  const [copiesError, setCopiesError] = useState<string | null>(null);
+  const [storageUsage, setStorageUsage] = useState<StorageUsage | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const copiesRequestRef = useRef(0);
   const [ownership, setOwnership] = useState<DatabaseToolOwnership | null>(
     null,
   );
-
-  useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      setRecentDatabases(readRecentDatabases());
-    }, 0);
-    return () => window.clearTimeout(timeout);
-  }, []);
 
   // Claim the tool for this page before any engine starts. A conflict keeps
   // the page waiting in the background and takes over when the other tab
@@ -340,24 +424,44 @@ export function WorkspaceTool() {
     };
   }, []);
 
-  const remember = useCallback((next: WorkspaceSummary) => {
-    setRecentDatabases((current) => {
-      const updated = [
-        { name: next.workingCopyName, format: next.format },
-        ...current.filter((entry) => entry.name !== next.workingCopyName),
-      ].slice(0, 8);
-      window.localStorage.setItem(
-        RECENT_DATABASES_KEY,
-        JSON.stringify(updated),
-      );
-      return updated;
-    });
-  }, []);
-
   const client = useCallback(() => {
     clientRef.current ??= new WorkspaceClient();
     return clientRef.current;
   }, []);
+
+  // Read the working copies from storage. Only the latest request may
+  // publish its answer, so a slow listing cannot overwrite a newer one.
+  const refreshCopies = useCallback(async () => {
+    const request = copiesRequestRef.current + 1;
+    copiesRequestRef.current = request;
+    try {
+      const listing = await client().listDatabases();
+      const usage = await readStorageUsage();
+      if (copiesRequestRef.current !== request) return;
+      setCopies({
+        databases: orderByRecentUse(listing.databases),
+        ignored: listing.ignored,
+      });
+      setStorageUsage(usage);
+      setCopiesError(null);
+    } catch (error) {
+      if (copiesRequestRef.current !== request) return;
+      setCopiesError(describeFailure(error));
+    }
+  }, [client]);
+
+  useEffect(() => {
+    if (ownership === null || ownership.state === "conflict") return;
+    void refreshCopies();
+  }, [ownership, refreshCopies]);
+
+  const remember = useCallback(
+    (next: WorkspaceSummary) => {
+      markRecent(next.workingCopyName);
+      void refreshCopies();
+    },
+    [refreshCopies],
+  );
 
   useEffect(
     () => () => {
@@ -389,10 +493,12 @@ export function WorkspaceTool() {
         readonly signal: AbortSignal;
         readonly onProgress: (next: WorkspaceProgress) => void;
       }) => Promise<T>,
+      options: { readonly cancellable?: boolean } = {},
     ): Promise<T | null> => {
       const controller = new AbortController();
       controllerRef.current = controller;
       setBusy(label);
+      setCancellable(options.cancellable !== false);
       setProgress(null);
       setStatus(null);
       try {
@@ -511,6 +617,56 @@ export function WorkspaceTool() {
       });
     },
     [clearDeliveries, client, invalidateSchemaReview, remember, runLong],
+  );
+
+  // The page drops its view of the database whether or not the worker
+  // finished every cleanup: a worker that could not close a resource keeps
+  // it until the next open replaces it, and the page's error says so. The
+  // reverse (a page that still shows a closed database) would route every
+  // later action into "create or open a database first".
+  const closeDatabase = useCallback(async () => {
+    if (summary === null) return;
+    const closedName = summary.workingCopyName;
+    const closed = await runLong("Closing database", () => client().close(), {
+      cancellable: false,
+    });
+    setSummary(null);
+    setWorkspaceGeneration((current) => current + 1);
+    invalidateSchemaReview();
+    clearDeliveries();
+    if (closed !== null) {
+      setStatus({
+        kind: "notice",
+        message: `Closed "${closedName}". It stays in browser storage until you delete it`,
+      });
+    }
+    void refreshCopies();
+  }, [
+    clearDeliveries,
+    client,
+    invalidateSchemaReview,
+    refreshCopies,
+    runLong,
+    summary,
+  ]);
+
+  const removeDatabase = useCallback(
+    async (workingCopyName: string) => {
+      setPendingDelete(null);
+      const removed = await runLong(
+        "Deleting working copy",
+        () => client().removeDatabase(workingCopyName),
+        { cancellable: false },
+      );
+      if (removed === null) return;
+      forgetRecent(workingCopyName);
+      setStatus({
+        kind: "notice",
+        message: `Deleted "${workingCopyName}" from browser storage. Files you opened or exported are not affected`,
+      });
+      void refreshCopies();
+    },
+    [client, refreshCopies, runLong],
   );
 
   const planSchema = useCallback(async () => {
@@ -762,30 +918,141 @@ export function WorkspaceTool() {
           unchanged. Verified in Chromium-based desktop browsers such as Chrome
           and Edge. Use the tool in one tab at a time
         </p>
-        {recentDatabases.length === 0 ? null : (
+        {copies === null && copiesError === null ? null : (
           <div className="mt-5" data-testid="workspace-recent">
-            <h3 className="text-sm font-semibold">Browser working copies</h3>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {recentDatabases.map((entry) => (
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <h3 className="text-sm font-semibold">Browser working copies</h3>
+              {storageUsage === null ||
+              storageUsageText(storageUsage) === null ? null : (
+                <span
+                  className="text-xs text-fd-muted-foreground"
+                  data-testid="workspace-storage-usage"
+                >
+                  {storageUsageText(storageUsage)}
+                </span>
+              )}
+            </div>
+            {copiesError === null ? null : (
+              <div
+                className="mt-2 rounded-lg border border-fd-primary/40 p-3 text-sm"
+                data-testid="workspace-copies-error"
+                role="alert"
+              >
+                <p>
+                  The working copies stored in this browser could not be listed
+                </p>
+                <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs leading-6">
+                  {copiesError}
+                </pre>
                 <button
-                  className={secondaryButtonClass}
-                  data-testid="workspace-reopen"
+                  className={`${secondaryButtonClass} mt-3`}
+                  data-testid="workspace-copies-retry"
                   disabled={disabled}
-                  key={entry.name}
-                  onClick={() => void reopen(entry.name)}
+                  onClick={() => void refreshCopies()}
                   type="button"
                 >
-                  <FolderOpen aria-hidden="true" className="size-4" />
-                  {entry.name} ({entry.format})
+                  <RefreshCw aria-hidden="true" className="size-4" />
+                  Try listing again
                 </button>
-              ))}
-            </div>
+              </div>
+            )}
+            {copies === null ? null : copies.databases.length === 0 &&
+              copies.ignored.length === 0 ? (
+              <p className="mt-2 text-sm text-fd-muted-foreground">
+                No working copies are stored in this browser yet
+              </p>
+            ) : (
+              <ul className="mt-2 space-y-2">
+                {copies.databases.map((entry) => {
+                  const isOpen = summary?.workingCopyName === entry.name;
+                  const confirming = pendingDelete === entry.name;
+                  return (
+                    <li
+                      className="flex flex-wrap items-center gap-2"
+                      data-testid="workspace-copy"
+                      key={entry.name}
+                    >
+                      <button
+                        className={secondaryButtonClass}
+                        data-testid="workspace-reopen"
+                        disabled={disabled}
+                        onClick={() => void reopen(entry.name)}
+                        type="button"
+                      >
+                        <FolderOpen aria-hidden="true" className="size-4" />
+                        {entry.name} ({entry.format})
+                      </button>
+                      {isOpen ? (
+                        <>
+                          <span className="text-xs text-fd-muted-foreground">
+                            Open now
+                          </span>
+                          <button
+                            className={compactButtonClass}
+                            data-testid="workspace-close"
+                            disabled={disabled}
+                            onClick={() => void closeDatabase()}
+                            type="button"
+                          >
+                            Close
+                          </button>
+                        </>
+                      ) : confirming ? (
+                        <>
+                          <span className="text-xs">
+                            Delete this copy from browser storage?
+                          </span>
+                          <button
+                            className={compactButtonClass}
+                            data-testid="workspace-copy-delete-confirm"
+                            disabled={disabled}
+                            onClick={() => void removeDatabase(entry.name)}
+                            type="button"
+                          >
+                            <Trash2 aria-hidden="true" className="size-3.5" />
+                            Confirm delete
+                          </button>
+                          <button
+                            className={compactButtonClass}
+                            data-testid="workspace-copy-delete-cancel"
+                            onClick={() => setPendingDelete(null)}
+                            type="button"
+                          >
+                            Keep
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          className={compactButtonClass}
+                          data-testid="workspace-copy-delete"
+                          disabled={disabled}
+                          onClick={() => setPendingDelete(entry.name)}
+                          type="button"
+                        >
+                          <Trash2 aria-hidden="true" className="size-3.5" />
+                          Delete
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+                {copies.ignored.map((entry) => (
+                  <li
+                    className="text-xs text-fd-muted-foreground"
+                    data-testid="workspace-copy-ignored"
+                    key={`ignored:${entry.name}`}
+                  >
+                    {entry.name} ({entry.code}): {entry.message}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
       </section>
 
       {progress === null ? null : <ProgressNotice progress={progress} />}
-      {busy === null ? null : (
+      {busy === null || !cancellable ? null : (
         <button
           className={secondaryButtonClass}
           data-testid="workspace-cancel"

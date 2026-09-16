@@ -46,6 +46,16 @@ file stays unchanged. Leave replacement unchecked to keep an existing copy.
 Generated working-copy names and inferred Record ID prefixes keep Unicode
 characters intact when shortened.
 
+**Browser working copies** lists every working copy stored in this browser, read
+from storage rather than from a remembered list, with the most recently used
+first. Each copy can be opened or deleted; the open copy offers **Close**
+instead. Deleting removes that copy's files from browser storage and leaves
+opened and exported files alone. Saved import batches belong to a database ID,
+not a name, and remain until the database that owns them lists and discards
+them. The section also shows how much site storage the browser reports in use. A
+name stored in both formats, or a DuckDB write-ahead log without its database,
+is listed with the code opening it would raise.
+
 SQLite triggers on managed tables or internal bookkeeping tables can change
 imported rows and receipts. Managed writes reject these triggers with
 `DB_SCHEMA_DRIFT`. Restore the declared schema before retrying.

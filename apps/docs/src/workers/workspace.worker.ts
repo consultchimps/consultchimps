@@ -1479,6 +1479,19 @@ async function handle(id: number, command: WorkspaceCommand): Promise<void> {
       case "reopen":
         await handleReopen(id, command, controller.signal);
         return;
+      // Listing runs on its own when the page loads, and removal never
+      // needs another tab's handles, so neither waits for a busy pool. A
+      // fast failure here leaves the next user action free to start the
+      // engine with the busy wait and its progress.
+      case "listDatabases": {
+        const listing = await (await runtime()).listDatabases();
+        scope.postMessage({ type: "databases", id, listing });
+        return;
+      }
+      case "removeDatabase":
+        await (await runtime()).removeDatabase({ name: command.name });
+        scope.postMessage({ type: "databaseRemoved", id });
+        return;
       case "planSchema":
       case "applySchema":
         await handleSchema(id, command, controller.signal);

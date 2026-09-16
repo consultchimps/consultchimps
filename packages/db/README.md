@@ -367,8 +367,19 @@ Unsupported batch versions remain stored and are reported through those entries.
 
 Call `BrowserDatabaseRuntime.discardImportBatch({ name })` only for a private
 batch that the caller created and no longer needs. The runtime refuses to remove
-an open batch, a database, or an unrecognized artifact with that name. This
-operation does not provide general browser database deletion.
+an open batch, a database, or an unrecognized artifact with that name.
+
+`BrowserDatabaseRuntime.listDatabases()` names the working copies stored in the
+browser without opening any of them: `databases` entries carry a `name` and
+`format`, and `ignored` entries carry a `name`, stable error `code`, and
+`message` for a name stored in both formats, a DuckDB write-ahead log without
+its database, or a stored name that does not match the runtime's normalized
+naming. Private candidate, backup, batch, and export files are left out.
+`BrowserDatabaseRuntime.removeDatabase({ name })` deletes a working copy's files
+under the per-name lock and is refused with `DB_BROWSER_DATABASE_BUSY` while
+that copy is open; a name with nothing stored reports
+`DB_BROWSER_STORAGE_MISSING`. Prepared import batches are not removed with a
+database.
 
 Use `openDatabase({ name, readonly: true })` for browser inspection or export
 without permitting database writes. Browser exports require an empty

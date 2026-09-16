@@ -3,6 +3,7 @@ import { ConsultChimpsError } from "@consultchimps/core";
 import type {
   WorkspaceCommand,
   WorkspaceDatabaseFormat,
+  WorkspaceDatabaseListing,
   WorkspaceDeliveryContext,
   WorkspaceDeliveryPage,
   WorkspaceEvent,
@@ -350,6 +351,17 @@ export class WorkspaceClient {
   async close(): Promise<void> {
     const event = await this.#request({ type: "close" });
     if (event.type !== "closed") throw unexpected("close");
+  }
+
+  async listDatabases(): Promise<WorkspaceDatabaseListing> {
+    const event = await this.#request({ type: "listDatabases" });
+    if (event.type !== "databases") throw unexpected("listing");
+    return event.listing;
+  }
+
+  async removeDatabase(name: string): Promise<void> {
+    const event = await this.#request({ type: "removeDatabase", name });
+    if (event.type !== "databaseRemoved") throw unexpected("removal");
   }
 
   terminate(): void {
