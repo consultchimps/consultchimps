@@ -59,6 +59,12 @@ import { DATABASE_METADATA_TABLE } from "./metadata.js";
 import { readSchemaFingerprint } from "./records.js";
 
 const SQLITE_HEADER = new TextEncoder().encode("SQLite format 3\0");
+/**
+ * Every file the runtime creates for itself (candidates, backups, import
+ * batches, export snapshots) carries this prefix, so a listing of working
+ * copies can leave them out by name alone.
+ */
+const PRIVATE_NAME_PREFIX = ".consultchimps-";
 const COPY_CHUNK_BYTES = 1024 * 1024;
 const SAH_HEADER_BYTES = 4096;
 const SAH_PATH_BYTES = 512;
@@ -182,6 +188,22 @@ export interface BrowserImportBatchListing {
   readonly ignored: readonly BrowserIgnoredImportBatch[];
 }
 
+export interface BrowserDatabaseSummary {
+  readonly name: string;
+  readonly format: DatabaseFormat;
+}
+
+export interface BrowserIgnoredDatabase {
+  readonly name: string;
+  readonly code: string;
+  readonly message: string;
+}
+
+export interface BrowserDatabaseListing {
+  readonly databases: readonly BrowserDatabaseSummary[];
+  readonly ignored: readonly BrowserIgnoredDatabase[];
+}
+
 export interface BrowserDatabaseRuntime {
   createDatabase(
     options: CreateBrowserDatabaseOptions,
@@ -190,6 +212,20 @@ export interface BrowserDatabaseRuntime {
     readonly name: string;
     readonly readonly?: boolean | undefined;
   }): Promise<Database>;
+  /**
+   * The working copies stored in this browser, by name, without opening any
+   * of them. Private files (candidates, backups, import batches, exports)
+   * are not working copies and are left out. A name stored in both formats,
+   * or a DuckDB write-ahead log without its database, is reported as ignored
+   * with the code that opening it would raise.
+   */
+  listDatabases(): Promise<BrowserDatabaseListing>;
+  /**
+   * Remove a working copy's files from browser storage. Refused while the
+   * copy is open. Prepared import batches belong to a database id, not a
+   * name, and are left in place.
+   */
+  removeDatabase(options: { readonly name: string }): Promise<void>;
   importDatabase(options: ImportBrowserDatabaseOptions): Promise<Database>;
   createImportBatch(
     options: CreateBrowserImportBatchOptions,
@@ -1580,9 +1616,122 @@ export async function configureBrowserDatabaseRuntime(
     }
   };
 
+  const listDatabases = async (): Promise<BrowserDatabaseListing> => {
+    const sqliteNames = new Set(
+      pool
+        .getFileNames()
+        .filter(
+          (fileName) =>
+            fileName.startsWith("/") &&
+            !fileName.startsWith(`/${PRIVATE_NAME_PREFIX}`),
+        )
+        .map((fileName) => fileName.slice(1)),
+    );
+    const duckFiles = new Set<string>();
+    for await (const entry of duckDirectory.values()) {
+      if (
+        entry.kind === "file" &&
+        !entry.name.startsWith(PRIVATE_NAME_PREFIX)
+      ) {
+        duckFiles.add(entry.name);
+      }
+    }
+    // A "<name>.wal" file next to "<name>" is that database's write-ahead
+    // log. Without "<name>" it is reported under its own file name, so a
+    // removal of that name reaches the right file.
+    const duckNames = new Set<string>();
+    const orphanWalFiles = new Set<string>();
+    for (const fileName of duckFiles) {
+      if (!fileName.endsWith(".wal")) {
+        duckNames.add(fileName);
+        continue;
+      }
+      const base = fileName.slice(0, -".wal".length);
+      if (base.length === 0 || !duckFiles.has(base))
+        orphanWalFiles.add(fileName);
+    }
+    const databases: BrowserDatabaseSummary[] = [];
+    const ignored: BrowserIgnoredDatabase[] = [];
+    const names = [
+      ...new Set([...sqliteNames, ...duckNames, ...orphanWalFiles]),
+    ].sort();
+    for (const name of names) {
+      // Every other operation addresses a copy through storageName, so a
+      // stored name that does not come back unchanged can be neither opened
+      // nor removed by name and is reported with the code that would raise.
+      let normalized: string;
+      try {
+        normalized = storageName(name);
+      } catch (error) {
+        ignored.push({
+          name,
+          code: isConsultChimpsError(error)
+            ? error.code
+            : "DB_INVALID_STORAGE_NAME",
+          message:
+            "This stored name cannot be used by the browser database runtime. Clear the site's storage to remove it.",
+        });
+        continue;
+      }
+      if (normalized !== name) {
+        ignored.push({
+          name,
+          code: "DB_INVALID_STORAGE_NAME",
+          message:
+            "This stored name is not in the runtime's normalized form, so it cannot be opened or removed by name. Clear the site's storage to remove it.",
+        });
+      } else if (sqliteNames.has(name) && duckNames.has(name)) {
+        ignored.push({
+          name,
+          code: "DB_AMBIGUOUS_BROWSER_STORAGE",
+          message:
+            "Both SQLite and DuckDB working copies use this browser database name. Replace one copy with an explicit format before reopening it.",
+        });
+      } else if (sqliteNames.has(name)) {
+        databases.push({ name, format: "sqlite" });
+      } else if (duckNames.has(name)) {
+        databases.push({ name, format: "duckdb" });
+      } else {
+        ignored.push({
+          name,
+          code: "DB_BROWSER_INCOMPLETE_STORAGE",
+          message:
+            "This DuckDB write-ahead log has no matching database file. Restore the database file next to it, or remove it.",
+        });
+      }
+    }
+    return { databases, ignored };
+  };
+
+  const removeDatabase = async (remove: {
+    readonly name: string;
+  }): Promise<void> => {
+    const name = storageName(remove.name);
+    await withNameLock(name, async () => {
+      assertNoFailedOpenCleanup(name);
+      const [duckdb, duckdbWal] = await Promise.all([
+        fileExists(duckDirectory, name),
+        fileExists(duckDirectory, `${name}.wal`),
+      ]);
+      const sqlite = pool.getFileNames().includes(sqliteName(name));
+      if (!sqlite && !duckdb && !duckdbWal) {
+        throw databaseError(
+          "DB_BROWSER_STORAGE_MISSING",
+          "The browser working database could not be found.",
+          { name },
+        );
+      }
+      assertNotBusy(name);
+      if (sqlite) pool.unlink(sqliteName(name));
+      if (duckdb || duckdbWal) await removeDuckDbFiles(duckDirectory, name);
+    });
+  };
+
   return {
     createDatabase,
     openDatabase,
+    listDatabases,
+    removeDatabase,
     async importDatabase(importOptions) {
       const name = storageName(importOptions.name);
       return withNameLock(name, async () => {
