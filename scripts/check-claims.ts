@@ -114,7 +114,7 @@ const CLAIM_RULES: readonly ClaimRule[] = [
     // check below, which reads "Node.js >=24" as a version claim too.
     pattern: /Node(?:\.js)?\s*(?:>=|>|\^|~|=)?\s*v?24/gi,
     advice:
-      'published packages declare engines.node ">=22.0.0"; a package README must state the supported floor, not the version the maintainers develop on',
+      'published packages declare engines.node ">=22.13.0"; a package README must state the supported floor, not the version the maintainers develop on',
     appliesTo: isPackageReadme,
   },
   {
