@@ -14,3 +14,5 @@ pnpm-lock.yaml
 # CLAUDE.md is a repository symlink to AGENTS.md; on Windows checkouts it is
 # materialized as the symlink target text, which Prettier cannot parse.
 CLAUDE.md
+# Generated Emscripten glue, committed for reproducibility.
+packages/pbi/wasm/xpress9.mjs

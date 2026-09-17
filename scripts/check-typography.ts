@@ -107,6 +107,7 @@ const TEXT_EXTENSIONS: readonly string[] = [
   ".md",
   ".mdx",
   ".mjs",
+  ".mts",
   ".ts",
   ".tsx",
   ".txt",
@@ -127,12 +128,25 @@ const TEXT_FILENAMES: readonly string[] = [
   "LICENSE",
 ];
 
-// Extensions whose files are bytes rather than prose. This list exists so an
+// Extensions whose files are bytes rather than prose, including the fixture
+// corpus: a .pbix is a zip and a corpus .tsv is one independent reader's dump
+// of a sample model's cells, so neither is the repository's prose to fix. This
+// list exists so an
 // extensionless file the repository adds later cannot be skipped in silence:
 // anything matching none of the three lists stops the check and has to be
 // classified, the same way the xlsx contract makes the build demand a decision
 // rather than leaving one to a reviewer.
-const BINARY_EXTENSIONS: readonly string[] = [".png", ".xlsx"];
+const BINARY_EXTENSIONS: readonly string[] = [
+  ".pbix",
+  ".png",
+  ".tsv",
+  ".wasm",
+  ".xlsx",
+];
+
+// Vendored third-party source is reproduced verbatim; the repository does not
+// rewrite its prose, so it is neither checked nor treated as bytes.
+const VENDORED_EXTENSIONS: readonly string[] = [".c", ".h", ".i", ".i2", ".i3"];
 
 /**
  * Every tracked file, from git rather than a directory walk: git already knows
@@ -187,7 +201,10 @@ const allowedEntries = new Map(
 const scannedFiles: string[] = [];
 
 for (const label of listTrackedFiles()) {
-  if (hasExtension(label, BINARY_EXTENSIONS)) {
+  if (
+    hasExtension(label, BINARY_EXTENSIONS) ||
+    hasExtension(label, VENDORED_EXTENSIONS)
+  ) {
     continue;
   }
   if (

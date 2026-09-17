@@ -2,7 +2,7 @@
   "name": "@consultchimps/pbi",
   "version": "0.1.0",
   "private": true,
-  "description": "Bounded Power BI container reading for ConsultChimps.",
+  "description": "Bounded Power BI model reading and table export for ConsultChimps.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -15,24 +15,37 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./xpress9.wasm": "./wasm/xpress9.wasm"
   },
   "files": [
-    "dist"
+    "dist",
+    "wasm"
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean",
+    "build:wasm": "node scripts/build-wasm.mjs",
     "prepack": "tsup src/index.ts --format esm --dts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@consultchimps/core": "workspace:*"
+    "@consultchimps/core": "workspace:*",
+    "@consultchimps/db": "workspace:*",
+    "jszip": "3.10.1"
+  },
+  "peerDependencies": {
+    "@sqlite.org/sqlite-wasm": "3.53.4-build1"
+  },
+  "peerDependenciesMeta": {
+    "@sqlite.org/sqlite-wasm": {
+      "optional": true
+    }
   },
   "engines": {
     "node": ">=22.14.0"
   },
   "devDependencies": {
-    "jszip": "3.10.1",
+    "@sqlite.org/sqlite-wasm": "3.53.4-build1",
     "typescript": "7.0.2"
   }
 }
