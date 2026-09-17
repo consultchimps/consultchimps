@@ -222,9 +222,12 @@ It is not a bound on the process. A decoded cell is charged at its measured cost
 by type, eight bytes for a boolean, sixteen for a dictionary string, twenty-four
 for a double or a date serial and thirty-two for an int64 or a currency. Those
 are the costs of the values themselves, not of everything the JavaScript engine
-holds while it builds a workbook from them: a model whose largest table
-approaches the row limit has been measured at about four times the reported
-peak. Size the host for the measured figure, not for `peakBytes`.
+holds while it builds a workbook from them. On the largest sample file, ten
+tables and 383,399 rows, `exportPbiTables` reserved about 190 MB while the
+measured JavaScript peak was about 2.0 GB, roughly ten times more. The gap is
+the materialized worksheet XML and jszip's intermediate copies, so it is
+smallest for `readPbiTables` and largest for `exportPbiTables` on a wide table.
+Size the host for the measured figure, not for `peakBytes`.
 
 `scripts/measure-cell-cost.ts` is where the per-type figures come from. Run it
 again after any change to the decoded value representation.
