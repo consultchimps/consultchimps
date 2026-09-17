@@ -74,6 +74,13 @@ them. The section also shows how much site storage the browser reports in use. A
 name stored in both formats, or a DuckDB write-ahead log without its database,
 is listed with the code opening it would raise.
 
+Each table in the summary offers **Browse rows**: a read-only look at the rows
+stored in that table, 50 at a time in record ID order, with the record ID, the
+table's columns, and the ID of the source file each row came from. **Next rows**
+and **First rows** move through the pages, and the panel reloads its first page
+after an applied or recorded import batch or a schema change. It does not edit,
+sort, or filter; export the database to work with the rows in another tool.
+
 SQLite triggers on managed tables or internal bookkeeping tables can change
 imported rows and receipts. Managed writes reject these triggers with
 `DB_SCHEMA_DRIFT`. Restore the declared schema before retrying.

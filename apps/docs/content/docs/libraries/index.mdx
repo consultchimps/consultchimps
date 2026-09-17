@@ -287,6 +287,13 @@ and stored routes that did not match a captured source.
 applied profile, decisions, and source bindings from the working database,
 including after the private batch file has been removed.
 
+`readTableRows` reads one page of a managed table's stored rows in Record ID
+order for a bounded, read-only look at the data: the Record ID, the declared
+columns, and the source file ID, 1 to 200 rows at a time with a `nextCursor`
+that continues the page. It refuses an unknown table, a bad page size, a foreign
+cursor, and a registered table whose storage has drifted, each with a stable
+code, and it never writes.
+
 `draftImportProfile({ sources, naming })` centralizes automatic destination
 names. `naming` is `{ kind: "source-or-selection" }`,
 `{ kind: "selection-label" }`, or `{ kind: "single-table", name: "datasets" }`.

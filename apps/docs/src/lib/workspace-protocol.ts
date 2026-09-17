@@ -1,4 +1,4 @@
-import type { DatabaseFormat } from "@consultchimps/db";
+import type { DatabaseFormat, TableRowValue } from "@consultchimps/db";
 
 export type WorkspaceDatabaseFormat = DatabaseFormat;
 
@@ -242,6 +242,17 @@ export interface WorkspaceIgnoredDatabase {
   readonly message: string;
 }
 
+export interface WorkspaceRowsPage {
+  readonly table: string;
+  readonly columns: ReadonlyArray<{
+    readonly name: string;
+    readonly type: string;
+  }>;
+  readonly rows: ReadonlyArray<readonly TableRowValue[]>;
+  readonly cursor: string | null;
+  readonly nextCursor: string | null;
+}
+
 export interface WorkspaceDatabaseListing {
   readonly databases: readonly WorkspaceStoredDatabase[];
   readonly ignored: readonly WorkspaceIgnoredDatabase[];
@@ -272,6 +283,12 @@ export type WorkspaceCommand =
     })
   | (WorkspaceCommandBase & { readonly type: "listDatabases" })
   | (WorkspaceCommandBase & { readonly type: "refreshSummary" })
+  | (WorkspaceCommandBase & {
+      readonly type: "readRows";
+      readonly table: string;
+      readonly cursor: string | null;
+      readonly limit: number;
+    })
   | (WorkspaceCommandBase & {
       readonly type: "removeDatabase";
       readonly name: string;
@@ -394,6 +411,10 @@ export type WorkspaceEvent =
       readonly listing: WorkspaceDatabaseListing;
     })
   | (WorkspaceEventBase & { readonly type: "databaseRemoved" })
+  | (WorkspaceEventBase & {
+      readonly type: "rows";
+      readonly page: WorkspaceRowsPage;
+    })
   | (WorkspaceEventBase & {
       readonly type: "progress";
       readonly progress: WorkspaceProgress;

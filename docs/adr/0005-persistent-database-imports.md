@@ -139,3 +139,13 @@ bounded import previews, batch history, and export remain in scope.
 The [implementation proposal](../database-import-implementation.md) defines the
 operation and command plan. Public documentation must describe verified behavior
 as it ships, not treat this architecture record as proof of support.
+
+## Note added 2026-09-16: bounded row browser
+
+The browser tool gains a read-only row browser: one page of a managed table's
+stored rows at a time, ordered by Record ID, through `readTableRows`. It is an
+extension of the bounded previews this decision already allows (import previews,
+batch history pages) and reads through the same read-only transaction; nothing
+is written and no engine is kept open for it. The query editor, editable grid,
+charts, reconciliation, and master dataset maintenance remain paused as stated
+above.
