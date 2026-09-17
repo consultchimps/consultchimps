@@ -77,12 +77,16 @@ try {
   mkdirSync(tarballDirectory);
   mkdirSync(consumerDirectory);
 
+  // Pack only the publishable packages listed above. A recursive pack over
+  // packages/* also packs private workspace packages, which never publish.
   execFileSync(
     pnpmCommand,
     [
       ...pnpmArguments,
-      "--filter",
-      "./packages/*",
+      ...packageDirectories.flatMap((directory) => [
+        "--filter",
+        `./packages/${directory}`,
+      ]),
       "-r",
       "pack",
       "--pack-destination",
