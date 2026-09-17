@@ -130,6 +130,22 @@ describe("readPbiModelPart", () => {
     expect(backing.at(-1)).toBe(7);
   });
 
+  it("reads a length-tracking view over a growable shared buffer", async () => {
+    const plain = await fixture();
+    const Growable = SharedArrayBuffer as unknown as new (
+      length: number,
+      options: { maxByteLength: number },
+    ) => SharedArrayBuffer;
+    const shared = new Growable(plain.length, {
+      maxByteLength: plain.length * 4,
+    });
+    const input = new Uint8Array(shared);
+    input.set(plain);
+    expect(readPbiModelPart(input, { peakBytes: 1024 * 1024 * 1024 })).toEqual(
+      model,
+    );
+  });
+
   it("uses one no-model code even with a Connections part", async () => {
     const input = await fixture({ model: null, connections: true });
     expect(diagnostic(() => readPbiModelPart(input)).code).toBe("PBI_NO_MODEL");

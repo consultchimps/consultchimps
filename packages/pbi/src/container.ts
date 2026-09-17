@@ -32,26 +32,29 @@ function backingBytes(input: Uint8Array): number {
 }
 
 function directory(input: Uint8Array, limits: ContainerLimits): Directory {
-  const view = new DataView(input.buffer, input.byteOffset, input.byteLength);
+  // One length is captured for the view and every bounds check. A
+  // length-tracking view over a growable shared buffer can report a larger
+  // byteLength later; the fixed-length view would then throw on reads that a
+  // live-length check had approved.
+  const length = input.byteLength;
+  const view = new DataView(input.buffer, input.byteOffset, length);
   const fits = (offset: number, size: number): boolean =>
-    offset >= 0 && size >= 0 && offset <= input.byteLength - size;
+    offset >= 0 && size >= 0 && offset <= length - size;
   const u16 = (offset: number): number => view.getUint16(offset, true);
   const u32 = (offset: number): number => view.getUint32(offset, true);
+  const u8 = (offset: number): number => view.getUint8(offset);
   // The end-of-central-directory record is the highest-offset candidate whose
   // comment reaches the end of input AND whose directory range ends exactly at
   // the record. A decoy signature inside an archive comment therefore does not
   // hide the real record; the scan continues past it.
-  let end = input.byteLength - 22;
+  let end = length - 22;
   const minimum = Math.max(0, end - 65_535);
   let count = 0;
   let size = 0;
   let start = 0;
   let unbounded = false;
   while (end >= minimum) {
-    if (
-      u32(end) === 0x06054b50 &&
-      end + 22 + u16(end + 20) === input.byteLength
-    ) {
+    if (u32(end) === 0x06054b50 && end + 22 + u16(end + 20) === length) {
       count = u16(end + 10);
       size = u32(end + 12);
       start = u32(end + 16);
@@ -143,9 +146,7 @@ function directory(input: Uint8Array, limits: ContainerLimits): Directory {
       dataStart + compressedSize > start ||
       u16(local + 6) !== flags ||
       u16(local + 8) !== method ||
-      !nameBytes.every(
-        (byte, position) => byte === input[local + 30 + position],
-      )
+      !nameBytes.every((byte, position) => byte === u8(local + 30 + position))
     )
       throw invalidContainer();
     if (
