@@ -232,6 +232,11 @@ export function readPbiModelPart(
   options: PbiContainerOptions = {},
 ): Uint8Array {
   const limits = validateLimits(options);
+  // A view whose buffer was transferred away (for example to a worker) has no
+  // bytes to read. It is refused like any other unreadable input rather than
+  // surfacing the runtime's own TypeError from the DataView constructor.
+  if ((input.buffer as ArrayBuffer & { detached?: boolean }).detached === true)
+    throw invalidContainer();
   checkLimit(limits, "inputBytes", input.byteLength, "container");
   checkLimit(
     limits,

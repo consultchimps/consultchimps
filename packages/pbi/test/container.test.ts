@@ -162,10 +162,13 @@ describe("readPbiModelPart", () => {
 
   it("refuses non-ZIP and truncated containers without leaking parser text", async () => {
     const input = await fixture();
+    const transferred = input.slice();
+    structuredClone(transferred.buffer, { transfer: [transferred.buffer] });
     for (const bytes of [
       model,
       new Uint8Array(),
       input.subarray(0, input.length - 1),
+      transferred,
     ]) {
       expect(diagnostic(() => readPbiModelPart(bytes)).code).toBe(
         "PBI_INVALID_CONTAINER",

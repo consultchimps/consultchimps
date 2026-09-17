@@ -35,6 +35,8 @@ contain the model's compression and backup framing, not decoded rows.
   data descriptors in either form, with or without the signature; the signed
   reading is tried first, so a CRC that equals the signature value still reads
 - A matching CRC-32 for the model part, computed on the returned copy
+- A live input view; a view whose buffer has been detached by a transfer is
+  refused as an invalid container
 
 The end-of-central-directory record is the highest-offset candidate whose
 comment reaches the end of the input and whose directory ends exactly at the
