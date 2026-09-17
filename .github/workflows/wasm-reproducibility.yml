@@ -1,0 +1,107 @@
+name: WebAssembly reproducibility
+
+# packages/pbi/wasm/xpress9.wasm is a committed build product, so a reviewer
+# cannot read it. This workflow is what makes it reviewable: it rebuilds the
+# artifact twice from the vendored C, in two directories with different paths,
+# and fails unless the two builds agree with each other and with the files in
+# the pull request. A toolchain change, a vendored source change and a new
+# artifact therefore have to arrive together in one reviewed change.
+#
+# It does not run on every pull request, only when something that can change
+# the artifact changes.
+
+on:
+  pull_request:
+    paths:
+      - packages/pbi/vendor/**
+      - packages/pbi/scripts/**
+      - packages/pbi/wasm/**
+      - .github/workflows/wasm-reproducibility.yml
+  push:
+    branches:
+      - main
+    paths:
+      - packages/pbi/vendor/**
+      - packages/pbi/scripts/**
+      - packages/pbi/wasm/**
+      - .github/workflows/wasm-reproducibility.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild:
+    name: Rebuild xpress9.wasm twice and compare
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+
+    # Emscripten 6.0.9, pinned by immutable digest rather than by the mutable
+    # 6.0.9 tag, because the tag is what the artifact's bytes depend on.
+    #
+    # linux/amd64 digest of emscripten/emsdk:6.0.9, read on 2026-09-17 from
+    #   curl -s https://hub.docker.com/v2/repositories/emscripten/emsdk/tags/6.0.9
+    # The multi-architecture index digest for the same tag is
+    #   sha256:96617f27fe16421588241def73908fd348a7f9d260440ed0d00b36dcf7a063cc
+    # and the amd64 digest below is the one this amd64 runner actually resolves.
+    # The image already carries the Node that the build script runs under, so
+    # this job needs neither setup-node nor pnpm: the script uses Node builtins
+    # only and installs nothing.
+    container:
+      image: emscripten/emsdk@sha256:3ba391c5b1554e06f9af0a69652ff20919dff14e771619339dba988bd62574b5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Trust the checkout inside the container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Record the toolchain
+        run: |
+          emcc --version
+          node --version
+
+      # Two copies at different absolute paths. If the build embedded its own
+      # directory, in a source path, a debug record or a toolchain identity
+      # string, the two outputs would differ here and the job would fail, which
+      # is exactly what the path and identity flags in the build script prevent.
+      - name: Build in the first clean copy
+        run: |
+          mkdir -p /tmp/first
+          cp -a packages/pbi /tmp/first/pbi
+          node /tmp/first/pbi/scripts/build-wasm.mjs
+
+      - name: Build in the second clean copy
+        run: |
+          mkdir -p /tmp/second/a/deeper/path
+          cp -a packages/pbi /tmp/second/a/deeper/path/pbi
+          node /tmp/second/a/deeper/path/pbi/scripts/build-wasm.mjs
+
+      - name: Confirm the two builds are byte-identical
+        run: |
+          cmp /tmp/first/pbi/wasm/xpress9.wasm /tmp/second/a/deeper/path/pbi/wasm/xpress9.wasm
+          cmp /tmp/first/pbi/wasm/xpress9.mjs /tmp/second/a/deeper/path/pbi/wasm/xpress9.mjs
+
+      - name: Confirm the committed artifacts match the rebuild
+        run: |
+          cmp /tmp/first/pbi/wasm/xpress9.wasm packages/pbi/wasm/xpress9.wasm
+          cmp /tmp/first/pbi/wasm/xpress9.mjs packages/pbi/wasm/xpress9.mjs
+
+      - name: Print the hashes
+        if: always()
+        run:
+          sha256sum packages/pbi/wasm/xpress9.wasm packages/pbi/wasm/xpress9.mjs
+          /tmp/first/pbi/wasm/xpress9.wasm /tmp/first/pbi/wasm/xpress9.mjs ||
+          true
+
+      # When the comparison fails, the rebuilt pair is what the maintainer needs
+      # in hand to see the difference and, if the toolchain moved on purpose, to
+      # commit.
+      - name: Upload the rebuilt artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: xpress9-rebuilt
+          path: /tmp/first/pbi/wasm/xpress9.*
+          retention-days: 7

@@ -18,3 +18,12 @@
 *.woff2 binary
 *.ttf binary
 *.otf binary
+
+*.wasm binary
+# Power BI containers are zip archives, and the oracle dumps must keep their
+# exact bytes: a CRLF checkout would put a carriage return in every last cell.
+*.pbix binary
+*.pbit binary
+*.tsv -text
+# Vendored third-party source stays byte-identical to upstream.
+packages/pbi/vendor/** -text

@@ -14,6 +14,8 @@ export default tseslint.config(
       // Local agent configuration and scratch space, never committed.
       ".claude/**",
       "tmp/**",
+      // Generated Emscripten glue, committed for reproducibility.
+      "packages/pbi/wasm/xpress9.mjs",
     ],
   },
   eslint.configs.recommended,
