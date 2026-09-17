@@ -1,0 +1,14 @@
+ID	First Name	State	Sales.ID	Sales.Sales Person	Sales.Sales Amount
+I:1	S:Bill	S:TX	I:1	S:Bill	I:100
+I:1	S:Bill	S:TX	I:4	S:Bill	I:3494
+I:1	S:Bill	S:TX	I:9	S:Bill	I:567
+I:1	S:Bill	S:TX	I:2	S:Will	I:200
+I:1	S:Bill	S:TX	I:5	S:Billi	I:345
+I:2	S:Will	S:CA	I:2	S:Will	I:200
+I:2	S:Will	S:CA	I:1	S:Bill	I:100
+I:2	S:Will	S:CA	I:4	S:Bill	I:3494
+I:2	S:Will	S:CA	I:9	S:Bill	I:567
+I:3	S:William	S:WA	I:3	S:william	I:2400
+I:3	S:William	S:WA	I:8	S:william	I:123
+I:3	S:William	S:WA	I:6	S:willia	I:2992
+I:4	S:Zoe	S:NY	~N~	~N~	~N~

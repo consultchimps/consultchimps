@@ -1,0 +1,1003 @@
+{
+  "commit": "8e99b1233173025a9ddcb5d8e5edfc119f2dfbb1",
+  "baseUrl": "https://raw.githubusercontent.com/microsoft/powerbi-desktop-samples/8e99b1233173025a9ddcb5d8e5edfc119f2dfbb1/",
+  "fixtures": [
+    {
+      "name": "a-2018-fuzzy",
+      "fileName": "a-2018-fuzzy.pbix",
+      "bytes": 45177,
+      "sha256": "b04ef67ce8b113a9199f6c849667ff390df95b0e6c8a97f5017d2c1f4078af4d",
+      "url": "https://raw.githubusercontent.com/microsoft/powerbi-desktop-samples/8e99b1233173025a9ddcb5d8e5edfc119f2dfbb1/Monthly%20Desktop%20Blog%20Samples/2018/2018SU10%20Fuzzy%20Matching%20Demo%20-%20October.pbix",
+      "tables": [
+        {
+          "name": "DateTableTemplate_9e6833d7-5e83-4931-bc93-8dbeed8e6805",
+          "rows": 1,
+          "columns": [
+            "Date",
+            "Year",
+            "MonthNo",
+            "Month",
+            "QuarterNo",
+            "Quarter",
+            "Day"
+          ],
+          "digest": "ebb405ad"
+        },
+        {
+          "name": "People",
+          "rows": 13,
+          "columns": [
+            "ID",
+            "First Name",
+            "State",
+            "Sales.ID",
+            "Sales.Sales Person",
+            "Sales.Sales Amount"
+          ],
+          "digest": "79467418"
+        },
+        {
+          "name": "Sales",
+          "rows": 9,
+          "columns": ["ID", "Sales Person", "Sales Amount"],
+          "digest": "c70fb7bf"
+        }
+      ]
+    },
+    {
+      "name": "b-2018-profiling",
+      "fileName": "b-2018-profiling.pbix",
+      "bytes": 145790,
+      "sha256": "116a43041d31fd5281c14254cdc175a209ec1ee14770e6cea5e9fc48e918a82a",
+      "url": "https://raw.githubusercontent.com/microsoft/powerbi-desktop-samples/8e99b1233173025a9ddcb5d8e5edfc119f2dfbb1/Monthly%20Desktop%20Blog%20Samples/2018/2018SU10%20Data%20Profiling%20Demo%20-%20October.pbix",
+      "tables": [
+        {
+          "name": "Customers",
+          "rows": 91,
+          "columns": [
+            "CustomerID",
+            "CompanyName",
+            "ContactName",
+            "ContactTitle",
+            "Address",
+            "City",
+            "Region",
+            "PostalCode",
+            "Country",
+            "Phone",
+            "Fax"
+          ],
+          "digest": "610c7934"
+        },
+        {
+          "name": "DateTableTemplate_4f8920eb-1212-4b4f-a76d-c176c7ebe49d",
+          "rows": 1,
+          "columns": [
+            "Date",
+            "Year",
+            "MonthNo",
+            "Month",
+            "QuarterNo",
+            "Quarter",
+            "Day"
+          ],
+          "digest": "ebb405ad"
+        },
+        {
+          "name": "LocalDateTable_49867f5a-779b-41d5-a53f-f14479577782",
+          "rows": 1096,
+          "columns": [
+            "Date",
+            "Year",
+            "MonthNo",
+            "Month",
+            "QuarterNo",
+            "Quarter",
+            "Day"
+          ],
+          "digest": "4d3a72a7"
+        },
+        {
+          "name": "LocalDateTable_4e215a5d-84a0-4382-a1a4-fa9aca5802de",
+          "rows": 1096,
+          "columns": [
+            "Date",
+            "Year",
+            "MonthNo",
+            "Month",
+            "QuarterNo",
+            "Quarter",
+            "Day"
+          ],
+          "digest": "4d3a72a7"
+        },
+        {
+          "name": "LocalDateTable_fc40ce61-4ee5-4f8d-9efc-5bde7d7411a6",
+          "rows": 1096,
+          "columns": [
+            "Date",
+            "Year",
+            "MonthNo",
+            "Month",
+            "QuarterNo",
+            "Quarter",
+            "Day"
+          ],
+          "digest": "4d3a72a7"
+        },
+        {
+          "name": "Numbers",
+          "rows": 1000,
+          "columns": ["Column1"],
+          "digest": "18edd8f4"
+        },
+        {
+          "name": "Orders",
+          "rows": 830,
+          "columns": [
+            "OrderID",
+            "CustomerID",
+            "EmployeeID",
+            "OrderDate",
+            "RequiredDate",
+            "ShippedDate",
+            "ShipVia",
+            "Freight",
+            "ShipName",
+            "ShipAddress",
+            "ShipCity",
+            "ShipRegion",
+            "ShipPostalCode",
+            "ShipCountry"
+          ],
+          "digest": "82674f50"
+        }
+      ]
+    },
+    {
+      "name": "c-perf-analyzer",
+      "fileName": "c-perf-analyzer.pbix",
+      "bytes": 154535,
+      "sha256": "e5d20e696496874ff51cf9f420af56b80fbfe0ddd9458ae39ebbcecfe0476810",
+      "url": "https://raw.githubusercontent.com/microsoft/powerbi-desktop-samples/8e99b1233173025a9ddcb5d8e5edfc119f2dfbb1/Performance%20Analyzer/PerformanceAnalyzerExportReport.pbix",
+      "tables": [
+        {
+          "name": "EventEdges",
+          "rows": 229,
+          "columns": [
+            "id",
+            "timestamp",
+            "marker",
+            "timestampMs",
+            "MS Since Root Start",
+            "Root",
+            "Rank",
+            "Duration",
+            "EdgePath",
+            "event_type"
+          ],
+          "digest": "b4fc83e7"
+        },
+        {
+          "name": "EventTypes",
+          "rows": 15,
+          "columns": ["name", "component", "event_type"],
+          "digest": "906d63ca"
+        },
+        {
+          "name": "Events",
+          "rows": 117,
+          "columns": [
+            "name",
+            "component",
+            "start",
+            "id",
+            "ActualQueryDuration",
+            "DataReadDuration",
+            "QueryText",
+            "RowCount",
+            "RowsRead",
+            "sourceLabel",
+            "status",
+            "visualTitle",
+            "end",
+            "DurationMs",
+            "StartMs",
+            "EndMs",
+            "parentId",
+            "Path",
+            "Root",
+            "Rank",
+            "RawIndex",
+            "ParentIndex",
+            "Index",
+            "TreeLabel",
+            "MS Since Visual Start",
+            "PathLength",
+            "event_type",
+            "changeDetectionMeasure",
+            "visualId",
+            "visualType"
+          ],
+          "digest": "47ba75d5"
+        },
+        {
+          "name": "Metadata",
+          "rows": 1,
+          "columns": ["FilePath", "RawEventCount", "UniqueEventCount"],
+          "digest": "20e849b7"
+        },
+        {
+          "name": "RootActions",
+          "rows": 15,
+          "columns": [
+            "Root",
+            "Order",
+            "Time DAX Query (ms)",
+            "Time Visual Display (ms)",
+            "Time Other (ms)",
+            "Time Total (ms)",
+            "Time Direct Query (ms)",
+            "Action Label",
+            "ActionType"
+          ],
+          "digest": "0330f411"
+        }
+      ]
+    },
+    {
+      "name": "d-2026-revenue",
+      "fileName": "d-2026-revenue.pbix",
+      "bytes": 245930,
+      "sha256": "3c95c4fb5a261e9d13a7152a2e14b18ea9e9efac0105dbd9ed46ba0137489c27",
+      "url": "https://raw.githubusercontent.com/microsoft/powerbi-desktop-samples/8e99b1233173025a9ddcb5d8e5edfc119f2dfbb1/2026%20Power%20BI%20Samples%20Revamp/Revenue%20Opportunities.pbix",
+      "tables": [
+        {
+          "name": "Account",
+          "rows": 357,
+          "columns": ["Account", "Region", "Segment", "Account ID", "State"],
+          "digest": "456fb75d"
+        },
+        {
+          "name": "Calculations",
+          "rows": 458,
+          "columns": [
+            "EstimatedCloseDate",
+            "Opportunity ID",
+            "Sales Stage ID",
+            "Account ID",
+            "Partner ID",
+            "Product ID",
+            "ProductRevenue",
+            "FactoredProductRevenue",
+            "Create Date",
+            "Opportunity Days",
+            "Year",
+            "Month_Number",
+            "Month",
+            "Date"
+          ],
+          "digest": "32851840"
+        },
+        {
+          "name": "Calendar",
+          "rows": 1096,
+          "columns": [
+            "Date",
+            "Year",
+            "Quarter Number",
+            "Quarter",
+            "Year Quarter",
+            "Month Number",
+            "Month",
+            "Year Month",
+            "Year Month Number",
+            "Day of Week Number",
+            "Day of Week"
+          ],
+          "digest": "d20ede4b"
+        },
+        {
+          "name": "Fact A",
+          "rows": 228,
+          "columns": [
+            "EstimatedCloseDate",
+            "Opportunity ID",
+            "Sales Stage ID",
+            "Account ID",
+            "Partner ID",
+            "Product ID",
+            "ProductRevenue",
+            "FactoredProductRevenue",
+            "Create Date",
+            "Opportunity Days",
+            "Year",
+            "Month_Number",
+            "Month"
+          ],
+          "digest": "83e26eec"
+        },
+        {
+          "name": "Fact B",
+          "rows": 230,
+          "columns": [
+            "EstimatedCloseDate",
+            "Opportunity ID",
+            "Sales Stage ID",
+            "Account ID",
+            "Partner ID",
+            "Product ID",
+            "ProductRevenue",
+            "FactoredProductRevenue",
+            "Create Date",
+            "Opportunity Days",
+            "Year",
+            "Month_Number",
+            "Month"
+          ],
+          "digest": "b4f5d711"
+        },
+        {
+          "name": "Opportunity",
+          "rows": 486,
+          "columns": [
+            "Name",
+            "Opportunity ID",
+            "Rank",
+            "SizeID",
+            "Opportunity Size"
+          ],
+          "digest": "cf3f8c35"
+        },
+        {
+          "name": "Partner",
+          "rows": 101,
+          "columns": ["Partner", "Partner ID", "Partner Driven"],
+          "digest": "558e7251"
+        },
+        {
+          "name": "Product",
+          "rows": 25,
+          "columns": ["Product Code", "Product ID"],
+          "digest": "f285f7b3"
+        },
+        {
+          "name": "Sales stage",
+          "rows": 5,
+          "columns": ["Probability", "Sales Stage", "Sales Stage ID"],
+          "digest": "528a1c93"
+        }
+      ]
+    },
+    {
+      "name": "e-covid",
+      "fileName": "e-covid.pbit",
+      "bytes": 1276277,
+      "sha256": "714d3b00e5b02d4c0d87c73363b00829d14c77f609c49ea2c23b4f3392ea626d",
+      "url": "https://raw.githubusercontent.com/microsoft/powerbi-desktop-samples/8e99b1233173025a9ddcb5d8e5edfc119f2dfbb1/powerbi-service-samples/COVID-19%20US%20Tracking%20Sample.pbit",
+      "tables": []
+    },
+    {
+      "name": "f-2026-corpspend",
+      "fileName": "f-2026-corpspend.pbix",
+      "bytes": 716704,
+      "sha256": "2e56785790d20bc4596d2aec8ede7128093b4affaaf2204198b382c9192f6ca6",
+      "url": "https://raw.githubusercontent.com/microsoft/powerbi-desktop-samples/8e99b1233173025a9ddcb5d8e5edfc119f2dfbb1/2026%20Power%20BI%20Samples%20Revamp/Corporate%20Spend.pbix",
+      "tables": [
+        {
+          "name": "Business Area",
+          "rows": 7,
+          "columns": ["Business Area", "Business Area ID"],
+          "digest": "09a7e3e3"
+        },
+        {
+          "name": "Calculations",
+          "rows": 166216,
+          "columns": [
+            "Date",
+            "Value",
+            "Department",
+            "Cost Element ID",
+            "Country/Region ID",
+            "Business Area ID",
+            "IT Sub Area ID",
+            "Scenario ID"
+          ],
+          "digest": "bb8d256c"
+        },
+        {
+          "name": "Cost Element",
+          "rows": 253,
+          "columns": [
+            "Cost element name",
+            "Cost Element Group",
+            "Cost Element Sub Group",
+            "Cost Element ID"
+          ],
+          "digest": "262620e9"
+        },
+        {
+          "name": "Country Region",
+          "rows": 52,
+          "columns": [
+            "Sales Region",
+            "Country/Region",
+            "Country/Region ID",
+            "Country / Region"
+          ],
+          "digest": "baaaa259"
+        },
+        {
+          "name": "Date",
+          "rows": 48,
+          "columns": ["Date", "Year", "Period", "Month"],
+          "digest": "a31b7711"
+        },
+        {
+          "name": "Department",
+          "rows": 471,
+          "columns": ["VP", "Department"],
+          "digest": "659b2407"
+        },
+        {
+          "name": "IT Area",
+          "rows": 40,
+          "columns": ["IT Area", "IT Sub Area", "IT Sub Area ID"],
+          "digest": "e3a9a6fb"
+        },
+        {
+          "name": "Scenario",
+          "rows": 5,
+          "columns": ["Scenario", "Scenario ID", "ScenarioDescription"],
+          "digest": "d628e389"
+        },
+        {
+          "name": "Toggle for breakdown",
+          "rows": 5,
+          "columns": ["Breakdown by", "Parameter Fields", "Parameter Order"],
+          "digest": "bc8633b6"
+        },
+        {
+          "name": "Toggle for variance to plan",
+          "rows": 2,
+          "columns": ["# / %", "Parameter Fields", "Parameter Order"],
+          "digest": "4cd547b3"
+        }
+      ]
+    },
+    {
+      "name": "g-2018-newformat",
+      "fileName": "g-2018-newformat.pbix",
+      "bytes": 3631431,
+      "sha256": "3d20f44ebffcfddb65069dbe467b3174b68a224511d715b6a521b52a68ac4681",
+      "url": "https://raw.githubusercontent.com/microsoft/powerbi-desktop-samples/8e99b1233173025a9ddcb5d8e5edfc119f2dfbb1/Monthly%20Desktop%20Blog%20Samples/2018/2018SU09%20Blog%20Demo%20-%20September%20-%20New%20Format.pbix",
+      "tables": [
+        {
+          "name": "Calendar",
+          "rows": 1826,
+          "columns": ["Date", "Month", "Year", "MonthN"],
+          "digest": "410efc5e"
+        },
+        {
+          "name": "DateTableTemplate_ccb20219-f6e6-4499-a224-352c41e914ce",
+          "rows": 1,
+          "columns": [
+            "Date",
+            "Year",
+            "MonthNo",
+            "Month",
+            "QuarterNo",
+            "Quarter",
+            "Day"
+          ],
+          "digest": "ebb405ad"
+        },
+        {
+          "name": "LocalDateTable_8369bfaf-356a-4b8d-a282-dd2c1868a321",
+          "rows": 1826,
+          "columns": [
+            "Date",
+            "Year",
+            "MonthNo",
+            "Month",
+            "QuarterNo",
+            "Quarter",
+            "Day"
+          ],
+          "digest": "0c1e58db"
+        },
+        {
+          "name": "Sales",
+          "rows": 38728,
+          "columns": [
+            "SalesOrderID",
+            "Country",
+            "OrderDate",
+            "SalesChannelCode",
+            "ProdID",
+            "StyleName",
+            "CustomerAccountNumber",
+            "StoreKey",
+            "ProductLabel",
+            "ProductDescription",
+            "Manufacturer",
+            "BrandName",
+            "Class",
+            "Color",
+            "StockType",
+            "Units",
+            "SalesAmount",
+            "RePurch",
+            "NSAT",
+            "SubCategory",
+            "Category",
+            "Sale Size",
+            "ProductName",
+            "Sales Size Sort",
+            "."
+          ],
+          "digest": "fa3d3f67"
+        }
+      ]
+    },
+    {
+      "name": "l-2019-12",
+      "fileName": "l-2019-12.pbix",
+      "bytes": 4354034,
+      "sha256": "cc3c7d851fdc61c5060bf2c88f08ba7103c0838c079084f3dbfb46f5bc3867ee",
+      "url": "https://raw.githubusercontent.com/microsoft/powerbi-desktop-samples/8e99b1233173025a9ddcb5d8e5edfc119f2dfbb1/Monthly%20Desktop%20Blog%20Samples/2019/2019SU12%20Blog%20Demo%20-%20December.pbix",
+      "tables": [
+        {
+          "name": "Calendar",
+          "rows": 1826,
+          "columns": ["Date", "Month", "Year", "MonthN"],
+          "digest": "410efc5e"
+        },
+        {
+          "name": "DateTableTemplate_ccb20219-f6e6-4499-a224-352c41e914ce",
+          "rows": 1,
+          "columns": [
+            "Date",
+            "Year",
+            "MonthNo",
+            "Month",
+            "QuarterNo",
+            "Quarter",
+            "Day"
+          ],
+          "digest": "ebb405ad"
+        },
+        {
+          "name": "Inventory",
+          "rows": 38027,
+          "columns": [
+            "InventoryRecID",
+            "InvDate",
+            "StoreKey",
+            "ProductKey",
+            "ComboKey",
+            "OnHandQuantity",
+            "OnOrderQuantity",
+            "SafetyStockQuantity",
+            "UnitCost",
+            "DaysInStock",
+            "MinDayInStock",
+            "MaxDayInStock",
+            "Aging"
+          ],
+          "digest": "a7008eab"
+        },
+        {
+          "name": "LocalDateTable_8369bfaf-356a-4b8d-a282-dd2c1868a321",
+          "rows": 1826,
+          "columns": [
+            "Date",
+            "Year",
+            "MonthNo",
+            "Month",
+            "QuarterNo",
+            "Quarter",
+            "Day"
+          ],
+          "digest": "0c1e58db"
+        },
+        {
+          "name": "LocalDateTable_f7a0d7fe-233b-4557-ad80-800373cd4ad4",
+          "rows": 365,
+          "columns": [
+            "Date",
+            "Year",
+            "MonthNo",
+            "Month",
+            "QuarterNo",
+            "Quarter",
+            "Day"
+          ],
+          "digest": "f467a889"
+        },
+        {
+          "name": "Products",
+          "rows": 2517,
+          "columns": [
+            "ProductKey",
+            "ProductLabel",
+            "ProductName",
+            "ProductDescription",
+            "Manufacturer",
+            "BrandName",
+            "Class",
+            "StyleName",
+            "ColorName",
+            "StockTypeName",
+            "UnitCost",
+            "UnitPrice",
+            "SubCategory",
+            "GeneralCategory"
+          ],
+          "digest": "1b34db38"
+        },
+        {
+          "name": "Sales",
+          "rows": 38728,
+          "columns": [
+            "SalesOrderID",
+            "Country",
+            "OrderDate",
+            "SalesChannelCode",
+            "ProdID",
+            "StyleName",
+            "CustomerAccountNumber",
+            "StoreKey",
+            "ProductLabel",
+            "ProductDescription",
+            "Manufacturer",
+            "Brand Name",
+            "Class",
+            "Color",
+            "StockType",
+            "Units",
+            "Sales Amount",
+            "NSAT",
+            "SubCategory",
+            "Category",
+            "Sale Size",
+            "ProductName",
+            "Sales Size Sort",
+            "Unit Cost",
+            "Unit Price",
+            "SalesTax",
+            "Freight",
+            "PurchAgain",
+            "."
+          ],
+          "digest": "5e27e046"
+        },
+        {
+          "name": "Stores",
+          "rows": 306,
+          "columns": [
+            "StoreKey",
+            "GeographyKey",
+            "StoreManager",
+            "StoreType",
+            "StoreName",
+            "StoreDescription",
+            "Status",
+            "ZipCode",
+            "ZipCodeExtension",
+            "StorePhone",
+            "StoreFax",
+            "AddressLine1",
+            "AddressLine2",
+            "EmployeeCount",
+            "SellingAreaSize",
+            "GeoLocation",
+            "Geometry"
+          ],
+          "digest": "e4886b74"
+        }
+      ]
+    },
+    {
+      "name": "m-2020-09",
+      "fileName": "m-2020-09.pbix",
+      "bytes": 4471831,
+      "sha256": "78ea07975de14f3f095e3a5e08cae37fab09b79954e72f5cc09e29089a4bdbbe",
+      "url": "https://raw.githubusercontent.com/microsoft/powerbi-desktop-samples/8e99b1233173025a9ddcb5d8e5edfc119f2dfbb1/Monthly%20Desktop%20Blog%20Samples/2020/2020SU09%20Blog%20Demo%20-%20September.pbix",
+      "tables": [
+        {
+          "name": "DateTableTemplate_49c7f922-5652-4b27-894d-42ffd0728673",
+          "rows": 1,
+          "columns": [
+            "Date",
+            "Year",
+            "MonthNo",
+            "Month",
+            "QuarterNo",
+            "Quarter",
+            "Day"
+          ],
+          "digest": "ebb405ad"
+        },
+        {
+          "name": "Geo",
+          "rows": 411,
+          "columns": [
+            "City",
+            "Revenue per transaction",
+            "Transactions",
+            "Region"
+          ],
+          "digest": "9ab9aa5c"
+        },
+        {
+          "name": "LocalDateTable_12549ca7-792e-4421-aa7a-f90bf6ab314f",
+          "rows": 1096,
+          "columns": [
+            "Date",
+            "Year",
+            "MonthNo",
+            "Month",
+            "QuarterNo",
+            "Quarter",
+            "Day"
+          ],
+          "digest": "e390e3db"
+        },
+        {
+          "name": "LocalDateTable_53ab0f38-0987-4954-9220-498e4d272cb4",
+          "rows": 1461,
+          "columns": [
+            "Date",
+            "Year",
+            "MonthNo",
+            "Month",
+            "QuarterNo",
+            "Quarter",
+            "Day"
+          ],
+          "digest": "aab6e8bd"
+        },
+        {
+          "name": "LocalDateTable_85ba34a4-eea6-403e-b88e-5c37a1780d69",
+          "rows": 1096,
+          "columns": [
+            "Date",
+            "Year",
+            "MonthNo",
+            "Month",
+            "QuarterNo",
+            "Quarter",
+            "Day"
+          ],
+          "digest": "5e129e19"
+        },
+        {
+          "name": "Online Sales",
+          "rows": 119423,
+          "columns": [
+            "Status",
+            "Lead time",
+            "Stays in weekend nights",
+            "Stays in week nights",
+            "Adults",
+            "Children",
+            "Babies",
+            "Country",
+            "Repeat customer",
+            "Previous cancelations",
+            "Previous bookings not canceled",
+            "Reserved room type code",
+            "Assigned room type code",
+            "Booking changes",
+            "Agent",
+            "Company",
+            "Days in waiting list",
+            "Time Spent on Website",
+            "Required parking spaces",
+            "Total of special requests",
+            "Reservation status",
+            "Reservation status date",
+            "Customer",
+            "No. of Guests",
+            "Assigned room type",
+            "Purchase Year",
+            "Purchase month name",
+            "Purchase week number",
+            "Purchase day of the month",
+            "Product",
+            "City",
+            "Region",
+            "Revenue Total",
+            "Loyalty card",
+            "Brand",
+            "Age Group",
+            "Customer Segment",
+            "Purchase month",
+            "Purchase date",
+            "Purchase Size",
+            "Promo Code",
+            "Purchasing Date"
+          ],
+          "digest": "019817ec"
+        }
+      ]
+    },
+    {
+      "name": "n-2020-11",
+      "fileName": "n-2020-11.pbix",
+      "bytes": 9325733,
+      "sha256": "ca234c6895ec7a8e783fe85b12f2e9272e514ee5e33ded28dfad2f726d3fd9cb",
+      "url": "https://raw.githubusercontent.com/microsoft/powerbi-desktop-samples/8e99b1233173025a9ddcb5d8e5edfc119f2dfbb1/Monthly%20Desktop%20Blog%20Samples/2020/2020SU11%20Blog%20Demo%20-%20November.pbix",
+      "tables": [
+        {
+          "name": "Customer",
+          "rows": 18485,
+          "columns": [
+            "CustomerKey",
+            "Customer ID",
+            "Customer",
+            "City",
+            "State-Province",
+            "Country-Region",
+            "Postal Code"
+          ],
+          "digest": "3147e640"
+        },
+        {
+          "name": "Date",
+          "rows": 1461,
+          "columns": [
+            "DateKey",
+            "Date",
+            "Fiscal Year",
+            "Fiscal Quarter",
+            "Month",
+            "MonthKey",
+            "Full Date",
+            "Short Month"
+          ],
+          "digest": "9e4a1a1f"
+        },
+        {
+          "name": "Geo",
+          "rows": 411,
+          "columns": [
+            "City",
+            "Revenue per transaction",
+            "Transactions",
+            "Region"
+          ],
+          "digest": "9ab9aa5c"
+        },
+        {
+          "name": "Online Sales",
+          "rows": 119423,
+          "columns": [
+            "Promo Code",
+            "Status",
+            "Lead time",
+            "Purchase Year",
+            "Purchase month name",
+            "Purchase week number",
+            "Purchase day of the month",
+            "Stays in weekend nights",
+            "Stays in week nights",
+            "Adults",
+            "Children",
+            "Babies",
+            "Brand",
+            "Country",
+            "Product",
+            "Age Group",
+            "Repeat customer",
+            "Previous cancelations",
+            "Previous bookings not canceled",
+            "Reserved room type code",
+            "Assigned room type code",
+            "Booking changes",
+            "Customer Segment",
+            "City",
+            "Agent",
+            "Company",
+            "Days in waiting list",
+            "Region",
+            "Time Spent on Website",
+            "Required parking spaces",
+            "Total of special requests",
+            "Reservation status",
+            "Reservation status date",
+            "No. of Guests",
+            "Purchase month",
+            "Purchase date",
+            "Customer",
+            "Revenue Total",
+            "Assigned room type",
+            "Purchase Size",
+            "Loyalty card",
+            "Purchasing Date",
+            "Seller"
+          ],
+          "digest": "22276e91"
+        },
+        {
+          "name": "Product",
+          "rows": 397,
+          "columns": [
+            "ProductKey",
+            "Product",
+            "Standard Cost",
+            "Color",
+            "List Price",
+            "Model",
+            "Subcategory",
+            "Category",
+            "SKU"
+          ],
+          "digest": "b35f0fcd"
+        },
+        {
+          "name": "Reseller",
+          "rows": 702,
+          "columns": [
+            "ResellerKey",
+            "Business Type",
+            "Reseller",
+            "City",
+            "State-Province",
+            "Country-Region",
+            "Postal Code",
+            "Reseller ID",
+            "city.state"
+          ],
+          "digest": "d0670e40"
+        },
+        {
+          "name": "Sales",
+          "rows": 121253,
+          "columns": [
+            "SalesOrderLineKey",
+            "ResellerKey",
+            "CustomerKey",
+            "ProductKey",
+            "OrderDateKey",
+            "DueDateKey",
+            "ShipDateKey",
+            "SalesTerritoryKey",
+            "Order Quantity",
+            "Unit Price",
+            "Extended Amount",
+            "Product Standard Cost",
+            "Total Product Cost",
+            "Sales Amount",
+            "Unit Price Discount Pct"
+          ],
+          "digest": "45c69e7e"
+        },
+        {
+          "name": "Sales Order",
+          "rows": 121253,
+          "columns": [
+            "SalesOrderLineKey",
+            "Sales Order",
+            "Sales Order Line",
+            "Channel"
+          ],
+          "digest": "9642a59d"
+        },
+        {
+          "name": "Sales Territory",
+          "rows": 11,
+          "columns": ["SalesTerritoryKey", "Region", "Country", "Group"],
+          "digest": "d33d23d8"
+        },
+        {
+          "name": "Table",
+          "rows": 3,
+          "columns": ["Type"],
+          "digest": "df5ef4d8"
+        }
+      ]
+    }
+  ]
+}

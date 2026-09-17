@@ -38,12 +38,21 @@ as another input format.
 **Decision: a new package `@consultchimps/pbi`.** It carries a WebAssembly
 artifact and a vendored third-party C source tree, and neither belongs in a
 package whose consumers expect pure TypeScript. It depends on
-`@consultchimps/db/sqlite-read` for temporary, read-only catalog queries and on
-`@consultchimps/xlsx` for the workbook writer. The catalog inside the model is
-SQLite, but it is not a managed ConsultChimps database. The reader uses the
-official `@sqlite.org/sqlite-wasm` runtime already pinned by the workspace,
-rather than restoring the sql.js APIs removed by ADR 0005. The ZIP dependency
-remains jszip at the repository's pinned version.
+`@consultchimps/db/sqlite-read` for temporary, read-only catalog queries. The
+workbook writer lives inside `@consultchimps/pbi` on jszip, not in
+`@consultchimps/xlsx`: everything Decision 5 and Decision 6 require is net-new
+code wherever it sits (the SpreadsheetML escaping, the sanitizing name
+allocator, typed cells, number formats, the multi-sheet split), and
+`@consultchimps/xlsx` has no bytes-level multi-sheet write surface, no way to
+carry a bigint, a date serial or a number format through its `Table` type, and a
+rows path that writes through SheetJS. Putting the writer behind that package
+would change its public surface and its supply chain in the same pull request
+that decodes VertiPaq; promoting the writer later is a refactor with its own
+contract. The catalog inside the model is SQLite, but it is not a managed
+ConsultChimps database. The reader uses the official `@sqlite.org/sqlite-wasm`
+runtime already pinned by the workspace, rather than restoring the sql.js APIs
+removed by ADR 0005. The ZIP dependency remains jszip at the repository's pinned
+version.
 
 The SQLite reader opens an independent in-memory copy, accepts one read-only
 statement at a time, and frees its catalog buffer on close. It needs neither
@@ -677,6 +686,19 @@ first build must treat each as unverified until a fixture is found:
 - compression classes other than hybrid run-length encoding;
 - encrypted or password-protected models, which are refused, not read.
 
+Each of these, except the encrypted model, attempts the decode and records a
+warning rather than refusing. The manifest gains an `unverifiedPaths` list whose
+codes name the reference path that ran without corpus evidence, and every entry
+adds one plain-language warning telling the user to check the affected values
+against Power BI. Refusing instead would withhold rows that are probably
+correct, and reading in silence would present them as verified; naming the path
+in the manifest is the only option that does neither. The one path that cannot
+attempt the decode is a segment whose compression class has no known bit width
+and which carries a bit-packed subsegment: the width is unknowable, so the
+column is excluded with `PBI_COLUMN_UNSUPPORTED_ENCODING`. A warning is not a
+substitute for a fixture, and each code is removed from this list when a model
+that exercises it joins the corpus.
+
 The pipeline was verified in Chromium only. Nothing in it is Chromium-specific,
 but that is reasoning, not evidence. The spike measured only the decoder's
 working set: it tracks the largest single table, not the whole model, and the
@@ -709,22 +731,26 @@ an independent review before push:
    `PBI_MODEL_UNREADABLE`, `PBI_NO_MODEL`, `PBI_MODEL_ENCRYPTED`,
    `PBI_NO_EXPORTABLE_TABLES`, `PBI_EXPORT_LIMIT_EXCEEDED`) and error codes.
    Ships a real, testable refusal before any decode.
-2. Vendored XPress9 source, Emscripten build script, committed binary, the
-   same-origin copy script, and the licence attributions.
-3. XPress9 chunk framing (single and multithreaded), the backup container, and a
-   golden hash test per fixture.
-4. Catalog through `@consultchimps/db/sqlite-read`: storage schema, legacy
-   schema fallbacks, the table and column model, and the hidden-object rule.
-5. VertiPaq decoding: segment metadata, run-length and bit-packed columns,
-   numeric dictionaries, value encoding, nulls.
-6. String dictionaries: the Huffman kernel port and all three page encodings.
-7. Typed values: integers, doubles, dates, currency, booleans, binary; the
-   formatting policy including lossless base64 and whole-column exclusion for
-   oversized binary cells; concatenation across partitions and segments.
-8. Workbook emission through `@consultchimps/xlsx`: limits, worksheet splitting,
-   the aggregated manifest, deterministic bytes, a corpus test.
-9. The browser tool page, worker wiring, progress, cancellation, and the
-   registry entry with its category.
+2. Items 2 through 8 collapse into one decoder pull request, because each
+   depends on the one before it and none of them is separately testable against
+   the fixture corpus. It carries the vendored XPress9 source, the Emscripten
+   build script, the committed binary and the licence attributions; the XPress9
+   chunk framing, single and multithreaded; the backup container; the catalog
+   through `@consultchimps/db/sqlite-read`, with its schema probe, legacy
+   fallbacks, table and column model and hidden-object rule; VertiPaq segment
+   metadata, run-length and bit-packed columns, numeric dictionaries, value
+   encoding and nulls; the string dictionaries, the Huffman kernel port and all
+   three page encodings; typed values with the Decision 6 formatting policy and
+   concatenation across partitions and segments; and workbook emission with the
+   worksheet limits, splitting, the aggregated manifest, deterministic bytes and
+   the corpus oracle test. The same-origin asset copy script belongs to the
+   browser release and is not in it.
+3. A surface pull request: the CLI command `consultchimps pbi export-tables`
+   with its `--include-hidden-tables` flag and destination planning, the
+   registry entry and its category, the README operations table, the guide page,
+   the drift checks, and making the package public.
+4. The browser tool page, worker wiring, progress, cancellation, the asset copy
+   step, and the browser memory envelope.
 
 ## Consequences
 
@@ -736,6 +762,8 @@ an independent review before push:
   model's values, not Power BI's formatting, and numeric date cells lose
   sub-millisecond detail by stated policy.
 - The library and CLI surfaces share the same bytes-level engine, so the
-  operation can ship on all three surfaces; the browser surface is first.
+  operation can ship on all three surfaces; the library and CLI surfaces are
+  first. Every sentence below that gates work on build item 9 gates the browser
+  release, not the library.
 - Reading query definitions from a `.pbix` is not planned. Files that need it
   are old or are templates, and the rows path serves current files.
