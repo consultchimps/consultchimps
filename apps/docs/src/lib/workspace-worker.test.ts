@@ -18,7 +18,7 @@ const EMPTY_SUMMARY: WorkspaceSummary = {
   workingCopyName: "test.sqlite",
   tables: [],
   importCount: 0,
-  deliveryCount: 0,
+  batchCount: 0,
 };
 
 type ReplyWithoutId = {

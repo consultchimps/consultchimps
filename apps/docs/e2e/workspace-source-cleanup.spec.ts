@@ -155,7 +155,7 @@ test("retries retained workbook cleanup before preparing another import", async 
           type: "applyImport",
           planId: seedPlan.id,
           reviewFingerprint: seedPlan.reviewFingerprint,
-          delivery: {
+          batch: {
             requestId: crypto.randomUUID(),
             vendor: "Synthetic vendor",
             entity: "Synthetic entity",

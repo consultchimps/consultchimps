@@ -3,9 +3,9 @@ import { ConsultChimpsError } from "@consultchimps/core";
 import type {
   WorkspaceCommand,
   WorkspaceDatabaseFormat,
+  WorkspaceBatchContext,
+  WorkspaceBatchPage,
   WorkspaceDatabaseListing,
-  WorkspaceDeliveryContext,
-  WorkspaceDeliveryPage,
   WorkspaceEvent,
   WorkspaceImportFile,
   WorkspaceImportListing,
@@ -300,38 +300,38 @@ export class WorkspaceClient {
   async applyImport(
     planId: string,
     reviewFingerprint: string,
-    delivery: WorkspaceDeliveryContext,
+    batch: WorkspaceBatchContext,
     options?: WorkspaceRunOptions,
   ): Promise<WorkspaceImportResult> {
     const event = await this.#request(
-      { type: "applyImport", planId, reviewFingerprint, delivery },
+      { type: "applyImport", planId, reviewFingerprint, batch },
       options,
     );
     if (event.type !== "importApplied") throw unexpected("import");
     return event.result;
   }
 
-  async recordDelivery(
+  async recordBatch(
     planId: string,
     reviewFingerprint: string,
-    delivery: WorkspaceDeliveryContext,
+    batch: WorkspaceBatchContext,
     options?: WorkspaceRunOptions,
   ): Promise<WorkspaceImportResult> {
     const event = await this.#request(
-      { type: "recordDelivery", planId, reviewFingerprint, delivery },
+      { type: "recordBatch", planId, reviewFingerprint, batch },
       options,
     );
-    if (event.type !== "importApplied") throw unexpected("delivery");
+    if (event.type !== "importApplied") throw unexpected("batch");
     return event.result;
   }
 
-  async listDeliveries(cursor: string | null): Promise<WorkspaceDeliveryPage> {
+  async listBatches(cursor: string | null): Promise<WorkspaceBatchPage> {
     const event = await this.#request({
-      type: "listDeliveries",
+      type: "listBatches",
       cursor,
       limit: 25,
     });
-    if (event.type !== "deliveries") throw unexpected("delivery");
+    if (event.type !== "batches") throw unexpected("batch");
     return event.page;
   }
 

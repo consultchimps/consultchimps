@@ -275,10 +275,10 @@ describe("workspace worker saved-plan cleanup", () => {
 
     const recording = request({
       id: 3,
-      type: "recordDelivery",
+      type: "recordBatch",
       planId: "first-plan",
       reviewFingerprint: "fingerprint-first-plan",
-      delivery: {
+      batch: {
         requestId: "request-1",
         vendor: "Vendor",
         entity: "Entity",

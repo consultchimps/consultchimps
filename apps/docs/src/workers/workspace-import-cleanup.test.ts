@@ -109,6 +109,6 @@ describe("workspace import cleanup", () => {
         errors: [inspectionFailure, closeFailure],
       }),
     });
-    expect(error.message).toContain("Choose Retry saved batches");
+    expect(error.message).toContain("Choose Retry saved reviews");
   });
 });

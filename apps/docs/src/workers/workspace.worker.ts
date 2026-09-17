@@ -55,10 +55,10 @@ import {
 } from "@/lib/workspace-replacement";
 import { workspaceWorkingCopyName } from "@/lib/workspace-naming";
 import type {
+  WorkspaceBatchContext,
+  WorkspaceBatchPage,
+  WorkspaceBatchSummary,
   WorkspaceCommand,
-  WorkspaceDeliveryContext,
-  WorkspaceDeliveryPage,
-  WorkspaceDeliverySummary,
   WorkspaceEvent,
   WorkspaceImportColumn,
   WorkspaceImportRegion,
@@ -285,7 +285,7 @@ async function summaryOf(open: OpenWorkspace): Promise<WorkspaceSummary> {
       })),
     })),
     importCount: boundedNumber(inspection.completedImports, "import count"),
-    deliveryCount: boundedNumber(
+    batchCount: boundedNumber(
       inspection.recordedBatches,
       "recorded batch count",
     ),
@@ -600,7 +600,7 @@ function requireReviewFingerprint(
   }
 }
 
-function deliveryContext(input: WorkspaceDeliveryContext): BatchContext {
+function batchContext(input: WorkspaceBatchContext): BatchContext {
   const scopeValue: BatchContext["scope"] =
     input.coverage === "full"
       ? { kind: "full" }
@@ -632,22 +632,22 @@ function deliveryContext(input: WorkspaceDeliveryContext): BatchContext {
   };
 }
 
-function deliveryDto(delivery: BatchRecord): WorkspaceDeliverySummary {
-  const attributes = delivery.context.attributes ?? {};
+function batchDto(record: BatchRecord): WorkspaceBatchSummary {
+  const attributes = record.context.attributes ?? {};
   return {
-    id: delivery.id,
-    requestId: delivery.requestId,
-    label: delivery.context.label,
+    id: record.id,
+    requestId: record.requestId,
+    label: record.context.label,
     vendor:
       typeof attributes["vendor"] === "string" ? attributes["vendor"] : "",
     entity:
       typeof attributes["entity"] === "string" ? attributes["entity"] : "",
     phase: typeof attributes["phase"] === "string" ? attributes["phase"] : "",
-    scope: delivery.context.scope,
-    effectiveDate: delivery.context.effectiveDate ?? null,
-    receivedDate: delivery.context.receivedDate ?? null,
-    captureIds: delivery.captureIds,
-    reusedCapture: delivery.reusedCaptureIds.length > 0,
+    scope: record.context.scope,
+    effectiveDate: record.context.effectiveDate ?? null,
+    receivedDate: record.context.receivedDate ?? null,
+    captureIds: record.captureIds,
+    reusedCapture: record.reusedCaptureIds.length > 0,
   };
 }
 
@@ -906,7 +906,7 @@ async function listSavedImports(
             name: entry.name,
             code: "DB_BROWSER_PREPARED_IMPORT_UNREADABLE",
             message:
-              "This saved batch could not be reopened. Reload the database tool, then prepare the original sources again or restore a verified batch copy if it remains unavailable.",
+              "This saved review could not be reopened. Reload the database tool, then prepare the original sources again or restore a verified batch copy if it remains unavailable.",
           };
       if (prepared === undefined) {
         ignoredPlans.push(ignoredPlan);
@@ -1268,8 +1268,8 @@ async function applyImportBatch(
     database: current().database,
     prepared: held.prepared,
     approved: inspection.prepared,
-    requestId: command.delivery.requestId,
-    batchContext: deliveryContext(command.delivery),
+    requestId: command.batch.requestId,
+    batchContext: batchContext(command.batch),
     signal,
     onProgress: onProgress(id),
   });
@@ -1282,8 +1282,8 @@ async function applyImportBatch(
     type: "importApplied",
     id,
     result: {
-      importId: result.importIds[0] ?? command.delivery.requestId,
-      receiptId: result.batchId ?? command.delivery.requestId,
+      importId: result.importIds[0] ?? command.batch.requestId,
+      receiptId: result.batchId ?? command.batch.requestId,
       outcome:
         result.metrics.rowsImported === 0 && result.metrics.rowsReused > 0
           ? "duplicate"
@@ -1291,7 +1291,7 @@ async function applyImportBatch(
       appendedRows: result.metrics.rowsImported,
       skippedRows: result.metrics.rowsReused,
       schemaChanges: result.metrics.tablesCreated,
-      deliveriesRecorded: result.metrics.batchesRecorded,
+      batchesRecorded: result.metrics.batchesRecorded,
       captureIds: result.captureIds,
       summary,
       checkpoint: checkpointDto(checkpointed.checkpoint),
@@ -1299,9 +1299,9 @@ async function applyImportBatch(
   });
 }
 
-async function recordPreparedDelivery(
+async function recordPreparedBatch(
   id: number,
-  command: Extract<WorkspaceCommand, { readonly type: "recordDelivery" }>,
+  command: Extract<WorkspaceCommand, { readonly type: "recordBatch" }>,
   signal: AbortSignal,
 ): Promise<void> {
   const held = imports.get(command.planId);
@@ -1326,8 +1326,8 @@ async function recordPreparedDelivery(
   const record = await recordBatch({
     database: current().database,
     captureIds: [...new Set(captureIds)],
-    context: deliveryContext(command.delivery),
-    requestId: command.delivery.requestId,
+    context: batchContext(command.batch),
+    requestId: command.batch.requestId,
   });
   const checkpointed = await checkpointDatabaseWrite({
     database: current().database,
@@ -1344,7 +1344,7 @@ async function recordPreparedDelivery(
       appendedRows: 0,
       skippedRows: boundedNumber(inspection.reviewRows, "review row count"),
       schemaChanges: 0,
-      deliveriesRecorded: record.metrics.batchesRecorded,
+      batchesRecorded: record.metrics.batchesRecorded,
       captureIds: record.batch.captureIds,
       summary,
       checkpoint: checkpointDto(checkpointed.checkpoint),
@@ -1352,20 +1352,20 @@ async function recordPreparedDelivery(
   });
 }
 
-async function deliveryHistory(
+async function batchHistory(
   id: number,
-  command: Extract<WorkspaceCommand, { readonly type: "listDeliveries" }>,
+  command: Extract<WorkspaceCommand, { readonly type: "listBatches" }>,
 ): Promise<void> {
   const page = await listBatches({
     database: current().database,
     limit: command.limit,
     ...(command.cursor === null ? {} : { cursor: command.cursor }),
   });
-  const dto: WorkspaceDeliveryPage = {
-    deliveries: page.batches.map(deliveryDto),
+  const dto: WorkspaceBatchPage = {
+    batches: page.batches.map(batchDto),
     nextCursor: page.nextCursor ?? null,
   };
-  scope.postMessage({ type: "deliveries", id, page: dto });
+  scope.postMessage({ type: "batches", id, page: dto });
 }
 
 async function exportWorkspace(
@@ -1518,11 +1518,11 @@ async function handle(id: number, command: WorkspaceCommand): Promise<void> {
       case "applyImport":
         await applyImportBatch(id, command, controller.signal);
         return;
-      case "recordDelivery":
-        await recordPreparedDelivery(id, command, controller.signal);
+      case "recordBatch":
+        await recordPreparedBatch(id, command, controller.signal);
         return;
-      case "listDeliveries":
-        await deliveryHistory(id, command);
+      case "listBatches":
+        await batchHistory(id, command);
         return;
       case "export":
         await exportWorkspace(id, command, controller.signal);

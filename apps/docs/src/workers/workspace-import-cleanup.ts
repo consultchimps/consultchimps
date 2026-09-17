@@ -120,7 +120,7 @@ export function savedPlanCleanupError(options: {
 }): ConsultChimpsError {
   return new ConsultChimpsError(
     "DB_BROWSER_IMPORT_CLEANUP_REQUIRED",
-    "Saved batches could not finish releasing their private resources. Choose Retry saved batches to finish cleanup before reopening them.",
+    "Saved reviews could not finish releasing their private resources. Choose Retry saved reviews to finish cleanup before reopening them.",
     {
       details: {
         savedPlanCleanupFailed: true,

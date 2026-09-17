@@ -376,7 +376,7 @@ describe("workspace worker import cleanup", () => {
         type: "applyImport",
         planId: "plan-1",
         reviewFingerprint: "review-fingerprint-1",
-        delivery: {
+        batch: {
           requestId: "request-1",
           vendor: "Vendor",
           entity: "Entity",
@@ -456,7 +456,7 @@ describe("workspace worker import cleanup", () => {
         type: "applyImport",
         planId: "plan-1",
         reviewFingerprint: "review-fingerprint-1",
-        delivery: {
+        batch: {
           requestId: "request-1",
           vendor: "Vendor",
           entity: "Entity",
