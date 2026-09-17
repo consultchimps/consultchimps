@@ -2,7 +2,7 @@
 
 Local-first spreadsheet, PowerPoint, and PDF operations for consultants.
 
-Requires Node.js 22.13 or later.
+Requires Node.js 22.14 or later.
 
 ## Run
 
