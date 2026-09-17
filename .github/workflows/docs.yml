@@ -32,6 +32,17 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      - name: Restore the Next.js build cache
+        uses: actions/cache@v6
+        with:
+          path: apps/docs/.next/cache
+          key:
+            nextjs-pages-${{ hashFiles('pnpm-lock.yaml') }}-${{
+            hashFiles('apps/docs/src/**', 'apps/docs/content/**',
+            'apps/docs/*.ts', 'apps/docs/*.mjs', 'apps/docs/*.json') }}
+          restore-keys: |
+            nextjs-pages-${{ hashFiles('pnpm-lock.yaml') }}-
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 

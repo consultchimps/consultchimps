@@ -42,7 +42,7 @@
     }
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.14.0"
   },
   "devDependencies": {
     "@sqlite.org/sqlite-wasm": "3.53.4-build1",
