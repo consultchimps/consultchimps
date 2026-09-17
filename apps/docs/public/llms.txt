@@ -3,7 +3,7 @@
 > Deterministic, local-first document operations for consultants: consolidate,
 > merge, and split Excel workbooks; inspect and populate PowerPoint templates;
 > split and merge PDFs. All processing happens locally: files never leave the
-> machine. Requires Node.js 22.13 or later.
+> machine. Requires Node.js 22.14 or later.
 
 ## Run with zero setup
 

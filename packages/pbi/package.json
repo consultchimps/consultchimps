@@ -29,7 +29,7 @@
     "@consultchimps/core": "workspace:*"
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.14.0"
   },
   "devDependencies": {
     "jszip": "3.10.1",

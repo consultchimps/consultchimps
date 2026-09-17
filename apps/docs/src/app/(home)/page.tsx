@@ -65,7 +65,7 @@ export default function HomePage() {
         <div className="manual-command min-w-0">
           <div className="manual-command__bar">
             <span>field-note.sh</span>
-            <span>Node 22.13+ · local</span>
+            <span>Node 22.14+ · local</span>
           </div>
           <pre aria-label="Example ConsultChimps command">
             <code>
