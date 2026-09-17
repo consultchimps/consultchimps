@@ -659,6 +659,13 @@ function recoverySteps(
       "Keep the captured batch until the import has completed; it can contain data needed for review.",
     ];
   }
+  if (code === "DB_BROWSER_ENGINE_UNAVAILABLE") {
+    return [
+      "Close any other tab or window of this browser that has the database tool open, then try again.",
+      "If no other tab is open, reload the page. The tool starts its engine again on the next action.",
+      "If it keeps failing, check the network connection and whether this browser allows site storage.",
+    ];
+  }
   if (code?.startsWith("DB_")) {
     return [
       "Check the database format, schema, and import options named in the message.",
