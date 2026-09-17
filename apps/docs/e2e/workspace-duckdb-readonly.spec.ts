@@ -26,7 +26,7 @@ test("exports, closes, and reopens a read-only DuckDB workspace", async ({
         const id = nextId++;
         const timer = setTimeout(
           () => reject(new Error("Direct workspace worker timed out")),
-          20_000,
+          60_000,
         );
         const receive = (event: MessageEvent<Record<string, unknown>>) => {
           if (event.data["id"] !== id || event.data["type"] === "progress") {

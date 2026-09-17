@@ -522,7 +522,7 @@ test.describe("persistent database workspace", () => {
           new Promise<Record<string, unknown>>((resolve, reject) => {
             const timer = setTimeout(
               () => reject(new Error("Direct workspace worker timed out")),
-              10_000,
+              60_000, // the engine may wait up to 45 s for a closed tab's handles
             );
             const receive = (event: MessageEvent<Record<string, unknown>>) => {
               if (event.data["id"] !== command["id"]) return;
