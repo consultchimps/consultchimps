@@ -51,7 +51,7 @@ documentation site renders its cards and tabs from;
 
 Requirements:
 
-- Node.js 22 or later (development happens on Node 24)
+- Node.js 22.13 or later (development happens on Node 24)
 
 Run the CLI without keeping a global installation:
 

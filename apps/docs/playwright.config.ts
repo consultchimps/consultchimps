@@ -30,9 +30,10 @@ export default defineConfig({
   // shrinking the suite.
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
-  // One worker in CI keeps the report deterministic; locally the suite shares
-  // the machine with whatever else is running.
-  workers: process.env.CI ? 1 : "50%",
+  // Two workers fit the 4 vCPU runner: each worker drives its own browser and
+  // the specs isolate their files and storage. Locally the suite shares the
+  // machine with whatever else is running.
+  workers: process.env.CI ? 2 : "50%",
   reporter: process.env.CI
     ? [["list"], ["html", { open: "never" }]]
     : [["list"]],

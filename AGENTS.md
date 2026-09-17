@@ -58,10 +58,13 @@ Pinned major versions reduce differences between local development, CI, and
 published packages. Read package.json and the lockfile before changing them.
 -->
 
-- Develop on Node.js 24.x. Published packages declare `engines.node`
-  `">=22.0.0"`; the workspace itself requires `">=22.13.0"` because the pinned
-  pnpm does. CI validates the published contract with build-and-test legs on
-  Node 22.16, the latest 22, and 26. Plan: drop Node 22 support around its April
+- Develop on Node.js 24.x. Published packages and the workspace both declare
+  `engines.node` `">=22.13.0"`, the floor the pinned pnpm requires. CI builds
+  once on Linux and Node 24, runs the test suites on that build on Linux and
+  Windows for every pull request, and validates the published contract on every
+  push to main with test legs on Node 22.13.0 and 26. macOS is not exercised in
+  CI: the shipped JavaScript is platform-neutral and the native database engines
+  are installed per platform by npm. Plan: drop Node 22 support around its April
   2027 end of life. Do not use APIs newer than Node 22 in package runtime code.
 - Use pnpm 11.x through the repository's pinned `packageManager` declaration.
 - TypeScript runs split-toolchain: each package's own `typescript` 7
