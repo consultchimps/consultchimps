@@ -31,12 +31,15 @@ function backingBytes(input: Uint8Array): number {
   return Math.max(buffer.byteLength, buffer.maxByteLength ?? 0);
 }
 
-function directory(input: Uint8Array, limits: ContainerLimits): Directory {
-  // One length is captured for the view and every bounds check. A
-  // length-tracking view over a growable shared buffer can report a larger
-  // byteLength later; the fixed-length view would then throw on reads that a
-  // live-length check had approved.
-  const length = input.byteLength;
+function directory(
+  input: Uint8Array,
+  length: number,
+  limits: ContainerLimits,
+): Directory {
+  // The caller captured `length` once, checked it against inputBytes, and
+  // passes it here for the view and every bounds check. A length-tracking view
+  // over a growable shared buffer can report a larger byteLength later; the
+  // fixed-length view would then throw on reads that a live check approved.
   const view = new DataView(input.buffer, input.byteOffset, length);
   const fits = (offset: number, size: number): boolean =>
     offset >= 0 && size >= 0 && offset <= length - size;
@@ -238,14 +241,15 @@ export function readPbiModelPart(
   // surfacing the runtime's own TypeError from the DataView constructor.
   if ((input.buffer as ArrayBuffer & { detached?: boolean }).detached === true)
     throw invalidContainer();
-  checkLimit(limits, "inputBytes", input.byteLength, "container");
+  const length = input.byteLength;
+  checkLimit(limits, "inputBytes", length, "container");
   checkLimit(
     limits,
     "peakBytes",
     backingBytes(input) + scratchBytes,
     "container",
   );
-  const { model, peakBytes } = directory(input, limits);
+  const { model, peakBytes } = directory(input, length, limits);
   if (model === undefined) {
     throw new ConsultChimpsError(
       "PBI_NO_MODEL",
