@@ -6,6 +6,7 @@ import {
   serializeManifest,
 } from "../src/manifest.js";
 import type { PbiManifest, PbiManifestColumn } from "../src/manifest.js";
+import { exclusionCounts } from "../src/pipeline.js";
 
 /** ADR Decision 9: the manifest's bounds, order and warning vocabulary. */
 
@@ -223,5 +224,58 @@ describe("serialization", () => {
 
   it("writes the same bytes for the same manifest", () => {
     expect(serializeManifest(empty)).toEqual(serializeManifest(empty));
+  });
+});
+
+describe("the anonymous counts of a no-exportable-tables refusal", () => {
+  it("counts an excluded column once, whatever its value count", () => {
+    // One binary column with five oversized cells. The manifest keeps the five;
+    // the refusal's aggregate is tables and columns, so it sees one column.
+    const counts = exclusionCounts([
+      {
+        source: {
+          id: 1,
+          name: "Attachments",
+          hidden: false,
+          calculated: false,
+          dax: undefined,
+          rowCount: 5,
+          columns: [],
+        },
+        reasons: ["PBI_TABLE_NO_EXPORTABLE_COLUMNS"],
+        columns: [column([["PBI_BINARY_CELL_TOO_LONG", 5]])],
+      },
+    ]);
+    expect(counts).toEqual([
+      { code: "PBI_BINARY_CELL_TOO_LONG", tables: 0, columns: 1 },
+      { code: "PBI_TABLE_NO_EXPORTABLE_COLUMNS", tables: 1, columns: 0 },
+    ]);
+  });
+
+  it("adds a column per excluded column and a table per excluded table", () => {
+    const table = (id: number, columns: PbiManifestColumn[]) => ({
+      source: {
+        id,
+        name: `t${id}`,
+        hidden: true,
+        calculated: false,
+        dax: undefined,
+        rowCount: 0,
+        columns: [],
+      },
+      reasons: ["PBI_TABLE_HIDDEN" as PbiReasonCode],
+      columns,
+    });
+    const counts = exclusionCounts([
+      table(1, [
+        column([["PBI_COLUMN_UNREADABLE", 1]]),
+        column([["PBI_COLUMN_UNREADABLE", 1]], { id: 2 }),
+      ]),
+      table(2, []),
+    ]);
+    expect(counts).toEqual([
+      { code: "PBI_COLUMN_UNREADABLE", tables: 0, columns: 2 },
+      { code: "PBI_TABLE_HIDDEN", tables: 2, columns: 0 },
+    ]);
   });
 });

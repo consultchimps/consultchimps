@@ -355,7 +355,7 @@ function unverifiedPaths(
     .sort((left, right) => (left.code < right.code ? -1 : 1));
 }
 
-function exclusionCounts(
+export function exclusionCounts(
   excluded: readonly ExcludedTable[],
 ): ExclusionCounts[] {
   const totals = new Map<PbiReasonCode, { tables: number; columns: number }>();
@@ -368,7 +368,10 @@ function exclusionCounts(
     for (const column of entry.columns)
       for (const reason of column.reasons) {
         const bucket = totals.get(reason.code) ?? { tables: 0, columns: 0 };
-        bucket.columns += reason.count;
+        // One excluded column counts once. The value-level count a code such as
+        // PBI_BINARY_CELL_TOO_LONG carries belongs to the successful export's
+        // manifest; this aggregate is anonymous tables and columns.
+        bucket.columns += 1;
         totals.set(reason.code, bucket);
       }
   }

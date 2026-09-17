@@ -20,10 +20,13 @@ const MULTITHREADED_COUNTS_BYTES = 40;
 /** An eight-byte chunk header plus at least one byte of compressed payload. */
 const MINIMUM_FRAMED_CHUNK = 9;
 
-// The module's linear memory measured 33,554,432 bytes after every corpus
-// fixture, including the largest. It is charged once, not per chunk, because
-// the decoder reuses one source and one destination buffer across a stream.
-const RUNTIME_MEMORY_BYTES = 33_554_432;
+/**
+ * What the module holds before either framing buffer exists: its own code,
+ * stack, the LZ77 history window and the allocator's initial arena. Measured as
+ * the corpus figure of 33,554,432 bytes less the largest pair of buffers any
+ * corpus stream asked for, and rounded up to the next power of two.
+ */
+const RUNTIME_BASELINE_BYTES = 16 * 1024 * 1024;
 
 export type ModelCompression = "single" | "multithreaded" | "uncompressed";
 
@@ -98,6 +101,10 @@ export async function decompressModelPart(
   part: Uint8Array,
   budget: PipelineBudget,
   config: Xpress9RuntimeConfig | undefined,
+  /** The loader, so a test can observe when the decoder is actually called. */
+  load: (
+    runtime?: Xpress9RuntimeConfig,
+  ) => Promise<Xpress9Decoder> = loadXpress9,
 ): Promise<ModelStream> {
   const compression = detectCompression(part);
   if (compression === null) throw unreadableModel("xpress9");
@@ -113,14 +120,39 @@ export async function decompressModelPart(
 
   const openDecoder = async (): Promise<Xpress9Decoder> => {
     decoder?.close();
-    const next = await loadXpress9(config);
+    const next = await load(config);
     decoder = next;
     return next;
   };
 
+  // The runtime keeps one source and one destination buffer and only ever grows
+  // them, so the live WebAssembly allocation is the largest pair any frame of
+  // this stream has asked for. Charging the corpus's 32 MiB instead would let a
+  // frame declaring a gigabyte of output pass the budget and then allocate it.
+  let sourceCapacity = 0;
+  let destinationCapacity = 0;
+
   const emit = (session: Xpress9Decoder, frame: Frame): void => {
     // Check the budget before the allocation, never by catching an
-    // out-of-memory: the copy the decoder returns is what grows the live set.
+    // out-of-memory. The runtime's two buffers are charged from the sizes this
+    // frame is about to hand it, before the call that would allocate them, and
+    // the copy the decoder returns grows the live set on top.
+    if (frame.compressedSize > sourceCapacity) {
+      budget.reserve(
+        "xpress9LinearMemory",
+        frame.compressedSize - sourceCapacity,
+        "xpress9",
+      );
+      sourceCapacity = frame.compressedSize;
+    }
+    if (frame.uncompressedSize > destinationCapacity) {
+      budget.reserve(
+        "xpress9LinearMemory",
+        frame.uncompressedSize - destinationCapacity,
+        "xpress9",
+      );
+      destinationCapacity = frame.uncompressedSize;
+    }
     budget.decode(frame.uncompressedSize, "xpress9");
     budget.reserve("backupImage", frame.uncompressedSize, "xpress9");
     const bytes = session.decompress(
@@ -132,7 +164,7 @@ export async function decompressModelPart(
     chunks++;
   };
 
-  budget.reserve("xpress9LinearMemory", RUNTIME_MEMORY_BYTES, "xpress9");
+  budget.reserve("xpress9LinearMemory", RUNTIME_BASELINE_BYTES, "xpress9");
   try {
     if (compression === "single") {
       const session = await openDecoder();
@@ -184,7 +216,9 @@ export async function decompressModelPart(
     }
   } finally {
     decoder?.close();
-    budget.release(RUNTIME_MEMORY_BYTES);
+    budget.release(
+      RUNTIME_BASELINE_BYTES + sourceCapacity + destinationCapacity,
+    );
   }
 
   if (total === 0) throw unreadableModel("xpress9");

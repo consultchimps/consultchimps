@@ -158,6 +158,12 @@ export function decodePage(
       const entry = table[(window >>> (shift - offset)) & mask]!;
       const codeLength = entry & 0xff;
       if (codeLength === 0) throw new HuffmanError("corrupt bitstream");
+      // A codeword that runs past this string's end bit would be completed from
+      // the next string's bits or from the zero padding past the page. The
+      // symbol it produced would be invented, and the column would keep its
+      // value count and export fabricated text.
+      if (bit + codeLength > endBit)
+        throw new HuffmanError("codeword crosses the string boundary");
       if (cursor + stride > limit) throw new HuffmanError("corrupt bitstream");
       if (cursor + stride > buffer.length) {
         const grown = new Uint8Array(Math.min(buffer.length * 2, limit));

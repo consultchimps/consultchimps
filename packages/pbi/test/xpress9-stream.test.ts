@@ -9,6 +9,7 @@ import {
   decompressModelPart,
   detectCompression,
 } from "../src/xpress9/stream.js";
+import type { Xpress9Decoder } from "../src/xpress9/runtime.js";
 import { readPbiTables } from "../src/pipeline.js";
 import { FIXTURES } from "./oracle.js";
 
@@ -195,4 +196,84 @@ describe("the multithreaded warning", () => {
       ),
     ).toBe(false);
   }, 60_000);
+});
+
+describe("the runtime's own buffers are charged before it allocates them", () => {
+  /** A single-chunk stream whose header declares `declared` output bytes. */
+  function frame(declared: number, compressed = 16): Uint8Array {
+    const signature = "This backup was created using XPress9 compression.";
+    const stream = new Uint8Array(110 + compressed);
+    for (let index = 0; index < signature.length; index++) {
+      const unit = signature.charCodeAt(index);
+      stream[index * 2] = unit & 0xff;
+      stream[index * 2 + 1] = unit >> 8;
+    }
+    const view = new DataView(stream.buffer);
+    view.setUint32(102, declared, true);
+    view.setUint32(106, compressed, true);
+    return stream;
+  }
+
+  /** A decoder that records whether the runtime was ever asked to decompress. */
+  function spy(): {
+    load: () => Promise<Xpress9Decoder>;
+    calls: { input: number; outputSize: number }[];
+  } {
+    const calls: { input: number; outputSize: number }[] = [];
+    return {
+      calls,
+      load: () =>
+        Promise.resolve({
+          decompress(input: Uint8Array, outputSize: number): Uint8Array {
+            calls.push({ input: input.byteLength, outputSize });
+            return new Uint8Array(outputSize);
+          },
+          close(): void {},
+        }),
+    };
+  }
+
+  it("refuses a frame whose declared output passes peakBytes, before decompressing", async () => {
+    const { load, calls } = spy();
+    const error = await refusal(() =>
+      decompressModelPart(
+        frame(1_500_000_000),
+        budget({ peakBytes: 64 * 1024 * 1024 }),
+        undefined,
+        load,
+      ),
+    );
+    expect(error.code).toBe("PBI_EXPORT_LIMIT_EXCEEDED");
+    expect(error.details).toMatchObject({
+      stage: "xpress9",
+      option: "peakBytes",
+      limit: 64 * 1024 * 1024,
+    });
+    // The whole point: the runtime was never asked to allocate the buffer the
+    // refusal describes. Charging a fixed corpus figure let this through.
+    expect(calls).toEqual([]);
+  });
+
+  it("charges the destination buffer a frame actually needs", async () => {
+    const { load, calls } = spy();
+    const stream = await decompressModelPart(
+      frame(4_000_000),
+      budget(),
+      undefined,
+      load,
+    );
+    expect(stream.bytes.byteLength).toBe(4_000_000);
+    expect(calls).toEqual([{ input: 16, outputSize: 4_000_000 }]);
+  });
+
+  it("grows the charge only when a later frame needs more", async () => {
+    // Two frames of the same size charge the buffer once; the budget's own
+    // accounting shows the peak, not the sum.
+    const { load } = spy();
+    const single = budget();
+    await decompressModelPart(frame(2_000_000), single, undefined, load);
+    expect(single.terms().xpress9LinearMemory).toBe(
+      16 * 1024 * 1024 + 2_000_000 + 16,
+    );
+  });
 });

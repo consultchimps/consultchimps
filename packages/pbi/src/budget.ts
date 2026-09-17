@@ -243,7 +243,10 @@ export class PipelineBudget {
     checkLimit(this.limits, "peakBytes", next, stage);
     this.#live = next;
     this.#peak = Math.max(this.#peak, next);
-    this.#terms.set(term, Math.max(this.#terms.get(term) ?? 0, bytes));
+    // Summed, not maximised: a term the pipeline grows in steps, such as the
+    // decoder's two buffers, is only honest when the accounting shows what it
+    // reached in total rather than its largest single step.
+    this.#terms.set(term, (this.#terms.get(term) ?? 0) + bytes);
   }
 
   release(bytes: number): void {

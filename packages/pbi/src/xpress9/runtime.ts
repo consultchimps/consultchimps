@@ -232,20 +232,36 @@ export async function loadXpress9(
   let destinationCapacity = 0;
 
   /**
-   * Grows a cached buffer in place of allocating one per chunk. A backup stream
-   * is thousands of chunks of similar size, so reusing the pair keeps the
-   * module's linear memory flat across the stream.
+   * Grows one cached buffer in place of allocating one per chunk. A backup
+   * stream is thousands of chunks of similar size, so reusing the pair keeps
+   * the module's linear memory flat across the stream.
+   *
+   * Ownership is released before the new allocation is attempted, so a malloc
+   * that returns zero leaves no pointer behind. Keeping the old address would
+   * hand `close()` an already-freed pointer to free a second time, which traps
+   * or corrupts the allocator and buries the capacity refusal underneath it.
    */
-  const reserve = (
-    current: number,
-    capacity: number,
-    needed: number,
-  ): number => {
-    if (needed <= capacity) return current;
+  const grow = (which: "source" | "destination", needed: number): void => {
+    const capacity = which === "source" ? sourceCapacity : destinationCapacity;
+    if (needed <= capacity) return;
+    const current = which === "source" ? sourcePointer : destinationPointer;
     if (current !== 0) module._x9_free(current);
+    if (which === "source") {
+      sourcePointer = 0;
+      sourceCapacity = 0;
+    } else {
+      destinationPointer = 0;
+      destinationCapacity = 0;
+    }
     const pointer = module._x9_malloc(needed);
     if (pointer === 0) throw memoryExhausted();
-    return pointer;
+    if (which === "source") {
+      sourcePointer = pointer;
+      sourceCapacity = needed;
+    } else {
+      destinationPointer = pointer;
+      destinationCapacity = needed;
+    }
   };
 
   const release = (): void => {
@@ -267,24 +283,8 @@ export async function loadXpress9(
       }
       if (input.byteLength === 0) throw damagedModel();
 
-      const nextSource = reserve(
-        sourcePointer,
-        sourceCapacity,
-        input.byteLength,
-      );
-      if (nextSource !== sourcePointer) {
-        sourcePointer = nextSource;
-        sourceCapacity = input.byteLength;
-      }
-      const nextDestination = reserve(
-        destinationPointer,
-        destinationCapacity,
-        outputSize,
-      );
-      if (nextDestination !== destinationPointer) {
-        destinationPointer = nextDestination;
-        destinationCapacity = outputSize;
-      }
+      grow("source", input.byteLength);
+      grow("destination", outputSize);
 
       // Read HEAPU8 fresh after every allocation: ALLOW_MEMORY_GROWTH detaches
       // and replaces the view whenever linear memory grows.

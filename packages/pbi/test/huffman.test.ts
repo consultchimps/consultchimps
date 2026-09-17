@@ -130,3 +130,46 @@ describe("the bit-order helpers", () => {
     expect(lengths[1]).toBe(2);
   });
 });
+
+describe("a codeword may not cross its string's end bit", () => {
+  /** Symbol 0 is one bit, symbols 1 and 2 are two bits. A complete code. */
+  function mixedLengthTable(): ReturnType<typeof buildTable> {
+    const packed = new Uint8Array(128);
+    packed[0] = 0x21; // symbol 0 length 1, symbol 1 length 2
+    packed[1] = 0x02; // symbol 2 length 2
+    return buildTable(expandEncodeArray(packed));
+  }
+
+  it("decodes strings that end exactly on codeword boundaries", () => {
+    // Bits 0, 1, 0: the first string is one one-bit code, the second is one
+    // two-bit code, and both land exactly on their end bit.
+    const runs = decodePage(
+      new Uint8Array([0x40, 0]),
+      mixedLengthTable(),
+      [0, 1],
+      3,
+      0,
+    );
+    expect(runs).toHaveLength(2);
+    expect([...runs[0]!]).toEqual([0]);
+    expect([...runs[1]!]).toEqual([1]);
+  });
+
+  it("refuses a string that ends partway through a codeword", () => {
+    // The first string spans one bit but that bit opens a two-bit codeword.
+    // Completing it would take a bit belonging to the next string, and the
+    // symbol it produced would be invented.
+    const error = refusal(() =>
+      decodePage(new Uint8Array([0xc0, 0]), mixedLengthTable(), [0, 1], 2, 0),
+    );
+    expect(error.message).toContain("crosses the string boundary");
+  });
+
+  it("refuses when the last string runs into the page's zero padding", () => {
+    // The final string's codeword would be completed from bits past totalBits.
+    const error = refusal(() =>
+      decodePage(new Uint8Array([0x80, 0]), mixedLengthTable(), [0], 1, 0),
+    );
+    expect(error.message).toContain("crosses the string boundary");
+  });
+});
