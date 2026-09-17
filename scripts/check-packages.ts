@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 interface PackageMetadata {
   name: string;
   version: string;
+  private?: boolean;
 }
 
 const workspaceRoot = path.resolve(
@@ -58,6 +59,27 @@ const packageDirectories = [
   "pptx",
   "cli",
 ] as const;
+// The list above is the expected set of publishable packages. It is checked
+// against the workspace so that a new publishable package cannot be left out
+// of packing, publint, attw, and the consumer install silently, and so that a
+// package turned private is removed from the list deliberately.
+const publishableDirectories = readdirSync(
+  path.join(workspaceRoot, "packages"),
+  { withFileTypes: true },
+)
+  .filter(
+    (entry) => entry.isDirectory() && !readPackageMetadata(entry.name).private,
+  )
+  .map((entry) => entry.name)
+  .sort();
+const expectedDirectories = [...packageDirectories].sort();
+if (
+  JSON.stringify(publishableDirectories) !== JSON.stringify(expectedDirectories)
+) {
+  throw new Error(
+    `Publishable workspace packages [${publishableDirectories.join(", ")}] differ from the checked list [${expectedDirectories.join(", ")}]. Update packageDirectories in scripts/check-packages.ts.`,
+  );
+}
 const libraryDirectories = packageDirectories.filter(
   (directory) => directory !== "cli",
 );
