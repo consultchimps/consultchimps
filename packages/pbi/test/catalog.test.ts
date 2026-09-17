@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConsultChimpsError } from "@consultchimps/core";
+import type { Sqlite3Static } from "@sqlite.org/sqlite-wasm";
 import { memberBytes, parseAbf } from "../src/abf.js";
 import { PipelineBudget, validateExportOptions } from "../src/budget.js";
 import { capDax, readCatalog } from "../src/catalog.js";
@@ -158,4 +159,86 @@ describe("the DAX cap", () => {
     expect(capped.length).toBe(32_767);
     expect(capped.endsWith("x")).toBe(true);
   });
+});
+
+/**
+ * A synthetic catalog with the tables the storage query joins, so the paging of
+ * the calculated-partition query can be driven past the reader's page size
+ * without a model that large existing anywhere.
+ */
+async function syntheticCatalog(
+  calculatedPartitions: number,
+): Promise<Uint8Array> {
+  const { default: initialize } = await import("@sqlite.org/sqlite-wasm");
+  const sqlite = await (
+    initialize as unknown as (config: {
+      print: () => void;
+      printErr: () => void;
+    }) => Promise<Sqlite3Static>
+  )({ print: () => undefined, printErr: () => undefined });
+  const database = new sqlite.oo1.DB(":memory:");
+  try {
+    database.exec(`
+      CREATE TABLE [Table] (ID INTEGER, Name TEXT, IsHidden INTEGER);
+      CREATE TABLE Column (ID INTEGER, TableID INTEGER, ExplicitName TEXT,
+        InferredName TEXT, IsHidden INTEGER, Type INTEGER, Expression TEXT,
+        ExplicitDataType INTEGER, InferredDataType INTEGER,
+        ColumnStorageID INTEGER);
+      CREATE TABLE ColumnStorage (ID INTEGER, StoragePosition INTEGER,
+        DictionaryStorageID INTEGER, Statistics_RowCount INTEGER);
+      CREATE TABLE AttributeHierarchy (ColumnID INTEGER,
+        AttributeHierarchyStorageID INTEGER);
+      CREATE TABLE AttributeHierarchyStorage (ID INTEGER, StorageFileID INTEGER);
+      CREATE TABLE StorageFile (ID INTEGER, FileName TEXT);
+      CREATE TABLE DictionaryStorage (ID INTEGER, StorageFileID INTEGER,
+        BaseId INTEGER, Magnitude REAL);
+      CREATE TABLE ColumnPartitionStorage (ColumnStorageID INTEGER,
+        StorageFileID INTEGER, PartitionStorageID INTEGER);
+      CREATE TABLE PartitionStorage (ID INTEGER, StoragePosition INTEGER);
+      CREATE TABLE Partition (ID INTEGER, TableID INTEGER, Type INTEGER,
+        QueryDefinition TEXT);
+      INSERT INTO StorageFile VALUES (1, 'c.idf'), (2, 'c.hidx');
+      INSERT INTO PartitionStorage VALUES (1, 0);
+      INSERT INTO AttributeHierarchyStorage VALUES (1, 2);
+    `);
+    // One table the main query returns, whose calculated partition sits past
+    // the first page of the calculated-partition query.
+    const last = calculatedPartitions;
+    database.exec(`
+      INSERT INTO [Table] VALUES (${last}, 'Late', 0);
+      INSERT INTO ColumnStorage VALUES (1, 0, 1, 3);
+      INSERT INTO DictionaryStorage VALUES (1, NULL, 0, 1.0);
+      INSERT INTO Column VALUES (1, ${last}, 'Amount', NULL, 0, 1, NULL, 6, 6, 1);
+      INSERT INTO AttributeHierarchy VALUES (1, 1);
+      INSERT INTO ColumnPartitionStorage VALUES (1, 1, 1);
+    `);
+    database.exec("BEGIN");
+    for (let index = 1; index <= calculatedPartitions; index++)
+      database.exec({
+        sql: "INSERT INTO Partition VALUES (?, ?, 2, ?)",
+        bind: [index, index, `EVALUATE ROW("n", ${index})`],
+      });
+    database.exec("COMMIT");
+    const pointer = sqlite.capi.sqlite3_js_db_export(database);
+    return pointer;
+  } finally {
+    database.close();
+  }
+}
+
+describe("the calculated-partition query", () => {
+  it("sees a calculated table past the reader's page size", async () => {
+    // 2,049 partitions: the last one is the first row of the second page.
+    const bytes = await syntheticCatalog(2_049);
+    const catalog = await readCatalog(bytes, undefined);
+    try {
+      const table = catalog.tables.find((entry) => entry.name === "Late");
+      expect(table).toBeDefined();
+      // Before paging this table was reported as imported and lost its DAX.
+      expect(table!.calculated).toBe(true);
+      expect(table!.dax).toBe('EVALUATE ROW("n", 2049)');
+    } finally {
+      catalog.close();
+    }
+  }, 300_000);
 });

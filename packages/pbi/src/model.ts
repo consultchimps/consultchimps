@@ -1,3 +1,4 @@
+import { isConsultChimpsError } from "@consultchimps/core";
 import { memberBytes } from "./abf.js";
 import type { AbfImage } from "./abf.js";
 import type { CatalogColumn, CatalogTable } from "./catalog.js";
@@ -14,6 +15,7 @@ import {
 import type {
   Dictionary,
   DictionaryValue,
+  ReserveBytes,
   SegmentDescriptor,
 } from "./vertipaq.js";
 
@@ -136,6 +138,7 @@ export function decodeColumn(
   column: CatalogColumn,
   rowCount: number,
   unverified: UnverifiedTally,
+  reserve?: ReserveBytes,
 ): ColumnOutcome {
   const type = AMO_TYPES.get(column.dataType);
   if (type === undefined)
@@ -165,6 +168,7 @@ export function decodeColumn(
       dictionary = parseDictionary(
         memberBytes(image, backup, column.dictionary!),
         XM_FIRST_DATA_ID,
+        reserve,
       );
       if (dictionary === null)
         return {
@@ -236,6 +240,15 @@ export function decodeColumn(
         values: undefined,
         excluded: "PBI_COLUMN_ROW_ALIGNMENT_UNRECOVERABLE",
       };
+    // A capacity refusal is the caller's, not this column's, so it passes
+    // through: a budget that says stop must stop the export, not quietly drop
+    // one column and carry on. Every other controlled error here describes this
+    // column's own member and stays an exclusion.
+    if (
+      isConsultChimpsError(error) &&
+      error.code === "PBI_EXPORT_LIMIT_EXCEEDED"
+    )
+      throw error;
     // Belt and braces over the structural ceilings above: a column is one
     // exclusion, never a thrown runtime error, and nothing of the original
     // error's text survives, so a file-declared length cannot ride out in a

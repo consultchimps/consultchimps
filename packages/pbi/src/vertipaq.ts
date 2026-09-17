@@ -23,6 +23,9 @@ const HUFFMAN_GENERAL = 0x000aba92;
 /** Hybrid run-length encoding: the bit width lives in the sub class. */
 const HYBRID_RLE = 703066;
 
+/** What one decoded dictionary string costs beyond its characters. */
+const STRING_OVERHEAD = 32;
+
 const utf16 = new TextDecoder("utf-16le");
 const latin1 = new TextDecoder("latin1");
 
@@ -425,15 +428,25 @@ export interface Dictionary {
   readonly nonLatinPages: number;
 }
 
+/**
+ * Charged before a dictionary page decodes. Twice the member length does not
+ * bound a Huffman page: a one-bit code expands one buffer byte into eight
+ * symbols and a charset page emits two bytes per symbol, and the decoded runs
+ * and the strings they become are both live at once.
+ */
+export type ReserveBytes = (bytes: number) => void;
+
 /** Null when the dictionary type is one the reader does not support. */
 export function parseDictionary(
   member: Uint8Array,
   minDataId: number,
+  reserve?: ReserveBytes,
 ): Dictionary | null {
   const reader = new Reader(member);
   const dictionaryType = reader.s4();
   for (let index = 0; index < 6; index++) reader.s4(); // hash info
-  if (dictionaryType === 2) return parseStringDictionary(reader, minDataId);
+  if (dictionaryType === 2)
+    return parseStringDictionary(reader, minDataId, reserve);
   if (dictionaryType === 0 || dictionaryType === 1) {
     const declared = reader.u8count();
     const elementSize = reader.u4();
@@ -471,7 +484,11 @@ interface CompressedPage {
   readonly buffer: Uint8Array;
 }
 
-function parseStringDictionary(reader: Reader, minDataId: number): Dictionary {
+function parseStringDictionary(
+  reader: Reader,
+  minDataId: number,
+  reserve?: ReserveBytes,
+): Dictionary {
   reader.s8count(); // stored string count
   reader.u1(); // compressed flag
   reader.s8count(); // longest stored string
@@ -554,6 +571,13 @@ function parseStringDictionary(reader: Reader, minDataId: number): Dictionary {
     const general = page.charsetTypeId === HUFFMAN_GENERAL;
     const charsetByte = general ? 0 : page.charsetUsed;
     if (charsetByte !== 0) nonLatinPages++;
+    // The shortest codeword is one bit, so this page emits at most one symbol
+    // per declared bit and `stride` bytes per symbol. `decodePage` has already
+    // refused a bit count past the page's own bytes, so this is a real bound.
+    // Three times that covers the decoded runs and the UTF-16 strings they
+    // become, both live at once, and each string carries an object header.
+    const stride = charsetByte ? 2 : 1;
+    reserve?.(page.totalBits * stride * 3 + offsets.length * STRING_OVERHEAD);
     let runs: Uint8Array[];
     try {
       runs = decodePage(

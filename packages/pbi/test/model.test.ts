@@ -13,7 +13,12 @@ import {
   tableExclusion,
   validateTypedValues,
 } from "../src/pipeline.js";
-import { idf, idfmeta, numericDictionary } from "./vertipaq-bytes.js";
+import {
+  idf,
+  idfmeta,
+  numericDictionary,
+  stringDictionary,
+} from "./vertipaq-bytes.js";
 
 /**
  * Section C, the per-column exclusion rows and the table-eligibility rows.
@@ -468,5 +473,89 @@ describe("the catalog reservation", () => {
     );
     expect(closed).toBe(0);
     expect(budget.terms().sqliteLinearMemory).toBe(8_388_608);
+  });
+});
+
+describe("Huffman dictionary expansion is charged before it happens", () => {
+  /**
+   * A one-bit code expands one buffer byte into eight symbols, and a charset
+   * page emits two bytes per symbol, so twice the member length does not bound
+   * what a page allocates. The reservation comes from the page's own validated
+   * bit count and stride instead.
+   */
+  function huffmanColumn(bufferBytes: number, charsetByte: number) {
+    const encodeArray = new Uint8Array(128);
+    encodeArray[0] = 0x11; // a complete two-symbol code, one bit each
+    const buffer = new Uint8Array(bufferBytes);
+    const member = stringDictionary(
+      [
+        {
+          huffman: {
+            encodeArray,
+            buffer,
+            totalBits: bufferBytes * 8,
+            charsetByte,
+          },
+        },
+      ],
+      [[0, 0]],
+    );
+    const { bytes, backup } = image({
+      "c.dictionary": member,
+      "c.idfmeta": idfmeta([{ records: 1, minDataId: 3 }]),
+      "c.idf": idf([{ runs: [[3, 1] as const] }]),
+    });
+    return {
+      bytes,
+      backup,
+      member,
+      column: column({
+        dataType: 2,
+        dictionary: "c.dictionary",
+        idfs: ["c.idf"],
+      }),
+    };
+  }
+
+  it("refuses at the page reservation, from the declared bit count", () => {
+    const { bytes, backup, column: entry } = huffmanColumn(8192, 4);
+    const budget = new PipelineBudget(
+      validateExportOptions({ peakBytes: 100_000 }, true),
+    );
+    let failure: ConsultChimpsError | undefined;
+    try {
+      decodeColumnWithBudget(bytes, backup, entry, 1, budget, tally());
+    } catch (error) {
+      failure = error as ConsultChimpsError;
+    }
+    expect(failure).toBeDefined();
+    expect(failure!.code).toBe("PBI_EXPORT_LIMIT_EXCEEDED");
+    expect(failure!.details).toMatchObject({
+      stage: "decode",
+      option: "peakBytes",
+    });
+    // 65,536 declared bits, two bytes per symbol, three times over for the runs
+    // and the strings they become, plus one string header. Every term comes
+    // from the page header, so nothing decoded before the refusal.
+    const required = (failure!.details as { required: number }).required;
+    expect(required).toBeGreaterThanOrEqual(65_536 * 2 * 3 + 32);
+  });
+
+  it("charges nothing beyond the member for a page it can afford", () => {
+    const { bytes, backup, column: entry, member } = huffmanColumn(8, 0);
+    const budget = new PipelineBudget(validateExportOptions({}, true));
+    const outcome = decodeColumnWithBudget(
+      bytes,
+      backup,
+      entry,
+      1,
+      budget,
+      tally(),
+    );
+    expect(outcome.excluded).toBeUndefined();
+    // The member term plus the page term, both charged before the decode.
+    expect(budget.terms().dictionaries).toBeGreaterThanOrEqual(
+      member.length * 2,
+    );
   });
 });

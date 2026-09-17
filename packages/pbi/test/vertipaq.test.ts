@@ -294,3 +294,88 @@ describe("an exhausted bit-packed subsegment", () => {
     expect([...decodeSegmentIds(segment, descriptor)]).toHaveLength(4);
   });
 });
+
+describe("the hybrid run-length placeholder marker", () => {
+  /**
+   * The marker is `0xFFFFFFFF` minus the number of packed values already
+   * consumed, not minus the run's own index. The corpus settles it: across the
+   * nine fixtures, 497 segments carry a bit-packed subsegment, 142 of them
+   * place their first marker after one or more ordinary runs, and in every one
+   * of those the marker is the bare `0xFFFFFFFF` regardless of its index.
+   * `f-2026-corpspend`'s "Country/Region ID" has its first marker at run 8 with
+   * `0xFFFFFFFF`, and its second at run 11 with `0xFFFFFFE3`, which is
+   * `0xFFFFFFFF` less the 28 values the first consumed.
+   */
+  function hybrid(
+    runs: readonly (readonly [number, number])[],
+    packedValues: number,
+  ) {
+    const descriptor = parseIdfmeta(
+      idfmeta([
+        {
+          records: runs.reduce((total, [, repeat]) => total + repeat, 0),
+          compressionClass: 703066,
+          subCompressionClass: 703062, // 32 bits: two values per 64-bit word
+          subsegmentRecords: packedValues,
+          minDataId: 0,
+        },
+      ]),
+      1000,
+    )[0]!;
+    // Two packed values per word, ascending so each one is identifiable.
+    const sub = new Uint8Array(Math.ceil(packedValues / 2) * 8);
+    const view = new DataView(sub.buffer);
+    for (let index = 0; index < packedValues; index++)
+      view.setUint32(index * 4, 100 + index, true);
+    const segment = parseIdf(idf([{ runs, sub }]))[0]!;
+    return [...decodeSegmentIds(segment, descriptor)];
+  }
+
+  it("recognises a placeholder that follows an ordinary run", () => {
+    // One ordinary run first, then the marker. Under a rule keyed on the run's
+    // index the marker would have to be 0xFFFFFFFE here; it is not, and the
+    // packed values would decode as one huge id and then a null.
+    expect(
+      hybrid(
+        [
+          [7, 3],
+          [0xffffffff, 4],
+        ],
+        4,
+      ),
+    ).toEqual([7, 7, 7, 100, 101, 102, 103]);
+  });
+
+  it("recognises a placeholder that comes first", () => {
+    expect(
+      hybrid(
+        [
+          [0xffffffff, 4],
+          [7, 2],
+        ],
+        4,
+      ),
+    ).toEqual([100, 101, 102, 103, 7, 7]);
+  });
+
+  it("offsets a later marker by the values already consumed", () => {
+    // The shape of "Country/Region ID": a marker after ordinary runs, then a
+    // second marker reduced by the first marker's own count.
+    expect(
+      hybrid(
+        [
+          [5, 2],
+          [0xffffffff, 3],
+          [6, 1],
+          [0xffffffff - 3, 2],
+        ],
+        5,
+      ),
+    ).toEqual([5, 5, 100, 101, 102, 6, 103, 104]);
+  });
+
+  it("treats a value that is not the marker as an ordinary id", () => {
+    // 0xFFFFFFFE with nothing consumed is data, not a placeholder.
+    expect(hybrid([[0xfffffffe, 2]], 0)).toEqual([0xfffffffe, 0xfffffffe]);
+  });
+});

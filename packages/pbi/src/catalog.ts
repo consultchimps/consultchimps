@@ -208,13 +208,39 @@ export async function readCatalog(
         },
       );
 
-    // Calculated tables: a partition of type 2 carries the table's DAX.
+    // Calculated tables: a partition of type 2 carries the table's DAX. Paged
+    // with the same deterministic ordering as the main query, because the
+    // reader's page size is a page size and not a total: a model past it would
+    // otherwise have its later calculated tables reported as imported and lose
+    // their DAX from the manifest.
     const calculated = new Map<number, string | undefined>();
-    for (const row of reader.query(
-      "SELECT TableID, QueryDefinition FROM Partition WHERE Type = 2 ORDER BY TableID, ID LIMIT 2048",
-    ).rows) {
-      const id = asNumber(row[0]);
-      if (!calculated.has(id)) calculated.set(id, capDax(asText(row[1])));
+    const calculatedTotal = asNumber(
+      reader.query("SELECT COUNT(*) FROM Partition WHERE Type = 2")
+        .rows[0]?.[0],
+    );
+    if (calculatedTotal > MAX_CATALOG_ROWS)
+      throw new ConsultChimpsError(
+        "PBI_EXPORT_LIMIT_EXCEEDED",
+        "This model has more calculated partitions than the reader will enumerate. Use a smaller model.",
+        {
+          details: {
+            stage: "catalog",
+            option: "catalogRows",
+            limit: MAX_CATALOG_ROWS,
+            required: calculatedTotal,
+          },
+        },
+      );
+    for (let offset = 0; offset < calculatedTotal; offset += PAGE_ROWS) {
+      const page = reader.query(
+        "SELECT TableID, QueryDefinition FROM Partition WHERE Type = 2 ORDER BY TableID, ID LIMIT ? OFFSET ?",
+        [PAGE_ROWS, offset],
+      );
+      for (const row of page.rows) {
+        const id = asNumber(row[0]);
+        if (!calculated.has(id)) calculated.set(id, capDax(asText(row[1])));
+      }
+      if (page.rows.length < PAGE_ROWS) break;
     }
 
     const select = `

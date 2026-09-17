@@ -173,7 +173,12 @@ export function decodeColumnWithBudget(
   if (dictionaryBytes > 0)
     budget.reserve("dictionaries", dictionaryBytes, "decode");
   return validateTypedValues(
-    decodeColumn(image, backup, column, rowCount, unverified),
+    decodeColumn(image, backup, column, rowCount, unverified, (bytes) =>
+      // Each Huffman page is charged from its validated bit count before it
+      // decodes, so an expansion the member's own length does not bound refuses
+      // with the capacity code instead of ending in an out-of-memory.
+      budget.reserve("dictionaries", bytes, "decode"),
+    ),
   );
 }
 
