@@ -259,9 +259,12 @@ successful export.
 
 ## The fixture corpus
 
-Two fixtures and their full cell-level dumps are committed, so the default test
-run exercises the whole pipeline offline. The other seven are public Microsoft
-samples pinned by repository commit in `fixtures/oracle-digests.json` and
+One fixture and its full cell-level dump are committed, so the default test run
+exercises the whole pipeline offline. It is `a-2018-fuzzy.pbix`, the smallest of
+the nine, whose cells are first names and two-letter state codes. Every other
+sample carries person-like names, street addresses or telephone numbers, and the
+repository does not commit those even from a public sample, so the other eight
+stay in `fixtures/oracle-digests.json` as a pinned URL and a SHA-256 and are
 fetched on demand:
 
 ```sh
@@ -269,6 +272,7 @@ node scripts/fetch-fixtures.ts
 ```
 
 Every fetched file is verified against its committed SHA-256 before it is
-written. The corpus test compares cell for cell against the committed dumps and
-at per-table digest level against any fetched file present, and reports by name
-every fixture it skipped.
+written. The corpus test compares cell for cell against the committed dump and
+at per-table digest level against every fetched file present. Outside CI it
+names each fixture it skipped; in CI it fetches a missing one itself, so the
+full nine always run there.

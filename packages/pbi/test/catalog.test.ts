@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConsultChimpsError } from "@consultchimps/core";
@@ -7,7 +7,7 @@ import { PipelineBudget, validateExportOptions } from "../src/budget.js";
 import { capDax, readCatalog } from "../src/catalog.js";
 import { readPbiModelPart } from "../src/container.js";
 import { decompressModelPart } from "../src/xpress9/stream.js";
-import { FIXTURES } from "./oracle.js";
+import { FETCHED, FIXTURES } from "./oracle.js";
 
 /**
  * Section C, the catalog rows. The reader runs against the real catalog of a
@@ -15,10 +15,17 @@ import { FIXTURES } from "./oracle.js";
  * count are checked against a catalog Power BI actually wrote.
  */
 
+/** The committed fixture, or the fetched cache when the test names another. */
+function locate(fixture: string): string | null {
+  for (const directory of [FIXTURES, FETCHED]) {
+    const candidate = path.join(directory, `${fixture}.pbix`);
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 async function catalogBytes(fixture: string): Promise<Uint8Array> {
-  const container = new Uint8Array(
-    readFileSync(path.join(FIXTURES, `${fixture}.pbix`)),
-  );
+  const container = new Uint8Array(readFileSync(locate(fixture)!));
   const budget = new PipelineBudget(validateExportOptions({}, true));
   const stream = await decompressModelPart(
     readPbiModelPart(container),
@@ -78,25 +85,29 @@ describe("the storage catalog", () => {
     }
   }, 120_000);
 
-  it("carries the DAX of calculated objects and nothing for imported ones", async () => {
-    const catalog = await readCatalog(
-      await catalogBytes("b-2018-profiling"),
-      undefined,
-    );
-    try {
-      const calculated = catalog.tables.filter((table) => table.calculated);
-      expect(calculated.length).toBeGreaterThan(0);
-      for (const table of calculated)
-        expect(typeof table.dax === "string" || table.dax === undefined).toBe(
-          true,
-        );
-      for (const table of catalog.tables)
-        for (const entry of table.columns)
-          if (!entry.calculated) expect(entry.dax).toBeUndefined();
-    } finally {
-      catalog.close();
-    }
-  }, 120_000);
+  it.skipIf(locate("b-2018-profiling") === null)(
+    "carries the DAX of calculated objects and nothing for imported ones",
+    async () => {
+      const catalog = await readCatalog(
+        await catalogBytes("b-2018-profiling"),
+        undefined,
+      );
+      try {
+        const calculated = catalog.tables.filter((table) => table.calculated);
+        expect(calculated.length).toBeGreaterThan(0);
+        for (const table of calculated)
+          expect(typeof table.dax === "string" || table.dax === undefined).toBe(
+            true,
+          );
+        for (const table of catalog.tables)
+          for (const entry of table.columns)
+            if (!entry.calculated) expect(entry.dax).toBeUndefined();
+      } finally {
+        catalog.close();
+      }
+    },
+    120_000,
+  );
 
   it("maps an unreadable catalog to the model refusal", async () => {
     const error = await refusal(() =>

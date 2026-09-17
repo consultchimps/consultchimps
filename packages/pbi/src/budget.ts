@@ -191,6 +191,20 @@ export function validateExportOptions(
   };
 }
 
+/** The one refusal both the workbook writer and the pipeline raise for outputBytes. */
+export function outputLimitExceeded(
+  limit: number,
+  required: number,
+): ConsultChimpsError {
+  return new ConsultChimpsError(
+    "PBI_EXPORT_LIMIT_EXCEEDED",
+    "The workbook and its manifest would exceed the configured output byte limit. Export a smaller model, or explicitly increase the limit if your environment can support it.",
+    {
+      details: { stage: "workbook", option: "outputBytes", limit, required },
+    },
+  );
+}
+
 export function checkLimit(
   limits: ContainerLimits,
   option: keyof ContainerLimits | "outputBytes",

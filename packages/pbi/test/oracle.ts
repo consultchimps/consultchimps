@@ -39,10 +39,13 @@ export interface OracleIndex {
   readonly fixtures: readonly OracleFixture[];
 }
 
-export const COMMITTED: ReadonlySet<string> = new Set([
-  "a-2018-fuzzy",
-  "b-2018-profiling",
-]);
+/**
+ * The only fixture committed to the repository. It is the smallest of the nine
+ * and its cells are first names and two-letter state codes; every other sample
+ * carries person-like names, street addresses or telephone numbers, which the
+ * repository does not commit. The rest are fetched by pinned digest.
+ */
+export const COMMITTED: ReadonlySet<string> = new Set(["a-2018-fuzzy"]);
 
 export function oracleIndex(): OracleIndex {
   return JSON.parse(

@@ -83,6 +83,12 @@ export interface ColumnOutcome {
   readonly type: PbiColumnType | undefined;
   readonly values: PbiValue[] | undefined;
   readonly excluded: PbiReasonCode | undefined;
+  /**
+   * How many values the exclusion code describes, when the code counts values
+   * rather than the column itself. Only `PBI_BINARY_CELL_TOO_LONG` uses it, and
+   * it is the real number of oversized cells, not one per column.
+   */
+  readonly excludedCount?: number;
 }
 
 function coerce(raw: DictionaryValue | null, type: PbiColumnType): PbiValue {

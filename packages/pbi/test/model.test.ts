@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { ConsultChimpsError } from "@consultchimps/core";
 import type { AbfImage } from "../src/abf.js";
+import { PipelineBudget, validateExportOptions } from "../src/budget.js";
 import type { CatalogColumn, CatalogTable } from "../src/catalog.js";
 import { assembleTable, decodeColumn } from "../src/model.js";
 import type { ColumnOutcome, UnverifiedTally } from "../src/model.js";
 import {
   allocateWorksheets,
+  decodeColumnWithBudget,
   planParts,
+  reserveCatalogMemory,
   tableExclusion,
   validateTypedValues,
 } from "../src/pipeline.js";
@@ -358,5 +362,111 @@ describe("worksheet allocation", () => {
       "Sales_2",
       "Sales_2_2",
     ]);
+  });
+});
+
+describe("the oversized binary count reaches the manifest", () => {
+  it("counts every oversized value, not one per column", () => {
+    const checked = validateTypedValues(
+      outcome([new Uint8Array(24_574), null, new Uint8Array(30_000)], {
+        type: "binary",
+      }),
+    );
+    expect(checked.excluded).toBe("PBI_BINARY_CELL_TOO_LONG");
+    expect(checked.excludedCount).toBe(2);
+  });
+
+  it("leaves the count absent for an exclusion that counts columns", () => {
+    const checked = validateTypedValues(
+      outcome([1, Number.NaN], { type: "dateTimeSerial" }),
+    );
+    expect(checked.excluded).toBe("PBI_COLUMN_UNREADABLE");
+    expect(checked.excludedCount).toBeUndefined();
+  });
+});
+
+describe("the per-column failure boundary covers the dictionary lookup", () => {
+  it("excludes only the column whose dictionary member is missing", () => {
+    const { bytes, backup } = image({
+      "good.idfmeta": idfmeta([{ records: 4 }]),
+      "good.idf": idf([{ runs: [[3, 4] as const] }]),
+    });
+    const budget = new PipelineBudget(validateExportOptions({}, true));
+    const missing = decodeColumnWithBudget(
+      bytes,
+      backup,
+      column({ id: 1, dictionary: "absent.dictionary", idfs: ["good.idf"] }),
+      4,
+      budget,
+      tally(),
+    );
+    // Before the fix this threw PBI_MODEL_UNREADABLE and aborted the export.
+    expect(missing.excluded).toBe("PBI_COLUMN_UNREADABLE");
+    const good = decodeColumnWithBudget(
+      bytes,
+      backup,
+      column({ id: 2, idfs: ["good.idf"], hierarchyIndex: "good.hidx" }),
+      4,
+      budget,
+      tally(),
+    );
+    expect(good.excluded).toBeUndefined();
+    expect(good.values).toHaveLength(4);
+  });
+
+  it("charges the dictionary only once the member is known to exist", () => {
+    const dictionary = numericDictionary(0, [1n, 2n]);
+    const { bytes, backup } = image({
+      "c.dictionary": dictionary,
+      "c.idfmeta": idfmeta([{ records: 2, minDataId: 3 }]),
+      "c.idf": idf([{ runs: [[3, 2] as const] }]),
+    });
+    const budget = new PipelineBudget(validateExportOptions({}, true));
+    decodeColumnWithBudget(
+      bytes,
+      backup,
+      column({ dictionary: "c.dictionary", idfs: ["c.idf"] }),
+      2,
+      budget,
+      tally(),
+    );
+    expect(budget.terms().dictionaries).toBe(dictionary.length * 2);
+  });
+});
+
+describe("the catalog reservation", () => {
+  it("closes the reader when its own memory is refused", () => {
+    let closed = 0;
+    const catalog = {
+      wasmMemoryBytes: 8_388_608,
+      close: () => {
+        closed++;
+      },
+    };
+    const budget = new PipelineBudget(
+      validateExportOptions({ peakBytes: 1000 }, true),
+    );
+    expect(() => reserveCatalogMemory(catalog, budget)).toThrow(
+      ConsultChimpsError,
+    );
+    // The reader is released before the refusal leaves, so repeated capacity
+    // failures cannot leave one WebAssembly instance alive per attempt.
+    expect(closed).toBe(1);
+  });
+
+  it("leaves an accepted reader open", () => {
+    let closed = 0;
+    const budget = new PipelineBudget(validateExportOptions({}, true));
+    reserveCatalogMemory(
+      {
+        wasmMemoryBytes: 8_388_608,
+        close: () => {
+          closed++;
+        },
+      },
+      budget,
+    );
+    expect(closed).toBe(0);
+    expect(budget.terms().sqliteLinearMemory).toBe(8_388_608);
   });
 });

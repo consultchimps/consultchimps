@@ -398,8 +398,13 @@ export function decodeSegmentIds(
     if (dataValue + packedOffset === 0xffffffff) {
       if (packed === null)
         throw new VertipaqError("missing bit-packed subsegment");
+      // An exhausted subsegment must not be filled with zeros: the column would
+      // keep its row count and export fabricated ids as real values instead of
+      // being excluded.
+      if (packedOffset + count > packed.length)
+        throw new VertipaqError("bit-packed subsegment is exhausted");
       for (let step = 0; step < count; step++)
-        vector[position + step] = packed[packedOffset + step] ?? 0;
+        vector[position + step] = packed[packedOffset + step]!;
       packedOffset += count;
       position += count;
     } else {

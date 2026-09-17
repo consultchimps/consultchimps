@@ -251,3 +251,46 @@ describe("dictionaries", () => {
     refusal(() => parseDictionary(member, XM_FIRST_DATA_ID));
   });
 });
+
+describe("an exhausted bit-packed subsegment", () => {
+  it("refuses rather than filling the rest of the column with zeros", () => {
+    // The descriptor claims four bit-packed entries and the subsegment holds
+    // one word. Filling the shortfall with zeros would keep the row count and
+    // export fabricated ids as if they were real values.
+    const descriptor = parseIdfmeta(
+      idfmeta([
+        {
+          records: 200,
+          compressionClass: 703066,
+          subCompressionClass: 703062, // 32 bits: two values per word
+          subsegmentRecords: 200,
+        },
+      ]),
+      200,
+    )[0]!;
+    const segment = parseIdf(
+      idf([{ runs: [[0xffffffff, 200] as const], sub: new Uint8Array(16) }]),
+    )[0]!;
+    const error = refusal(() => decodeSegmentIds(segment, descriptor));
+    expect(error.message).toContain("exhausted");
+  });
+
+  it("decodes a subsegment that holds every entry it claims", () => {
+    const descriptor = parseIdfmeta(
+      idfmeta([
+        {
+          records: 4,
+          compressionClass: 703066,
+          subCompressionClass: 703062,
+          subsegmentRecords: 4,
+          minDataId: 0,
+        },
+      ]),
+      4,
+    )[0]!;
+    const segment = parseIdf(
+      idf([{ runs: [[0xffffffff, 4] as const], sub: new Uint8Array(16) }]),
+    )[0]!;
+    expect([...decodeSegmentIds(segment, descriptor)]).toHaveLength(4);
+  });
+});

@@ -1,7 +1,12 @@
 import { safeNameFragment } from "@consultchimps/core";
 import type { ByteArtifact, ByteOperationOutcome } from "@consultchimps/core";
 import { hasMember, memberBytes, parseAbf } from "./abf.js";
-import { PipelineBudget, checkLimit, validateExportOptions } from "./budget.js";
+import type { AbfImage } from "./abf.js";
+import {
+  PipelineBudget,
+  outputLimitExceeded,
+  validateExportOptions,
+} from "./budget.js";
 import type { PbiExportOptions, PbiReadOptions } from "./budget.js";
 import { readCatalog } from "./catalog.js";
 import type { CatalogColumn, CatalogTable } from "./catalog.js";
@@ -21,6 +26,7 @@ import type {
   PbiManifestColumn,
   PbiManifestExclusion,
   PbiManifestTable,
+  PbiReasonEntry,
   PbiWorksheetPart,
 } from "./manifest.js";
 import { SheetNameAllocator } from "./sheets.js";
@@ -98,15 +104,77 @@ interface DecodeResult {
 function manifestColumn(
   column: CatalogColumn,
   type: PbiManifestColumn["type"],
-  reasons: PbiReasonCode[],
+  reasons: readonly PbiReasonEntry[],
 ): PbiManifestColumn {
   return {
     name: column.name,
     id: column.id,
     type,
     ...(column.dax === undefined ? {} : { dax: column.dax }),
-    reasons: reasons.map((code) => ({ code, count: 1 })),
+    reasons: [...reasons],
   };
+}
+
+/** What the catalog reservation needs from an open reader. */
+export interface ClosableCatalog {
+  readonly wasmMemoryBytes: number;
+  close(): void;
+}
+
+/**
+ * Charge the open reader's linear memory, inside the reader's own cleanup
+ * scope. A refusal here describes memory the reader is already holding, so the
+ * reader is released before the refusal propagates rather than leaving one
+ * WebAssembly instance alive per failed attempt.
+ */
+export function reserveCatalogMemory(
+  catalog: ClosableCatalog,
+  budget: PipelineBudget,
+): void {
+  try {
+    budget.reserve("sqliteLinearMemory", catalog.wasmMemoryBytes, "catalog");
+  } catch (error) {
+    try {
+      catalog.close();
+    } catch {
+      // The capacity refusal is the actionable error.
+    }
+    throw error;
+  }
+}
+
+/**
+ * Decode one column with its dictionary reservation, inside the per-column
+ * failure boundary. A column naming a dictionary member the backup does not
+ * carry excludes that one column; it never aborts an export the rest of the
+ * model could still produce.
+ */
+export function decodeColumnWithBudget(
+  image: Uint8Array,
+  backup: AbfImage,
+  column: CatalogColumn,
+  rowCount: number,
+  budget: PipelineBudget,
+  unverified: UnverifiedTally,
+): ColumnOutcome {
+  let dictionaryBytes = 0;
+  try {
+    if (column.dictionary !== null)
+      dictionaryBytes =
+        memberBytes(image, backup, column.dictionary).byteLength * 2;
+  } catch {
+    return {
+      column,
+      type: undefined,
+      values: undefined,
+      excluded: "PBI_COLUMN_UNREADABLE",
+    };
+  }
+  if (dictionaryBytes > 0)
+    budget.reserve("dictionaries", dictionaryBytes, "decode");
+  return validateTypedValues(
+    decodeColumn(image, backup, column, rowCount, unverified),
+  );
 }
 
 /**
@@ -158,7 +226,7 @@ async function decodeModel(
   const catalogBytes = memberBytes(stream.bytes, backup, CATALOG_MEMBER);
   budget.reserve("catalogBuffer", catalogBytes.byteLength, "catalog");
   const catalog = await readCatalog(catalogBytes, options.runtime?.sql);
-  budget.reserve("sqliteLinearMemory", catalog.wasmMemoryBytes, "catalog");
+  reserveCatalogMemory(catalog, budget);
 
   const tables: PbiTable[] = [];
   const manifestTables = new Map<number, PbiManifestTable>();
@@ -182,21 +250,14 @@ async function decodeModel(
           source.rowCount * cellBytes(column.dataType),
           "decode",
         );
-        if (column.dictionary !== null)
-          budget.reserve(
-            "dictionaries",
-            memberBytes(stream.bytes, backup, column.dictionary).byteLength * 2,
-            "decode",
-          );
         outcomes.push(
-          validateTypedValues(
-            decodeColumn(
-              stream.bytes,
-              backup,
-              column,
-              source.rowCount,
-              unverified,
-            ),
+          decodeColumnWithBudget(
+            stream.bytes,
+            backup,
+            column,
+            source.rowCount,
+            budget,
+            unverified,
           ),
         );
       }
@@ -208,7 +269,9 @@ async function decodeModel(
           manifestColumn(
             outcome.column,
             outcome.type ?? "string",
-            code === undefined ? [] : [code],
+            code === undefined
+              ? []
+              : [{ code, count: outcome.excludedCount ?? 1 }],
           ),
         );
       }
@@ -263,12 +326,18 @@ export function validateTypedValues(outcome: ColumnOutcome): ColumnOutcome {
     return outcome;
   if (outcome.type === "dateTimeSerial" && !dateColumnReadable(outcome.values))
     return { ...outcome, values: undefined, excluded: "PBI_COLUMN_UNREADABLE" };
-  if (outcome.type === "binary" && oversizedBinaryValues(outcome.values) > 0)
-    return {
-      ...outcome,
-      values: undefined,
-      excluded: "PBI_BINARY_CELL_TOO_LONG",
-    };
+  if (outcome.type === "binary") {
+    const oversized = oversizedBinaryValues(outcome.values);
+    if (oversized > 0)
+      return {
+        ...outcome,
+        values: undefined,
+        excluded: "PBI_BINARY_CELL_TOO_LONG",
+        // The code counts oversized values, so the manifest reports how many
+        // there were, not one per column.
+        excludedCount: oversized,
+      };
+  }
   return outcome;
 }
 
@@ -469,17 +538,21 @@ export async function exportPbiTables(
   for (const plan of plans)
     cells += (plan.end - plan.start) * plan.columns.length;
   budget.reserve("workbook", cells * 48 + 1024 * 1024, "workbook");
-  const { bytes: workbookBytes, counts } = await writeWorkbook(plans);
+  // The limit is enforced while the package is produced: the worksheet XML is
+  // refused as it is built, and the compressed bytes are counted as they arrive,
+  // so an over-limit export costs neither the whole archive nor the memory the
+  // limit existed to guard.
+  const { bytes: workbookBytes, counts } = await writeWorkbook(
+    plans,
+    budget.limits.outputBytes,
+  );
 
   const manifest = buildManifest(result, parts, counts);
   const manifestBytes = serializeManifest(manifest);
   // Both artifacts are reserved together before either is emitted.
-  checkLimit(
-    budget.limits,
-    "outputBytes",
-    workbookBytes.byteLength + manifestBytes.byteLength,
-    "workbook",
-  );
+  const required = workbookBytes.byteLength + manifestBytes.byteLength;
+  if (required > budget.limits.outputBytes)
+    throw outputLimitExceeded(budget.limits.outputBytes, required);
 
   const names = outputNames(budget.limits.outputName);
   const outputs: ByteArtifact[] = [

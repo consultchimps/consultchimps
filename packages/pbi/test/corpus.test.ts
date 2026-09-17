@@ -1,7 +1,10 @@
-import { describe, expect, it } from "vitest";
+import path from "node:path";
+import { beforeAll, describe, expect, it } from "vitest";
+import { fetchFixture } from "../scripts/fetch-fixtures.js";
 import { readPbiTables } from "../src/pipeline.js";
 import {
   COMMITTED,
+  FETCHED,
   canonical,
   escapeToken,
   fixturePath,
@@ -21,13 +24,31 @@ import type { OracleFixture } from "./oracle.js";
  */
 
 const index = oracleIndex();
+/** CI runs the whole corpus: a missing fixture is fetched, never skipped. */
+const inCi = process.env.CI !== undefined && process.env.CI !== "";
+// The refusal case carries no tables and has its own test.
+const candidates: OracleFixture[] = index.fixtures.filter(
+  (fixture) => fixture.tables.length > 0,
+);
 const present: OracleFixture[] = [];
 const skipped: string[] = [];
-for (const fixture of index.fixtures) {
-  if (fixture.tables.length === 0) continue; // the refusal case has its own test
-  if (fixturePath(fixture) === null) skipped.push(fixture.name);
-  else present.push(fixture);
-}
+
+beforeAll(async () => {
+  for (const fixture of candidates) {
+    if (fixturePath(fixture) !== null) {
+      present.push(fixture);
+      continue;
+    }
+    if (!inCi) {
+      skipped.push(fixture.name);
+      continue;
+    }
+    // A pinned URL and a committed digest, verified before anything is written,
+    // so fetching here cannot introduce a fixture the repository did not pick.
+    await fetchFixture(fixture, path.join(FETCHED, fixture.fileName));
+    present.push(fixture);
+  }
+}, 600_000);
 
 // A generous ceiling: the corpus is read whole, and the default peak bound is
 // sized for an export, not for holding every table of every fixture at once.
@@ -40,17 +61,23 @@ const READ_OPTIONS = {
 
 describe("corpus oracle", () => {
   it("reports every fixture that is not available locally", () => {
-    // Not a failure: a contributor without the cache runs the committed two.
-    // Run `node scripts/fetch-fixtures.mjs` to add the rest.
+    // Not a failure outside CI: a contributor without the cache runs the one
+    // committed fixture. `node scripts/fetch-fixtures.ts` adds the rest.
     expect(skipped.every((name) => !COMMITTED.has(name))).toBe(true);
     if (skipped.length > 0)
       process.stdout.write(`corpus fixtures skipped: ${skipped.join(", ")}\n`);
-    expect(present.length).toBeGreaterThanOrEqual(2);
+    if (inCi) expect(skipped).toEqual([]);
+    expect(present.length).toBeGreaterThanOrEqual(1);
   });
 
-  for (const fixture of present) {
-    it(`decodes ${fixture.name} exactly as the independent reader does`, async () => {
-      const file = fixturePath(fixture)!;
+  for (const fixture of candidates) {
+    it(`decodes ${fixture.name} exactly as the independent reader does`, async ({
+      skip,
+    }) => {
+      const found = fixturePath(fixture);
+      // Outside CI a fixture nobody fetched is skipped by name, never passed.
+      if (found === null) skip(`${fixture.fileName} is not present locally`);
+      const file = found!;
       const model = await readPbiTables(readFixture(file), READ_OPTIONS);
       const byName = new Map(model.tables.map((table) => [table.name, table]));
       expect([...byName.keys()].sort()).toEqual(
