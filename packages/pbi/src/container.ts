@@ -159,16 +159,22 @@ function directory(input: Uint8Array, limits: ContainerLimits): Directory {
     if ((flags & 8) !== 0) {
       // Both legal descriptor forms are accepted. Sizes come from the checked
       // central directory, never from a scan for a signature inside model data.
+      // The signed form is tried first; when the first word equals the
+      // signature but the signed reading does not validate, the word is a
+      // CRC-32 that happens to equal it and the unsigned reading is used.
+      const validAt = (at: number): boolean =>
+        fits(at, 12) &&
+        at + 12 <= start &&
+        u32(at) === crc &&
+        u32(at + 4) === compressedSize &&
+        u32(at + 8) === decodedSize;
       const descriptor =
-        rangeEnd + (fits(rangeEnd, 4) && u32(rangeEnd) === 0x08074b50 ? 4 : 0);
-      if (
-        !fits(descriptor, 12) ||
-        descriptor + 12 > start ||
-        u32(descriptor) !== crc ||
-        u32(descriptor + 4) !== compressedSize ||
-        u32(descriptor + 8) !== decodedSize
-      )
-        throw invalidContainer();
+        fits(rangeEnd, 4) &&
+        u32(rangeEnd) === 0x08074b50 &&
+        validAt(rangeEnd + 4)
+          ? rangeEnd + 4
+          : rangeEnd;
+      if (!validAt(descriptor)) throw invalidContainer();
       rangeEnd = descriptor + 12;
     }
     ranges.push({ start: local, end: rangeEnd });

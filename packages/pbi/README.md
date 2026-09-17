@@ -32,7 +32,8 @@ contain the model's compression and backup framing, not decoded rows.
   `Report/definition/...`
 - A nonempty `DataModel` part stored with ZIP method 0 (STORE)
 - Matching central and local headers, non-overlapping entries, and optional ZIP
-  data descriptors in either form, with or without the signature
+  data descriptors in either form, with or without the signature; the signed
+  reading is tried first, so a CRC that equals the signature value still reads
 - A matching CRC-32 for the model part, computed on the returned copy
 
 The end-of-central-directory record is the highest-offset candidate whose

@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import { crc32 } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { ConsultChimpsError } from "@consultchimps/core";
 import { readPbiModelPart } from "../src/index.js";
@@ -314,6 +315,43 @@ describe("readPbiModelPart", () => {
     expect(diagnostic(() => readPbiModelPart(input)).code).toBe(
       "PBI_INVALID_CONTAINER",
     );
+  });
+
+  it("reads an unsigned descriptor whose CRC equals the signature value", async () => {
+    // Four trailing bytes force the model's CRC-32 to the descriptor signature,
+    // so the first word of an unsigned descriptor is indistinguishable from a
+    // signed one until the signed reading fails to validate.
+    const table = Array.from({ length: 256 }, (_, n) => {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      return c >>> 0;
+    });
+    const target = 0x08074b50;
+    const indexes: number[] = [];
+    let state = (target ^ 0xffffffff) >>> 0;
+    for (let i = 0; i < 4; i++) {
+      const index = table.findIndex((t) => t >>> 24 === state >>> 24);
+      indexes.unshift(index);
+      state = ((state ^ table[index]!) << 8) >>> 0;
+    }
+    const collide = new Uint8Array(model.length + 4);
+    collide.set(model);
+    state = (crc32(model) ^ 0xffffffff) >>> 0;
+    for (const [i, index] of indexes.entries()) {
+      collide[model.length + i] = (state ^ index) & 0xff;
+      state = ((state >>> 8) ^ table[index]!) >>> 0;
+    }
+    expect(crc32(collide)).toBe(target);
+    const streamed = await fixture({ model: collide, streamFiles: true });
+    const { data } = localOf(streamed, "DataModel");
+    const descriptor = data + collide.length;
+    const input = new Uint8Array(streamed.length - 4);
+    input.set(streamed.subarray(0, descriptor));
+    input.set(streamed.subarray(descriptor + 4), descriptor);
+    shiftOffsets(input, descriptor, -4);
+    expect(new DataView(input.buffer).getUint32(descriptor, true)).toBe(target);
+    expect(readPbiModelPart(input)).toEqual(collide);
+    expect(readPbiModelPart(streamed)).toEqual(collide);
   });
 
   it("refuses an entry whose bytes lie inside another entry's data", async () => {
