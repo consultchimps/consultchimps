@@ -169,6 +169,9 @@ importers:
       '@consultchimps/messages':
         specifier: workspace:*
         version: link:../messages
+      '@consultchimps/pbi':
+        specifier: workspace:*
+        version: link:../pbi
       '@consultchimps/pdf':
         specifier: workspace:*
         version: link:../pdf
@@ -181,6 +184,9 @@ importers:
       '@duckdb/node-api':
         specifier: 1.5.5-r.4
         version: 1.5.5-r.4
+      '@sqlite.org/sqlite-wasm':
+        specifier: 3.53.4-build1
+        version: 3.53.4-build1
       better-sqlite3:
         specifier: 13.0.3
         version: 13.0.3

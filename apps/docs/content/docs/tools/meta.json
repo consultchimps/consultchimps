@@ -12,6 +12,7 @@
     "powerpoint-populate",
     "pdf-split",
     "pdf-merge",
-    "data-workspace"
+    "data-workspace",
+    "power-bi-export"
   ]
 }

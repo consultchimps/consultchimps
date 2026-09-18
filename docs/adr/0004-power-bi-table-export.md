@@ -4,6 +4,11 @@ Status: Proposed. The initial decisions followed a reading spike. The
 clarifications below address review findings before acceptance. The SQLite
 runtime decision now follows the persistent database replacement in ADR 0005.
 
+Amended 2026-09-18, when the surface shipped: the operation is `pbi.export` and
+the command is `consultchimps pbi export`, and the registry category is the
+fifth, not the fourth, because the database workspace of ADR 0005 took the
+fourth. Decision 3 and the build plan below are written as amended.
+
 Consultants receive Power BI files (`.pbix`) whose data they need in Excel, and
 the only supported way to get it out is to open the file in Power BI Desktop on
 Windows and query the running engine. This ADR adds the toolkit's first Power BI
@@ -169,16 +174,15 @@ memory bound before claiming browser support.
 Options considered: a named registry operation with its own category; a `.pbix`
 input option on the data workspace import; both.
 
-**Decision: a named operation, `pbi.export-tables`, in a new "Power BI" tool
-category, with its own guide page and browser tool page.** The output is a
-workbook, which argues for treating `.pbix` as just another input, but the
-refusal surface is large and specific to Power BI (templates, live connections,
-DirectQuery, encrypted models, unsupported encodings), and a tool that refuses
-needs a page that can explain why. The category is the fourth value of
-`ToolCategory` in the registry, a schema change that touches the README
-operations table and the registry drift checks (ADR 0001 is otherwise
-unchanged). Adding `.pbix` to workspace import can follow later as a separate
-decision.
+**Decision: a named operation, `pbi.export`, in a new "Power BI" tool category,
+with its own guide page and browser tool page.** The output is a workbook, which
+argues for treating `.pbix` as just another input, but the refusal surface is
+large and specific to Power BI (templates, live connections, DirectQuery,
+encrypted models, unsupported encodings), and a tool that refuses needs a page
+that can explain why. The category is the fifth value of `ToolCategory` in the
+registry, a schema change that touches the README operations table and the
+registry drift checks (ADR 0001 is otherwise unchanged). Adding `.pbix` to
+workspace import can follow later as a separate decision.
 
 ## Decision 4: refusal and partial export
 
@@ -745,16 +749,16 @@ an independent review before push:
    worksheet limits, splitting, the aggregated manifest, deterministic bytes and
    the corpus oracle test. The same-origin asset copy script belongs to the
    browser release and is not in it.
-3. A surface pull request: the CLI command `consultchimps pbi export-tables`
-   with its `--include-hidden-tables` flag and destination planning, the
-   registry entry and its category, the README operations table, the guide page,
-   the drift checks, and making the package public.
+3. A surface pull request: the CLI command `consultchimps pbi export` with its
+   `--include-hidden` flag and destination planning, the registry entry and its
+   category, the README operations table, the guide page, the drift checks, and
+   making the package public.
 4. The browser tool page, worker wiring, progress, cancellation, the asset copy
    step, and the browser memory envelope.
 
 ## Consequences
 
-- The registry gains a fourth category and one operation; the README table and
+- The registry gains a fifth category and one operation; the README table and
   drift checks change with it. ADR 0001's rules are unchanged.
 - The repository gains its first vendored C source and committed WebAssembly
   binary, with a reproducibility check in CI. All licences are MIT.

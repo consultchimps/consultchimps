@@ -1,0 +1,230 @@
+---
+title: Export Power BI tables
+description:
+  Read the tables stored inside a .pbix file into one Excel workbook, with a
+  manifest of everything left out.
+icon: ChartNoAxesColumn
+---
+
+A Power BI file carries its loaded rows inside itself. Getting them back
+normally means opening the file in Power BI Desktop on Windows and querying the
+running engine. This command reads the model directly and writes the rows to an
+Excel workbook on your machine. The source file is never changed, and nothing is
+uploaded.
+
+The browser version of this tool is planned. Today the operation runs from the
+command line and from the `@consultchimps/pbi` library.
+
+## Basic usage
+
+```bash
+consultchimps pbi export sales.pbix
+```
+
+Without an output option, the two files are written to a folder beside the
+input, named after it:
+
+```text
+sales-tables/
+├── workbook.xlsx
+└── manifest.json
+```
+
+Choose the folder yourself with `--output`:
+
+```bash
+consultchimps pbi export sales.pbix --output outputs/sales-tables
+```
+
+## The two outputs
+
+`workbook.xlsx` holds one worksheet per exported table, in the model's own table
+order, with columns in their stored order. A table with more rows than a
+worksheet can hold is split across numbered worksheets, `Sales`, `Sales_2`,
+`Sales_3`, each carrying the header row again.
+
+The workbook holds the model's stored values, not Power BI's presentation. Dates
+arrive as dates, currency as a four-decimal number, text as text. A number that
+a worksheet cannot hold without losing precision is written as exact text
+instead, and the manifest counts that.
+
+`manifest.json` is the record of what happened. It lists every exported table
+with its worksheet parts and their source row ranges, every table and column
+that was left out with the reason code for it, the DAX of calculated tables and
+columns, and the readings this reader has never seen a verified example of. It
+carries no cell values, no timestamp, and no random identifier, so two runs of
+the same file produce the same manifest.
+
+The command prints the same information as it finishes: the tables exported and
+where they landed, what was left out and why, and one plain-language warning per
+distinct reason.
+
+## Hidden tables
+
+Power BI models mark helper tables hidden, such as the date tables it generates
+for time intelligence. They are skipped by default and named in the manifest.
+Include them when you want them:
+
+```bash
+consultchimps pbi export sales.pbix --include-hidden
+```
+
+## Existing files
+
+Both destinations are checked before the file is read, so a run that would
+replace an existing `workbook.xlsx` or `manifest.json` stops in a second rather
+than after the work. Pass `--force` only when replacement is intentional:
+
+```bash
+consultchimps pbi export sales.pbix --output outputs/sales-tables --force
+```
+
+Both files are written only after both exist in full, so an interrupted run
+leaves the destination as it was. The output folder itself is created just
+before the files are written, and an empty folder can be left behind if the
+writing then fails.
+
+One run exports one file. A pattern that matches several `.pbix` files is
+refused rather than exported one over another, because both output names are
+fixed inside the folder.
+
+## Memory
+
+A model is decoded into memory before it becomes a workbook, and the export
+reserves what it is about to allocate before allocating it. If the reservation
+passes the ceiling, the command refuses with `PBI_EXPORT_LIMIT_EXCEEDED` instead
+of starting a workbook the machine cannot finish.
+
+The ceiling is 4 GiB by default. Change it with `--max-memory`, which accepts a
+whole number of bytes or a number with a `k`, `m`, or `g` suffix, and never less
+than `64m`:
+
+```bash
+consultchimps pbi export sales.pbix --max-memory 8g
+```
+
+That one number governs the whole run. The input file may be up to an eighth of
+it, decompression may produce up to half of it, and the two outputs together may
+be up to a quarter of it. A file too large for the ceiling is refused before it
+is read, rather than loaded and then refused, and the refusal says which share
+was exceeded and what ceiling would carry the file.
+
+The ceiling itself is capped at twice the machine's physical memory. A budget
+exists so that a model too large for the host is refused rather than ending in
+an out-of-memory, and a ceiling larger than the machine hands that outcome back.
+
+Roughly, the workbook stage is charged for each cell it will write, each row,
+each character of text after escaping, and each worksheet, on top of what the
+decoded columns themselves cost. Every figure comes from measuring the stage,
+and charging text and rows separately is what keeps a model of very long cells,
+or of one narrow column, inside the bound rather than past it. The largest
+public sample measured, ten worksheets and 383,399 rows, reserves about 3.84 GB
+and actually spends about 1.94 GB, so the default ceiling carries it with a
+little to spare. A larger model needs a higher ceiling and a machine with the
+memory to back it.
+
+## When the command refuses
+
+Every refusal names what it found and what to do about it. None of them carries
+a table name, a column name, or anything else from inside the file.
+
+| Code                        | What it means                                                                                                                                           |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PBI_INVALID_OPTIONS`       | An option is not a shape the reader accepts. Nothing was read: options are checked before the file is opened.                                           |
+| `PBI_INVALID_CONTAINER`     | The file is not a readable Power BI container, or the parts a `.pbix` must have are damaged or missing. A renamed or partly downloaded file lands here. |
+| `PBI_NO_MODEL`              | The container is fine, but it holds no embedded model. Templates, reports on a live connection, and DirectQuery-only reports carry no imported rows.    |
+| `PBI_MODEL_ENCRYPTED`       | The model is encrypted or password-protected. Ask the file owner for an unencrypted `.pbix` saved with its data imported.                               |
+| `PBI_MODEL_UNREADABLE`      | The model's compressed stream, its backup container, or its catalog could not be read through. Copy the file again, then save a new `.pbix`.            |
+| `PBI_NO_EXPORTABLE_TABLES`  | The model was read, but no table survived. The message counts the reasons. If they are hidden tables, `--include-hidden` exports them.                  |
+| `PBI_RUNTIME_UNAVAILABLE`   | One of the two WebAssembly runtimes the reader needs could not load. The message names which one.                                                       |
+| `PBI_EXPORT_LIMIT_EXCEEDED` | The export would pass a byte limit, or the file uses a ZIP layout whose size cannot be bounded before allocating. See Memory above.                     |
+
+A refusal exits with status 1 and writes nothing to the output folder. With
+`--json`, the same code arrives in the failure envelope.
+
+Four more codes come from the command itself rather than from the reader, and
+describe what it could not do with the files it was given:
+
+| Code                              | What it means                                                                                                                                               |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CLI_PBI_ONE_INPUT`               | The input matched more than one `.pbix`. Both outputs have fixed names in one folder, so a run exports one file. Nothing was read.                          |
+| `CLI_PBI_OUTPUT_INCOMPLETE`       | One of the two files was written and the other was not. The message names which. With `--force`, what stands beside the new file may be the previous run's. |
+| `CLI_PBI_OUTPUT_CLEANUP_REQUIRED` | Both files were written, so the export is complete, but a staging file could not be removed afterwards. The message names it; delete it.                    |
+| `CLI_PBI_UNEXPECTED_OUTPUTS`      | The library returned outputs this command does not recognize, which means the two are at different versions. Nothing was written.                           |
+
+## When a table or a column is left out
+
+A file that exports successfully can still leave something behind. Those are
+recorded in the manifest against the table or column they belong to, never per
+cell, and each distinct reason becomes one warning line:
+
+| Code                                     | What it means                                                                       |
+| ---------------------------------------- | ----------------------------------------------------------------------------------- |
+| `PBI_TABLE_HIDDEN`                       | The model marks the table hidden and `--include-hidden` was not used.               |
+| `PBI_TABLE_TOO_WIDE`                     | The table has more columns than a worksheet holds.                                  |
+| `PBI_TABLE_NO_EXPORTABLE_COLUMNS`        | Every column of the table was left out, so the table was too.                       |
+| `PBI_TABLE_SPLIT`                        | The table was taller than one worksheet and was written across numbered worksheets. |
+| `PBI_COLUMN_UNREADABLE`                  | The column could not be read as its declared type.                                  |
+| `PBI_COLUMN_UNSUPPORTED_ENCODING`        | The column uses a storage encoding this reader does not support.                    |
+| `PBI_COLUMN_ROW_ALIGNMENT_UNRECOVERABLE` | The column's values could not be placed on the table's rows. No row was moved.      |
+| `PBI_COLUMN_DECODER_ERROR`               | This reader failed while decoding the column. The model itself may be fine.         |
+| `PBI_BINARY_CELL_TOO_LONG`               | A binary value is longer as base64 than a worksheet cell can hold.                  |
+| `PBI_BINARY_AS_BASE64`                   | Binary values were written as base64 text.                                          |
+| `PBI_NUMERIC_AS_TEXT`                    | Numbers were written as exact text because a worksheet number would lose precision. |
+| `PBI_NONFINITE_AS_TEXT`                  | Values that are not finite numbers were written as text.                            |
+| `PBI_DATE_AS_TEXT`                       | Dates outside the years a workbook can hold were written as text.                   |
+| `PBI_DATE_ROUNDED`                       | Dates were rounded to the nearest millisecond.                                      |
+| `PBI_TEXT_TRUNCATED`                     | Text longer than a worksheet cell holds was shortened.                              |
+
+Losing a column never moves a row: every other column of the table keeps the
+rows it had.
+
+## Readings with no verified example
+
+The reader was built against nine public sample files. Several code paths follow
+Microsoft's reference implementation but were never exercised by those samples.
+Rather than refuse, the export attempts the reading and warns, so you know which
+figures to check against Power BI before relying on them:
+
+| Code                                   | The reading                                       |
+| -------------------------------------- | ------------------------------------------------- |
+| `PBI_UNVERIFIED_XPRESS9_MULTITHREADED` | the multithreaded compression variant             |
+| `PBI_UNVERIFIED_MULTIPLE_PARTITIONS`   | a column stored in several partitions             |
+| `PBI_UNVERIFIED_MULTIPLE_SEGMENTS`     | a column stored in several segments               |
+| `PBI_UNVERIFIED_NON_LATIN_DICTIONARY`  | a text dictionary in a non-Latin script           |
+| `PBI_UNVERIFIED_BOOLEAN_TYPE`          | a true or false column                            |
+| `PBI_UNVERIFIED_BINARY_TYPE`           | a binary column                                   |
+| `PBI_UNVERIFIED_COMPRESSION_CLASS`     | a column compression class the reader has not met |
+
+## Known limits
+
+- Measures, relationships, row-level security, and report pages are not
+  exported. This reads stored table rows.
+- Power Query definitions are not read. Files from late 2020 onward no longer
+  carry them separately.
+- A model part compressed at the ZIP level, a ZIP64 archive, or a multi-volume
+  archive is refused, because their sizes cannot be bounded before allocating.
+  Saving the file again in Power BI Desktop produces a layout the reader
+  accepts.
+- Worksheet names are sanitized and made unique, so a name in the workbook can
+  differ from the table name. The manifest maps one to the other.
+- The workbook is deterministic: identical input bytes and options produce
+  identical output bytes, with no timestamps inside either file.
+
+## TypeScript API
+
+```ts
+import { exportPbiTables } from "@consultchimps/pbi";
+
+const outcome = await exportPbiTables(containerBytes, {
+  includeHiddenTables: false,
+  peakBytes: 4 * 1024 * 1024 * 1024,
+});
+
+const [workbook, manifest] = outcome.outputs;
+outcome.result.warnings.forEach((warning) => console.warn(warning));
+```
+
+`readPbiTables` returns the decoded, typed rows without building a workbook, and
+`readPbiModelPart` returns the raw model part alone. The package README
+documents the limits, the runtimes, and the container profile in full.
