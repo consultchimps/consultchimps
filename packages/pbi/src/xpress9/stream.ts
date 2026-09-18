@@ -20,10 +20,76 @@ const MULTITHREADED_COUNTS_BYTES = 40;
 /** An eight-byte chunk header plus at least one byte of compressed payload. */
 const MINIMUM_FRAMED_CHUNK = 9;
 
-// The module's linear memory measured 33,554,432 bytes after every corpus
-// fixture, including the largest. It is charged once, not per chunk, because
-// the decoder reuses one source and one destination buffer across a stream.
-const RUNTIME_MEMORY_BYTES = 33_554_432;
+/**
+ * What the module holds before either framing buffer exists: its own code,
+ * stack, the LZ77 history window and the allocator's initial arena. It is the
+ * build's own `-sINITIAL_MEMORY`, pinned in `scripts/build-wasm.mjs`.
+ */
+const RUNTIME_BASELINE_BYTES = 16 * 1024 * 1024;
+
+/** WebAssembly grows linear memory a page at a time. */
+const WASM_PAGE_BYTES = 64 * 1024;
+
+/**
+ * Emscripten's `MEMORY_GROWTH_GEOMETRIC_STEP`, pinned explicitly in
+ * `scripts/build-wasm.mjs` so this prediction reads a flag rather than a
+ * default that a toolchain upgrade could move. A heap that must grow does not
+ * grow to what was asked for: it grows by this fraction on top.
+ */
+const MEMORY_GROWTH_GEOMETRIC_STEP = 0.2;
+
+/**
+ * dlmalloc's own bookkeeping around the two buffers: a fixed allowance for its
+ * arena headers plus a fraction of what is being allocated, because a larger
+ * request is split across more chunks.
+ */
+const ALLOCATOR_SLACK_BYTES = 64 * 1024;
+const ALLOCATOR_SLACK_RATIO = 0.01;
+
+/**
+ * Every earlier generation of a buffer is still in the heap. dlmalloc cannot
+ * satisfy a larger request from the smaller block the runtime has just freed,
+ * so each regrowth leaves its predecessor behind as fragmentation. The runtime
+ * grows by doubling, so those predecessors form a geometric series whose sum is
+ * below the current capacity, and counting each capacity twice covers the live
+ * block together with all of its debris.
+ */
+const FRAGMENTATION_FACTOR = 2;
+
+/**
+ * A conservative prediction of the linear memory the module will hold once it
+ * carries buffers of these capacities.
+ *
+ * Summing the payloads under-counts twice over. With `ALLOW_MEMORY_GROWTH` the
+ * heap grows geometrically, rounds up to whole pages and carries allocator
+ * overhead; and a buffer that has been regrown leaves every earlier generation
+ * behind it. A probe that regrew both buffers ten percent at a time reached a
+ * 60,424,192-byte heap where a single-generation prediction said 58,130,432.
+ *
+ * The capacities passed here are what the runtime allocated, its doubling
+ * included, so a caller must mirror that growth rule rather than pass the sizes
+ * it asked for.
+ */
+export function predictedHeapBytes(
+  baseline: number,
+  sourceCapacity: number,
+  destinationCapacity: number,
+  currentHeap: number,
+): number {
+  const payload = sourceCapacity + destinationCapacity;
+  const needed =
+    baseline +
+    FRAGMENTATION_FACTOR * payload +
+    ALLOCATOR_SLACK_BYTES +
+    Math.ceil(payload * ALLOCATOR_SLACK_RATIO);
+  // A heap that already holds this much does not grow, so the geometric step
+  // applies only to what growth would have to reach.
+  const target = Math.max(
+    currentHeap,
+    Math.ceil(needed * (1 + MEMORY_GROWTH_GEOMETRIC_STEP)),
+  );
+  return Math.ceil(target / WASM_PAGE_BYTES) * WASM_PAGE_BYTES;
+}
 
 export type ModelCompression = "single" | "multithreaded" | "uncompressed";
 
@@ -59,6 +125,14 @@ export interface ModelStream {
   readonly compression: ModelCompression;
   /** Chunks framed, across every thread group. */
   readonly chunks: number;
+  /** The heap this stream's frames were charged for. */
+  readonly reservedHeapBytes: number;
+  /**
+   * Frames whose real heap turned out larger than the prediction. It must be
+   * zero: a nonzero count means the prediction is not an upper bound and the
+   * budget was briefly below reality.
+   */
+  readonly heapUnderpredictions: number;
 }
 
 interface Frame {
@@ -98,11 +172,21 @@ export async function decompressModelPart(
   part: Uint8Array,
   budget: PipelineBudget,
   config: Xpress9RuntimeConfig | undefined,
+  /** The loader, so a test can observe when the decoder is actually called. */
+  load: (
+    runtime?: Xpress9RuntimeConfig,
+  ) => Promise<Xpress9Decoder> = loadXpress9,
 ): Promise<ModelStream> {
   const compression = detectCompression(part);
   if (compression === null) throw unreadableModel("xpress9");
   if (compression === "uncompressed")
-    return { bytes: part, compression, chunks: 0 };
+    return {
+      bytes: part,
+      compression,
+      chunks: 0,
+      reservedHeapBytes: 0,
+      heapUnderpredictions: 0,
+    };
 
   const length = part.byteLength;
   const view = new DataView(part.buffer, part.byteOffset, length);
@@ -113,26 +197,67 @@ export async function decompressModelPart(
 
   const openDecoder = async (): Promise<Xpress9Decoder> => {
     decoder?.close();
-    const next = await loadXpress9(config);
+    const next = await load(config);
     decoder = next;
     return next;
   };
 
+  // The runtime keeps one source and one destination buffer and only ever grows
+  // them, so the capacities any frame of this stream has asked for determine
+  // the heap the module ends up holding.
+  let sourceCapacity = 0;
+  let destinationCapacity = 0;
+  let reservedHeap = RUNTIME_BASELINE_BYTES;
+  let underpredictions = 0;
+
+  const chargeHeap = (predicted: number): void => {
+    if (predicted <= reservedHeap) return;
+    budget.reserve("xpress9LinearMemory", predicted - reservedHeap, "xpress9");
+    reservedHeap = predicted;
+  };
+
   const emit = (session: Xpress9Decoder, frame: Frame): void => {
     // Check the budget before the allocation, never by catching an
-    // out-of-memory: the copy the decoder returns is what grows the live set.
+    // out-of-memory. The prediction covers the linear memory the module will
+    // hold once it carries buffers this frame's sizes imply, and it is charged
+    // before the call that would allocate them.
+    // Mirror the runtime's own growth rule, which doubles rather than taking
+    // the exact size asked for, so these track what it actually allocated.
+    if (frame.compressedSize > sourceCapacity)
+      sourceCapacity = Math.max(frame.compressedSize, sourceCapacity * 2);
+    if (frame.uncompressedSize > destinationCapacity)
+      destinationCapacity = Math.max(
+        frame.uncompressedSize,
+        destinationCapacity * 2,
+      );
+    chargeHeap(
+      predictedHeapBytes(
+        RUNTIME_BASELINE_BYTES,
+        sourceCapacity,
+        destinationCapacity,
+        session.memoryBytes(),
+      ),
+    );
     budget.decode(frame.uncompressedSize, "xpress9");
     budget.reserve("backupImage", frame.uncompressedSize, "xpress9");
     const bytes = session.decompress(
       part.subarray(frame.start, frame.start + frame.compressedSize),
       frame.uncompressedSize,
     );
+    // The prediction is meant to be an upper bound. Reading the real figure
+    // afterwards keeps the accounting honest if it ever is not, and the count
+    // is reported so a test can insist the prediction held on every fixture.
+    const actual = session.memoryBytes();
+    if (actual > reservedHeap) {
+      underpredictions++;
+      chargeHeap(actual);
+    }
     pieces.push(bytes);
     total += bytes.length;
     chunks++;
   };
 
-  budget.reserve("xpress9LinearMemory", RUNTIME_MEMORY_BYTES, "xpress9");
+  budget.reserve("xpress9LinearMemory", RUNTIME_BASELINE_BYTES, "xpress9");
   try {
     if (compression === "single") {
       const session = await openDecoder();
@@ -184,7 +309,7 @@ export async function decompressModelPart(
     }
   } finally {
     decoder?.close();
-    budget.release(RUNTIME_MEMORY_BYTES);
+    budget.release(reservedHeap);
   }
 
   if (total === 0) throw unreadableModel("xpress9");
@@ -198,5 +323,11 @@ export async function decompressModelPart(
   }
   pieces.length = 0;
   budget.release(total);
-  return { bytes, compression, chunks };
+  return {
+    bytes,
+    compression,
+    chunks,
+    reservedHeapBytes: reservedHeap,
+    heapUnderpredictions: underpredictions,
+  };
 }
