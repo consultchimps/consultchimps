@@ -3,7 +3,11 @@ import { ConsultChimpsError } from "@consultchimps/core";
 import type { AbfImage } from "../src/abf.js";
 import { PipelineBudget, validateExportOptions } from "../src/budget.js";
 import type { CatalogColumn, CatalogTable } from "../src/catalog.js";
-import { assembleTable, decodeColumn } from "../src/model.js";
+import {
+  assembleTable,
+  columnFailureReason,
+  decodeColumn,
+} from "../src/model.js";
 import type { ColumnOutcome, UnverifiedTally } from "../src/model.js";
 import {
   allocateWorksheets,
@@ -13,6 +17,8 @@ import {
   tableExclusion,
   validateTypedValues,
 } from "../src/pipeline.js";
+import { HuffmanError } from "../src/huffman.js";
+import { VertipaqAlignmentError, VertipaqError } from "../src/vertipaq.js";
 import {
   idf,
   idfmeta,
@@ -557,5 +563,138 @@ describe("Huffman dictionary expansion is charged before it happens", () => {
     expect(budget.terms().dictionaries).toBeGreaterThanOrEqual(
       member.length * 2,
     );
+  });
+});
+
+/**
+ * Which exclusion a failure inside a column decoder becomes. The classification
+ * is asserted over the kinds of failure rather than over one example each, so a
+ * new controlled error type cannot quietly start reporting itself as damaged
+ * source data, and an engine fault cannot quietly start reporting itself as
+ * anything but this reader's own.
+ */
+describe("a failure inside a column decoder", () => {
+  const controlled: Array<[string, unknown]> = [
+    ["a reader structure error", new VertipaqError("count is out of range")],
+    ["a dictionary page error", new HuffmanError("code is incomplete")],
+    [
+      "a backup member refusal",
+      new ConsultChimpsError("PBI_MODEL_UNREADABLE", "member missing"),
+    ],
+    [
+      "a container refusal",
+      new ConsultChimpsError("PBI_INVALID_CONTAINER", "not a container"),
+    ],
+    [
+      "an encrypted model refusal",
+      new ConsultChimpsError("PBI_MODEL_ENCRYPTED", "encrypted"),
+    ],
+  ];
+  for (const [label, error] of controlled)
+    it(`reports ${label} as an unreadable column`, () => {
+      expect(columnFailureReason(error)).toBe("PBI_COLUMN_UNREADABLE");
+    });
+
+  const unexpected: Array<[string, unknown]> = [
+    ["a type error", new TypeError("values.forEach is not a function")],
+    ["a range error", new RangeError("invalid array length")],
+    ["a plain error", new Error("something went wrong")],
+    // The case a class-based rule got wrong: this repository's own error class
+    // carrying a code that says nothing about the file.
+    [
+      "an options refusal raised inside the decoder",
+      new ConsultChimpsError("PBI_INVALID_OPTIONS", "options are invalid"),
+    ],
+    [
+      "a code no file-fault list knows",
+      new ConsultChimpsError("DB_SQLITE_READ_QUERY_FAILED", "query failed"),
+    ],
+  ];
+  for (const [label, error] of unexpected)
+    it(`reports ${label} as this reader's own fault`, () => {
+      expect(columnFailureReason(error)).toBe("PBI_COLUMN_DECODER_ERROR");
+    });
+
+  it("keeps the row alignment failure on its own code", () => {
+    expect(
+      columnFailureReason(new VertipaqAlignmentError("rows exceeded")),
+    ).toBe("PBI_COLUMN_ROW_ALIGNMENT_UNRECOVERABLE");
+  });
+
+  it("lets a capacity refusal through instead of excluding a column", () => {
+    const refusal = new ConsultChimpsError(
+      "PBI_EXPORT_LIMIT_EXCEEDED",
+      "over the limit",
+    );
+    expect(() => columnFailureReason(refusal)).toThrow(refusal);
+  });
+
+  it("rethrows anything that is not an error at all", () => {
+    expect(() => columnFailureReason("not an error")).toThrow();
+  });
+
+  it("lets the dictionary reservation's refusal stop the export", () => {
+    // The member is readable, so the failure is the budget's: a capacity
+    // refusal there is the caller's, and excluding the column instead would
+    // carry on spending memory the caller said was not available.
+    const dictionary = numericDictionary(0, [1n, 2n]);
+    const { bytes, backup } = image({
+      "c.dictionary": dictionary,
+      "c.idfmeta": idfmeta([{ records: 2, minDataId: 3 }]),
+      "c.idf": idf([{ runs: [[3, 2] as const] }]),
+    });
+    const budget = new PipelineBudget(
+      validateExportOptions({ peakBytes: 1 }, true),
+    );
+    let failure: ConsultChimpsError | undefined;
+    try {
+      decodeColumnWithBudget(
+        bytes,
+        backup,
+        column({ dictionary: "c.dictionary", idfs: ["c.idf"] }),
+        2,
+        budget,
+        tally(),
+      );
+    } catch (error) {
+      failure = error as ConsultChimpsError;
+    }
+    expect(failure?.code).toBe("PBI_EXPORT_LIMIT_EXCEEDED");
+  });
+
+  it("excludes the column when the decoder itself throws a type error", () => {
+    const { bytes, backup } = image({
+      "c.dictionary": stringDictionary(
+        [
+          {
+            huffman: {
+              encodeArray: (() => {
+                const encodeArray = new Uint8Array(128);
+                encodeArray[0] = 0x11;
+                return encodeArray;
+              })(),
+              buffer: new Uint8Array(8),
+              totalBits: 64,
+              charsetByte: 0,
+            },
+          },
+        ],
+        [[0, 0]],
+      ),
+      "c.idfmeta": idfmeta([{ records: 1, minDataId: 3 }]),
+      "c.idf": idf([{ runs: [[3, 1] as const] }]),
+    });
+    const outcome = decodeColumn(
+      bytes,
+      backup,
+      column({ dataType: 2, dictionary: "c.dictionary", idfs: ["c.idf"] }),
+      1,
+      tally(),
+      () => {
+        throw new TypeError("page.stride is not a number");
+      },
+    );
+    expect(outcome.excluded).toBe("PBI_COLUMN_DECODER_ERROR");
+    expect(outcome.values).toBeUndefined();
   });
 });

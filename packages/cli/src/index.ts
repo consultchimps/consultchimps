@@ -29,6 +29,7 @@ import { Command, CommanderError } from "commander";
 
 import { formatWorkbookDescription } from "./describe-report.js";
 import { registerDbCommands } from "./commands/db.js";
+import { registerPbiCommands } from "./commands/pbi.js";
 import { createCliProgress, finishActiveProgress } from "./progress.js";
 import {
   withoutTerminalControls,
@@ -270,6 +271,7 @@ Quick start:
   consultchimps pptx populate --template profile.pptx --data clients.xlsx --sheet Clients --template-slide 1 -o profiles.pptx
   consultchimps pdf split report.pdf -o pages
   consultchimps pdf merge "inputs/*.pdf" -o combined.pdf
+  consultchimps pbi export sales.pbix -o sales-tables
 
 Automation with --json:
   Place --json before the command to replace the explanation with one line of
@@ -966,6 +968,13 @@ What happens:
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
+registerPbiCommands(program, {
+  json: () => program.opts<GlobalOptions>().json === true,
+  result: (result) =>
+    printResult(result, program.opts<GlobalOptions>().json === true),
+  prose: (value) => process.stdout.write(withoutTerminalControlsInProse(value)),
+});
+
 registerDbCommands(program, {
   json: () => program.opts<GlobalOptions>().json === true,
   result: (result) =>
@@ -1017,7 +1026,13 @@ try {
         formatHumanError(
           withoutTerminalControls(message),
           expected ? error.code : undefined,
-          { vocabulary: CLI_VOCABULARY },
+          // The details decide which recovery steps are true for this failure,
+          // and they are the operation's own structured facts, never text from
+          // inside a document.
+          {
+            vocabulary: CLI_VOCABULARY,
+            ...(expected ? { details: error.details } : {}),
+          },
         ),
       );
     }

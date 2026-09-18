@@ -75,14 +75,21 @@ describe("exportPbiTables", () => {
     ]);
   }, 120_000);
 
-  it("names the include-hidden option in the hidden-table warning", async () => {
+  it("says how to include hidden tables, without naming an option", async () => {
     const outcome = await exportPbiTables(fixture);
     expect(
       outcome.result.warnings.some(
         (warning) =>
-          warning.includes("hidden") && warning.includes("includeHiddenTables"),
+          warning.includes("hidden") &&
+          warning.includes("Export hidden tables as well"),
       ),
     ).toBe(true);
+    // The wording is read by every surface, so it never names one surface's
+    // option, whether the library's or a command line's.
+    for (const warning of outcome.result.warnings) {
+      expect(warning).not.toContain("includeHiddenTables");
+      expect(warning).not.toContain("--include-hidden");
+    }
   }, 120_000);
 
   it("includes hidden tables when asked", async () => {

@@ -11,10 +11,15 @@ export type PbiErrorCode =
   | "PBI_NO_EXPORTABLE_TABLES"
   | "PBI_EXPORT_LIMIT_EXCEEDED";
 
-/** The fourteen manifest reason codes of ADR 0004 Decision 9. */
+/**
+ * The manifest reason codes of ADR 0004 Decision 9, plus
+ * `PBI_COLUMN_DECODER_ERROR`, which the surface contract added so an unexpected
+ * fault inside this reader is never reported as damaged source data.
+ */
 export type PbiReasonCode =
   | "PBI_BINARY_AS_BASE64"
   | "PBI_BINARY_CELL_TOO_LONG"
+  | "PBI_COLUMN_DECODER_ERROR"
   | "PBI_COLUMN_ROW_ALIGNMENT_UNRECOVERABLE"
   | "PBI_COLUMN_UNREADABLE"
   | "PBI_COLUMN_UNSUPPORTED_ENCODING"
@@ -130,11 +135,14 @@ export function noExportableTables(
       ? "This model has no tables to export."
       : "Every table in this model was excluded from the export.";
   const cure = hiddenExcluded
-    ? " Set includeHiddenTables to true to export the tables the model marks hidden."
+    ? " Export hidden tables as well to include the tables the model marks hidden."
     : "";
   return new ConsultChimpsError(
     "PBI_NO_EXPORTABLE_TABLES" satisfies PbiErrorCode,
     `${summary}${cure} No workbook was produced.`,
-    { details: { stage: "decode", exclusions: counts } },
+    // Whether hidden tables were among the excluded ones is what decides
+    // whether including them could help, so it travels with the refusal rather
+    // than being guessed at by whatever renders it.
+    { details: { stage: "decode", hiddenExcluded, exclusions: counts } },
   );
 }
