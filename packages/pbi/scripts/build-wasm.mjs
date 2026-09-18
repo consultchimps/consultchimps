@@ -277,6 +277,12 @@ function main() {
     // isolation requirement on the page that hosts the decoder.
     "-sALLOW_MEMORY_GROWTH=1",
     `-sINITIAL_MEMORY=${INITIAL_MEMORY}`,
+    // Emscripten's own default, pinned so the host's memory prediction in
+    // src/xpress9/stream.ts reads a flag rather than a default a toolchain
+    // upgrade could move. A heap that must grow grows by this fraction on top
+    // of what was asked for, which is why summing payload bytes under-counts
+    // the linear memory the module ends up holding.
+    "-sMEMORY_GROWTH_GEOMETRIC_STEP=0.2",
     // Nothing in the decoder touches a file.
     "-sFILESYSTEM=0",
     "-sASSERTIONS=0",

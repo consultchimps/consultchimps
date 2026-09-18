@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConsultChimpsError } from "@consultchimps/core";
@@ -8,10 +8,11 @@ import { readPbiModelPart } from "../src/container.js";
 import {
   decompressModelPart,
   detectCompression,
+  predictedHeapBytes,
 } from "../src/xpress9/stream.js";
 import type { Xpress9Decoder } from "../src/xpress9/runtime.js";
 import { readPbiTables } from "../src/pipeline.js";
-import { FIXTURES } from "./oracle.js";
+import { FETCHED, FIXTURES } from "./oracle.js";
 
 /** Section C, "XPress9 runtime and chunk framing". */
 
@@ -214,20 +215,28 @@ describe("the runtime's own buffers are charged before it allocates them", () =>
     return stream;
   }
 
-  /** A decoder that records whether the runtime was ever asked to decompress. */
-  function spy(): {
+  /**
+   * A decoder that records whether the runtime was ever asked to decompress,
+   * and reports a heap that grows the way Emscripten's would.
+   */
+  function spy(heap = 16 * 1024 * 1024): {
     load: () => Promise<Xpress9Decoder>;
     calls: { input: number; outputSize: number }[];
   } {
     const calls: { input: number; outputSize: number }[] = [];
+    let current = heap;
     return {
       calls,
       load: () =>
         Promise.resolve({
           decompress(input: Uint8Array, outputSize: number): Uint8Array {
             calls.push({ input: input.byteLength, outputSize });
+            const needed = heap + input.byteLength + outputSize;
+            if (needed > current)
+              current = Math.ceil((needed * 1.2) / (64 * 1024)) * (64 * 1024);
             return new Uint8Array(outputSize);
           },
+          memoryBytes: (): number => current,
           close(): void {},
         }),
     };
@@ -266,14 +275,99 @@ describe("the runtime's own buffers are charged before it allocates them", () =>
     expect(calls).toEqual([{ input: 16, outputSize: 4_000_000 }]);
   });
 
-  it("grows the charge only when a later frame needs more", async () => {
-    // Two frames of the same size charge the buffer once; the budget's own
-    // accounting shows the peak, not the sum.
+  it("charges the predicted heap, not the payload sum", async () => {
     const { load } = spy();
     const single = budget();
-    await decompressModelPart(frame(2_000_000), single, undefined, load);
-    expect(single.terms().xpress9LinearMemory).toBe(
-      16 * 1024 * 1024 + 2_000_000 + 16,
+    const stream = await decompressModelPart(
+      frame(2_000_000),
+      single,
+      undefined,
+      load,
     );
+    const predicted = predictedHeapBytes(
+      16 * 1024 * 1024,
+      16,
+      2_000_000,
+      16 * 1024 * 1024,
+    );
+    expect(stream.reservedHeapBytes).toBe(predicted);
+    expect(single.terms().xpress9LinearMemory).toBe(predicted);
+    // Well above the payload sum, which is what made a peakBytes between the
+    // two figures let an over-limit allocation through.
+    expect(predicted).toBeGreaterThan(16 * 1024 * 1024 + 2_000_000 + 16);
+    expect(stream.heapUnderpredictions).toBe(0);
   });
+});
+
+describe("predictedHeapBytes", () => {
+  const baseline = 16 * 1024 * 1024;
+  const page = 64 * 1024;
+
+  it("returns whole WebAssembly pages", () => {
+    for (const [source, destination] of [
+      [1, 1],
+      [12_345, 67_891],
+      [1_000_003, 7],
+    ] as const) {
+      const predicted = predictedHeapBytes(
+        baseline,
+        source,
+        destination,
+        baseline,
+      );
+      expect(predicted % page).toBe(0);
+    }
+  });
+
+  it("adds the geometric growth step on top of what is needed", () => {
+    // A payload far beyond the current heap must grow it, so the prediction is
+    // the needed figure plus a fifth, rounded up to a page.
+    const destination = 64 * 1024 * 1024;
+    const predicted = predictedHeapBytes(baseline, 0, destination, baseline);
+    const needed = baseline + destination + 64 * 1024 + destination * 0.01;
+    expect(predicted).toBeGreaterThanOrEqual(Math.ceil(needed * 1.2));
+    expect(predicted).toBeLessThan(Math.ceil(needed * 1.2) + page);
+  });
+
+  it("never predicts below the heap the module already holds", () => {
+    // A small frame against a large heap does not shrink anything.
+    const current = 128 * 1024 * 1024;
+    expect(predictedHeapBytes(baseline, 16, 1024, current)).toBe(current);
+  });
+
+  it("carries allocator slack for the buffers themselves", () => {
+    // Two identical payloads, one split across both buffers: the slack term is
+    // proportional, so neither prediction is merely the payload sum.
+    const predicted = predictedHeapBytes(baseline, 0, 0, 0);
+    expect(predicted).toBeGreaterThan(baseline);
+  });
+});
+
+describe("the prediction against the real runtime", () => {
+  const files = [path.join(FIXTURES, "a-2018-fuzzy.pbix")];
+  for (const name of [
+    "c-perf-analyzer.pbix",
+    "g-2018-newformat.pbix",
+    "l-2019-12.pbix",
+    "m-2020-09.pbix",
+    "n-2020-11.pbix",
+  ]) {
+    const candidate = path.join(FETCHED, name);
+    if (existsSync(candidate)) files.push(candidate);
+  }
+
+  for (const file of files) {
+    it(`bounds the heap on ${path.basename(file)}`, async () => {
+      const running = budget({ peakBytes: 2 * 1024 * 1024 * 1024 });
+      const stream = await decompressModelPart(
+        readPbiModelPart(new Uint8Array(readFileSync(file))),
+        running,
+        undefined,
+      );
+      // The reservation is an upper bound on what the module actually took,
+      // checked after every frame. A nonzero count means it was not.
+      expect(stream.heapUnderpredictions).toBe(0);
+      expect(stream.reservedHeapBytes).toBeGreaterThan(0);
+    }, 300_000);
+  }
 });

@@ -33,6 +33,12 @@ export interface Xpress9Decoder {
    * them as an independent copy. A short or failed decode is a damaged model.
    */
   decompress(input: Uint8Array, outputSize: number): Uint8Array;
+  /**
+   * The module's current linear memory in bytes. The host charges a prediction
+   * of this before each frame and compares it with the real figure afterwards,
+   * so the accounting is never below what the runtime actually took.
+   */
+  memoryBytes(): number;
   /** Releases the decoder and its buffers. Safe to call more than once. */
   close(): void;
 }
@@ -301,6 +307,9 @@ export async function loadXpress9(
         destinationPointer,
         destinationPointer + outputSize,
       );
+    },
+    memoryBytes(): number {
+      return module.HEAPU8.byteLength;
     },
     close(): void {
       if (closed) return;

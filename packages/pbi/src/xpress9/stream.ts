@@ -22,11 +22,61 @@ const MINIMUM_FRAMED_CHUNK = 9;
 
 /**
  * What the module holds before either framing buffer exists: its own code,
- * stack, the LZ77 history window and the allocator's initial arena. Measured as
- * the corpus figure of 33,554,432 bytes less the largest pair of buffers any
- * corpus stream asked for, and rounded up to the next power of two.
+ * stack, the LZ77 history window and the allocator's initial arena. It is the
+ * build's own `-sINITIAL_MEMORY`, pinned in `scripts/build-wasm.mjs`.
  */
 const RUNTIME_BASELINE_BYTES = 16 * 1024 * 1024;
+
+/** WebAssembly grows linear memory a page at a time. */
+const WASM_PAGE_BYTES = 64 * 1024;
+
+/**
+ * Emscripten's `MEMORY_GROWTH_GEOMETRIC_STEP`, pinned explicitly in
+ * `scripts/build-wasm.mjs` so this prediction reads a flag rather than a
+ * default that a toolchain upgrade could move. A heap that must grow does not
+ * grow to what was asked for: it grows by this fraction on top.
+ */
+const MEMORY_GROWTH_GEOMETRIC_STEP = 0.2;
+
+/**
+ * dlmalloc's own bookkeeping around the two buffers: a fixed allowance for its
+ * arena headers plus a fraction of what is being allocated, because a larger
+ * request is split across more chunks.
+ */
+const ALLOCATOR_SLACK_BYTES = 64 * 1024;
+const ALLOCATOR_SLACK_RATIO = 0.01;
+
+/**
+ * A conservative prediction of the linear memory the module will hold once it
+ * carries buffers of these capacities.
+ *
+ * Summing the payloads under-counts, which is the defect this replaces: with
+ * `ALLOW_MEMORY_GROWTH` the heap grows geometrically, rounds up to whole pages,
+ * and carries allocator overhead, so the capacity that results is larger than
+ * the bytes that were asked for. The corpus records 33,554,432 bytes of heap on
+ * the largest fixture against about 20.2 MB of payload, and a `peakBytes`
+ * between the two would have passed an allocation beyond the bound.
+ */
+export function predictedHeapBytes(
+  baseline: number,
+  sourceCapacity: number,
+  destinationCapacity: number,
+  currentHeap: number,
+): number {
+  const payload = sourceCapacity + destinationCapacity;
+  const needed =
+    baseline +
+    payload +
+    ALLOCATOR_SLACK_BYTES +
+    Math.ceil(payload * ALLOCATOR_SLACK_RATIO);
+  // A heap that already holds this much does not grow, so the geometric step
+  // applies only to what growth would have to reach.
+  const target = Math.max(
+    currentHeap,
+    Math.ceil(needed * (1 + MEMORY_GROWTH_GEOMETRIC_STEP)),
+  );
+  return Math.ceil(target / WASM_PAGE_BYTES) * WASM_PAGE_BYTES;
+}
 
 export type ModelCompression = "single" | "multithreaded" | "uncompressed";
 
@@ -62,6 +112,14 @@ export interface ModelStream {
   readonly compression: ModelCompression;
   /** Chunks framed, across every thread group. */
   readonly chunks: number;
+  /** The heap this stream's frames were charged for. */
+  readonly reservedHeapBytes: number;
+  /**
+   * Frames whose real heap turned out larger than the prediction. It must be
+   * zero: a nonzero count means the prediction is not an upper bound and the
+   * budget was briefly below reality.
+   */
+  readonly heapUnderpredictions: number;
 }
 
 interface Frame {
@@ -109,7 +167,13 @@ export async function decompressModelPart(
   const compression = detectCompression(part);
   if (compression === null) throw unreadableModel("xpress9");
   if (compression === "uncompressed")
-    return { bytes: part, compression, chunks: 0 };
+    return {
+      bytes: part,
+      compression,
+      chunks: 0,
+      reservedHeapBytes: 0,
+      heapUnderpredictions: 0,
+    };
 
   const length = part.byteLength;
   const view = new DataView(part.buffer, part.byteOffset, length);
@@ -126,39 +190,48 @@ export async function decompressModelPart(
   };
 
   // The runtime keeps one source and one destination buffer and only ever grows
-  // them, so the live WebAssembly allocation is the largest pair any frame of
-  // this stream has asked for. Charging the corpus's 32 MiB instead would let a
-  // frame declaring a gigabyte of output pass the budget and then allocate it.
+  // them, so the capacities any frame of this stream has asked for determine
+  // the heap the module ends up holding.
   let sourceCapacity = 0;
   let destinationCapacity = 0;
+  let reservedHeap = RUNTIME_BASELINE_BYTES;
+  let underpredictions = 0;
+
+  const chargeHeap = (predicted: number): void => {
+    if (predicted <= reservedHeap) return;
+    budget.reserve("xpress9LinearMemory", predicted - reservedHeap, "xpress9");
+    reservedHeap = predicted;
+  };
 
   const emit = (session: Xpress9Decoder, frame: Frame): void => {
     // Check the budget before the allocation, never by catching an
-    // out-of-memory. The runtime's two buffers are charged from the sizes this
-    // frame is about to hand it, before the call that would allocate them, and
-    // the copy the decoder returns grows the live set on top.
-    if (frame.compressedSize > sourceCapacity) {
-      budget.reserve(
-        "xpress9LinearMemory",
-        frame.compressedSize - sourceCapacity,
-        "xpress9",
-      );
-      sourceCapacity = frame.compressedSize;
-    }
-    if (frame.uncompressedSize > destinationCapacity) {
-      budget.reserve(
-        "xpress9LinearMemory",
-        frame.uncompressedSize - destinationCapacity,
-        "xpress9",
-      );
-      destinationCapacity = frame.uncompressedSize;
-    }
+    // out-of-memory. The prediction covers the linear memory the module will
+    // hold once it carries buffers this frame's sizes imply, and it is charged
+    // before the call that would allocate them.
+    sourceCapacity = Math.max(sourceCapacity, frame.compressedSize);
+    destinationCapacity = Math.max(destinationCapacity, frame.uncompressedSize);
+    chargeHeap(
+      predictedHeapBytes(
+        RUNTIME_BASELINE_BYTES,
+        sourceCapacity,
+        destinationCapacity,
+        session.memoryBytes(),
+      ),
+    );
     budget.decode(frame.uncompressedSize, "xpress9");
     budget.reserve("backupImage", frame.uncompressedSize, "xpress9");
     const bytes = session.decompress(
       part.subarray(frame.start, frame.start + frame.compressedSize),
       frame.uncompressedSize,
     );
+    // The prediction is meant to be an upper bound. Reading the real figure
+    // afterwards keeps the accounting honest if it ever is not, and the count
+    // is reported so a test can insist the prediction held on every fixture.
+    const actual = session.memoryBytes();
+    if (actual > reservedHeap) {
+      underpredictions++;
+      chargeHeap(actual);
+    }
     pieces.push(bytes);
     total += bytes.length;
     chunks++;
@@ -216,9 +289,7 @@ export async function decompressModelPart(
     }
   } finally {
     decoder?.close();
-    budget.release(
-      RUNTIME_BASELINE_BYTES + sourceCapacity + destinationCapacity,
-    );
+    budget.release(reservedHeap);
   }
 
   if (total === 0) throw unreadableModel("xpress9");
@@ -232,5 +303,11 @@ export async function decompressModelPart(
   }
   pieces.length = 0;
   budget.release(total);
-  return { bytes, compression, chunks };
+  return {
+    bytes,
+    compression,
+    chunks,
+    reservedHeapBytes: reservedHeap,
+    heapUnderpredictions: underpredictions,
+  };
 }
