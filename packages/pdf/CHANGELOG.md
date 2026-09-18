@@ -1,5 +1,21 @@
 # @consultchimps/pdf
 
+## 0.5.0
+
+### Minor Changes
+
+- 4bc99d2: Raise the supported Node.js floor from 22.0.0 to 22.14.0. Continuous
+  integration now tests that exact version: pnpm 11 requires 22.13, and
+  better-sqlite3 13 crashes on the 22.13 patch line, so 22.14.0 is the lowest
+  release on which every published package works.
+
+### Patch Changes
+
+- Updated dependencies [4bc99d2]
+- Updated dependencies [6606d1e]
+  - @consultchimps/core@0.6.0
+  - @consultchimps/files@0.5.0
+
 ## 0.4.3
 
 ### Patch Changes
