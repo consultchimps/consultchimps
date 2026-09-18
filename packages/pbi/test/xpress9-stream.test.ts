@@ -10,6 +10,7 @@ import {
   detectCompression,
   predictedHeapBytes,
 } from "../src/xpress9/stream.js";
+import { loadXpress9 } from "../src/xpress9/runtime.js";
 import type { Xpress9Decoder } from "../src/xpress9/runtime.js";
 import { readPbiTables } from "../src/pipeline.js";
 import { FETCHED, FIXTURES } from "./oracle.js";
@@ -324,7 +325,9 @@ describe("predictedHeapBytes", () => {
     // the needed figure plus a fifth, rounded up to a page.
     const destination = 64 * 1024 * 1024;
     const predicted = predictedHeapBytes(baseline, 0, destination, baseline);
-    const needed = baseline + destination + 64 * 1024 + destination * 0.01;
+    // Two generations of the buffer, because a regrown one leaves the block it
+    // replaced behind, plus the allocator's own slack.
+    const needed = baseline + 2 * destination + 64 * 1024 + destination * 0.01;
     expect(predicted).toBeGreaterThanOrEqual(Math.ceil(needed * 1.2));
     expect(predicted).toBeLessThan(Math.ceil(needed * 1.2) + page);
   });
@@ -370,4 +373,54 @@ describe("the prediction against the real runtime", () => {
       expect(stream.reservedHeapBytes).toBeGreaterThan(0);
     }, 300_000);
   }
+});
+
+describe("repeated regrowth of both cached buffers", () => {
+  it("stays inside the prediction across many reallocations", async () => {
+    // The review's probe: grow both buffers ten percent at a time, in the
+    // runtime's free-then-allocate order, many steps. Every freed generation
+    // stays in the heap because dlmalloc cannot serve the larger request from
+    // the smaller block it just released, so a single-generation bound was
+    // exceeded. The decode itself is irrelevant here; the allocation happens
+    // first, and a damaged-model refusal after it is expected.
+    const decoder = await loadXpress9();
+    try {
+      let sourceCapacity = 0;
+      let destinationCapacity = 0;
+      let worst = 0;
+      let source = 4096;
+      let destination = 1024 * 1024;
+      for (let step = 0; step < 40; step++) {
+        // Mirror the runtime's doubling, which is what the prediction reads.
+        if (source > sourceCapacity)
+          sourceCapacity = Math.max(source, sourceCapacity * 2);
+        if (destination > destinationCapacity)
+          destinationCapacity = Math.max(destination, destinationCapacity * 2);
+        try {
+          decoder.decompress(new Uint8Array(source), destination);
+        } catch {
+          // The bytes are not a real frame, so the decode refuses. The buffers
+          // were already allocated by then, which is what this measures.
+        }
+        const predicted = predictedHeapBytes(
+          16 * 1024 * 1024,
+          sourceCapacity,
+          destinationCapacity,
+          16 * 1024 * 1024,
+        );
+        const actual = decoder.memoryBytes();
+        worst = Math.max(worst, actual / predicted);
+        expect(
+          actual,
+          `step ${step}: source ${sourceCapacity}, destination ${destinationCapacity}`,
+        ).toBeLessThanOrEqual(predicted);
+        source = Math.ceil(source * 1.1);
+        destination = Math.ceil(destination * 1.1);
+      }
+      // The bound holds with room to spare rather than by a hair.
+      expect(worst).toBeLessThan(1);
+    } finally {
+      decoder.close();
+    }
+  }, 300_000);
 });

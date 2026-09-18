@@ -250,6 +250,13 @@ export async function loadXpress9(
   const grow = (which: "source" | "destination", needed: number): void => {
     const capacity = which === "source" ? sourceCapacity : destinationCapacity;
     if (needed <= capacity) return;
+    // Grow by doubling, never by the exact amount asked for. dlmalloc cannot
+    // satisfy a larger request from the smaller block just freed, so every
+    // regrowth leaves that block behind as fragmentation. Doubling makes the
+    // number of regrowths logarithmic in the largest frame, and it bounds the
+    // debris: under doubling the sum of every earlier generation is below the
+    // current capacity, so the host can predict the heap this produces.
+    const target = Math.max(needed, capacity * 2);
     const current = which === "source" ? sourcePointer : destinationPointer;
     if (current !== 0) module._x9_free(current);
     if (which === "source") {
@@ -259,14 +266,14 @@ export async function loadXpress9(
       destinationPointer = 0;
       destinationCapacity = 0;
     }
-    const pointer = module._x9_malloc(needed);
+    const pointer = module._x9_malloc(target);
     if (pointer === 0) throw memoryExhausted();
     if (which === "source") {
       sourcePointer = pointer;
-      sourceCapacity = needed;
+      sourceCapacity = target;
     } else {
       destinationPointer = pointer;
-      destinationCapacity = needed;
+      destinationCapacity = target;
     }
   };
 

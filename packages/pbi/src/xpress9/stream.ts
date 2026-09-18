@@ -47,15 +47,28 @@ const ALLOCATOR_SLACK_BYTES = 64 * 1024;
 const ALLOCATOR_SLACK_RATIO = 0.01;
 
 /**
+ * Every earlier generation of a buffer is still in the heap. dlmalloc cannot
+ * satisfy a larger request from the smaller block the runtime has just freed,
+ * so each regrowth leaves its predecessor behind as fragmentation. The runtime
+ * grows by doubling, so those predecessors form a geometric series whose sum is
+ * below the current capacity, and counting each capacity twice covers the live
+ * block together with all of its debris.
+ */
+const FRAGMENTATION_FACTOR = 2;
+
+/**
  * A conservative prediction of the linear memory the module will hold once it
  * carries buffers of these capacities.
  *
- * Summing the payloads under-counts, which is the defect this replaces: with
- * `ALLOW_MEMORY_GROWTH` the heap grows geometrically, rounds up to whole pages,
- * and carries allocator overhead, so the capacity that results is larger than
- * the bytes that were asked for. The corpus records 33,554,432 bytes of heap on
- * the largest fixture against about 20.2 MB of payload, and a `peakBytes`
- * between the two would have passed an allocation beyond the bound.
+ * Summing the payloads under-counts twice over. With `ALLOW_MEMORY_GROWTH` the
+ * heap grows geometrically, rounds up to whole pages and carries allocator
+ * overhead; and a buffer that has been regrown leaves every earlier generation
+ * behind it. A probe that regrew both buffers ten percent at a time reached a
+ * 60,424,192-byte heap where a single-generation prediction said 58,130,432.
+ *
+ * The capacities passed here are what the runtime allocated, its doubling
+ * included, so a caller must mirror that growth rule rather than pass the sizes
+ * it asked for.
  */
 export function predictedHeapBytes(
   baseline: number,
@@ -66,7 +79,7 @@ export function predictedHeapBytes(
   const payload = sourceCapacity + destinationCapacity;
   const needed =
     baseline +
-    payload +
+    FRAGMENTATION_FACTOR * payload +
     ALLOCATOR_SLACK_BYTES +
     Math.ceil(payload * ALLOCATOR_SLACK_RATIO);
   // A heap that already holds this much does not grow, so the geometric step
@@ -208,8 +221,15 @@ export async function decompressModelPart(
     // out-of-memory. The prediction covers the linear memory the module will
     // hold once it carries buffers this frame's sizes imply, and it is charged
     // before the call that would allocate them.
-    sourceCapacity = Math.max(sourceCapacity, frame.compressedSize);
-    destinationCapacity = Math.max(destinationCapacity, frame.uncompressedSize);
+    // Mirror the runtime's own growth rule, which doubles rather than taking
+    // the exact size asked for, so these track what it actually allocated.
+    if (frame.compressedSize > sourceCapacity)
+      sourceCapacity = Math.max(frame.compressedSize, sourceCapacity * 2);
+    if (frame.uncompressedSize > destinationCapacity)
+      destinationCapacity = Math.max(
+        frame.uncompressedSize,
+        destinationCapacity * 2,
+      );
     chargeHeap(
       predictedHeapBytes(
         RUNTIME_BASELINE_BYTES,
