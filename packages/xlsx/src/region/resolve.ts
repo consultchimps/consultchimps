@@ -29,6 +29,7 @@ import type {
 } from "../model/types.js";
 import {
   detectHeaderRow,
+  headerCellName,
   profileWorksheet,
   regionColumns,
 } from "./header-detection.js";
@@ -74,8 +75,11 @@ function findHeaderCell(
       column <= used.end.column;
       column += 1
     ) {
-      const text = worksheet.cellText({ column, row });
-      if (text !== undefined && normalizeHeader(text) === target) {
+      // Matched by the name the cell gives its column, the spelling the
+      // inspection reports, so a column named from the inspection is found:
+      // a boolean header is `true`, not the stored `1`.
+      const name = headerCellName(worksheet, { column, row });
+      if (name !== "" && normalizeHeader(name) === target) {
         return { column, row };
       }
     }

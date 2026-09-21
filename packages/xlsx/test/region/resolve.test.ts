@@ -654,6 +654,35 @@ describe("resolveRegions: { sheet }", () => {
     );
     expect(region?.headerRow).toBe(2);
   });
+
+  it("finds a column by the name the inspection gives it, whatever the cell's type", async () => {
+    // A boolean header cell is stored as 1 and named `true`; a numeric one
+    // stored as 1E3 is named 1000. The search matches the name, so a column
+    // chosen from an inspection is found by every selector.
+    const workbook = new FakeWorkbookModel({
+      sheets: [
+        {
+          grid: [
+            [{ text: "1", type: "b" }, { text: "1E3" }, "Region"],
+            ["yes", 5, "north"],
+          ],
+          name: "Data",
+        },
+      ],
+    });
+
+    const [byName] = await resolveRegions(workbook, { sheet: "Data" }, "true");
+    expect(byName?.columns.map((column) => column.name)).toEqual([
+      "true",
+      "1000",
+      "Region",
+    ]);
+    const [numeric] = await resolveRegions(workbook, { find: "1000" }, "1000");
+    expect(numeric?.headerRow).toBe(1);
+    await expect(
+      resolveRegions(workbook, { sheet: "Data" }, "1"),
+    ).rejects.toMatchObject({ code: "XLSX_SPLIT_COLUMN_NOT_FOUND" });
+  });
 });
 
 describe("resolveRegions: { range }", () => {
