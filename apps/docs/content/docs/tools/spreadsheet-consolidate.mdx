@@ -307,17 +307,18 @@ many were.
 
 A count alone cannot tell a title line from a header that leaves most of its
 columns unnamed: `Name` alone above `Alice | North | Open` looks exactly like
-`Report` above `Case_ID | Region | Status`. Reading the first as a title would
-lose a record, so a row above the header is skipped only on evidence that it
-cannot be the header of the block below it: a blank row separates the two, or
-the row holds fewer than a third as many values as the header. A one-value title
-directly above four or more columns is skipped, as is a "Prepared by" line with
-a name beside it directly above seven or more; the same lines set apart from the
-header by a blank row are skipped above any width. Rows that themselves form a
-table, two adjacent rows each holding three or more values, are never skipped,
-so a small table above a wider block stays the table. Whenever the evidence is
-missing, the first row holding a value is the header, as it always was, and no
-row is lost. Override the detection wherever it guesses wrong:
+`Report` above `Case_ID | Region | Status`, and `Name` alone above four or more
+columns is no different. Reading a sparse header as a title would lose a record,
+so a row above the header is skipped only on evidence that it cannot be the
+header of the block below it: a blank row separates the two, or the row is a
+banner, every value on it sitting in a cell merged across two or more columns.
+Rows that themselves form a table, two adjacent rows each holding three or more
+values, are never skipped, so a small table above a wider block stays the table.
+Whenever the evidence is missing, the first row holding a value is the header,
+as it always was, and no row is lost. A title typed into one unmerged cell
+directly above the header, with no blank row between, is the common shape that
+still reads as the header; give it a blank row, or name the header row. Override
+the detection wherever it guesses wrong:
 
 ```bash
 consultchimps sheets consolidate inputs/ \

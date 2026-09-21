@@ -9,7 +9,7 @@ ten populated rows below it, or at most one value fewer, so a report title, a
 merged banner, or a "Prepared by" line above a table four or more columns wide
 no longer becomes the first column name. A row is skipped only on evidence that
 it cannot be the header of the block below it, a blank row between the two or
-fewer than a third as many values as the header holds, and never when the
+every value on it sitting in a cell merged across columns, and never when the
 skipped rows form a table of their own; otherwise the first row holding a value
 stays the header, as it always was, so no data row is ever lost to the
 detection. The inspection's `headerColumns` metric now counts the kept columns.

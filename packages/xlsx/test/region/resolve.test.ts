@@ -655,6 +655,48 @@ describe("resolveRegions: { sheet }", () => {
     expect(region?.headerRow).toBe(2);
   });
 
+  it("skips a banner merged across the columns directly above the header", async () => {
+    const workbook = new FakeWorkbookModel({
+      sheets: [
+        {
+          grid: [
+            ["Quarterly review log", null, null, null],
+            ["Case_ID", "Region", "Owner", "Status"],
+            ["R-1", "north", "Reviewer 1", "open"],
+          ],
+          merges: ["A1:D1"],
+          name: "Data",
+        },
+      ],
+    });
+
+    const [region] = await resolveRegions(workbook, { sheet: "Data" });
+    expect(region?.headerRow).toBe(2);
+    expect(region?.columns.map((column) => column.name)).toEqual([
+      "Case_ID",
+      "Region",
+      "Owner",
+      "Status",
+    ]);
+
+    // The same title typed into one unmerged cell is no evidence: it could
+    // be a header naming one column, so it reads as the header, as before.
+    const unmerged = new FakeWorkbookModel({
+      sheets: [
+        {
+          grid: [
+            ["Quarterly review log", null, null, null],
+            ["Case_ID", "Region", "Owner", "Status"],
+            ["R-1", "north", "Reviewer 1", "open"],
+          ],
+          name: "Data",
+        },
+      ],
+    });
+    const [kept] = await resolveRegions(unmerged, { sheet: "Data" });
+    expect(kept?.headerRow).toBe(1);
+  });
+
   it("finds a column by the name the inspection gives it, whatever the cell's type", async () => {
     // A boolean header cell is stored as 1 and named `true`; a numeric one
     // stored as 1E3 is named 1000. The search matches the name, so a column

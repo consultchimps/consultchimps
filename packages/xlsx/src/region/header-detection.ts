@@ -8,7 +8,8 @@
  * resolver in `resolve.ts`, which the inspection reports through. The rule
  * both apply lives here, once, so that the header row an inspection reports is
  * the header row a consolidation reads from. Each reader supplies what it can
- * see - for every row, how many values it holds - and this module answers.
+ * see - for every populated row, how many values it holds and how many of them
+ * sit in a cell merged across columns - and this module answers.
  *
  * The rule. A row is measured against the fullest of the rows that follow it,
  * up to `HEADER_LOOKAHEAD_ROWS` populated rows down: it qualifies as the
@@ -25,15 +26,17 @@
  * The evidence. By count alone a title line cannot be told from a header that
  * leaves most of its columns unnamed: `Name | | ` above `Alice | North | Open`
  * is one value above three, and so is `Report` above `Case_ID | Region |
- * Status`. Reading the first as a title would take its first record for the
- * header row, and losing a record silently is the one outcome these readers
- * must never produce, so a row above the header is skipped only on evidence
- * that it cannot be the header of the block below:
+ * Status`; and `Name` alone above four or more columns is no different, since
+ * a count is a likelihood and never a proof. Reading a sparse header as a
+ * title would take its first record for the header row, and losing a record
+ * silently is the one outcome these readers must never produce, so a row
+ * above the header is skipped only on structural evidence that it cannot be
+ * the header of the block below:
  *
  * - a blank row lies between it and the header, since a header is never set
  *   apart from its records; or
- * - it holds fewer than a third as many values as the header, since a row
- *   naming fewer than a third of a block's columns is not naming it.
+ * - it is a banner: every value on it sits in a cell merged across two or
+ *   more columns, and a cell spanning columns names none of them.
  *
  * And rows that themselves form a table - two adjacent rows holding three or
  * more values, the would-be header included - are never titles, whatever wider
@@ -90,11 +93,36 @@ export interface RowValueCount {
   readonly row: RowNumber;
   /** Cells on the row holding a value, within the range the caller examined. */
   readonly values: number;
+  /** Of those, the values sitting in a cell merged across two or more columns. */
+  readonly bannerValues: number;
 }
 
 /** Whether a cell holds nothing, by the definition every reader here shares. */
 export function isBlankValue(value: unknown): boolean {
   return value === undefined || value === null || value === "";
+}
+
+/**
+ * The `row:column` keys of the top-left cells of every merged range that
+ * spans two or more columns, in the caller's own numbering. Only that cell
+ * holds the merge's value, so a value cell whose key is here is a banner
+ * value.
+ */
+export function bannerAnchors(
+  ranges: readonly CellRange[],
+): ReadonlySet<string> {
+  const anchors = new Set<string>();
+  for (const range of ranges) {
+    if (range.end.column > range.start.column) {
+      anchors.add(cellKey(range.start.row, range.start.column));
+    }
+  }
+  return anchors;
+}
+
+/** The key `bannerAnchors` uses, for callers building their own set. */
+export function cellKey(row: number, column: number): string {
+  return `${String(row)}:${String(column)}`;
 }
 
 /**
@@ -113,17 +141,18 @@ export function qualifiesAsHeader(values: number, fullest: number): boolean {
 }
 
 /**
- * Whether a row above the header is a title line by the evidence the module
- * comment describes: set apart from the header by a blank row, or naming
- * fewer than a third of the header's columns. Exported for the same reason
- * as `qualifiesAsHeader`.
+ * Whether a populated row above the header is a title line by the evidence
+ * the module comment describes: set apart from the header by a blank row, or
+ * a banner whose every value sits in a cell merged across columns. Exported
+ * for the same reason as `qualifiesAsHeader`.
  */
 export function isTitleLine(
   line: RowValueCount,
-  header: RowValueCount,
   blankRowBetween: boolean,
 ): boolean {
-  return blankRowBetween || line.values * 3 < header.values;
+  return (
+    blankRowBetween || (line.values > 0 && line.bannerValues === line.values)
+  );
 }
 
 /**
@@ -166,7 +195,7 @@ function maySkipTitles(
     // Populated rows number consecutively when no blank row lies between
     // them, so a larger gap in row numbers than in positions is a blank row.
     const blankRowBetween = header.row - line.row > headerIndex - index;
-    if (!isTitleLine(line, header, blankRowBetween)) {
+    if (!isTitleLine(line, blankRowBetween)) {
       return false;
     }
   }
@@ -252,11 +281,13 @@ export function profileWorksheet(
 ): WorksheetProfile {
   const counts: RowValueCount[] = [];
   const lastValueRow = new Map<ColumnIndex, RowNumber>();
+  const banners = bannerAnchors(worksheet.mergedRanges());
   for (const row of rows) {
     if (row.number < used.start.row || row.number > used.end.row) {
       continue;
     }
     let values = 0;
+    let bannerValues = 0;
     for (const cell of row.cells) {
       const column = cell.ref.column;
       if (column < used.start.column || column > used.end.column) {
@@ -266,13 +297,16 @@ export function profileWorksheet(
         continue;
       }
       values += 1;
+      if (banners.has(cellKey(row.number, column))) {
+        bannerValues += 1;
+      }
       const last = lastValueRow.get(column);
       if (last === undefined || last < row.number) {
         lastValueRow.set(column, row.number);
       }
     }
     if (values > 0) {
-      counts.push({ row: row.number, values });
+      counts.push({ bannerValues, row: row.number, values });
     }
   }
   // Stored order is document order, which a hand-written part may leave

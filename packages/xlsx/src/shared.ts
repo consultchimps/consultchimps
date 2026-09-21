@@ -36,6 +36,7 @@ import type { WorksheetModel } from "./model/types.js";
 import { WorkbookRead } from "./operations/read-model.js";
 import { preserveWorkbookWithFilteredExcelTable } from "./preserve-table-split.js";
 import {
+  cellKey,
   countTitleRows,
   detectHeaderRow,
   isBlankValue,
@@ -844,8 +845,17 @@ function profileRange(
   const width = range.e.c - range.s.c + 1;
   const counts: RowValueCount[] = [];
   const lastValueRow: number[] = new Array<number>(width).fill(-1);
+  // The top-left cells of the merges spanning columns, in the engine's
+  // zero-based numbering: a value there is a banner value.
+  const banners = new Set<string>();
+  for (const merge of worksheet["!merges"] ?? []) {
+    if (merge.e.c > merge.s.c) {
+      banners.add(cellKey(merge.s.r, merge.s.c));
+    }
+  }
   for (let rowIndex = range.s.r; rowIndex <= range.e.r; rowIndex += 1) {
     let values = 0;
+    let bannerValues = 0;
     for (let offset = 0; offset < width; offset += 1) {
       const value = cellToPrimitive(
         getCell(worksheet, rowIndex, range.s.c + offset),
@@ -855,10 +865,13 @@ function profileRange(
         continue;
       }
       values += 1;
+      if (banners.has(cellKey(rowIndex, range.s.c + offset))) {
+        bannerValues += 1;
+      }
       lastValueRow[offset] = rowIndex;
     }
     if (values > 0) {
-      counts.push({ row: rowIndex, values });
+      counts.push({ bannerValues, row: rowIndex, values });
     }
   }
   return { counts, lastValueRow };

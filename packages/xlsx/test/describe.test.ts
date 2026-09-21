@@ -250,6 +250,7 @@ describe("describeWorkbook", () => {
         name: "Review Log",
         rows: [
           ["Quarterly review log", null, null, null],
+          [null, null, null, null],
           ["Case_ID", "Region", "Failed Checks", "Owner"],
           ["R-1", "north", 5, "Reviewer 1"],
           ["R-2", "south", 7, "Reviewer 2"],
@@ -257,12 +258,12 @@ describe("describeWorkbook", () => {
       },
     ]);
 
-    // Without a header row the title is skipped: it holds one value above a
-    // four-column table, fewer than a third of it, so the first row that is
-    // nearly as full as the fullest one is the real header. The inspection
-    // reports that row because it is the row a consolidation would read from.
+    // Without a header row the title is skipped: a blank row sets it apart
+    // from the four-column table, so the first row that is nearly as full as
+    // the fullest one is the real header. The inspection reports that row
+    // because it is the row a consolidation would read from.
     const detected = await describeWorkbook(input);
-    expect(detected.description.sheets[0]?.headerRow).toBe(2);
+    expect(detected.description.sheets[0]?.headerRow).toBe(3);
     expect(
       detected.description.sheets[0]?.columns.map((column) => column.header),
     ).toEqual(["Case_ID", "Region", "Failed Checks", "Owner"]);
@@ -277,9 +278,9 @@ describe("describeWorkbook", () => {
       ),
     ).toEqual(["Quarterly review log", "column_2", "column_3", "column_4"]);
 
-    const configured = await describeWorkbook(input, { headerRow: 2 });
+    const configured = await describeWorkbook(input, { headerRow: 3 });
     const sheet = configured.description.sheets[0];
-    expect(sheet?.headerRow).toBe(2);
+    expect(sheet?.headerRow).toBe(3);
     expect(sheet?.columns.map((column) => column.header)).toEqual([
       "Case_ID",
       "Region",
@@ -288,7 +289,7 @@ describe("describeWorkbook", () => {
     ]);
     expect(sheet?.dataRowCount).toBe(2);
     // The used range is unchanged by the header choice; only the preview moves.
-    expect(sheet?.rowCount).toBe(4);
+    expect(sheet?.rowCount).toBe(5);
   });
 
   it("bounds sample values and rejects an out-of-range request", async () => {
@@ -2126,8 +2127,8 @@ describe("worksheets with title rows and spacer columns", () => {
     ]);
     expect(table?.rows).toHaveLength(2);
 
-    // A title above year columns is still skipped: a single-value line above
-    // a header of three or more values.
+    // A title set apart from year columns by a blank row is skipped, and the
+    // years name their columns as numbers.
     const [years] = await readWorkbookTablesBytes({
       name: "years.xlsx",
       bytes: workbookBytes([
@@ -2135,6 +2136,7 @@ describe("worksheets with title rows and spacer columns", () => {
           name: "Years",
           rows: [
             ["Headcount by year", null, null, null],
+            [null, null, null, null],
             ["Region", 2023, 2024, 2025],
             ["north", 10, 12, 14],
           ],
@@ -2142,7 +2144,50 @@ describe("worksheets with title rows and spacer columns", () => {
       ]),
     });
     expect(years?.columns).toEqual(["Region", "2023", "2024", "2025"]);
-    expect(years?.source?.firstDataRow).toBe(3);
+    expect(years?.source?.firstDataRow).toBe(4);
+  });
+
+  it("skips a banner merged across the columns directly above the header, on both readers", async () => {
+    const banner: XLSX.WorkSheet = {
+      "!merges": [{ e: { c: 3, r: 0 }, s: { c: 0, r: 0 } }],
+      "!ref": "A1:D3",
+      A1: { t: "s", v: "Quarterly review log" },
+      A2: { t: "s", v: "Case_ID" },
+      B2: { t: "s", v: "Region" },
+      C2: { t: "s", v: "Owner" },
+      D2: { t: "s", v: "Status" },
+      A3: { t: "s", v: "R-1" },
+      B3: { t: "s", v: "north" },
+      C3: { t: "s", v: "Reviewer 1" },
+      D3: { t: "s", v: "open" },
+    };
+    const bytes = new Uint8Array(
+      XLSX.write(
+        { SheetNames: ["Data"], Sheets: { Data: banner } },
+        { bookType: "xlsx", type: "array" },
+      ) as ArrayBuffer,
+    );
+
+    const [report] = await readWorkbookWorksheetsBytes({
+      name: "banner.xlsx",
+      bytes,
+    });
+    expect(report?.region?.headerRow).toBe(2);
+    expect(report?.skippedTitleRows).toBe(1);
+    expect(report?.table?.columns).toEqual([
+      "Case_ID",
+      "Region",
+      "Owner",
+      "Status",
+    ]);
+    const { description } = await describeWorkbookBytes({
+      name: "banner.xlsx",
+      bytes,
+    });
+    expect(description.sheets[0]?.headerRow).toBe(2);
+    expect(
+      description.sheets[0]?.columns.map((column) => column.header),
+    ).toEqual(report?.table?.columns);
   });
 
   it("never reads a small table above a wider one as title rows", async () => {
