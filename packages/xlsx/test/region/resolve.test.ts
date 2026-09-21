@@ -576,6 +576,84 @@ describe("resolveRegions: { sheet }", () => {
       { index: 1, name: "" },
     ]);
   });
+
+  it("looks for the column on the detected header row before anywhere else", async () => {
+    // A title block that repeats the column's name above the real header:
+    // the topmost match would key on the title line. The detected header row
+    // is looked at first, so the split keys on the row the inspection
+    // reports, with every selector.
+    const workbook = new FakeWorkbookModel({
+      sheets: [
+        {
+          grid: [
+            ["Region", "North", null, null],
+            [null, null, null, null],
+            ["Case_ID", "Region", "Owner", "Status"],
+            ["R-1", "north", "Reviewer 1", "open"],
+          ],
+          name: "Data",
+        },
+      ],
+    });
+
+    const [bySheet] = await resolveRegions(
+      workbook,
+      { sheet: "Data" },
+      "Region",
+    );
+    expect(bySheet?.headerRow).toBe(3);
+    expect(bySheet?.columns.map((column) => column.name)).toEqual([
+      "Case_ID",
+      "Region",
+      "Owner",
+      "Status",
+    ]);
+    const [byFind] = await resolveRegions(
+      workbook,
+      { find: "Region" },
+      "Region",
+    );
+    expect(byFind?.headerRow).toBe(3);
+    const [everywhere] = await resolveRegions(
+      workbook,
+      "all-worksheets",
+      "Region",
+    );
+    expect(everywhere?.headerRow).toBe(3);
+    // A declared header row is never second-guessed.
+    const [declared] = await resolveRegions(
+      workbook,
+      { headerRow: 1, sheet: "Data" },
+      "Region",
+    );
+    expect(declared?.headerRow).toBe(1);
+  });
+
+  it("falls back to the topmost match when the detected header row lacks the column", async () => {
+    // The rule places the header on row 1 here (a one-value line directly
+    // above a three-column header is not evidence of a title), so the column
+    // is not on the detected row; the whole-sheet search still finds it on
+    // row 2, as it always did.
+    const workbook = new FakeWorkbookModel({
+      sheets: [
+        {
+          grid: [
+            ["Quarterly review log", null, null],
+            ["Case_ID", "Region", "Status"],
+            ["R-1", "north", "open"],
+          ],
+          name: "Data",
+        },
+      ],
+    });
+
+    const [region] = await resolveRegions(
+      workbook,
+      { sheet: "Data" },
+      "Region",
+    );
+    expect(region?.headerRow).toBe(2);
+  });
 });
 
 describe("resolveRegions: { range }", () => {

@@ -51,9 +51,10 @@ interface HeaderCell {
 }
 
 /**
- * Port of `findSplitHeader`. With `configuredHeaderRow` only that row is
- * examined, so a header row override never silently matches a data row that
- * happens to repeat the header text.
+ * Port of `findSplitHeader`: the topmost, then leftmost, cell whose text
+ * matches. With `configuredHeaderRow` only that row is examined, so a header
+ * row override never silently matches a data row that happens to repeat the
+ * header text.
  */
 function findHeaderCell(
   worksheet: WorksheetModel,
@@ -80,6 +81,42 @@ function findHeaderCell(
     }
   }
   return undefined;
+}
+
+/**
+ * The header cell for `headerText`, looked for first on the row the shared
+ * header rule detects and only then anywhere on the sheet.
+ *
+ * A title block often repeats a column's name - `Region | North` above a
+ * header that names a `Region` column - and the topmost match would key an
+ * operation on the title line while the inspection reports the real header
+ * below it. Looking on the detected header row first keeps the two answers
+ * the same wherever the column is there. The whole-sheet search stays as the
+ * fallback, so a sheet whose header the rule cannot place (a title directly
+ * above a narrow header, say) still resolves the way it always did. A declared
+ * header row is never second-guessed: only that row is examined.
+ */
+function locateHeaderCell(
+  worksheet: WorksheetModel,
+  headerText: string,
+  configuredHeaderRow: RowNumber | undefined,
+): HeaderCell | undefined {
+  if (configuredHeaderRow !== undefined) {
+    return findHeaderCell(worksheet, headerText, configuredHeaderRow);
+  }
+  const used = worksheet.usedRange;
+  const detected =
+    used === undefined
+      ? undefined
+      : detectHeaderRow(
+          profileWorksheet(worksheet, worksheet.rows(), used).counts,
+        );
+  return (
+    (detected === undefined
+      ? undefined
+      : findHeaderCell(worksheet, headerText, detected)) ??
+    findHeaderCell(worksheet, headerText, undefined)
+  );
 }
 
 /**
@@ -312,7 +349,7 @@ async function resolveSheet(
       : { kind: "declared-header" };
 
   if (column !== undefined && column.trim() !== "") {
-    const header = findHeaderCell(worksheet, column, headerRow);
+    const header = locateHeaderCell(worksheet, column, headerRow);
     if (!header) {
       throw columnNotFound(workbook, column, headerRow);
     }
@@ -391,7 +428,7 @@ function searchSheets(
     if (!worksheet) {
       continue;
     }
-    const anchor = findHeaderCell(worksheet, anchorText, undefined);
+    const anchor = locateHeaderCell(worksheet, anchorText, undefined);
     if (!anchor) {
       continue;
     }
