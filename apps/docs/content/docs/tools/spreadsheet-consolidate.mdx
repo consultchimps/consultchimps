@@ -86,7 +86,14 @@ CLIENT
 
 The first spelling encountered becomes the output header. Missing values are
 written as blank cells. Duplicate headers inside one worksheet gain a numeric
-suffix, and blank headers become `column_1`, `column_2`, and so on.
+suffix, and a blank header over a column that holds values becomes `column_1`,
+`column_2`, and so on, numbered by the column's position among the columns that
+were kept.
+
+A column that holds nothing at all, neither a header nor a value in any row
+under the header, is a spacer: the empty column a layout leaves between two
+blocks. Spacer columns never reach the output, and the result reports how many
+were left out.
 
 ### Match headers that differ in spacing or punctuation
 
@@ -291,8 +298,22 @@ Worksheet matching is case-insensitive. Include hidden worksheets with
 
 ## Choose a header row
 
-The first row containing a value is treated as the header. Override that
-behavior for workbooks with title blocks:
+The header row is detected. Each row is measured against the fullest of the ten
+populated rows below it: the first row that holds more than half as many values
+as that row, or at most one value fewer, is the header. Rows above it that hold
+anything, such as a report title, a merged banner, or a "Prepared by" line with
+a name beside it, are title rows. They are skipped, and the result reports how
+many were.
+
+A count alone cannot tell a title line from a header that leaves half its
+columns unnamed, so rows are skipped only when the row that becomes the header
+holds nothing but text, as column names do, or when every skipped row holds a
+single value and the header holds at least three, which is what lets a title be
+skipped above year or month columns. Whenever that is not so, the first row
+holding a value is the header, as it always was, and no row is lost. The same
+holds when a title line holds as many values as the header: one value above a
+one- or two-column table, or two above a three-column one. Override the
+detection wherever it guesses wrong:
 
 ```bash
 consultchimps sheets consolidate inputs/ \
@@ -300,7 +321,11 @@ consultchimps sheets consolidate inputs/ \
   --output outputs/consolidated.xlsx
 ```
 
-`--header-row` is one-based, matching the row number shown in Excel.
+`--header-row` is one-based, matching the row number shown in Excel, and is
+never second-guessed: the row you name is the header, whatever sits above it.
+[Inspecting a workbook](/docs/tools/workbook-inspect) shows the header row and
+the columns a consolidation will use, so you can check the detection before
+running one.
 
 ## Output controls
 

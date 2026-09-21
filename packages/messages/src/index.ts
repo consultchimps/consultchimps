@@ -278,6 +278,22 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
         `ConsultChimps read ${quantity(metric(result, "inputFiles"), "Excel file")} and combined ${quantity(metric(result, "inputTables"), "visible worksheet")}.`,
         `The finished workbook contains ${quantity(metric(result, "outputRows"), "data row")} arranged across ${quantity(metric(result, "outputColumns"), "column")}.`,
       ];
+      // Title rows above a header and spacer columns between blocks are left
+      // out by design, so they are reported as a fact rather than a warning,
+      // and only when a worksheet actually had some.
+      const skippedRows = metric(result, "skippedTitleRows");
+      const skippedColumns = metric(result, "skippedSpacerColumns");
+      if (skippedRows > 0 || skippedColumns > 0) {
+        const skipped = [
+          skippedRows > 0
+            ? `${quantity(skippedRows, "title row")} found above the column headers`
+            : undefined,
+          skippedColumns > 0
+            ? `${quantity(skippedColumns, "empty spacer column")}`
+            : undefined,
+        ].filter((part) => part !== undefined);
+        lines.push(`It left out ${skipped.join(" and ")}.`);
+      }
       // A column mapping folds source headers into canonical columns, so the
       // sentence below is reported only when one did; a plain consolidation
       // says nothing about it.
@@ -500,6 +516,8 @@ const metricLabels: Readonly<Record<string, string>> = {
   placeholderOccurrences: "Placeholder occurrences per template slide",
   replacements: "Placeholder replacements made",
   skippedRows: "Rows skipped",
+  skippedSpacerColumns: "Empty spacer columns left out",
+  skippedTitleRows: "Title rows above the column headers left out",
   rowsDeleted: "Rows deleted across output workbooks",
   sheetProtectionsRemoved: "Worksheet protections removed",
   sheetsCopiedUnchanged: "Worksheets copied without filtering",

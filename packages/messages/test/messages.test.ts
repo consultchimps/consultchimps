@@ -207,6 +207,72 @@ describe("human-readable CLI output", () => {
     },
   );
 
+  it("says what a consolidation left out, and nothing when it left out nothing", () => {
+    const both = formatHumanResult(
+      result(
+        "sheets.consolidate",
+        {
+          inputFiles: 2,
+          inputTables: 2,
+          outputColumns: 5,
+          outputRows: 10,
+          skippedSpacerColumns: 1,
+          skippedTitleRows: 3,
+          suggestedColumns: 0,
+          unmappedColumns: 0,
+        },
+        ["combined.xlsx"],
+      ),
+      cli,
+    );
+    expect(both).toContain(
+      "It left out 3 title rows found above the column headers and 1 empty spacer column.",
+    );
+    expect(both).toContain("Title rows above the column headers left out: 3");
+    expect(both).toContain("Empty spacer columns left out: 1");
+
+    const rowsOnly = formatHumanResult(
+      result(
+        "sheets.consolidate",
+        {
+          inputFiles: 1,
+          inputTables: 1,
+          outputColumns: 5,
+          outputRows: 10,
+          skippedSpacerColumns: 0,
+          skippedTitleRows: 1,
+          suggestedColumns: 0,
+          unmappedColumns: 0,
+        },
+        ["combined.xlsx"],
+      ),
+      cli,
+    );
+    expect(rowsOnly).toContain(
+      "It left out 1 title row found above the column headers.",
+    );
+    expect(rowsOnly).not.toContain("spacer column.");
+
+    const nothing = formatHumanResult(
+      result(
+        "sheets.consolidate",
+        {
+          inputFiles: 1,
+          inputTables: 1,
+          outputColumns: 5,
+          outputRows: 10,
+          skippedSpacerColumns: 0,
+          skippedTitleRows: 0,
+          suggestedColumns: 0,
+          unmappedColumns: 0,
+        },
+        ["combined.xlsx"],
+      ),
+      cli,
+    );
+    expect(nothing).not.toContain("It left out");
+  });
+
   it("explains a consolidation that mapped columns and drafted a mapping", () => {
     const mapped = formatHumanResult(
       result(

@@ -66,6 +66,7 @@ import {
   CONSOLIDATE_OPERATION,
   CONSOLIDATED_SHEET_NAME,
   consolidateTables,
+  consolidationInputs,
   createMergeState,
   finishMergedWorkbook,
   INSPECT_OPERATION,
@@ -93,8 +94,8 @@ import {
   withoutWorkbookExtension,
   workbookExcelTables,
   workbookNamedRanges,
-  workbookTables,
   workbookWorksheetRecords,
+  workbookWorksheetReports,
   yieldToEventLoop,
   type ConsolidateWorkbooksMetric,
   type MergeWorkbooksMetric,
@@ -731,10 +732,12 @@ export async function consolidateWorkbooksBytes(
   )}${WORKBOOK_EXTENSION}`;
 
   const tables: Table[] = [];
+  let skippedTitleRows = 0;
+  let skippedSpacerColumns = 0;
   for (const [index, input] of options.inputs.entries()) {
     throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
-    tables.push(
-      ...workbookTables(
+    const read = consolidationInputs(
+      workbookWorksheetReports(
         parseWorkbookBytes(input.bytes, input.name, {
           details: { source: input.name },
         }),
@@ -745,6 +748,9 @@ export async function consolidateWorkbooksBytes(
         options,
       ),
     );
+    tables.push(...read.tables);
+    skippedTitleRows += read.skippedTitleRows;
+    skippedSpacerColumns += read.skippedSpacerColumns;
     options.onProgress?.({
       operation: CONSOLIDATE_OPERATION,
       stage: "reading-workbooks",
@@ -828,6 +834,8 @@ export async function consolidateWorkbooksBytes(
       inputTables: tables.length,
       outputColumns: table.columns.length,
       outputRows: table.rows.length,
+      skippedSpacerColumns,
+      skippedTitleRows,
       suggestedColumns: suggestion?.mapping.columns.length ?? 0,
       unmappedColumns: unmappedColumns.length,
     },
@@ -926,14 +934,16 @@ export async function readWorkbookTablesBytes(
   input: WorkbookInputBytes,
   options: ReadWorkbookOptions = {},
 ): Promise<Table[]> {
-  return workbookTables(
-    parseWorkbookBytes(input.bytes, input.name, {
-      details: { source: input.name },
-    }),
-    await readWorkbookDates(input.bytes, input.name, { source: input.name }),
-    input.name,
-    options,
-  );
+  return consolidationInputs(
+    workbookWorksheetReports(
+      parseWorkbookBytes(input.bytes, input.name, {
+        details: { source: input.name },
+      }),
+      await readWorkbookDates(input.bytes, input.name, { source: input.name }),
+      input.name,
+      options,
+    ),
+  ).tables;
 }
 
 /**

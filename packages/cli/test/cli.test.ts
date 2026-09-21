@@ -787,6 +787,57 @@ describe("consultchimps CLI", () => {
     expect(missingFile.stdout).toBe("");
   });
 
+  it("reports the title rows and spacer columns a consolidation left out", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "titled.xlsx");
+    const output = path.join(directory, "outputs", "consolidated.xlsx");
+
+    await writeWorkbook(input, [
+      [
+        "Review Log",
+        [
+          ["Quarterly review log", null, null, null, null],
+          ["Prepared by", "Reviewer 1", null, null, null],
+          [null, null, null, null, null],
+          ["Case_ID", "Region", null, "Failed Checks", "Owner"],
+          ["R-1", "north", null, 5, "Reviewer 2"],
+          ["R-2", "south", null, 7, "Reviewer 3"],
+        ],
+      ],
+    ]);
+
+    const machine = await runCli([
+      "--json",
+      "sheets",
+      "consolidate",
+      input,
+      "--output",
+      output,
+    ]);
+    expect(parseJsonSuccess(machine.stdout).metrics).toMatchObject({
+      inputTables: 1,
+      // Four columns kept, plus the three provenance columns; the empty
+      // column between Region and Failed Checks never reaches the output.
+      outputColumns: 7,
+      outputRows: 2,
+      skippedSpacerColumns: 1,
+      skippedTitleRows: 2,
+    });
+
+    const human = await runCli([
+      "sheets",
+      "consolidate",
+      input,
+      "--output",
+      output,
+      "--force",
+    ]);
+    expect(human.exitCode).toBe(0);
+    expect(human.stdout).toContain(
+      "It left out 2 title rows found above the column headers and 1 empty spacer column.",
+    );
+  });
+
   it("consolidates workbook globs through the built command", async () => {
     const directory = await createTemporaryDirectory();
     const inputs = path.join(directory, "inputs");

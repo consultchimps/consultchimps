@@ -35,6 +35,13 @@ import type { WorkbookModel } from "./model/index.js";
 import type { WorksheetModel } from "./model/types.js";
 import { WorkbookRead } from "./operations/read-model.js";
 import { preserveWorkbookWithFilteredExcelTable } from "./preserve-table-split.js";
+import {
+  countTitleRows,
+  detectHeaderRow,
+  isBlankValue,
+  isNonTextValue,
+  type RowValueCount,
+} from "./region/header-detection.js";
 import type { AllWorksheetSplitMetric } from "./split/all-worksheet.js";
 import { splitOutputFilenames } from "./split/names.js";
 import { stripPivotParts } from "./tier1/pivot.js";
@@ -74,6 +81,8 @@ export type ConsolidateWorkbooksMetric =
   | "inputTables"
   | "outputColumns"
   | "outputRows"
+  | "skippedSpacerColumns"
+  | "skippedTitleRows"
   | "suggestedColumns"
   | "unmappedColumns";
 export type ConsolidateWorkbooksPlanMetric = "inputFiles" | "outputFiles";
@@ -441,13 +450,18 @@ export interface WorkbookExcelTable extends Table {
 
 /**
  * The rectangle a worksheet read actually covered: the header row it keyed on
- * and the rows and columns it took values from, all one-based except the
+ * and the rows and columns it examined for values, all one-based except the
  * columns, which are zero-based as everywhere else in this package.
  *
  * It travels with the table so that anything asking a further question about
  * the same read asks it about the same rectangle. The alternative, resolving
  * the region a second time somewhere else, is how two answers about one
  * worksheet start disagreeing.
+ *
+ * The rectangle spans the worksheet's used columns, spacer columns included:
+ * a spacer is a column the read examined and found nothing in, so it is
+ * inside what the read covered even though the table carries no column for
+ * it. `skippedSpacerColumns` on the report says how many there were.
  */
 export interface WorksheetRegion {
   readonly headerRow: number;
@@ -467,6 +481,18 @@ export interface WorksheetTableReport {
   table: Table | undefined;
   /** The rectangle the table was read from, absent when there is no table. */
   region: WorksheetRegion | undefined;
+  /**
+   * Rows above the header row that held a value and were therefore left out
+   * of the table: a report title, a "Prepared by" line, a merged banner. Zero
+   * when the worksheet yielded no table.
+   */
+  skippedTitleRows: number;
+  /**
+   * Columns of the used range that held nothing in the header row or in any
+   * row under it, and were therefore left out of the table. Zero when the
+   * worksheet yielded no table.
+   */
+  skippedSpacerColumns: number;
 }
 
 export interface WorkbookNamedRange extends Table {
@@ -787,10 +813,76 @@ function getCell(
     XLSX.CellObject | undefined;
 }
 
-function findHeaderRow(
+/**
+ * One walk over the used range, in the engine's zero-based numbering: what
+ * each row holds, for the header rule, and the last row each column holds a
+ * value on, for the spacer rule. The header rule in
+ * `src/region/header-detection.ts` reads the counts; it is the same rule the
+ * region resolver applies to the document model, so the header row an
+ * inspection reports is the one this reader keys on.
+ */
+interface RangeProfile {
+  /** One entry per row of the range, top to bottom. */
+  readonly counts: readonly RowValueCount[];
+  /**
+   * Per column offset from `range.s.c`, the last row index holding a value,
+   * or -1 when the column holds none. A column is a spacer for a header row
+   * when its last value sits above that row.
+   */
+  readonly lastValueRow: readonly number[];
+}
+
+function profileRange(
   worksheet: XLSX.WorkSheet,
   range: XLSX.Range,
   dates: SheetDates,
+): RangeProfile {
+  const width = range.e.c - range.s.c + 1;
+  const counts: RowValueCount[] = [];
+  const lastValueRow: number[] = new Array<number>(width).fill(-1);
+  for (let rowIndex = range.s.r; rowIndex <= range.e.r; rowIndex += 1) {
+    let values = 0;
+    let nonTextValues = 0;
+    for (let offset = 0; offset < width; offset += 1) {
+      const cell = getCell(worksheet, rowIndex, range.s.c + offset);
+      const value = cellToPrimitive(cell, dates(rowIndex, range.s.c + offset));
+      if (isBlankValue(value)) {
+        continue;
+      }
+      values += 1;
+      if (isNonTextValue(value, cell?.t)) {
+        nonTextValues += 1;
+      }
+      lastValueRow[offset] = rowIndex;
+    }
+    counts.push({ nonTextValues, row: rowIndex, values });
+  }
+  return { counts, lastValueRow };
+}
+
+/**
+ * The column offsets a read from `headerRowIndex` keeps: every column holding
+ * a value in the header row or under it. The rest are spacers.
+ */
+function keptColumnOffsets(
+  profile: RangeProfile,
+  headerRowIndex: number,
+): number[] {
+  const kept: number[] = [];
+  profile.lastValueRow.forEach((lastRow, offset) => {
+    if (lastRow >= headerRowIndex) {
+      kept.push(offset);
+    }
+  });
+  return kept;
+}
+
+/**
+ * The zero-based header row: the declared one, validated and never
+ * second-guessed, or the one the shared rule detects from `counts`.
+ */
+function findHeaderRow(
+  counts: readonly RowValueCount[],
   configuredRow?: number,
 ): number | undefined {
   if (configuredRow !== undefined) {
@@ -803,25 +895,7 @@ function findHeaderRow(
     }
     return configuredRow - 1;
   }
-
-  for (let rowIndex = range.s.r; rowIndex <= range.e.r; rowIndex += 1) {
-    for (
-      let columnIndex = range.s.c;
-      columnIndex <= range.e.c;
-      columnIndex += 1
-    ) {
-      if (
-        cellToPrimitive(
-          getCell(worksheet, rowIndex, columnIndex),
-          dates(rowIndex, columnIndex),
-        ) !== null
-      ) {
-        return rowIndex;
-      }
-    }
-  }
-
-  return undefined;
+  return detectHeaderRow(counts);
 }
 
 function isVisibleSheet(workbook: XLSX.WorkBook, sheetName: string): boolean {
@@ -831,25 +905,29 @@ function isVisibleSheet(workbook: XLSX.WorkBook, sheetName: string): boolean {
   return (metadata?.Hidden ?? 0) === 0;
 }
 
+/** One worksheet read as a table, with what the read left out on the way. */
+interface WorksheetTableRead {
+  table: Table;
+  region: WorksheetRegion;
+  skippedTitleRows: number;
+  skippedSpacerColumns: number;
+}
+
 function worksheetToTable(
   sourceFile: string,
   sheetName: string,
   worksheet: XLSX.WorkSheet,
   dates: SheetDates,
   configuredHeaderRow?: number,
-): { table: Table; region: WorksheetRegion } | undefined {
+): WorksheetTableRead | undefined {
   const reference = worksheet["!ref"];
   if (!reference) {
     return undefined;
   }
 
   const range = XLSX.utils.decode_range(reference);
-  const headerRowIndex = findHeaderRow(
-    worksheet,
-    range,
-    dates,
-    configuredHeaderRow,
-  );
+  const profile = profileRange(worksheet, range, dates);
+  const headerRowIndex = findHeaderRow(profile.counts, configuredHeaderRow);
   if (
     headerRowIndex === undefined ||
     headerRowIndex < range.s.r ||
@@ -858,42 +936,43 @@ function worksheetToTable(
     return undefined;
   }
 
-  const rawHeaders: Array<string | null> = [];
-  for (
-    let columnIndex = range.s.c;
-    columnIndex <= range.e.c;
-    columnIndex += 1
-  ) {
-    const value = cellToPrimitive(
-      getCell(worksheet, headerRowIndex, columnIndex),
-      dates(headerRowIndex, columnIndex),
-    );
-    rawHeaders.push(value === null ? null : String(value));
-  }
+  // Spacer columns are left out; the rest are named by their position among
+  // the columns that were kept, which is what `column_3` means to a reader of
+  // the output: the third column of this table.
+  const width = range.e.c - range.s.c + 1;
+  const keptOffsets = keptColumnOffsets(profile, headerRowIndex);
+  const columns = uniqueHeaders(
+    keptOffsets.map((offset) => {
+      const value = cellToPrimitive(
+        getCell(worksheet, headerRowIndex, range.s.c + offset),
+        dates(headerRowIndex, range.s.c + offset),
+      );
+      return isBlankValue(value) ? null : String(value);
+    }),
+  );
 
-  const columns = uniqueHeaders(rawHeaders);
   const rows: TableRow[] = [];
   const sourceRows: number[] = [];
-
   for (
     let rowIndex = headerRowIndex + 1;
     rowIndex <= range.e.r;
     rowIndex += 1
   ) {
-    const values = columns.map((_, index) =>
+    // A row holding values only in spacer columns cannot exist: a column with
+    // a value under the header is not a spacer. So a blank row here is blank
+    // across the whole used width, as it was before spacers were left out.
+    const values = keptOffsets.map((offset) =>
       cellToPrimitive(
-        getCell(worksheet, rowIndex, range.s.c + index),
-        dates(rowIndex, range.s.c + index),
+        getCell(worksheet, rowIndex, range.s.c + offset),
+        dates(rowIndex, range.s.c + offset),
       ),
     );
-
-    if (values.every((value) => value === null || value === "")) {
+    if (values.every(isBlankValue)) {
       continue;
     }
-
     const row: TableRow = {};
-    columns.forEach((column, index) => {
-      row[column] = values[index] ?? null;
+    columns.forEach((column, position) => {
+      row[column] = values[position] ?? null;
     });
     rows.push(row);
     sourceRows.push(rowIndex + 1);
@@ -913,6 +992,8 @@ function worksheetToTable(
       startColumn: range.s.c,
       endColumn: range.e.c,
     },
+    skippedSpacerColumns: width - keptOffsets.length,
+    skippedTitleRows: countTitleRows(profile.counts, headerRowIndex),
     table: {
       columns,
       rows,
@@ -1165,10 +1246,42 @@ export function workbookWorksheetReports(
       sheet: sheetName,
       table: read?.table,
       region: read?.region,
+      skippedTitleRows: read?.skippedTitleRows ?? 0,
+      skippedSpacerColumns: read?.skippedSpacerColumns ?? 0,
     });
   }
 
   return reports;
+}
+
+/** What a consolidation takes from a workbook's reports: the tables, and what the reads left out. */
+export interface ConsolidationInputs {
+  tables: Table[];
+  skippedTitleRows: number;
+  skippedSpacerColumns: number;
+}
+
+/**
+ * The tables among `reports`, in worksheet order, with the title rows and
+ * spacer columns their reads left out summed up, so both consolidation
+ * surfaces report the same counts from the same reads.
+ */
+export function consolidationInputs(
+  reports: readonly WorksheetTableReport[],
+): ConsolidationInputs {
+  const inputs: ConsolidationInputs = {
+    tables: [],
+    skippedTitleRows: 0,
+    skippedSpacerColumns: 0,
+  };
+  for (const report of reports) {
+    if (report.table) {
+      inputs.tables.push(report.table);
+    }
+    inputs.skippedTitleRows += report.skippedTitleRows;
+    inputs.skippedSpacerColumns += report.skippedSpacerColumns;
+  }
+  return inputs;
 }
 
 export function workbookTables(
@@ -1177,18 +1290,9 @@ export function workbookTables(
   sourceFile: string,
   options: ReadWorkbookOptions = {},
 ): Table[] {
-  const tables: Table[] = [];
-  for (const report of workbookWorksheetReports(
-    workbook,
-    workbookDates,
-    sourceFile,
-    options,
-  )) {
-    if (report.table) {
-      tables.push(report.table);
-    }
-  }
-  return tables;
+  return consolidationInputs(
+    workbookWorksheetReports(workbook, workbookDates, sourceFile, options),
+  ).tables;
 }
 
 export function workbookExcelTables(
@@ -1345,12 +1449,8 @@ export function workbookWorksheetRecords(
 
   const range = XLSX.utils.decode_range(reference);
   const dates = workbookDates.forSheet(worksheetName);
-  const headerRowIndex = findHeaderRow(
-    worksheet,
-    range,
-    dates,
-    options.headerRow,
-  );
+  const profile = profileRange(worksheet, range, dates);
+  const headerRowIndex = findHeaderRow(profile.counts, options.headerRow);
   if (headerRowIndex === undefined || headerRowIndex > range.e.r) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_INVALID_HEADER_ROW,
@@ -1364,15 +1464,15 @@ export function workbookWorksheetRecords(
     );
   }
 
+  // Only the columns that hold something - by the same test the table reader
+  // applies, so the two readers keep the same columns - are held to the rule
+  // that a header must name them. A spacer is not an unnamed column.
+  const keptOffsets = keptColumnOffsets(profile, headerRowIndex);
   const columns: string[] = [];
-  for (
-    let columnIndex = range.s.c;
-    columnIndex <= range.e.c;
-    columnIndex += 1
-  ) {
+  for (const offset of keptOffsets) {
     const header = cellToDisplayText(
-      getCell(worksheet, headerRowIndex, columnIndex),
-      dates(headerRowIndex, columnIndex),
+      getCell(worksheet, headerRowIndex, range.s.c + offset),
+      dates(headerRowIndex, range.s.c + offset),
     ).trim();
     if (!header) {
       throw new ConsultChimpsError(
@@ -1380,7 +1480,7 @@ export function workbookWorksheetRecords(
         `Worksheet "${worksheetName}" contains an empty column header.`,
         {
           details: {
-            column: columnIndex + 1,
+            column: range.s.c + offset + 1,
             headerRow: headerRowIndex + 1,
             worksheet: worksheetName,
           },
@@ -1410,32 +1510,33 @@ export function workbookWorksheetRecords(
   const rows: Array<Record<string, string>> = [];
   const sourceRows: number[] = [];
   let skippedEmptyRows = 0;
-
   for (
     let rowIndex = headerRowIndex + 1;
     rowIndex <= range.e.r;
     rowIndex += 1
   ) {
-    const cells = columns.map((_, columnOffset) =>
-      getCell(worksheet, rowIndex, range.s.c + columnOffset),
+    const cells = keptOffsets.map((offset) =>
+      getCell(worksheet, rowIndex, range.s.c + offset),
     );
-    const isEmpty = cells.every((cell, columnOffset) => {
-      const value = cellToPrimitive(
-        cell,
-        dates(rowIndex, range.s.c + columnOffset),
-      );
-      return value === null || value === "";
-    });
+    // Spacer columns hold nothing under the header by definition, so a row
+    // blank across the kept columns is blank across the whole used width.
+    const isEmpty = cells.every((cell, position) =>
+      isBlankValue(
+        cellToPrimitive(
+          cell,
+          dates(rowIndex, range.s.c + keptOffsets[position]!),
+        ),
+      ),
+    );
     if (isEmpty) {
       skippedEmptyRows += 1;
       continue;
     }
-
     const row: Record<string, string> = {};
-    columns.forEach((column, columnOffset) => {
+    columns.forEach((column, position) => {
       row[column] = cellToDisplayText(
-        cells[columnOffset],
-        dates(rowIndex, range.s.c + columnOffset),
+        cells[position],
+        dates(rowIndex, range.s.c + keptOffsets[position]!),
       );
     });
     rows.push(row);

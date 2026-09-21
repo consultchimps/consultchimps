@@ -82,6 +82,7 @@ import {
   CONSOLIDATE_OPERATION,
   CONSOLIDATED_SHEET_NAME,
   consolidateTables,
+  consolidationInputs,
   createMergeState,
   finishMergedWorkbook,
   INSPECT_OPERATION,
@@ -105,8 +106,8 @@ import {
   WORKBOOK_MEDIA_TYPE,
   workbookExcelTables,
   workbookNamedRanges,
-  workbookTables,
   workbookWorksheetRecords,
+  workbookWorksheetReports,
   type ResolvedSplitSource,
 } from "./shared.js";
 
@@ -121,6 +122,7 @@ import type {
   WorkbookExcelTable,
   WorkbookNamedRange,
   WorksheetRecords,
+  WorksheetTableReport,
 } from "./shared.js";
 
 export { XLSX_ERRORS, type XlsxErrorCode } from "./errors.js";
@@ -350,18 +352,32 @@ async function readWorkbookFile(
   };
 }
 
-export async function readWorkbookTables(
+/**
+ * Every selected worksheet of one file as the table reader saw it. The
+ * consolidation and `readWorkbookTables` both read through here, so the tables
+ * one returns are the tables the other stacks, and the title rows and spacer
+ * columns the reads left out are counted from the same reads.
+ */
+async function readWorkbookTableReports(
   filePath: string,
-  options: ReadWorkbookOptions = {},
-): Promise<Table[]> {
+  options: ReadWorkbookOptions,
+): Promise<WorksheetTableReport[]> {
   const absolutePath = path.resolve(filePath);
   const { bytes, workbook } = await readWorkbookFile(absolutePath);
-  return workbookTables(
+  return workbookWorksheetReports(
     workbook,
     await readWorkbookDates(bytes, absolutePath, { filePath: absolutePath }),
     path.basename(absolutePath),
     options,
   );
+}
+
+export async function readWorkbookTables(
+  filePath: string,
+  options: ReadWorkbookOptions = {},
+): Promise<Table[]> {
+  return consolidationInputs(await readWorkbookTableReports(filePath, options))
+    .tables;
 }
 
 /**
@@ -708,9 +724,16 @@ export async function consolidateWorkbooks(
   }
 
   const tables: Table[] = [];
+  let skippedTitleRows = 0;
+  let skippedSpacerColumns = 0;
   for (const [index, absoluteInput] of absoluteInputs.entries()) {
     throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
-    tables.push(...(await readWorkbookTables(absoluteInput, options)));
+    const read = consolidationInputs(
+      await readWorkbookTableReports(absoluteInput, options),
+    );
+    tables.push(...read.tables);
+    skippedTitleRows += read.skippedTitleRows;
+    skippedSpacerColumns += read.skippedSpacerColumns;
     options.onProgress?.({
       operation: CONSOLIDATE_OPERATION,
       stage: "reading-workbooks",
@@ -783,6 +806,8 @@ export async function consolidateWorkbooks(
       inputTables: tables.length,
       outputColumns: table.columns.length,
       outputRows: table.rows.length,
+      skippedSpacerColumns,
+      skippedTitleRows,
       suggestedColumns: suggestion?.mapping.columns.length ?? 0,
       unmappedColumns: unmappedColumns.length,
     },

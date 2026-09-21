@@ -393,7 +393,7 @@ describe("resolveRegions: { sheet }", () => {
     ]);
   });
 
-  it("falls back to the first used row without a column or an override", async () => {
+  it("detects the header from the first used row without a column or an override", async () => {
     const workbook = new FakeWorkbookModel({
       sheets: [
         {
@@ -414,6 +414,167 @@ describe("resolveRegions: { sheet }", () => {
       end: { column: 1, row: 3 },
       start: { column: 0, row: 3 },
     });
+  });
+
+  it("skips a title block above the header without a column or an override", async () => {
+    const workbook = new FakeWorkbookModel({
+      sheets: [
+        {
+          grid: [
+            ["Quarterly review log", null, null, null],
+            ["Prepared by", "Reviewer 1", null, null],
+            [null, null, null, null],
+            ["Case_ID", "Region", "Failed Checks", "Owner"],
+            ["R-1", "north", 5, "Reviewer 2"],
+          ],
+          name: "Data",
+        },
+      ],
+    });
+
+    const [region] = await resolveRegions(workbook, { sheet: "Data" });
+
+    expect(region?.origin).toEqual({ kind: "detected-header" });
+    expect(region?.headerRow).toBe(4);
+    expect(region?.body).toEqual({
+      end: { column: 3, row: 5 },
+      start: { column: 0, row: 5 },
+    });
+    expect(region?.columns.map((column) => column.name)).toEqual([
+      "Case_ID",
+      "Region",
+      "Failed Checks",
+      "Owner",
+    ]);
+  });
+
+  it("keeps the first used row and every used column when no row holds a value", async () => {
+    // A sheet of uncalculated formulas is populated, so an inspection still
+    // describes it from its first row rather than reporting no header at all,
+    // and with its columns: no value anywhere means no spacer can be told from
+    // a column, so none is left out.
+    const workbook = new FakeWorkbookModel({
+      sheets: [
+        {
+          firstRow: 2,
+          grid: [
+            [
+              { formula: { kind: "normal", text: "1+1" } },
+              { formula: { kind: "normal", text: "2+2" } },
+            ],
+            [
+              { formula: { kind: "normal", text: "3+3" } },
+              { formula: { kind: "normal", text: "4+4" } },
+            ],
+          ],
+          name: "Formulas",
+        },
+      ],
+    });
+
+    const [region] = await resolveRegions(workbook, { sheet: "Formulas" });
+
+    expect(region?.headerRow).toBe(2);
+    expect(region?.columns).toEqual([
+      { index: 0, name: "" },
+      { index: 1, name: "" },
+    ]);
+  });
+
+  it("keeps a sparse header over rows holding numbers rather than skipping it", async () => {
+    // Two of four columns named, over data with a number in it. By count the
+    // first data row would be the header; the guard keeps row 1, so no data
+    // row is lost.
+    const workbook = new FakeWorkbookModel({
+      sheets: [
+        {
+          grid: [
+            ["Case_ID", "Region", null, null],
+            ["R-1", "north", "late", 5],
+            ["R-2", "south", "early", 7],
+          ],
+          name: "Data",
+        },
+      ],
+    });
+
+    const [region] = await resolveRegions(workbook, { sheet: "Data" });
+
+    expect(region?.headerRow).toBe(1);
+    expect(region?.columns.map((column) => column.name)).toEqual([
+      "Case_ID",
+      "Region",
+      "",
+      "",
+    ]);
+  });
+
+  it("leaves spacer columns out of the region's columns", async () => {
+    const workbook = new FakeWorkbookModel({
+      sheets: [
+        {
+          grid: [
+            ["Region", null, "Amount", null, null],
+            ["North", null, 10, null, "side note"],
+            ["South", null, 20, null, null],
+          ],
+          name: "Data",
+        },
+      ],
+    });
+
+    const [detected] = await resolveRegions(workbook, { sheet: "Data" });
+    // The body still spans the used range - a spacer was examined and found
+    // empty - but the columns are only the ones holding anything, and a blank
+    // header over values stays as an unnamed column.
+    expect(detected?.body).toEqual({
+      end: { column: 4, row: 3 },
+      start: { column: 0, row: 2 },
+    });
+    expect(detected?.columns).toEqual([
+      { index: 0, name: "Region" },
+      { index: 2, name: "Amount" },
+      { index: 4, name: "" },
+    ]);
+
+    // A region found by its header text answers the same, so the columns a
+    // region carries never depend on which selector found it.
+    const [found] = await resolveRegions(workbook, { sheet: "Data" }, "Region");
+    expect(found?.columns).toEqual(detected?.columns);
+    const [searched] = await resolveRegions(
+      workbook,
+      { find: "Amount" },
+      "Amount",
+    );
+    expect(searched?.columns).toEqual(detected?.columns);
+  });
+
+  it("declares a header row without dropping the columns under it", async () => {
+    const workbook = new FakeWorkbookModel({
+      sheets: [
+        {
+          grid: [
+            ["Report title", null],
+            ["Region", "Amount"],
+            ["North", 10],
+          ],
+          name: "Data",
+        },
+      ],
+    });
+
+    // Declaring the title row as the header reads the title as a header cell
+    // and the real header as data; the second column holds values under it,
+    // so it stays as an unnamed column.
+    const [region] = await resolveRegions(workbook, {
+      headerRow: 1,
+      sheet: "Data",
+    });
+    expect(region?.origin).toEqual({ kind: "declared-header" });
+    expect(region?.columns).toEqual([
+      { index: 0, name: "Report title" },
+      { index: 1, name: "" },
+    ]);
   });
 });
 

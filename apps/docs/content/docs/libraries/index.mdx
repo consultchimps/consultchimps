@@ -680,8 +680,16 @@ const namedRanges = await readWorkbookNamedRanges("clients.xlsx");
 ```
 
 `readWorkbookTables` accepts the consolidator's selection options: `sheets`, a
-one-based `headerRow`, and `includeHiddenSheets`. `readWorkbookTablesBytes` is
-its byte-level twin, for a browser that holds the workbook's bytes rather than a
+one-based `headerRow`, and `includeHiddenSheets`. Without a `headerRow` the
+header is detected the way the consolidator detects it: the first row holding
+more than half as many values as the fullest of the rows below it, or at most
+one value fewer, with the title rows above it skipped when the header they leave
+is made of text (see
+[Choose a header row](/docs/tools/spreadsheet-consolidate#choose-a-header-row)).
+Columns that hold nothing in the header row or under it are left out as spacers,
+and `readWorkbookWorksheets` reports both counts per worksheet as
+`skippedTitleRows` and `skippedSpacerColumns`. `readWorkbookTablesBytes` is its
+byte-level twin, for a browser that holds the workbook's bytes rather than a
 path. `readWorksheetRecords` selects one `worksheet` and a `headerRow`; the
 Excel Table and named-range readers filter by `sheets` plus `tables` or `names`.
 The `writeTable` counterpart writes one in-memory `Table` to a new formatted
@@ -691,13 +699,15 @@ workbook.
 
 `describeWorkbook` reports what is in a file without creating anything:
 worksheets with their visibility and dimensions, the header row the region
-resolver picks (the one a split keys on), Excel Tables, named ranges, and a
-bounded sample of every column's values. The table readers resolve a header
-separately and skip a row that carries no readable value, so on a worksheet
-whose first used row holds only uncalculated formulas the two differ; where that
-matters, read the region back from `readWorkbookWorksheetsBytes` rather than
-from the description. Use it to confirm a workbook's shape, or to build a picker
-for the sheets and columns another operation will act on.
+resolver picks (the one a consolidation reads from and a split keys on), Excel
+Tables, named ranges, and a bounded sample of every column's values. The region
+resolver and the table readers apply one header rule, so the header row and
+columns the description reports are the ones `readWorkbookTables` returns. The
+one worksheet they still describe differently is one where no row holds a
+readable value at all, such as a sheet of uncalculated formulas: the description
+reports its first used row as the header, since the sheet is not empty, while
+the table readers yield no table for it. Use it to confirm a workbook's shape,
+or to build a picker for the sheets and columns another operation will act on.
 
 ```ts
 import { describeWorkbook } from "@consultchimps/xlsx";

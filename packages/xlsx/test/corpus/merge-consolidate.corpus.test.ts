@@ -693,12 +693,18 @@ describe("corpus: consolidate", () => {
     expect(result.metrics).toEqual({
       inputFiles: 2,
       inputTables: 2,
-      // Six region columns, three unnamed columns for the cells outside it,
-      // and the three provenance columns.
-      outputColumns: 12,
+      // Six region columns, one unnamed column for the side note beside the
+      // region, and the three provenance columns. Columns G and I hold nothing
+      // in the header row or under it, so they are spacers and never reach the
+      // output.
+      outputColumns: 10,
       // The table shape contributes its totals row and footer block; the range
       // shape contributes only its footer block.
       outputRows: 15,
+      // Two spacer columns on each Data worksheet, and the report title on row
+      // 1 above the declared header row, once per Data worksheet.
+      skippedSpacerColumns: 4,
+      skippedTitleRows: 2,
       // This pin runs without a column mapping, so both mapping counts are
       // zero. The contract's consolidate column is unaffected: a mapping
       // renames and folds columns of the values-only table this operation
@@ -730,7 +736,7 @@ describe("corpus: consolidate", () => {
     expect(consolidatedXml).not.toContain("<f>");
   });
 
-  it("pins: header detection without headerRow picks the first non-empty row", async () => {
+  it("pins: header detection without headerRow skips the report title", async () => {
     const directory = await createCorpusDirectory();
     const input = await writeCorpusWorkbook(directory, "first.xlsx", {
       shape: "range",
@@ -742,10 +748,20 @@ describe("corpus: consolidate", () => {
       "Data",
       "Summary",
     ]);
-    // Row 1 holds the report title, so the title becomes the first column name
-    // and the real header row becomes a data row.
-    expect(tables[0]?.columns[0]).toBe("Corpus allocation report");
-    expect(tables[0]?.source?.firstDataRow).toBe(2);
+    // Row 1 holds the report title, one value above a six-column table, so it
+    // is a title row: the header is row 3 and the data starts under it. Up to
+    // version 0.17.0 the title became the first column name and the real
+    // header row became a data row.
+    expect(tables[0]?.columns).toEqual([
+      "Record",
+      "Client",
+      "Group",
+      "Amount",
+      "Doubled",
+      "Ratio",
+      "column_7",
+    ]);
+    expect(tables[0]?.source?.firstDataRow).toBe(4);
   });
 
   it("pins: hidden worksheets are excluded unless includeHiddenSheets is set", async () => {

@@ -14,6 +14,7 @@ import { WorkbookModel } from "../src/model/index.js";
 import { normalizeSplitValue } from "../src/region/values.js";
 import { forEachZone, ZONES } from "./zones.js";
 import {
+  consolidateWorkbooksBytes,
   describeWorkbookBytes,
   readWorkbookExcelTablesBytes,
   readWorkbookNamedRangesBytes,
@@ -256,12 +257,24 @@ describe("describeWorkbook", () => {
       },
     ]);
 
-    // Without a header row the first row carrying any value wins, which is the
-    // title - exactly the confusion an inspection exists to surface.
+    // Without a header row the title is skipped: it holds one value above a
+    // three-column table, so the first row that is nearly as full as the
+    // fullest one is the real header. The inspection reports that row because
+    // it is the row a consolidation would read from.
     const detected = await describeWorkbook(input);
-    expect(detected.description.sheets[0]?.headerRow).toBe(1);
+    expect(detected.description.sheets[0]?.headerRow).toBe(2);
     expect(
       detected.description.sheets[0]?.columns.map((column) => column.header),
+    ).toEqual(["Case_ID", "Region", "Failed Checks"]);
+
+    // A declared header row is never second-guessed, so declaring the title
+    // row reads the title as the header, blanks filled in and numbered.
+    const declaredTitle = await describeWorkbook(input, { headerRow: 1 });
+    expect(declaredTitle.description.sheets[0]?.headerRow).toBe(1);
+    expect(
+      declaredTitle.description.sheets[0]?.columns.map(
+        (column) => column.header,
+      ),
     ).toEqual(["Quarterly review log", "column_2", "column_3"]);
 
     const configured = await describeWorkbook(input, { headerRow: 2 });
@@ -1916,5 +1929,317 @@ describe("byte-surface readers match the file surface", () => {
         { names: ["missing"] },
       ),
     ).toEqual([]);
+  });
+});
+
+describe("worksheets with title rows and spacer columns", () => {
+  /**
+   * The shapes a consulting export arrives in: a title block above the
+   * header, an empty column between two blocks, a column nobody named, a
+   * header cell nobody filled in. Each is a workbook the readers below are
+   * asked the same questions about.
+   */
+  const TITLED: SheetSpec = {
+    name: "Review Log",
+    rows: [
+      ["Quarterly review log", null, null, null, null],
+      ["Prepared by", "Reviewer 1", null, null, null],
+      [null, null, null, null, null],
+      ["Case_ID", "Region", null, "Failed Checks", "Owner"],
+      ["R-1", "north", null, 5, "Reviewer 2"],
+      ["R-2", "south", null, 7, "Reviewer 3"],
+    ],
+  };
+  const UNNAMED_COLUMN: SheetSpec = {
+    name: "Review Log",
+    rows: [
+      ["Case_ID", "Region", null, "Failed Checks"],
+      ["R-1", "north", "late", 5],
+      ["R-2", "south", null, 7],
+    ],
+  };
+  const SIDE_NOTE: SheetSpec = {
+    name: "Notes",
+    rows: [
+      ["Report", null, null, null],
+      ["Case_ID", "Region", null, null],
+      ["R-1", "north", null, "checked twice"],
+      ["R-2", "south", null, null],
+    ],
+  };
+
+  it("reads a titled worksheet from its real header and leaves the spacer out", async () => {
+    const [report] = await readWorkbookWorksheetsBytes({
+      name: "titled.xlsx",
+      bytes: workbookBytes([TITLED]),
+    });
+
+    expect(report?.region?.headerRow).toBe(4);
+    expect(report?.skippedTitleRows).toBe(2);
+    expect(report?.skippedSpacerColumns).toBe(1);
+    expect(report?.table?.columns).toEqual([
+      "Case_ID",
+      "Region",
+      "Failed Checks",
+      "Owner",
+    ]);
+    expect(report?.table?.rows).toEqual([
+      {
+        Case_ID: "R-1",
+        Region: "north",
+        "Failed Checks": 5,
+        Owner: "Reviewer 2",
+      },
+      {
+        Case_ID: "R-2",
+        Region: "south",
+        "Failed Checks": 7,
+        Owner: "Reviewer 3",
+      },
+    ]);
+    // Provenance still names the worksheet's own rows.
+    expect(report?.table?.sourceRows).toEqual([5, 6]);
+    expect(report?.table?.source?.firstDataRow).toBe(5);
+    // The rectangle examined still spans every used column: the spacer was
+    // looked at and found empty, which is how it came to be left out.
+    expect(report?.region).toEqual({
+      endColumn: 4,
+      headerRow: 4,
+      lastRow: 6,
+      startColumn: 0,
+    });
+  });
+
+  it("keeps a column with values under a blank header, numbered by its place among the kept columns", async () => {
+    const [table] = await readWorkbookTablesBytes({
+      name: "unnamed.xlsx",
+      bytes: workbookBytes([UNNAMED_COLUMN]),
+    });
+
+    expect(table?.columns).toEqual([
+      "Case_ID",
+      "Region",
+      "column_3",
+      "Failed Checks",
+    ]);
+    expect(table?.rows[0]).toEqual({
+      Case_ID: "R-1",
+      Region: "north",
+      column_3: "late",
+      "Failed Checks": 5,
+    });
+
+    const [sideNote] = await readWorkbookTablesBytes({
+      name: "side-note.xlsx",
+      bytes: workbookBytes([SIDE_NOTE]),
+    });
+    // The spacer in the third column is gone, so the unnamed side-note column
+    // is the third column of the table and is named for that.
+    expect(sideNote?.columns).toEqual(["Case_ID", "Region", "column_3"]);
+    expect(sideNote?.rows).toEqual([
+      { Case_ID: "R-1", Region: "north", column_3: "checked twice" },
+      { Case_ID: "R-2", Region: "south", column_3: null },
+    ]);
+  });
+
+  it("counts title rows above a declared header row too", async () => {
+    const [report] = await readWorkbookWorksheetsBytes(
+      { name: "titled.xlsx", bytes: workbookBytes([TITLED]) },
+      { headerRow: 4 },
+    );
+    expect(report?.skippedTitleRows).toBe(2);
+
+    // Declaring the title row as the header is honoured, not second-guessed:
+    // the title becomes a header cell and nothing above it was skipped.
+    const [declared] = await readWorkbookWorksheetsBytes(
+      { name: "titled.xlsx", bytes: workbookBytes([TITLED]) },
+      { headerRow: 1 },
+    );
+    expect(declared?.region?.headerRow).toBe(1);
+    expect(declared?.skippedTitleRows).toBe(0);
+    expect(declared?.table?.columns[0]).toBe("Quarterly review log");
+  });
+
+  it("keeps the header of a two-column sheet whose second header cell is blank", async () => {
+    // On two columns a single value is both what a title holds and what a
+    // header missing one name holds; the first row holding a value wins, as
+    // it always did, rather than the data row under it.
+    const [table] = await readWorkbookTablesBytes({
+      name: "narrow.xlsx",
+      bytes: workbookBytes([
+        {
+          name: "Narrow",
+          rows: [
+            ["Case_ID", null],
+            ["R-1", 5],
+          ],
+        },
+      ]),
+    });
+    expect(table?.columns).toEqual(["Case_ID", "column_2"]);
+    expect(table?.rows).toEqual([{ Case_ID: "R-1", column_2: 5 }]);
+  });
+
+  it("reads a one-column sheet from its first row, as it always did", async () => {
+    const [report] = await readWorkbookWorksheetsBytes({
+      name: "cover.xlsx",
+      bytes: workbookBytes([
+        { name: "Cover", rows: [["Quarterly review log"], ["Prepared by"]] },
+      ]),
+    });
+    // Two one-value rows: the first is the header, nothing qualifies as a
+    // title above it, and the second is its one data row.
+    expect(report?.region?.headerRow).toBe(1);
+    expect(report?.skippedTitleRows).toBe(0);
+    expect(report?.table?.columns).toEqual(["Quarterly review log"]);
+    expect(report?.table?.rows).toEqual([
+      { "Quarterly review log": "Prepared by" },
+    ]);
+  });
+
+  it("keeps a sparse header over rows holding numbers rather than losing a row to it", async () => {
+    // Two of four columns named, over data holding a number. By count the
+    // first data row would be the header; the guard keeps row 1, so both data
+    // rows survive and the unnamed columns are numbered.
+    const [table] = await readWorkbookTablesBytes({
+      name: "sparse.xlsx",
+      bytes: workbookBytes([
+        {
+          name: "Sparse",
+          rows: [
+            ["Case_ID", "Region", null, null],
+            ["R-1", "north", "late", 5],
+            ["R-2", "south", "early", 7],
+          ],
+        },
+      ]),
+    });
+    expect(table?.columns).toEqual([
+      "Case_ID",
+      "Region",
+      "column_3",
+      "column_4",
+    ]);
+    expect(table?.rows).toHaveLength(2);
+
+    // A title above year columns is still skipped: a single-value line above
+    // a header of three or more values.
+    const [years] = await readWorkbookTablesBytes({
+      name: "years.xlsx",
+      bytes: workbookBytes([
+        {
+          name: "Years",
+          rows: [
+            ["Headcount by year", null, null, null],
+            ["Region", 2023, 2024, 2025],
+            ["north", 10, 12, 14],
+          ],
+        },
+      ]),
+    });
+    expect(years?.columns).toEqual(["Region", "2023", "2024", "2025"]);
+    expect(years?.source?.firstDataRow).toBe(3);
+  });
+
+  it("reports nothing left out for a worksheet that yields no table", async () => {
+    // A title above a three-column header with no rows under it: the title
+    // is skipped, the header is found, and there is still no table, so the
+    // counts describe a read that produced nothing.
+    const [empty] = await readWorkbookWorksheetsBytes({
+      name: "header-only.xlsx",
+      bytes: workbookBytes([
+        {
+          name: "Empty",
+          rows: [
+            ["Title", null, null],
+            ["Case_ID", "Region", "Owner"],
+          ],
+        },
+      ]),
+    });
+    expect(empty?.table).toBeUndefined();
+    expect(empty?.skippedTitleRows).toBe(0);
+    expect(empty?.skippedSpacerColumns).toBe(0);
+  });
+
+  it("describes the same header row and columns the table reader keys on", async () => {
+    // The invariant this rule exists for: whichever reader answers, a
+    // worksheet has one header row and one set of columns.
+    for (const sheet of [TITLED, UNNAMED_COLUMN, SIDE_NOTE, REVIEW_LOG]) {
+      const bytes = workbookBytes([sheet]);
+      const [table] = await readWorkbookTablesBytes({ name: "a.xlsx", bytes });
+      const [report] = await readWorkbookWorksheetsBytes({
+        name: "a.xlsx",
+        bytes,
+      });
+      const { description } = await describeWorkbookBytes({
+        name: "a.xlsx",
+        bytes,
+      });
+      const described = description.sheets[0];
+
+      expect(described?.headerRow).toBe(report?.region?.headerRow);
+      expect(described?.columns.map((column) => column.header)).toEqual(
+        table?.columns,
+      );
+      expect(described?.dataRowCount).toBe(table?.rows.length);
+    }
+  });
+
+  it("reads records from the real header and refuses only a blank header over values", async () => {
+    const records = await readWorksheetRecordsBytes(
+      { name: "titled.xlsx", bytes: workbookBytes([TITLED]) },
+      {},
+    );
+    expect(records.columns).toEqual([
+      "Case_ID",
+      "Region",
+      "Failed Checks",
+      "Owner",
+    ]);
+    expect(records.rows).toEqual([
+      {
+        Case_ID: "R-1",
+        Region: "north",
+        "Failed Checks": "5",
+        Owner: "Reviewer 2",
+      },
+      {
+        Case_ID: "R-2",
+        Region: "south",
+        "Failed Checks": "7",
+        Owner: "Reviewer 3",
+      },
+    ]);
+    expect(records.sourceRows).toEqual([5, 6]);
+
+    // A spacer is not a blank header; a blank header over values still is.
+    await expect(
+      readWorksheetRecordsBytes(
+        { name: "unnamed.xlsx", bytes: workbookBytes([UNNAMED_COLUMN]) },
+        {},
+      ),
+    ).rejects.toMatchObject({
+      code: XLSX_ERRORS.XLSX_EMPTY_HEADER,
+      details: { column: 3, headerRow: 1 },
+    });
+  });
+
+  it("consolidates from bytes with the counts the file surface reports", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "titled.xlsx");
+    const bytes = await writeWorkbook(input, [TITLED, SIDE_NOTE]);
+
+    const { result } = await consolidateWorkbooksBytes({
+      inputs: [{ name: "titled.xlsx", bytes }],
+    });
+    expect(result.metrics).toMatchObject({
+      inputTables: 2,
+      skippedSpacerColumns: 2,
+      skippedTitleRows: 3,
+    });
+    // Kept columns: Case_ID, Region, Failed Checks, Owner, column_3, plus the
+    // three provenance columns. The spacers never become columns.
+    expect(result.metrics.outputColumns).toBe(8);
   });
 });

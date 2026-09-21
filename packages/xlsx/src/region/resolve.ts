@@ -2,9 +2,11 @@
  * L2 region layer: the one resolver.
  *
  * Every discovery heuristic in the package lands here: NFKC/trim/case-folded
- * header search, the `headerRow` override, and the rule that associates a
+ * header search, the `headerRow` override, the rule that associates a
  * detected header with an Excel Table when the header sits on that table's
- * header row. The heuristics are ports of `findSplitHeader` and
+ * header row, and - through `header-detection.ts`, which the SheetJS table
+ * reader shares - which row is the header when nothing names it and which
+ * columns of a region hold anything. The heuristics are ports of `findSplitHeader` and
  * `findMatchingTable` from `src/workbook-column-split.ts`, re-expressed over
  * `WorkbookModel` / `WorksheetModel` instead of SheetJS objects, with row
  * numbers one-based throughout (the old code mixed zero-based indices with
@@ -25,6 +27,11 @@ import type {
   WorkbookTableInfo,
   WorksheetModel,
 } from "../model/types.js";
+import {
+  detectHeaderRow,
+  profileWorksheet,
+  regionColumns,
+} from "./header-detection.js";
 import { RangeBinding } from "./range-binding.js";
 import { TableBinding } from "./table-binding.js";
 import type {
@@ -130,17 +137,31 @@ function bindingForHeader(
     return new TableBinding(worksheet, table);
   }
   const used = worksheet.usedRange;
-  return new RangeBinding({
-    body: {
-      end: {
-        column: used?.end.column ?? header.column,
-        row: used?.end.row ?? header.row,
-      },
-      start: {
-        column: used?.start.column ?? header.column,
-        row: header.row + 1,
-      },
+  const body = {
+    end: {
+      column: used?.end.column ?? header.column,
+      row: used?.end.row ?? header.row,
     },
+    start: {
+      column: used?.start.column ?? header.column,
+      row: header.row + 1,
+    },
+  };
+  return new RangeBinding({
+    body,
+    // Spacer columns are left out here as they are for a region resolved
+    // without a column, so a region's columns never depend on which selector
+    // found it. The key column was found by its header text, so it is never a
+    // spacer.
+    columns:
+      used === undefined
+        ? undefined
+        : regionColumns(
+            worksheet,
+            header.row,
+            body,
+            profileWorksheet(worksheet, worksheet.rows(), used).lastValueRow,
+          ),
     headerRow: header.row,
     origin,
     worksheet,
@@ -306,19 +327,44 @@ async function resolveSheet(
     ];
   }
 
-  // Without a column to search for there is nothing to detect: the header is
-  // the declared row, or the first row of the used range.
+  // Without a column to search for, the header is the declared row, or the
+  // row `detectHeaderRow` picks from what each row holds. A worksheet with no
+  // value in any row - one of uncalculated formulas, say - has no row to pick
+  // and no column to keep, so it falls back whole: the first used row as the
+  // header and every used column, which is how a populated sheet of formulas
+  // nothing calculated still describes as one.
   const used = worksheet.usedRange;
-  const effectiveHeaderRow = headerRow ?? used?.start.row ?? 1;
+  const profile =
+    used === undefined
+      ? undefined
+      : profileWorksheet(worksheet, worksheet.rows(), used);
+  const detectedHeaderRow =
+    headerRow === undefined && profile !== undefined
+      ? detectHeaderRow(profile.counts)
+      : undefined;
+  const effectiveHeaderRow =
+    headerRow ?? detectedHeaderRow ?? used?.start.row ?? 1;
+  const body = {
+    end: {
+      column: used?.end.column ?? 0,
+      row: used?.end.row ?? effectiveHeaderRow,
+    },
+    start: { column: used?.start.column ?? 0, row: effectiveHeaderRow + 1 },
+  };
+  const spacersApply =
+    profile !== undefined &&
+    (headerRow !== undefined || detectedHeaderRow !== undefined);
   return [
     new RangeBinding({
-      body: {
-        end: {
-          column: used?.end.column ?? 0,
-          row: used?.end.row ?? effectiveHeaderRow,
-        },
-        start: { column: used?.start.column ?? 0, row: effectiveHeaderRow + 1 },
-      },
+      body,
+      columns: spacersApply
+        ? regionColumns(
+            worksheet,
+            effectiveHeaderRow,
+            body,
+            profile.lastValueRow,
+          )
+        : undefined,
       headerRow: effectiveHeaderRow,
       origin,
       worksheet,
