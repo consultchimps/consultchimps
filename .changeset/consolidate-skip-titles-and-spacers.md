@@ -18,7 +18,9 @@ and never reaches the output; a column with values under a blank header is kept
 and named `column_N` by its position among the columns that were kept. One rule
 decides this for the consolidation, the worksheet readers, the worksheet-records
 reader, and the inspection, so `sheets inspect` reports the header row and
-columns a consolidation will use. A declared `headerRow` is never
+columns a consolidation will use, spelled the same way whatever the header
+cell's type; an error cell in a header row now names its column `#REF!` rather
+than Excel's internal code for it. A declared `headerRow` is never
 second-guessed. Consolidation results carry two new metrics, `skippedTitleRows`
 and `skippedSpacerColumns`, and every worksheet report carries the same two
 counts; the plain-language result says what was left out.

@@ -60,8 +60,14 @@
  * value is a value: the cell holds something, however unwelcome.
  */
 
+import {
+  calendarIsoText,
+  isComponentsInRange,
+  utcCalendarParts,
+} from "../model/calendar.js";
 import type {
   CellRange,
+  CellRef,
   ColumnIndex,
   RowModel,
   RowNumber,
@@ -293,9 +299,35 @@ export function regionColumns(
     if (last !== undefined && last >= headerRow && last <= body.end.row) {
       columns.push({
         index: column,
-        name: worksheet.cellText({ column, row: headerRow }) ?? "",
+        name: headerCellName(worksheet, { column, row: headerRow }),
       });
     }
   }
   return columns;
+}
+
+/**
+ * The name a header cell gives its column, spelled the way the SheetJS table
+ * reader spells it, so the columns an inspection reports are the columns a
+ * consolidation produces whatever the cell's type: a number by its value
+ * rather than its stored token (`1E3` is `1000`), a boolean as `true` or
+ * `false`, a date as the ISO timestamp every reader here writes dates as, an
+ * error by its text, and a blank cell as an empty name for `uniqueHeaders`
+ * to fill in.
+ */
+export function headerCellName(
+  worksheet: WorksheetModel,
+  ref: CellRef,
+): string {
+  const value = worksheet.cellValue(ref);
+  if (isBlankValue(value)) {
+    return "";
+  }
+  if (value instanceof Date) {
+    const parts = utcCalendarParts(value);
+    return isComponentsInRange(parts)
+      ? calendarIsoText(parts)
+      : (worksheet.cellText(ref) ?? "");
+  }
+  return String(value);
 }

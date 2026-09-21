@@ -2188,6 +2188,58 @@ describe("worksheets with title rows and spacer columns", () => {
     expect(table?.source?.firstDataRow).toBe(2);
   });
 
+  it("names typed header cells the same way in the inspection and the table reader", async () => {
+    // A boolean, a number, an error, and a text cell as headers. The table
+    // reader spells them from the engine's primitives and the inspection from
+    // the document model; the invariant is that they agree.
+    const bytes = await uncalculatedWorkbookBytes(
+      `<row r="1"><c r="A1" t="b"><v>1</v></c><c r="B1"><v>2023</v></c><c r="C1" t="e"><v>#REF!</v></c>${textCell("D1", "Region")}</row>` +
+        `<row r="2">${textCell("A2", "yes")}<c r="B2"><v>10</v></c>${textCell("C2", "x")}${textCell("D2", "north")}</row>`,
+    );
+    const [table] = await readWorkbookTablesBytes({
+      name: "typed.xlsx",
+      bytes,
+    });
+    const { description } = await describeWorkbookBytes({
+      name: "typed.xlsx",
+      bytes,
+    });
+    expect(table?.columns).toEqual(["true", "2023", "#REF!", "Region"]);
+    expect(
+      description.sheets[0]?.columns.map((column) => column.header),
+    ).toEqual(table?.columns);
+
+    // A date-formatted serial names its column by the ISO timestamp every
+    // reader here writes dates as, on both sides.
+    const dated: XLSX.WorkSheet = {
+      "!ref": "A1:B2",
+      A1: { t: "n", v: 45292, z: "yyyy-mm-dd" },
+      B1: { t: "s", v: "Amount" },
+      A2: { t: "s", v: "Acme" },
+      B2: { t: "n", v: 10 },
+    };
+    const datedBytes = new Uint8Array(
+      XLSX.write(
+        { SheetNames: ["Data"], Sheets: { Data: dated } },
+        { bookType: "xlsx", type: "array" },
+      ) as ArrayBuffer,
+    );
+    const [datedTable] = await readWorkbookTablesBytes({
+      name: "dated.xlsx",
+      bytes: datedBytes,
+    });
+    const datedDescription = await describeWorkbookBytes({
+      name: "dated.xlsx",
+      bytes: datedBytes,
+    });
+    expect(datedTable?.columns).toEqual(["2024-01-01T00:00:00.000Z", "Amount"]);
+    expect(
+      datedDescription.description.sheets[0]?.columns.map(
+        (column) => column.header,
+      ),
+    ).toEqual(datedTable?.columns);
+  });
+
   it("reports nothing left out for a worksheet that yields no table", async () => {
     // A title, a blank row, then a header with no rows under it: the title
     // is skipped, the header is found, and there is still no table, so the

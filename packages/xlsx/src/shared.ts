@@ -865,6 +865,54 @@ function profileRange(
 }
 
 /**
+ * The name a header cell gives its column, or null for a blank cell. The
+ * region layer's `headerCellName` spells the same cell the same way from the
+ * document model, which is what lets an inspection promise the columns a
+ * consolidation produces. An error cell is the one type whose stored value is
+ * not what the cell means (the engine hands back Excel's numeric code), so it
+ * is named by its display text, `#REF!`, rather than by that code.
+ */
+function headerCellName(
+  cell: XLSX.CellObject | undefined,
+  date: CellDate | undefined,
+): string | null {
+  if (cell?.t === "e") {
+    return errorCellText(cell);
+  }
+  const value = cellToPrimitive(cell, date);
+  return isBlankValue(value) ? null : String(value);
+}
+
+/**
+ * The text of an error cell as the worksheet shows it. The engine stores the
+ * code Excel numbers each error by and, read without display text, offers
+ * nothing else, so the codes are spelled here; they are the file format's
+ * own, fixed since the binary workbook days.
+ */
+const EXCEL_ERROR_TEXT: Readonly<Record<number, string>> = {
+  0: "#NULL!",
+  7: "#DIV/0!",
+  15: "#VALUE!",
+  23: "#REF!",
+  29: "#NAME?",
+  36: "#NUM!",
+  42: "#N/A",
+  43: "#GETTING_DATA",
+};
+
+function errorCellText(cell: XLSX.CellObject): string {
+  if (typeof cell.w === "string") {
+    return cell.w;
+  }
+  if (typeof cell.v === "string") {
+    return cell.v;
+  }
+  return typeof cell.v === "number"
+    ? (EXCEL_ERROR_TEXT[cell.v] ?? String(cell.v))
+    : String(cell.v ?? "");
+}
+
+/**
  * The column offsets a read from `headerRowIndex` keeps: every column holding
  * a value in the header row or under it. The rest are spacers.
  */
@@ -946,13 +994,12 @@ function worksheetToTable(
   const width = range.e.c - range.s.c + 1;
   const keptOffsets = keptColumnOffsets(profile, headerRowIndex);
   const columns = uniqueHeaders(
-    keptOffsets.map((offset) => {
-      const value = cellToPrimitive(
+    keptOffsets.map((offset) =>
+      headerCellName(
         getCell(worksheet, headerRowIndex, range.s.c + offset),
         dates(headerRowIndex, range.s.c + offset),
-      );
-      return isBlankValue(value) ? null : String(value);
-    }),
+      ),
+    ),
   );
 
   const rows: TableRow[] = [];
