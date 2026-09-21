@@ -530,9 +530,12 @@ describe("consultchimps CLI", () => {
       input,
     ]);
     expect(withHeaderRow.stdout).toContain("Header row: 4");
-    expect(withHeaderRow.stdout).toContain('2. Client: "A", "B"');
-    expect(withHeaderRow.stdout).toContain('3. Region: "North", "South"');
-    expect(withHeaderRow.stdout).toContain("4. Amount: 10, 20");
+    // Column A holds nothing in the header row or under it, so it is a spacer
+    // and the Excel Table's first column is the first column described.
+    expect(withHeaderRow.stdout).toContain('1. Client: "A", "B"');
+    expect(withHeaderRow.stdout).toContain('2. Region: "North", "South"');
+    expect(withHeaderRow.stdout).toContain("3. Amount: 10, 20");
+    expect(withHeaderRow.stdout).not.toContain("column_1");
 
     expect(await readdir(path.join(directory, "inputs"))).toEqual([
       "clients.xlsx",

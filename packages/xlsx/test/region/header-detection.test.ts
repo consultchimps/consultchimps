@@ -219,6 +219,36 @@ describe("detectHeaderRow", () => {
     }
   });
 
+  it("never skips rows that themselves form a table", () => {
+    // A three-column table of a header and two all-text rows, then an
+    // eight-column all-text block within reach: by count no row of the small
+    // table qualifies and the wide header would pass the text test, so the
+    // whole small table would be read as title rows. Two consecutive rows of
+    // three or more values are a table, and a table is never a title.
+    expect(detectHeaderRow(textRows(3, 3, 3, 8, 8, 8))).toBe(1);
+    expect(detectHeaderRow(textRows(3, 3, 0, 8, 8, 8))).toBe(1);
+    // A three-value line set apart from the wide block by a blank row is a
+    // title line and is skipped; the same line directly above the block may
+    // be a three-name header over its first record, and reads as one.
+    expect(detectHeaderRow(textRows(3, 0, 8, 8, 8))).toBe(3);
+    expect(detectHeaderRow(textRows(3, 8, 8, 8))).toBe(1);
+    // A two-column key-value block above a wide table reads as a title
+    // block: two values per line is what "Prepared by | name" holds too.
+    expect(detectHeaderRow(textRows(1, 2, 2, 8, 8, 8))).toBe(4);
+    // The property: whenever the first two populated rows are adjacent and
+    // each holds at least three values, the first is the header, whatever
+    // follows.
+    for (const first of [3, 4, 5]) {
+      for (const second of [3, 4, 5]) {
+        for (const later of [6, 8, 12]) {
+          expect(
+            detectHeaderRow(textRows(0, first, second, later, later, later)),
+          ).toBe(2);
+        }
+      }
+    }
+  });
+
   it("never answers below the first populated row when the guard refuses", () => {
     // Whatever the counts, a header holding numbers with a multi-value row
     // above it means the first populated row is the answer.

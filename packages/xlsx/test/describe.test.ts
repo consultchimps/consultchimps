@@ -2141,6 +2141,49 @@ describe("worksheets with title rows and spacer columns", () => {
     expect(years?.source?.firstDataRow).toBe(3);
   });
 
+  it("never reads a small table above a wider one as title rows", async () => {
+    // A summary table of three columns, then a wider detail block on the same
+    // worksheet. The summary is a table, so it is the table this worksheet
+    // yields; the detail rows under it read as data, as they did before.
+    const [table] = await readWorkbookTablesBytes({
+      name: "two-blocks.xlsx",
+      bytes: workbookBytes([
+        {
+          name: "Summary",
+          rows: [
+            ["Region", "Owner", "Status"],
+            ["north", "Reviewer 1", "open"],
+            ["south", "Reviewer 2", "closed"],
+            [null, null, null, null, null, null, null, null],
+            [
+              "Case_ID",
+              "Region",
+              "Owner",
+              "Status",
+              "Opened",
+              "Closed",
+              "Notes",
+              "Checks",
+            ],
+            ["R-1", "north", "Reviewer 1", "open", "March", "", "", "a"],
+          ],
+        },
+      ]),
+    });
+    expect(table?.columns).toEqual([
+      "Region",
+      "Owner",
+      "Status",
+      "column_4",
+      "column_5",
+      "column_6",
+      "column_7",
+      "column_8",
+    ]);
+    expect(table?.rows).toHaveLength(4);
+    expect(table?.source?.firstDataRow).toBe(2);
+  });
+
   it("reports nothing left out for a worksheet that yields no table", async () => {
     // A title above a three-column header with no rows under it: the title
     // is skipped, the header is found, and there is still no table, so the

@@ -445,7 +445,7 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
     ],
     nextSteps: (vocabulary) => [
       "Read the worksheet names, column headers, and sample values from the description that accompanies this result, and confirm they are the ones you expected before consolidating, merging, or splitting the workbook.",
-      "Check the header row of every worksheet: a report title sitting above the real headers becomes the header row unless you name the correct one.",
+      "Check the header row of every worksheet: a report title above the real headers is skipped when it can be told from a header, and you can name the correct row when the guess is wrong.",
       vocabulary.spreadsheetOptionsReference,
     ],
   },

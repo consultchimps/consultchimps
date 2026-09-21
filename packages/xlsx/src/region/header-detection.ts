@@ -32,11 +32,15 @@
  * are skipped as titles only when the row that would become the header holds
  * nothing but text, or when every skipped row holds a single value - a title,
  * a banner - and the header holds at least three, which is what lets a title
- * be skipped above year or month columns. When the guard refuses, the first
- * row holding a value is the header, as it always was, and nothing is lost:
- * the worst case is the old one, a title read as a header, which the
- * inspection shows and `headerRow` overrides. A declared header row is never
- * second-guessed: the rule applies only when no row was declared.
+ * be skipped above year or month columns. And rows that themselves form a
+ * table - two adjacent rows holding three or more values, the would-be
+ * header included - are never titles, whatever wider block follows them: a
+ * small summary table above a wide detail block is a table, and the detail
+ * block reads as its data, as it always did. When the guard refuses, the first row holding a value is the
+ * header, as it always was, and nothing is lost: the worst case is the old
+ * one, a title read as a header, which the inspection shows and `headerRow`
+ * overrides. A declared header row is never second-guessed: the rule applies
+ * only when no row was declared.
  *
  * The same idea, turned on its side, decides the columns. A column whose
  * header cell is blank and whose every cell under the header is blank is a
@@ -74,6 +78,9 @@ const TITLE_LINE_VALUES = 1;
 
 /** The narrowest header a title may be skipped above when it is not all text. */
 const NON_TEXT_HEADER_MIN_VALUES = 3;
+
+/** Two consecutive rows holding at least this many values are a table. */
+const TABLE_ROW_MIN_VALUES = 3;
 
 /** The OOXML cell type of an error value. */
 const ERROR_CELL_TYPE = "e";
@@ -133,6 +140,9 @@ function maySkipTitles(
   header: RowValueCount,
   skipped: readonly RowValueCount[],
 ): boolean {
+  if (formsTable([...skipped, header])) {
+    return false;
+  }
   if (header.nonTextValues === 0) {
     return true;
   }
@@ -140,6 +150,31 @@ function maySkipTitles(
     header.values >= NON_TEXT_HEADER_MIN_VALUES &&
     skipped.every((row) => row.values <= TITLE_LINE_VALUES)
   );
+}
+
+/**
+ * Whether rows, in row order, contain a table: two physically adjacent rows
+ * each holding at least `TABLE_ROW_MIN_VALUES` values. A title block is lines
+ * of one or two values, or fuller lines set apart by a blank row; two
+ * adjacent rows of three or more are a table, and a table is never skipped as
+ * titles, whatever fuller block follows it. The row that would become the
+ * header is part of the question: a three-value line directly above it may
+ * be a three-name header over its first record, which is the sparse-header
+ * case nothing can tell from a title, so it is read as one.
+ */
+function formsTable(rows: readonly RowValueCount[]): boolean {
+  for (let index = 1; index < rows.length; index += 1) {
+    const above = rows[index - 1]!;
+    const below = rows[index]!;
+    if (
+      below.row === above.row + 1 &&
+      above.values >= TABLE_ROW_MIN_VALUES &&
+      below.values >= TABLE_ROW_MIN_VALUES
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
