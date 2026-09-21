@@ -943,24 +943,24 @@ function keptColumnOffsets(
 }
 
 /**
- * The zero-based header row: the declared one, validated and never
- * second-guessed, or the one the shared rule detects from `counts`.
+ * The zero-based index of a declared header row, validated and never
+ * second-guessed, or undefined when none was declared. Decided before the
+ * sheet is profiled, so a declared row the used range does not reach costs
+ * nothing: a `!ref` padded to the bottom of the sheet by formatting is not
+ * walked to refuse an option that was wrong on its face.
  */
-function findHeaderRow(
-  counts: readonly RowValueCount[],
-  configuredRow?: number,
-): number | undefined {
-  if (configuredRow !== undefined) {
-    if (!Number.isInteger(configuredRow) || configuredRow < 1) {
-      throw new ConsultChimpsError(
-        XLSX_ERRORS.XLSX_INVALID_HEADER_ROW,
-        "The header row must be a positive integer.",
-        { details: { configuredRow } },
-      );
-    }
-    return configuredRow - 1;
+function declaredHeaderRowIndex(configuredRow?: number): number | undefined {
+  if (configuredRow === undefined) {
+    return undefined;
   }
-  return detectHeaderRow(counts);
+  if (!Number.isInteger(configuredRow) || configuredRow < 1) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_INVALID_HEADER_ROW,
+      "The header row must be a positive integer.",
+      { details: { configuredRow } },
+    );
+  }
+  return configuredRow - 1;
 }
 
 function isVisibleSheet(workbook: XLSX.WorkBook, sheetName: string): boolean {
@@ -991,13 +991,16 @@ function worksheetToTable(
   }
 
   const range = XLSX.utils.decode_range(reference);
-  const profile = profileRange(worksheet, range, dates);
-  const headerRowIndex = findHeaderRow(profile.counts, configuredHeaderRow);
+  const declared = declaredHeaderRowIndex(configuredHeaderRow);
   if (
-    headerRowIndex === undefined ||
-    headerRowIndex < range.s.r ||
-    headerRowIndex > range.e.r
+    declared !== undefined &&
+    (declared < range.s.r || declared > range.e.r)
   ) {
+    return undefined;
+  }
+  const profile = profileRange(worksheet, range, dates);
+  const headerRowIndex = declared ?? detectHeaderRow(profile.counts);
+  if (headerRowIndex === undefined) {
     return undefined;
   }
 
@@ -1513,9 +1516,22 @@ export function workbookWorksheetRecords(
 
   const range = XLSX.utils.decode_range(reference);
   const dates = workbookDates.forSheet(worksheetName);
-  const profile = profileRange(worksheet, range, dates);
-  const headerRowIndex = findHeaderRow(profile.counts, options.headerRow);
-  if (headerRowIndex === undefined || headerRowIndex > range.e.r) {
+  const declared = declaredHeaderRowIndex(options.headerRow);
+  // A declared row the used range does not reach is refused before the sheet
+  // is profiled, for the reason `declaredHeaderRowIndex` gives.
+  const profile =
+    declared !== undefined && declared > range.e.r
+      ? undefined
+      : profileRange(worksheet, range, dates);
+  const headerRowIndex =
+    profile === undefined
+      ? undefined
+      : (declared ?? detectHeaderRow(profile.counts));
+  if (
+    profile === undefined ||
+    headerRowIndex === undefined ||
+    headerRowIndex > range.e.r
+  ) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_INVALID_HEADER_ROW,
       `Worksheet "${worksheetName}" does not contain the selected header row.`,

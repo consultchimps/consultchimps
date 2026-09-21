@@ -2285,6 +2285,26 @@ describe("worksheets with title rows and spacer columns", () => {
     ).toEqual(datedTable?.columns);
   });
 
+  it("refuses a declared header row the used range does not reach", async () => {
+    // Decided before the sheet is profiled, so the answer is the same as it
+    // always was: no table from the table reader, a refusal from the records
+    // reader, and no scan of a padded used range to get there.
+    const bytes = workbookBytes([TITLED]);
+    const [report] = await readWorkbookWorksheetsBytes(
+      { name: "titled.xlsx", bytes },
+      { headerRow: 40 },
+    );
+    expect(report?.table).toBeUndefined();
+    expect(report?.region).toBeUndefined();
+    expect(report?.skippedTitleRows).toBe(0);
+    await expect(
+      readWorksheetRecordsBytes(
+        { name: "titled.xlsx", bytes },
+        { headerRow: 40 },
+      ),
+    ).rejects.toMatchObject({ code: XLSX_ERRORS.XLSX_INVALID_HEADER_ROW });
+  });
+
   it("reports nothing left out for a worksheet that yields no table", async () => {
     // A title, a blank row, then a header with no rows under it: the title
     // is skipped, the header is found, and there is still no table, so the

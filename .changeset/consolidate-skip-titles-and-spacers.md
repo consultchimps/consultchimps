@@ -1,6 +1,7 @@
 ---
 "@consultchimps/xlsx": minor
 "@consultchimps/messages": patch
+"consultchimps": patch
 ---
 
 Skip title rows and spacer columns when reading worksheets. The header row is
