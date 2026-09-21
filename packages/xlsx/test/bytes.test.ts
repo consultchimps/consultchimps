@@ -1442,9 +1442,11 @@ describe("byte-level workbook consolidation", () => {
       inputTables: 2,
       outputColumns: 6,
       outputRows: 2,
-      // No mapping ran, so both mapping counts report zero rather than being
-      // absent: a caller reads a metric without first asking which options
-      // produced the result.
+      // Nothing was left out, and no mapping ran, so every one of these counts
+      // reports zero rather than being absent: a caller reads a metric without
+      // first asking which options or which worksheets produced the result.
+      skippedSpacerColumns: 0,
+      skippedTitleRows: 0,
       suggestedColumns: 0,
       unmappedColumns: 0,
     });
@@ -1520,6 +1522,8 @@ describe("byte-level workbook consolidation", () => {
       inputTables: 4,
       outputColumns: 8,
       outputRows: 4,
+      skippedSpacerColumns: 0,
+      skippedTitleRows: 0,
       suggestedColumns: 0,
       unmappedColumns: 0,
     });

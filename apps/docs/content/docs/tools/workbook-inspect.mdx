@@ -21,10 +21,19 @@ nothing, creates no output, and leaves the original untouched.
   or very hidden), the size of its used range, and how many rows sit below its
   header row.
 - **The header row** each worksheet would be read from. It comes from the same
-  region resolver the workbook split uses, rather than from a second header
-  detection written for the report, so the answer moves with the operation.
+  rule the consolidation and the workbook split apply, rather than from a second
+  header detection written for the report, so the answer moves with the
+  operations: the first row holding more than half as many values as the fullest
+  of the rows below it, or at most one value fewer, with the rows above it
+  skipped when a blank row sets them apart from the header or they are banners
+  merged across columns. The rule is described under
+  [Choose a header row](/docs/tools/spreadsheet-consolidate#choose-a-header-row);
+  `--header-row` names a row instead.
 - **Column headers** from that row, blanks filled in and repeats made unique the
-  way an operation would name them.
+  way an operation would name them. A column that holds nothing in the header
+  row or under it is a spacer and is left out, exactly as a consolidation leaves
+  it out, so the column list can be shorter than the width of the used range
+  reported beside it.
 - **Sample values**: up to five distinct non-empty values per column, in the
   order the rows carry them. Values are reported as the workbook stores them,
   with nothing type-inferred, so the number `1` and the text `1` stay apart. The

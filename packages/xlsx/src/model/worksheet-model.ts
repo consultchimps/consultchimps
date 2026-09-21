@@ -715,6 +715,32 @@ export class WorksheetModel implements WorksheetModelContract {
     return this.#rows.reduce((last, row) => Math.max(last, row.number), 0);
   }
 
+  /**
+   * The merged ranges the part declares, read from its `mergeCells`
+   * container, which OOXML places after `sheetData`. A reference that does
+   * not decode is left out rather than refused: a banner the rule cannot
+   * place is simply no evidence.
+   */
+  mergedRanges(): readonly CellRange[] {
+    const container = findElement(this.#suffix, "mergeCells");
+    if (!container || container.selfClosing) {
+      return [];
+    }
+    const ranges: CellRange[] = [];
+    for (const element of findElements(
+      this.#suffix.slice(container.innerStart, container.innerEnd),
+      "mergeCell",
+    )) {
+      const reference = getAttribute(element.openTag, "ref");
+      const range =
+        reference === undefined ? undefined : decodeRange(reference);
+      if (range) {
+        ranges.push(range);
+      }
+    }
+    return ranges;
+  }
+
   /** Whether any edit has been applied since the part was parsed. */
   get changed(): boolean {
     return this.#changed;

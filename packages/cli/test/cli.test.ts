@@ -530,9 +530,12 @@ describe("consultchimps CLI", () => {
       input,
     ]);
     expect(withHeaderRow.stdout).toContain("Header row: 4");
-    expect(withHeaderRow.stdout).toContain('2. Client: "A", "B"');
-    expect(withHeaderRow.stdout).toContain('3. Region: "North", "South"');
-    expect(withHeaderRow.stdout).toContain("4. Amount: 10, 20");
+    // Column A holds nothing in the header row or under it, so it is a spacer
+    // and the Excel Table's first column is the first column described.
+    expect(withHeaderRow.stdout).toContain('1. Client: "A", "B"');
+    expect(withHeaderRow.stdout).toContain('2. Region: "North", "South"');
+    expect(withHeaderRow.stdout).toContain("3. Amount: 10, 20");
+    expect(withHeaderRow.stdout).not.toContain("column_1");
 
     expect(await readdir(path.join(directory, "inputs"))).toEqual([
       "clients.xlsx",
@@ -785,6 +788,58 @@ describe("consultchimps CLI", () => {
     );
     expect(missingFile.stderr).toContain("FILES_NOT_FOUND");
     expect(missingFile.stdout).toBe("");
+  });
+
+  it("reports the title rows and spacer columns a consolidation left out", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "titled.xlsx");
+    const output = path.join(directory, "outputs", "consolidated.xlsx");
+
+    await writeWorkbook(input, [
+      [
+        "Review Log",
+        [
+          ["Quarterly review log", null, null, null, null],
+          [null, null, null, null, null],
+          ["Prepared by", "Reviewer 1", null, null, null],
+          [null, null, null, null, null],
+          ["Case_ID", "Region", null, "Failed Checks", "Owner"],
+          ["R-1", "north", null, 5, "Reviewer 2"],
+          ["R-2", "south", null, 7, "Reviewer 3"],
+        ],
+      ],
+    ]);
+
+    const machine = await runCli([
+      "--json",
+      "sheets",
+      "consolidate",
+      input,
+      "--output",
+      output,
+    ]);
+    expect(parseJsonSuccess(machine.stdout).metrics).toMatchObject({
+      inputTables: 1,
+      // Four columns kept, plus the three provenance columns; the empty
+      // column between Region and Failed Checks never reaches the output.
+      outputColumns: 7,
+      outputRows: 2,
+      skippedSpacerColumns: 1,
+      skippedTitleRows: 2,
+    });
+
+    const human = await runCli([
+      "sheets",
+      "consolidate",
+      input,
+      "--output",
+      output,
+      "--force",
+    ]);
+    expect(human.exitCode).toBe(0);
+    expect(human.stdout).toContain(
+      "It left out 2 title rows found above the column headers and 1 empty spacer column.",
+    );
   });
 
   it("consolidates workbook globs through the built command", async () => {

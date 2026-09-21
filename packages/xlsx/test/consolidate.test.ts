@@ -351,3 +351,60 @@ describe("consolidateWorkbooks", () => {
     }
   });
 });
+
+describe("consolidateWorkbooks title rows and spacer columns", () => {
+  it("skips a title block and an empty column, and counts both", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
+
+    try {
+      const first = path.join(directory, "north.xlsx");
+      const second = path.join(directory, "south.xlsx");
+      const output = path.join(directory, "consolidated.xlsx");
+      // A one-value title and a two-value "Prepared by" line above a
+      // four-column table: both hold too few values to be its header.
+      await createWorkbook(first, "North", [
+        ["Quarterly review log"],
+        [],
+        ["Prepared by", "Reviewer 1"],
+        [],
+        ["Client", "Amount", "", "Status", "Region"],
+        ["A", 10, "", "Open", "North"],
+      ]);
+      await createWorkbook(second, "South", [
+        ["Client", "Amount", "Status", "Region"],
+        ["B", 20, "Closed", "South"],
+      ]);
+
+      const result = await consolidateWorkbooks({
+        inputs: [first, second],
+        output,
+        addSourceColumns: false,
+      });
+      expect(result.metrics).toEqual({
+        inputFiles: 2,
+        inputTables: 2,
+        outputColumns: 4,
+        outputRows: 2,
+        skippedSpacerColumns: 1,
+        skippedTitleRows: 2,
+        suggestedColumns: 0,
+        unmappedColumns: 0,
+      });
+
+      const workbook = XLSX.read(await readFile(output), { type: "buffer" });
+      expect(
+        XLSX.utils.sheet_to_json(workbook.Sheets.Consolidated!, {
+          defval: null,
+          header: 1,
+          raw: true,
+        }),
+      ).toEqual([
+        ["Client", "Amount", "Status", "Region"],
+        ["A", 10, "Open", "North"],
+        ["B", 20, "Closed", "South"],
+      ]);
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+});

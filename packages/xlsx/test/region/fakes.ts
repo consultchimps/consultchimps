@@ -48,6 +48,8 @@ export interface FakeSheetSpec {
   readonly firstColumn?: number | undefined;
   readonly firstRow?: number | undefined;
   readonly grid: readonly (readonly FakeCellInput[])[];
+  /** Merged ranges, as A1 references such as `A1:D1`. */
+  readonly merges?: readonly string[] | undefined;
   readonly name: string;
   readonly partPath?: string | undefined;
   readonly visibility?: "hidden" | "veryHidden" | "visible" | undefined;
@@ -95,6 +97,7 @@ export class FakeWorksheetModel implements WorksheetModel {
   readonly relocateCalls: RelocateRowsCall[] = [];
   readonly info: SheetInfo;
   private rowsByNumber: Map<RowNumber, FakeRow>;
+  private readonly merges: readonly CellRange[];
 
   constructor(spec: FakeSheetSpec) {
     this.info = {
@@ -102,6 +105,10 @@ export class FakeWorksheetModel implements WorksheetModel {
       partPath: spec.partPath ?? `xl/worksheets/${spec.name}.xml`,
       visibility: spec.visibility ?? "visible",
     };
+    this.merges = (spec.merges ?? []).flatMap((reference) => {
+      const range = parseCellRange(reference);
+      return range ? [range] : [];
+    });
     this.rowsByNumber = new Map();
     const firstRow = spec.firstRow ?? 1;
     const firstColumn = spec.firstColumn ?? 0;
@@ -209,6 +216,10 @@ export class FakeWorksheetModel implements WorksheetModel {
       (last, row) => Math.max(last, row),
       0,
     );
+  }
+
+  mergedRanges(): readonly CellRange[] {
+    return this.merges;
   }
 
   deleteRows(

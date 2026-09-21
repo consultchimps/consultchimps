@@ -398,8 +398,14 @@ async function describeWorksheet(
     sheet: sheet.name,
   });
   const region: DataRegion | undefined = regions[0];
-  if (!region || region.headerRow > used.end.row) {
-    // A declared header row below the last used row leaves nothing to preview.
+  if (
+    !region ||
+    region.headerRow > used.end.row ||
+    region.headerRow < used.start.row
+  ) {
+    // A declared header row outside the used range leaves nothing to
+    // preview, on either side of it: the table readers yield no table for
+    // such a row, and the description says the same.
     return {
       ...EMPTY_SHEET,
       columnCount,

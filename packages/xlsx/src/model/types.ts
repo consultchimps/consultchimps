@@ -130,6 +130,11 @@ export interface WorksheetModel {
    */
   cellValue(ref: CellRef): CellValue;
   /**
+   * The merged ranges the part declares, as it declares them. Reading only:
+   * the invariant pass keeps them in step with row edits.
+   */
+  mergedRanges(): readonly CellRange[];
+  /**
    * The general form of `deleteRows`: an explicit plan saying where each row
    * lands. Both funnel into the same invariant pass.
    */
