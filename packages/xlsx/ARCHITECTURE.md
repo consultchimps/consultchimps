@@ -158,8 +158,8 @@ within a bounded lookahead, or at most one value fewer, and the rows above it
 that hold anything are title rows; they are skipped only on evidence that they
 cannot be the header of the block below (a blank row between them and the
 header, or every value on them in a cell merged across columns), and never when
-the skipped rows form a table of their own (two adjacent rows of three or more
-values), so that a sparse header over its records, or a small table above a
+the skipped rows form a table of their own (two adjacent rows of two or more
+values each), so that a sparse header over its records, or a small table above a
 wider block, is never mistaken for a title and a data row lost. Otherwise the
 first populated row is the header, as before. A header-text search (`{ find }`,
 `"all-worksheets"`, and `{ sheet }` with a column) looks on that detected row

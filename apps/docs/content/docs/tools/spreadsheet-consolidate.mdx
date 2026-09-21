@@ -312,7 +312,7 @@ columns is no different. Reading a sparse header as a title would lose a record,
 so a row above the header is skipped only on evidence that it cannot be the
 header of the block below it: a blank row separates the two, or the row is a
 banner, every value on it sitting in a cell merged across two or more columns.
-Rows that themselves form a table, two adjacent rows each holding three or more
+Rows that themselves form a table, two adjacent rows each holding two or more
 values, are never skipped, so a small table above a wider block stays the table.
 Whenever the evidence is missing, the first row holding a value is the header,
 as it always was, and no row is lost. A title typed into one unmerged cell

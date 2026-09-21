@@ -227,13 +227,20 @@ describe("detectHeaderRow", () => {
     // table, and a table is never a title.
     expect(detectHeaderRow(rows(3, 3, 3, 0, 8, 8, 8))).toBe(1);
     expect(detectHeaderRow(rows(3, 3, 0, 8, 8, 8))).toBe(1);
+    // A two-column table is a table: its header and one record, set apart
+    // from a wider block by a blank row, stay the table.
+    expect(detectHeaderRow(rows(2, 2, 0, 8, 8, 8))).toBe(1);
+    // Two adjacent single-value lines are a title and a subtitle, and two
+    // adjacent banners are two banners: neither is a table.
+    expect(detectHeaderRow(rows(1, 1, 0, 8, 8, 8))).toBe(4);
+    expect(detectHeaderRow(rows(-2, -2, 8, 8, 8))).toBe(3);
     // A single three-value line set apart by a blank row is a title line.
     expect(detectHeaderRow(rows(3, 0, 8, 8, 8))).toBe(3);
     // The property: whenever the first two populated rows are adjacent and
-    // each holds at least three values, the first is the header, whatever
+    // each holds at least two values, the first is the header, whatever
     // follows.
-    for (const first of [3, 4, 5]) {
-      for (const second of [3, 4, 5]) {
+    for (const first of [2, 3, 4, 5]) {
+      for (const second of [2, 3, 4, 5]) {
         for (const later of [6, 8, 12, 20]) {
           expect(
             detectHeaderRow(rows(0, first, second, 0, later, later, later)),
