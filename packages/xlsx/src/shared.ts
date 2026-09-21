@@ -1517,10 +1517,10 @@ export function workbookWorksheetRecords(
   const range = XLSX.utils.decode_range(reference);
   const dates = workbookDates.forSheet(worksheetName);
   const declared = declaredHeaderRowIndex(options.headerRow);
-  // A declared row the used range does not reach is refused before the sheet
-  // is profiled, for the reason `declaredHeaderRowIndex` gives.
+  // A declared row outside the used range, on either side, is refused before
+  // the sheet is profiled, for the reason `declaredHeaderRowIndex` gives.
   const profile =
-    declared !== undefined && declared > range.e.r
+    declared !== undefined && (declared < range.s.r || declared > range.e.r)
       ? undefined
       : profileRange(worksheet, range, dates);
   const headerRowIndex =

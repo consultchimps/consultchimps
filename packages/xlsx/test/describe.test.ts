@@ -2285,6 +2285,47 @@ describe("worksheets with title rows and spacer columns", () => {
     ).toEqual(datedTable?.columns);
   });
 
+  it("treats a declared header row above the used range the same on every reader", async () => {
+    // A used range that starts on row 3, and row 1 declared as the header:
+    // the table reader yields no table, the records reader refuses, and the
+    // inspection reports no header row and no columns, so a picker built
+    // from it offers nothing the read will not return.
+    const sheet: XLSX.WorkSheet = {
+      "!ref": "A3:B5",
+      A3: { t: "s", v: "Case_ID" },
+      B3: { t: "s", v: "Region" },
+      A4: { t: "s", v: "R-1" },
+      B4: { t: "s", v: "north" },
+      A5: { t: "s", v: "R-2" },
+      B5: { t: "s", v: "south" },
+    };
+    const bytes = new Uint8Array(
+      XLSX.write(
+        { SheetNames: ["Data"], Sheets: { Data: sheet } },
+        { bookType: "xlsx", type: "array" },
+      ) as ArrayBuffer,
+    );
+    const input = { name: "offset.xlsx", bytes };
+
+    expect(await readWorkbookTablesBytes(input, { headerRow: 1 })).toEqual([]);
+    await expect(
+      readWorksheetRecordsBytes(input, { headerRow: 1 }),
+    ).rejects.toMatchObject({ code: XLSX_ERRORS.XLSX_INVALID_HEADER_ROW });
+    const { description } = await describeWorkbookBytes(input, {
+      headerRow: 1,
+    });
+    expect(description.sheets[0]?.headerRow).toBeUndefined();
+    expect(description.sheets[0]?.columns).toEqual([]);
+
+    // The declared row inside the range reads as before, on every reader.
+    const [table] = await readWorkbookTablesBytes(input, { headerRow: 3 });
+    expect(table?.columns).toEqual(["Case_ID", "Region"]);
+    const inRange = await describeWorkbookBytes(input, { headerRow: 3 });
+    expect(
+      inRange.description.sheets[0]?.columns.map((column) => column.header),
+    ).toEqual(["Case_ID", "Region"]);
+  });
+
   it("refuses a declared header row the used range does not reach", async () => {
     // Decided before the sheet is profiled, so the answer is the same as it
     // always was: no table from the table reader, a refusal from the records
