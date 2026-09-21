@@ -702,12 +702,18 @@ worksheets with their visibility and dimensions, the header row the region
 resolver picks (the one a consolidation reads from and a split keys on), Excel
 Tables, named ranges, and a bounded sample of every column's values. The region
 resolver and the table readers apply one header rule, so the header row and
-columns the description reports are the ones `readWorkbookTables` returns. The
-one worksheet they still describe differently is one where no row holds a
-readable value at all, such as a sheet of uncalculated formulas: the description
-reports its first used row as the header, since the sheet is not empty, while
-the table readers yield no table for it. Use it to confirm a workbook's shape,
-or to build a picker for the sheets and columns another operation will act on.
+columns the description reports are the ones `readWorkbookTables` returns.
+Uncalculated formulas are where the two still differ, because a formula with no
+cached result occupies its row for the description and holds nothing for a table
+reader. A worksheet where no row holds a readable value at all is described from
+its first used row, since the sheet is not empty, while the table readers yield
+no table for it; and a worksheet whose header is readable but whose rows under
+it hold only such formulas is described with its header, its columns, and those
+rows counted as data rows, while the table readers see no values under the
+header and yield no table. Either way `readWorkbookWorksheetsBytes` reports the
+uncalculated cells beside the read. Use the description to confirm a workbook's
+shape, or to build a picker for the sheets and columns another operation will
+act on.
 
 ```ts
 import { describeWorkbook } from "@consultchimps/xlsx";
