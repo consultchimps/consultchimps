@@ -1945,6 +1945,7 @@ describe("worksheets with title rows and spacer columns", () => {
     name: "Review Log",
     rows: [
       ["Quarterly review log", null, null, null, null],
+      [null, null, null, null, null],
       ["Prepared by", "Reviewer 1", null, null, null],
       [null, null, null, null, null],
       ["Case_ID", "Region", null, "Failed Checks", "Owner"],
@@ -1979,7 +1980,7 @@ describe("worksheets with title rows and spacer columns", () => {
       bytes: workbookBytes([TITLED]),
     });
 
-    expect(report?.region?.headerRow).toBe(4);
+    expect(report?.region?.headerRow).toBe(5);
     expect(report?.skippedTitleRows).toBe(2);
     expect(report?.skippedSpacerColumns).toBe(1);
     expect(report?.table?.columns).toEqual([
@@ -2003,14 +2004,14 @@ describe("worksheets with title rows and spacer columns", () => {
       },
     ]);
     // Provenance still names the worksheet's own rows.
-    expect(report?.table?.sourceRows).toEqual([5, 6]);
-    expect(report?.table?.source?.firstDataRow).toBe(5);
+    expect(report?.table?.sourceRows).toEqual([6, 7]);
+    expect(report?.table?.source?.firstDataRow).toBe(6);
     // The rectangle examined still spans every used column: the spacer was
     // looked at and found empty, which is how it came to be left out.
     expect(report?.region).toEqual({
       endColumn: 4,
-      headerRow: 4,
-      lastRow: 6,
+      headerRow: 5,
+      lastRow: 7,
       startColumn: 0,
     });
   });
@@ -2050,7 +2051,7 @@ describe("worksheets with title rows and spacer columns", () => {
   it("counts title rows above a declared header row too", async () => {
     const [report] = await readWorkbookWorksheetsBytes(
       { name: "titled.xlsx", bytes: workbookBytes([TITLED]) },
-      { headerRow: 4 },
+      { headerRow: 5 },
     );
     expect(report?.skippedTitleRows).toBe(2);
 
@@ -2417,7 +2418,7 @@ describe("worksheets with title rows and spacer columns", () => {
         Owner: "Reviewer 3",
       },
     ]);
-    expect(records.sourceRows).toEqual([5, 6]);
+    expect(records.sourceRows).toEqual([6, 7]);
 
     // A spacer is not a blank header; a blank header over values still is.
     await expect(

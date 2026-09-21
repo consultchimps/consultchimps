@@ -422,6 +422,7 @@ describe("resolveRegions: { sheet }", () => {
         {
           grid: [
             ["Quarterly review log", null, null, null],
+            [null, null, null, null],
             ["Prepared by", "Reviewer 1", null, null],
             [null, null, null, null],
             ["Case_ID", "Region", "Failed Checks", "Owner"],
@@ -435,10 +436,10 @@ describe("resolveRegions: { sheet }", () => {
     const [region] = await resolveRegions(workbook, { sheet: "Data" });
 
     expect(region?.origin).toEqual({ kind: "detected-header" });
-    expect(region?.headerRow).toBe(4);
+    expect(region?.headerRow).toBe(5);
     expect(region?.body).toEqual({
-      end: { column: 3, row: 5 },
-      start: { column: 0, row: 5 },
+      end: { column: 3, row: 6 },
+      start: { column: 0, row: 6 },
     });
     expect(region?.columns.map((column) => column.name)).toEqual([
       "Case_ID",

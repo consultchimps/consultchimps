@@ -800,6 +800,7 @@ describe("consultchimps CLI", () => {
         "Review Log",
         [
           ["Quarterly review log", null, null, null, null],
+          [null, null, null, null, null],
           ["Prepared by", "Reviewer 1", null, null, null],
           [null, null, null, null, null],
           ["Case_ID", "Region", null, "Failed Checks", "Owner"],

@@ -38,9 +38,13 @@
  * - it is a banner: every value on it sits in a cell merged across two or
  *   more columns, and a cell spanning columns names none of them.
  *
- * And rows that themselves form a table - two adjacent rows holding two or
- * more values each, neither a banner, the would-be header included - are
- * never titles, whatever wider block follows them: a small summary table above a wide detail block is a
+ * And rows that themselves form a table - two adjacent populated rows,
+ * neither a banner, the would-be header included - are never titles,
+ * whatever wider block follows them. No count enters into it: a one-column
+ * list of a header and one record looks exactly like a title and a
+ * subtitle, so an unmerged title block of adjacent lines reads as the table
+ * it might be, while lines set apart by blank rows and merged banners are
+ * skipped. a small summary table above a wide detail block is a
  * table, and the detail block reads as its data, as it always did. When the
  * evidence is missing, the first row holding a value is the header, as it
  * always was, and nothing is lost: the worst case is the old one, a title
@@ -80,13 +84,6 @@ import type { ColumnInfo } from "./types.js";
 
 /** How many populated rows below a candidate the rule measures it against. */
 export const HEADER_LOOKAHEAD_ROWS = 10;
-
-/**
- * Two adjacent rows holding at least this many values are a table. Two is
- * the narrowest table a record can be told from a title line in: two
- * adjacent single-value rows are as likely a title and its subtitle.
- */
-const TABLE_ROW_MIN_VALUES = 2;
 
 /** What one row of a worksheet holds, as far as the header rule is concerned. */
 export interface RowValueCount {
@@ -160,19 +157,18 @@ export function isTitleLine(
 }
 
 /**
- * Whether rows, in row order, contain a table: two physically adjacent rows
- * each holding at least `TABLE_ROW_MIN_VALUES` values, neither a banner (a
- * cell spanning columns is no record). A title block is single-value lines,
- * banners, or fuller lines set apart by blank rows; two adjacent rows of two
- * or more are a table, and a table is never skipped as titles, whatever
- * fuller block follows it. The row that would become the
+ * Whether rows, in row order, contain a table: two physically adjacent
+ * populated rows, neither a banner (a cell spanning columns is no record).
+ * A title block is banners, or lines set apart from each other and from the
+ * header by blank rows; two adjacent populated rows are a table, and a table
+ * is never skipped as titles, whatever fuller block follows it. The row that would become the
  * header is part of the question: a three-value line directly above it may
  * be a three-name header over its first record, which is the sparse-header
  * case nothing can tell from a title, so it is read as one.
  */
-/** A row that could be a record: enough values, none of them a banner. */
+/** A row that could be a record: populated, and not a banner. */
 function isTableRow(row: RowValueCount): boolean {
-  return row.values >= TABLE_ROW_MIN_VALUES && row.bannerValues < row.values;
+  return row.values > 0 && row.bannerValues < row.values;
 }
 
 function formsTable(rows: readonly RowValueCount[]): boolean {

@@ -364,6 +364,7 @@ describe("consolidateWorkbooks title rows and spacer columns", () => {
       // four-column table: both hold too few values to be its header.
       await createWorkbook(first, "North", [
         ["Quarterly review log"],
+        [],
         ["Prepared by", "Reviewer 1"],
         [],
         ["Client", "Amount", "", "Status", "Region"],
