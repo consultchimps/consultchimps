@@ -821,7 +821,12 @@ function getCell(
  * inspection reports is the one this reader keys on.
  */
 interface RangeProfile {
-  /** One entry per row of the range, top to bottom. */
+  /**
+   * One entry per row of the range holding a value, top to bottom. Blank rows
+   * are left out: the rule reads them from the gaps in row numbers, and a
+   * `!ref` padded to the bottom of the sheet by formatting would otherwise
+   * cost an entry per empty row.
+   */
   readonly counts: readonly RowValueCount[];
   /**
    * Per column offset from `range.s.c`, the last row index holding a value,
@@ -852,7 +857,9 @@ function profileRange(
       values += 1;
       lastValueRow[offset] = rowIndex;
     }
-    counts.push({ row: rowIndex, values });
+    if (values > 0) {
+      counts.push({ row: rowIndex, values });
+    }
   }
   return { counts, lastValueRow };
 }

@@ -224,7 +224,11 @@ export function countTitleRows(
  * its last value, if any, sits above that row.
  */
 export interface WorksheetProfile {
-  /** Every stored row inside the used range, in row order. */
+  /**
+   * Every stored row inside the used range that holds a value, in row order.
+   * Rows holding nothing are left out; the rule reads blank rows from the
+   * gaps in row numbers, so nothing is kept per empty row.
+   */
   readonly counts: readonly RowValueCount[];
   /** The last row holding a value, per column that holds one anywhere. */
   readonly lastValueRow: ReadonlyMap<ColumnIndex, RowNumber>;
@@ -261,7 +265,9 @@ export function profileWorksheet(
         lastValueRow.set(column, row.number);
       }
     }
-    counts.push({ row: row.number, values });
+    if (values > 0) {
+      counts.push({ row: row.number, values });
+    }
   }
   // Stored order is document order, which a hand-written part may leave
   // unsorted; the rule reads rows top to bottom.
