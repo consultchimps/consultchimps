@@ -143,9 +143,13 @@ describe("exportPbiTables", () => {
       );
       return;
     }
+    // The script is JavaScript, not TypeScript, on purpose: it runs under the
+    // published runtime contract's Node floor, where type stripping is not
+    // on by default, and a check of the built package should need nothing
+    // the built package's own users do not have.
     const printed = execFileSync(
       process.execPath,
-      [path.join(root, "test", "export-once.ts")],
+      [path.join(root, "test", "export-once.mjs")],
       { encoding: "utf8", cwd: root },
     ).trim();
     const here = await exportPbiTables(fixture);
