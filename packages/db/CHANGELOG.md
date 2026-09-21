@@ -1,13 +1,9 @@
-# @consultchimps/core
+# @consultchimps/db
 
-## 0.6.0
+## 1.0.0
 
-### Minor Changes
+### Major Changes
 
-- 4bc99d2: Raise the supported Node.js floor from 22.0.0 to 22.14.0. Continuous
-  integration now tests that exact version: pnpm 11 requires 22.13, and
-  better-sqlite3 13 crashes on the 22.13 patch line, so 22.14.0 is the lowest
-  release on which every published package works.
 - 6606d1e: Group staged imports under `db import prepare`, `inspect`, `update`,
   and `apply`. Use `db import run` for one-step execution, `--profile` for
   reusable settings, and `--batch` for a saved review. Rename the library
@@ -133,70 +129,23 @@
   connection while leaving cleanup available, and retain the original error when
   rollback succeeds.
 
-## 0.5.1
+### Minor Changes
+
+- 467f75c: Add `@consultchimps/db/sqlite-read` for temporary read-only SQLite
+  catalogs in Node and browser workers. The entry uses the official SQLite WASM
+  runtime, preserves 64-bit integers and binary values, provides configurable
+  read limits, and creates no persistent workspace files.
+- 4bc99d2: Raise the supported Node.js floor from 22.0.0 to 22.14.0. Continuous
+  integration now tests that exact version: pnpm 11 requires 22.13, and
+  better-sqlite3 13 crashes on the 22.13 patch line, so 22.14.0 is the lowest
+  release on which every published package works.
 
 ### Patch Changes
 
-- 32973f7: Declare support for Node.js 22 and later (`engines.node: ">=22.0.0"`
-  instead of `24.x`), so the toolkit installs and runs in environments that ship
-  the previous LTS line. CI now validates the runtime on Node 22.16, the latest
-  22, and 26 alongside the full Node 24 verification. The CLI additionally ships
-  a standalone `consultchimps.mjs` bundle on each GitHub release: one file that
-  runs with `node consultchimps.mjs` and needs no npm access at all.
-
-## 0.5.0
-
-### Minor Changes
-
-- 1f759eb: Centralize portable filename sanitization in `@consultchimps/core`,
-  which now exports `safeNameFragment` and `truncateToUtf8Bytes`. The PDF and
-  Excel operations share that single implementation instead of keeping their own
-  copies, so every generated output name follows the same rules.
-
-  Excel splitting previously capped a group value at 80 code points rather than
-  80 UTF-8 bytes, so a long non-ASCII group value could produce an output
-  filename far past common 255-byte filename limits. It is now capped by encoded
-  size, truncating only at code point boundaries. Split filenames are unchanged
-  for ASCII group values; a non-ASCII group value longer than 80 UTF-8 bytes is
-  now shortened.
-
-## 0.4.0
-
-### Minor Changes
-
-- 6564e24: Add byte-level PDF operations for environments without a filesystem,
-  such as browsers. `@consultchimps/pdf/bytes` exports `splitPdfBytes`,
-  `planSplitPdfBytes`, and `mergePdfsBytes`, which take named in-memory bytes
-  and return the produced bytes alongside the same structured result the
-  path-based operations report. The entry point's import graph contains no Node
-  built-ins, outputs remain byte-deterministic, and cancellation and progress
-  work identically. `@consultchimps/core` gains the shared `ByteArtifact` and
-  `ByteOperationOutcome` contracts. Existing path-based APIs are unchanged.
-
-## 0.3.0
-
-### Minor Changes
-
-- 5c08c75: Publish typed error-code registries (`FILES_ERRORS`, `PDF_ERRORS`,
-  `XLSX_ERRORS`, `PPTX_ERRORS`, with matching `*ErrorCode` unions) so consumers
-  can match expected failures without string literals, and make
-  `OperationResult` and `OperationPlan` generic over each operation's metric
-  names so metric renames become compile-time errors. All runtime values and
-  error codes are unchanged; the generics default to `string`, so existing
-  consumers keep compiling.
-
-## 0.2.0
-
-### Minor Changes
-
-- c78b35e: Harden the operation APIs for interface consumers. Breaking for
-  library users on 0.x: `consolidateWorkbooks`, `splitWorkbookByColumn`,
-  `splitPdf`, and `mergePdfs` now take a single options object
-  (`inputs`/`input`, `output`/ `outputDirectory`, plus the existing options)
-  instead of positional arguments. Every operation now accepts an optional
-  `AbortSignal` and a deterministic `onProgress` reporter, and gains a `plan`
-  variant (`planConsolidateWorkbooks`, `planSplitWorkbookByColumn`,
-  `planSplitPdf`, `planMergePdfs`, `planPopulatePowerPointTemplate`) that
-  validates inputs and reports every intended output and collision without
-  writing anything. Cancellation raises a stable `OPERATION_ABORTED` error and
-  never modifies source files. CLI behavior is unchanged.
+- Updated dependencies [78ff6a6]
+- Updated dependencies [4bc99d2]
+- Updated dependencies [6606d1e]
+- Updated dependencies [04dd6de]
+  - @consultchimps/xlsx@0.18.0
+  - @consultchimps/core@0.6.0
+  - @consultchimps/files@0.5.0
