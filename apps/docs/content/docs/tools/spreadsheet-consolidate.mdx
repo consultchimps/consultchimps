@@ -300,10 +300,11 @@ Worksheet matching is case-insensitive. Include hidden worksheets with
 
 The header row is detected. Each row is measured against the fullest of the ten
 populated rows below it: the first row that holds more than half as many values
-as that row, or at most one value fewer, is the header. Rows above it that hold
-anything, such as a report title, a merged banner, or a "Prepared by" line with
-a name beside it, are title rows. They are skipped, and the result reports how
-many were.
+as that row, or at most one value fewer, is the header. Rows above it are title
+rows only when a blank row sets them apart from the header or they are banners
+merged across the columns, such as a report title merged across the table or a
+"Prepared by" line with a blank row under it. Those rows are skipped, and the
+result reports how many were.
 
 A count alone cannot tell a title line from a header that leaves most of its
 columns unnamed: `Name` alone above `Alice | North | Open` looks exactly like
