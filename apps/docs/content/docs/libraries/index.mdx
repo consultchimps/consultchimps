@@ -683,8 +683,8 @@ const namedRanges = await readWorkbookNamedRanges("clients.xlsx");
 one-based `headerRow`, and `includeHiddenSheets`. Without a `headerRow` the
 header is detected the way the consolidator detects it: the first row holding
 more than half as many values as the fullest of the rows below it, or at most
-one value fewer, with the title rows above it skipped when the header they leave
-is made of text (see
+one value fewer, with the rows above it skipped when a blank row sets them apart
+from the header or they hold fewer than a third as many values as it does (see
 [Choose a header row](/docs/tools/spreadsheet-consolidate#choose-a-header-row)).
 Columns that hold nothing in the header row or under it are left out as spacers,
 and `readWorkbookWorksheets` reports both counts per worksheet as

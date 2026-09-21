@@ -10,7 +10,7 @@ import {
   detectHeaderRow,
   HEADER_LOOKAHEAD_ROWS,
   isBlankValue,
-  isNonTextValue,
+  isTitleLine,
   profileWorksheet,
   qualifiesAsHeader,
   regionColumns,
@@ -21,13 +21,9 @@ import { FakeWorkbookModel } from "./fakes.js";
 /** Every (values, fullest) pair up to a width no worksheet here exceeds. */
 const WIDTHS = Array.from({ length: 24 }, (_, index) => index + 1);
 
-/** Rows of all-text values, one entry per row, top to bottom. */
-function textRows(...values: number[]): RowValueCount[] {
-  return values.map((count, index) => ({
-    nonTextValues: 0,
-    row: index + 1,
-    values: count,
-  }));
+/** Rows numbered from 1, one entry per row, top to bottom; 0 is a blank row. */
+function rows(...values: number[]): RowValueCount[] {
+  return values.map((count, index) => ({ row: index + 1, values: count }));
 }
 
 describe("qualifiesAsHeader", () => {
@@ -81,37 +77,81 @@ describe("qualifiesAsHeader", () => {
   });
 });
 
+describe("isTitleLine", () => {
+  const header = (values: number): RowValueCount => ({ row: 9, values });
+  const line = (values: number): RowValueCount => ({ row: 1, values });
+
+  it("accepts any populated line a blank row sets apart from the header", () => {
+    for (const width of WIDTHS) {
+      expect(isTitleLine(line(width), header(width), true)).toBe(true);
+    }
+  });
+
+  it("otherwise accepts only a line naming fewer than a third of the header", () => {
+    for (const width of WIDTHS) {
+      for (let values = 1; values <= width; values += 1) {
+        expect(isTitleLine(line(values), header(width), false)).toBe(
+          values * 3 < width,
+        );
+      }
+    }
+    // The shapes the rule is judged by: a one-value title above four columns
+    // is a title; above three it may be a header naming one column.
+    expect(isTitleLine(line(1), header(4), false)).toBe(true);
+    expect(isTitleLine(line(1), header(3), false)).toBe(false);
+    expect(isTitleLine(line(2), header(7), false)).toBe(true);
+    expect(isTitleLine(line(2), header(6), false)).toBe(false);
+  });
+});
+
 describe("detectHeaderRow", () => {
   it("finds nothing on a worksheet where no row holds a value", () => {
     expect(detectHeaderRow([])).toBeUndefined();
-    expect(detectHeaderRow(textRows(0, 0, 0))).toBeUndefined();
+    expect(detectHeaderRow(rows(0, 0, 0))).toBeUndefined();
   });
 
-  it("skips a title and a two-value line above a four-column header", () => {
+  it("skips a title block a blank row sets apart from the header", () => {
     // Title, "Prepared by | name", blank, header, data.
-    expect(detectHeaderRow(textRows(1, 2, 0, 4, 4, 4))).toBe(4);
+    expect(detectHeaderRow(rows(1, 2, 0, 4, 4, 4))).toBe(4);
+    // The same block directly above a wide header: the one-value title names
+    // fewer than a third of it, and so does the two-value line.
+    expect(detectHeaderRow(rows(1, 2, 7, 7, 7))).toBe(3);
+  });
+
+  it("keeps a sparse header above all-text records rather than losing one", () => {
+    // `Name | |` above `Alice | North | Open`: by count a title above a
+    // header, by count also a header naming one of three columns over its
+    // first record. Nothing tells them apart, so the first row is the
+    // header and no record is lost.
+    expect(detectHeaderRow(rows(1, 3, 3, 3))).toBe(1);
+    // Two names of four above records: the same.
+    expect(detectHeaderRow(rows(2, 4, 4, 4))).toBe(1);
+    // A blank row between them is what makes the first a title.
+    expect(detectHeaderRow(rows(1, 0, 3, 3, 3))).toBe(3);
+    // Four columns is where a single value stops being a plausible header.
+    expect(detectHeaderRow(rows(1, 4, 4, 4))).toBe(2);
   });
 
   it("keeps a header with one unnamed column over fuller data rows", () => {
-    expect(detectHeaderRow(textRows(1, 3, 4, 4))).toBe(2);
+    expect(detectHeaderRow(rows(1, 0, 3, 4, 4))).toBe(3);
   });
 
   it("picks the first qualifying row, never a later fuller one", () => {
-    expect(detectHeaderRow(textRows(0, 5, 6, 6))).toBe(2);
+    expect(detectHeaderRow(rows(0, 5, 6, 6))).toBe(2);
   });
 
   it("returns the caller's own row labels", () => {
     expect(
       detectHeaderRow([
-        { nonTextValues: 0, row: 7, values: 1 },
-        { nonTextValues: 0, row: 9, values: 5 },
-        { nonTextValues: 0, row: 12, values: 5 },
+        { row: 7, values: 1 },
+        { row: 9, values: 5 },
+        { row: 12, values: 5 },
       ]),
     ).toBe(9);
   });
 
   it("answers the first row holding a value whenever no row holds more than one", () => {
-    expect(detectHeaderRow(textRows(0, 0, 1, 1, 1))).toBe(3);
+    expect(detectHeaderRow(rows(0, 0, 1, 1, 1))).toBe(3);
   });
 
   it("measures a row against the rows that follow it, not the whole sheet", () => {
@@ -119,14 +159,14 @@ describe("detectHeaderRow", () => {
     // six-column block. The table's header is the header; the wider block
     // further down does not turn the table into title rows.
     const table = Array.from({ length: 20 }, () => 3);
-    expect(detectHeaderRow(textRows(...table, 0, 6, 6, 6))).toBe(1);
+    expect(detectHeaderRow(rows(...table, 0, 6, 6, 6))).toBe(1);
   });
 
   it("looks a bounded number of populated rows ahead", () => {
-    // Exactly HEADER_LOOKAHEAD_ROWS one-value lines above the header are still
-    // skipped, because the header is within reach of the first line...
+    // Exactly HEADER_LOOKAHEAD_ROWS one-value lines above a wide header are
+    // still skipped, because the header is within reach of the first line...
     const inReach = Array.from({ length: HEADER_LOOKAHEAD_ROWS }, () => 1);
-    expect(detectHeaderRow(textRows(...inReach, 6, 6))).toBe(
+    expect(detectHeaderRow(rows(...inReach, 6, 6))).toBe(
       HEADER_LOOKAHEAD_ROWS + 1,
     );
     // ...and one more line is one too many: the first line then sees nothing
@@ -135,132 +175,79 @@ describe("detectHeaderRow", () => {
       { length: HEADER_LOOKAHEAD_ROWS + 1 },
       () => 1,
     );
-    expect(detectHeaderRow(textRows(...outOfReach, 6, 6))).toBe(1);
+    expect(detectHeaderRow(rows(...outOfReach, 6, 6))).toBe(1);
   });
 
-  it("does not skip rows as titles when the header they leave holds numbers", () => {
-    // A header that names two of four columns over rows holding a number: by
-    // count the first data row would be the header, which would lose a data
-    // row and name columns after a record. The guard keeps the first row.
-    expect(
-      detectHeaderRow([
-        { nonTextValues: 0, row: 1, values: 2 },
-        { nonTextValues: 1, row: 2, values: 4 },
-        { nonTextValues: 1, row: 3, values: 4 },
-      ]),
-    ).toBe(1);
-  });
-
-  it("still skips single-value lines above a header of at least three values that holds numbers", () => {
-    // A title and a subtitle above "Region | 2023 | 2024 | 2025".
-    expect(
-      detectHeaderRow([
-        { nonTextValues: 0, row: 1, values: 1 },
-        { nonTextValues: 1, row: 2, values: 1 },
-        { nonTextValues: 3, row: 4, values: 4 },
-        { nonTextValues: 3, row: 5, values: 4 },
-      ]),
-    ).toBe(4);
-    // But not a two-value line: that could as well be a sparse header.
-    expect(
-      detectHeaderRow([
-        { nonTextValues: 0, row: 1, values: 2 },
-        { nonTextValues: 3, row: 2, values: 4 },
-        { nonTextValues: 3, row: 3, values: 4 },
-      ]),
-    ).toBe(1);
-    // Nor above a two-value header holding a number.
-    expect(
-      detectHeaderRow([
-        { nonTextValues: 0, row: 1, values: 1 },
-        { nonTextValues: 1, row: 3, values: 2 },
-        { nonTextValues: 1, row: 4, values: 2 },
-      ]),
-    ).toBe(1);
-  });
-
-  it("holds the property for every all-text count sequence in a small space", () => {
-    // Every sequence of up to four rows holding zero to five text values
-    // each: the answer is the first row that qualifies against the fullest of
-    // itself and the rows after it, and no row above it does.
-    const range = [0, 1, 2, 3, 4, 5];
-    for (const a of range) {
-      for (const b of range) {
-        for (const c of range) {
-          for (const d of range) {
-            const sequence = textRows(a, b, c, d);
-            const populated = sequence.filter((count) => count.values > 0);
-            const header = detectHeaderRow(sequence);
-            if (populated.length === 0) {
-              expect(header).toBeUndefined();
-              continue;
-            }
-            expect(header).toBeDefined();
-            const fullestFrom = (index: number): number =>
-              Math.max(...populated.slice(index).map((count) => count.values));
-            const chosenIndex = populated.findIndex(
-              (count) => count.row === header,
-            );
-            expect(chosenIndex).toBeGreaterThanOrEqual(0);
-            expect(
-              qualifiesAsHeader(
-                populated[chosenIndex]!.values,
-                fullestFrom(chosenIndex),
-              ),
-            ).toBe(true);
-            for (let above = 0; above < chosenIndex; above += 1) {
-              expect(
-                qualifiesAsHeader(populated[above]!.values, fullestFrom(above)),
-              ).toBe(false);
-            }
-          }
-        }
-      }
-    }
+  it("skips a title above year columns without needing to know they are numbers", () => {
+    // A title and a subtitle above `Region | 2023 | 2024 | 2025`.
+    expect(detectHeaderRow(rows(1, 1, 0, 4, 4))).toBe(4);
+    expect(detectHeaderRow(rows(1, 1, 4, 4))).toBe(3);
   });
 
   it("never skips rows that themselves form a table", () => {
-    // A three-column table of a header and two all-text rows, then an
-    // eight-column all-text block within reach: by count no row of the small
-    // table qualifies and the wide header would pass the text test, so the
-    // whole small table would be read as title rows. Two consecutive rows of
-    // three or more values are a table, and a table is never a title.
-    expect(detectHeaderRow(textRows(3, 3, 3, 8, 8, 8))).toBe(1);
-    expect(detectHeaderRow(textRows(3, 3, 0, 8, 8, 8))).toBe(1);
+    // A three-column table of a header and two rows, then an eight-column
+    // block within reach: each small-table row names more than a third of
+    // the wide header, and two adjacent rows of three or more are a table.
+    expect(detectHeaderRow(rows(3, 3, 3, 8, 8, 8))).toBe(1);
+    expect(detectHeaderRow(rows(3, 3, 0, 8, 8, 8))).toBe(1);
+    // Even a three-column table above a block wide enough that a third of it
+    // is more than three: adjacent rows of three or more are a table.
+    expect(detectHeaderRow(rows(3, 3, 0, 12, 12, 12))).toBe(1);
     // A three-value line set apart from the wide block by a blank row is a
     // title line and is skipped; the same line directly above the block may
     // be a three-name header over its first record, and reads as one.
-    expect(detectHeaderRow(textRows(3, 0, 8, 8, 8))).toBe(3);
-    expect(detectHeaderRow(textRows(3, 8, 8, 8))).toBe(1);
-    // A two-column key-value block above a wide table reads as a title
-    // block: two values per line is what "Prepared by | name" holds too.
-    expect(detectHeaderRow(textRows(1, 2, 2, 8, 8, 8))).toBe(4);
+    expect(detectHeaderRow(rows(3, 0, 12, 12, 12))).toBe(3);
+    expect(detectHeaderRow(rows(3, 12, 12, 12))).toBe(1);
     // The property: whenever the first two populated rows are adjacent and
     // each holds at least three values, the first is the header, whatever
     // follows.
     for (const first of [3, 4, 5]) {
       for (const second of [3, 4, 5]) {
-        for (const later of [6, 8, 12]) {
+        for (const later of [6, 8, 12, 20]) {
           expect(
-            detectHeaderRow(textRows(0, first, second, later, later, later)),
+            detectHeaderRow(rows(0, first, second, later, later, later)),
           ).toBe(2);
         }
       }
     }
   });
 
-  it("never answers below the first populated row when the guard refuses", () => {
-    // Whatever the counts, a header holding numbers with a multi-value row
-    // above it means the first populated row is the answer.
-    for (const above of [2, 3, 4]) {
-      for (const width of [4, 5, 6, 8]) {
-        expect(
-          detectHeaderRow([
-            { nonTextValues: 0, row: 2, values: above },
-            { nonTextValues: 1, row: 5, values: width },
-            { nonTextValues: 2, row: 6, values: width },
-          ]),
-        ).toBe(2);
+  it("always answers a populated row, and the first one without evidence", () => {
+    // Every sequence of up to five rows holding zero to six values each: the
+    // answer is always a row holding a value, and whenever no blank row
+    // separates the rows and every row names at least a third of every row
+    // below it, the answer is the first populated row.
+    const range = [0, 1, 2, 3, 4, 5, 6];
+    for (const a of range) {
+      for (const b of range) {
+        for (const c of range) {
+          for (const d of range) {
+            for (const e of range) {
+              const sequence = rows(a, b, c, d, e);
+              const populated = sequence.filter((count) => count.values > 0);
+              const header = detectHeaderRow(sequence);
+              if (populated.length === 0) {
+                expect(header).toBeUndefined();
+                continue;
+              }
+              expect(populated.some((count) => count.row === header)).toBe(
+                true,
+              );
+              const contiguous = populated.every(
+                (count, index) =>
+                  index === 0 || count.row === populated[index - 1]!.row + 1,
+              );
+              const noSparseLine = populated.every((count, index) =>
+                populated
+                  .slice(index + 1)
+                  .every((below) => count.values * 3 >= below.values),
+              );
+              if (contiguous && noSparseLine) {
+                expect(header).toBe(populated[0]!.row);
+              }
+            }
+          }
+        }
       }
     }
   });
@@ -268,14 +255,14 @@ describe("detectHeaderRow", () => {
 
 describe("countTitleRows", () => {
   it("counts only the rows above the header that hold a value", () => {
-    const sequence = textRows(1, 0, 2, 6, 6);
+    const sequence = rows(1, 0, 2, 6, 6);
     expect(countTitleRows(sequence, 4)).toBe(2);
     expect(countTitleRows(sequence, 1)).toBe(0);
     expect(countTitleRows(sequence, 5)).toBe(3);
   });
 });
 
-describe("isBlankValue and isNonTextValue", () => {
+describe("isBlankValue", () => {
   it("treats nothing, null, and the empty string as blank and everything else as a value", () => {
     expect(isBlankValue(undefined)).toBe(true);
     expect(isBlankValue(null)).toBe(true);
@@ -284,17 +271,6 @@ describe("isBlankValue and isNonTextValue", () => {
     expect(isBlankValue(0)).toBe(false);
     expect(isBlankValue(false)).toBe(false);
     expect(isBlankValue("#REF!")).toBe(false);
-  });
-
-  it("classifies numbers, booleans, and error cells as not text", () => {
-    expect(isNonTextValue(2024, undefined)).toBe(true);
-    expect(isNonTextValue(true, "b")).toBe(true);
-    // The two readers hand an error back differently; the cell type decides.
-    expect(isNonTextValue("#REF!", "e")).toBe(true);
-    expect(isNonTextValue(23, "e")).toBe(true);
-    expect(isNonTextValue("Region", "s")).toBe(false);
-    expect(isNonTextValue("2024-03-09", undefined)).toBe(false);
-    expect(isNonTextValue(new Date(0), undefined)).toBe(false);
   });
 });
 
@@ -306,7 +282,8 @@ describe("profileWorksheet", () => {
           grid: [
             ["Quarterly review log", null, null],
             // A row the sheet does not store at all: it never reaches the
-            // counts, and the rule does not need it to.
+            // counts, and the rule reads the gap in row numbers as the blank
+            // row it is.
             [null, null, null],
             ["Case_ID", "Region", "Failed Checks"],
             ["R-1", "north", 5],
@@ -325,10 +302,10 @@ describe("profileWorksheet", () => {
       worksheet.usedRange!,
     );
     expect(profile.counts).toEqual([
-      { nonTextValues: 0, row: 1, values: 1 },
-      { nonTextValues: 0, row: 3, values: 3 },
-      { nonTextValues: 1, row: 4, values: 3 },
-      { nonTextValues: 1, row: 5, values: 2 },
+      { row: 1, values: 1 },
+      { row: 3, values: 3 },
+      { row: 4, values: 3 },
+      { row: 5, values: 2 },
     ]);
     expect([...profile.lastValueRow.entries()]).toEqual([
       [0, 5],
@@ -337,7 +314,7 @@ describe("profileWorksheet", () => {
     ]);
   });
 
-  it("counts an uncalculated formula as nothing and an error as a non-text value", () => {
+  it("counts an uncalculated formula as nothing and an error as a value", () => {
     const workbook = new FakeWorkbookModel({
       sheets: [
         {
@@ -358,8 +335,8 @@ describe("profileWorksheet", () => {
       profileWorksheet(worksheet, worksheet.rows(), worksheet.usedRange!)
         .counts,
     ).toEqual([
-      { nonTextValues: 1, row: 1, values: 1 },
-      { nonTextValues: 0, row: 2, values: 2 },
+      { row: 1, values: 1 },
+      { row: 2, values: 2 },
     ]);
   });
 });

@@ -8,39 +8,42 @@
  * resolver in `resolve.ts`, which the inspection reports through. The rule
  * both apply lives here, once, so that the header row an inspection reports is
  * the header row a consolidation reads from. Each reader supplies what it can
- * see - for every row, how many values it holds and how many of those are not
- * text - and this module answers.
+ * see - for every row, how many values it holds - and this module answers.
  *
  * The rule. A row is measured against the fullest of the rows that follow it,
  * up to `HEADER_LOOKAHEAD_ROWS` populated rows down: it qualifies as the
  * header when it holds more than half as many values as that fullest row, or
- * at most one value fewer. The header row is the first row that qualifies. A
- * report title in A1, a merged banner, or a "Prepared by" line with a name
- * beside it holds one or two values above a table that holds five, so those
- * rows are skipped, while a header row that leaves a column unnamed over data
- * still wins, because it is nearly as full as the rows beneath it. Measuring
- * against the rows that follow, rather than against the fullest row anywhere
- * on the sheet, is what keeps a wider block further down the sheet from
+ * at most one value fewer. The header row is the first row that qualifies,
+ * provided the rows above it are titles by the evidence below; otherwise it is
+ * the first row holding a value, which is what every reader did before.
+ * Measuring against the rows that follow, rather than against the fullest row
+ * anywhere on the sheet, keeps a wider block further down the sheet from
  * turning a whole table above it into "title rows". The "one fewer" clause
  * matters only on a two-column sheet, where one value is both what a title
- * holds and what a header missing a name holds: there the first row holding a
- * value wins, which is what every reader did before.
+ * holds and what a header missing a name holds.
  *
- * The guard. A count cannot tell a header that leaves half its columns
- * unnamed from a title line above a full header: both are a sparse row over
- * fuller ones. Column names are text and data rows usually are not, so rows
- * are skipped as titles only when the row that would become the header holds
- * nothing but text, or when every skipped row holds a single value - a title,
- * a banner - and the header holds at least three, which is what lets a title
- * be skipped above year or month columns. And rows that themselves form a
- * table - two adjacent rows holding three or more values, the would-be
- * header included - are never titles, whatever wider block follows them: a
- * small summary table above a wide detail block is a table, and the detail
- * block reads as its data, as it always did. When the guard refuses, the first row holding a value is the
- * header, as it always was, and nothing is lost: the worst case is the old
- * one, a title read as a header, which the inspection shows and `headerRow`
- * overrides. A declared header row is never second-guessed: the rule applies
- * only when no row was declared.
+ * The evidence. By count alone a title line cannot be told from a header that
+ * leaves most of its columns unnamed: `Name | | ` above `Alice | North | Open`
+ * is one value above three, and so is `Report` above `Case_ID | Region |
+ * Status`. Reading the first as a title would take its first record for the
+ * header row, and losing a record silently is the one outcome these readers
+ * must never produce, so a row above the header is skipped only on evidence
+ * that it cannot be the header of the block below:
+ *
+ * - a blank row lies between it and the header, since a header is never set
+ *   apart from its records; or
+ * - it holds fewer than a third as many values as the header, since a row
+ *   naming fewer than a third of a block's columns is not naming it.
+ *
+ * And rows that themselves form a table - two adjacent rows holding three or
+ * more values, the would-be header included - are never titles, whatever wider
+ * block follows them: a small summary table above a wide detail block is a
+ * table, and the detail block reads as its data, as it always did. When the
+ * evidence is missing, the first row holding a value is the header, as it
+ * always was, and nothing is lost: the worst case is the old one, a title
+ * read as a header, which the inspection shows and `headerRow` overrides. A
+ * declared header row is never second-guessed: the rule applies only when no
+ * row was declared.
  *
  * The same idea, turned on its side, decides the columns. A column whose
  * header cell is blank and whose every cell under the header is blank is a
@@ -54,14 +57,10 @@
  * workbook carries no calculated value for holds nothing, the same as it does
  * to every reader downstream, so a title cell nobody calculated does not push
  * the header down and a column of uncalculated formulas is a spacer. An error
- * value is a value: the cell holds something, however unwelcome. "Not text"
- * means a number, a boolean, or an error: the kinds a column name is never
- * made of. A date is text for this purpose on both sides, because the table
- * reader hands dates back as ISO text and month columns are named by dates.
+ * value is a value: the cell holds something, however unwelcome.
  */
 
 import type {
-  CellModel,
   CellRange,
   ColumnIndex,
   RowModel,
@@ -73,47 +72,23 @@ import type { ColumnInfo } from "./types.js";
 /** How many populated rows below a candidate the rule measures it against. */
 export const HEADER_LOOKAHEAD_ROWS = 10;
 
-/** How a title block is told from a header: at most this many values. */
-const TITLE_LINE_VALUES = 1;
-
-/** The narrowest header a title may be skipped above when it is not all text. */
-const NON_TEXT_HEADER_MIN_VALUES = 3;
-
-/** Two consecutive rows holding at least this many values are a table. */
+/** Two adjacent rows holding at least this many values are a table. */
 const TABLE_ROW_MIN_VALUES = 3;
-
-/** The OOXML cell type of an error value. */
-const ERROR_CELL_TYPE = "e";
 
 /** What one row of a worksheet holds, as far as the header rule is concerned. */
 export interface RowValueCount {
-  /** The row, in whatever numbering the caller uses; only its order matters. */
+  /**
+   * The row, in whatever numbering the caller uses, provided physically
+   * adjacent rows number consecutively: the rule reads gaps as blank rows.
+   */
   readonly row: RowNumber;
   /** Cells on the row holding a value, within the range the caller examined. */
   readonly values: number;
-  /** Of those, the values that are a number, a boolean, or an error. */
-  readonly nonTextValues: number;
 }
 
 /** Whether a cell holds nothing, by the definition every reader here shares. */
 export function isBlankValue(value: unknown): boolean {
   return value === undefined || value === null || value === "";
-}
-
-/**
- * Whether a value is one a column name is never made of. Error cells are
- * classified by their cell type, because the two readers hand an error back
- * differently (one as the engine's numeric code, one as its text).
- */
-export function isNonTextValue(
-  value: unknown,
-  cellType: string | undefined,
-): boolean {
-  return (
-    cellType === ERROR_CELL_TYPE ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  );
 }
 
 /**
@@ -132,24 +107,17 @@ export function qualifiesAsHeader(values: number, fullest: number): boolean {
 }
 
 /**
- * Whether the rows above a header may be skipped as titles, given what the
- * header holds and what the skipped rows hold. See the guard in the module
- * comment.
+ * Whether a row above the header is a title line by the evidence the module
+ * comment describes: set apart from the header by a blank row, or naming
+ * fewer than a third of the header's columns. Exported for the same reason
+ * as `qualifiesAsHeader`.
  */
-function maySkipTitles(
+export function isTitleLine(
+  line: RowValueCount,
   header: RowValueCount,
-  skipped: readonly RowValueCount[],
+  blankRowBetween: boolean,
 ): boolean {
-  if (formsTable([...skipped, header])) {
-    return false;
-  }
-  if (header.nonTextValues === 0) {
-    return true;
-  }
-  return (
-    header.values >= NON_TEXT_HEADER_MIN_VALUES &&
-    skipped.every((row) => row.values <= TITLE_LINE_VALUES)
-  );
+  return blankRowBetween || line.values * 3 < header.values;
 }
 
 /**
@@ -178,12 +146,34 @@ function formsTable(rows: readonly RowValueCount[]): boolean {
 }
 
 /**
+ * Whether every populated row above `populated[headerIndex]` is a title line
+ * by the evidence, and none of them form a table with each other or with the
+ * header.
+ */
+function maySkipTitles(
+  populated: readonly RowValueCount[],
+  headerIndex: number,
+): boolean {
+  const header = populated[headerIndex]!;
+  for (let index = 0; index < headerIndex; index += 1) {
+    const line = populated[index]!;
+    // Populated rows number consecutively when no blank row lies between
+    // them, so a larger gap in row numbers than in positions is a blank row.
+    const blankRowBetween = header.row - line.row > headerIndex - index;
+    if (!isTitleLine(line, header, blankRowBetween)) {
+      return false;
+    }
+  }
+  return !formsTable(populated.slice(0, headerIndex + 1));
+}
+
+/**
  * The header row among `counts`, or undefined when no row holds a value.
  *
  * `counts` is read in the order given, which callers keep top to bottom: the
  * answer is the first row that qualifies against the fullest of itself and
- * the populated rows that follow it within the lookahead, provided the guard
- * allows the rows above it to be skipped; otherwise the first populated row.
+ * the populated rows that follow it within the lookahead, provided the rows
+ * above it are titles by the evidence; otherwise the first populated row.
  */
 export function detectHeaderRow(
   counts: readonly RowValueCount[],
@@ -203,9 +193,7 @@ export function detectHeaderRow(
     if (!qualifiesAsHeader(candidate.values, fullest)) {
       continue;
     }
-    return maySkipTitles(candidate, populated.slice(0, index))
-      ? candidate.row
-      : first.row;
+    return maySkipTitles(populated, index) ? candidate.row : first.row;
   }
   // Unreachable: the last populated row is measured against itself alone.
   return first.row;
@@ -259,35 +247,26 @@ export function profileWorksheet(
       continue;
     }
     let values = 0;
-    let nonTextValues = 0;
     for (const cell of row.cells) {
       const column = cell.ref.column;
       if (column < used.start.column || column > used.end.column) {
         continue;
       }
-      const value = worksheet.cellValue(cell.ref);
-      if (isBlankValue(value)) {
+      if (isBlankValue(worksheet.cellValue(cell.ref))) {
         continue;
       }
       values += 1;
-      if (isNonTextValue(value, cellType(cell))) {
-        nonTextValues += 1;
-      }
       const last = lastValueRow.get(column);
       if (last === undefined || last < row.number) {
         lastValueRow.set(column, row.number);
       }
     }
-    counts.push({ nonTextValues, row: row.number, values });
+    counts.push({ row: row.number, values });
   }
   // Stored order is document order, which a hand-written part may leave
   // unsorted; the rule reads rows top to bottom.
   counts.sort((left, right) => left.row - right.row);
   return { counts, lastValueRow };
-}
-
-function cellType(cell: CellModel): string | undefined {
-  return cell.type;
 }
 
 /**

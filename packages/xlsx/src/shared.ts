@@ -39,7 +39,6 @@ import {
   countTitleRows,
   detectHeaderRow,
   isBlankValue,
-  isNonTextValue,
   type RowValueCount,
 } from "./region/header-detection.js";
 import type { AllWorksheetSplitMetric } from "./split/all-worksheet.js";
@@ -842,20 +841,18 @@ function profileRange(
   const lastValueRow: number[] = new Array<number>(width).fill(-1);
   for (let rowIndex = range.s.r; rowIndex <= range.e.r; rowIndex += 1) {
     let values = 0;
-    let nonTextValues = 0;
     for (let offset = 0; offset < width; offset += 1) {
-      const cell = getCell(worksheet, rowIndex, range.s.c + offset);
-      const value = cellToPrimitive(cell, dates(rowIndex, range.s.c + offset));
+      const value = cellToPrimitive(
+        getCell(worksheet, rowIndex, range.s.c + offset),
+        dates(rowIndex, range.s.c + offset),
+      );
       if (isBlankValue(value)) {
         continue;
       }
       values += 1;
-      if (isNonTextValue(value, cell?.t)) {
-        nonTextValues += 1;
-      }
       lastValueRow[offset] = rowIndex;
     }
-    counts.push({ nonTextValues, row: rowIndex, values });
+    counts.push({ row: rowIndex, values });
   }
   return { counts, lastValueRow };
 }

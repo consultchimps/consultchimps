@@ -155,22 +155,22 @@ So does the rule for a worksheet nothing names a header on, in
 `src/region/header-detection.ts`: the header row is the first row holding more
 than half as many values as the fullest of the populated rows that follow it
 within a bounded lookahead, or at most one value fewer, and the rows above it
-that hold anything are title rows; they are skipped only when the header they
-leave is all text, or is at least three wide with nothing but single-value lines
-above it, and never when the skipped rows form a table of their own (two
-adjacent rows of three or more values), so that a sparse header over numeric
-data, or a small table above a wider block, is never mistaken for a title and a
-data row lost. Otherwise the first populated row is the header, as before. The
-same module decides which columns of a region hold anything: a column blank in
-the header row and in every row under it is a spacer and is not a column of the
-region. The rule is a pure function over per-row value counts, so the
-SheetJS-backed table reader in `src/shared.ts` (which the consolidation, the
-worksheet readers, and the worksheet-records reader are built on) applies it to
-its own reading of the cells and the resolver applies it to the document model.
-That is the invariant: one worksheet has one header row and one set of columns,
-whichever reader answers, which is what lets the inspection promise the header
-row a consolidation will use. A declared header row is never second-guessed by
-either.
+that hold anything are title rows; they are skipped only on evidence that they
+cannot be the header of the block below (a blank row between them and the
+header, or fewer than a third as many values as it holds), and never when the
+skipped rows form a table of their own (two adjacent rows of three or more
+values), so that a sparse header over its records, or a small table above a
+wider block, is never mistaken for a title and a data row lost. Otherwise the
+first populated row is the header, as before. The same module decides which
+columns of a region hold anything: a column blank in the header row and in every
+row under it is a spacer and is not a column of the region. The rule is a pure
+function over per-row value counts, so the SheetJS-backed table reader in
+`src/shared.ts` (which the consolidation, the worksheet readers, and the
+worksheet-records reader are built on) applies it to its own reading of the
+cells and the resolver applies it to the document model. That is the invariant:
+one worksheet has one header row and one set of columns, whichever reader
+answers, which is what lets the inspection promise the header row a
+consolidation will use. A declared header row is never second-guessed by either.
 
 ### L3: Operations (`src/operations/`)
 

@@ -249,23 +249,23 @@ describe("describeWorkbook", () => {
       {
         name: "Review Log",
         rows: [
-          ["Quarterly review log", null, null],
-          ["Case_ID", "Region", "Failed Checks"],
-          ["R-1", "north", 5],
-          ["R-2", "south", 7],
+          ["Quarterly review log", null, null, null],
+          ["Case_ID", "Region", "Failed Checks", "Owner"],
+          ["R-1", "north", 5, "Reviewer 1"],
+          ["R-2", "south", 7, "Reviewer 2"],
         ],
       },
     ]);
 
     // Without a header row the title is skipped: it holds one value above a
-    // three-column table, so the first row that is nearly as full as the
-    // fullest one is the real header. The inspection reports that row because
-    // it is the row a consolidation would read from.
+    // four-column table, fewer than a third of it, so the first row that is
+    // nearly as full as the fullest one is the real header. The inspection
+    // reports that row because it is the row a consolidation would read from.
     const detected = await describeWorkbook(input);
     expect(detected.description.sheets[0]?.headerRow).toBe(2);
     expect(
       detected.description.sheets[0]?.columns.map((column) => column.header),
-    ).toEqual(["Case_ID", "Region", "Failed Checks"]);
+    ).toEqual(["Case_ID", "Region", "Failed Checks", "Owner"]);
 
     // A declared header row is never second-guessed, so declaring the title
     // row reads the title as the header, blanks filled in and numbered.
@@ -275,7 +275,7 @@ describe("describeWorkbook", () => {
       declaredTitle.description.sheets[0]?.columns.map(
         (column) => column.header,
       ),
-    ).toEqual(["Quarterly review log", "column_2", "column_3"]);
+    ).toEqual(["Quarterly review log", "column_2", "column_3", "column_4"]);
 
     const configured = await describeWorkbook(input, { headerRow: 2 });
     const sheet = configured.description.sheets[0];
@@ -284,6 +284,7 @@ describe("describeWorkbook", () => {
       "Case_ID",
       "Region",
       "Failed Checks",
+      "Owner",
     ]);
     expect(sheet?.dataRowCount).toBe(2);
     // The used range is unchanged by the header choice; only the preview moves.
@@ -1962,6 +1963,9 @@ describe("worksheets with title rows and spacer columns", () => {
     name: "Notes",
     rows: [
       ["Report", null, null, null],
+      // The blank row is what makes "Report" a title above a two-column
+      // header rather than a header naming one of its columns.
+      [null, null, null, null],
       ["Case_ID", "Region", null, null],
       ["R-1", "north", null, "checked twice"],
       ["R-2", "south", null, null],
@@ -2185,7 +2189,7 @@ describe("worksheets with title rows and spacer columns", () => {
   });
 
   it("reports nothing left out for a worksheet that yields no table", async () => {
-    // A title above a three-column header with no rows under it: the title
+    // A title, a blank row, then a header with no rows under it: the title
     // is skipped, the header is found, and there is still no table, so the
     // counts describe a read that produced nothing.
     const [empty] = await readWorkbookWorksheetsBytes({
@@ -2195,6 +2199,7 @@ describe("worksheets with title rows and spacer columns", () => {
           name: "Empty",
           rows: [
             ["Title", null, null],
+            [null, null, null],
             ["Case_ID", "Region", "Owner"],
           ],
         },

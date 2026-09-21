@@ -305,17 +305,19 @@ anything, such as a report title, a merged banner, or a "Prepared by" line with
 a name beside it, are title rows. They are skipped, and the result reports how
 many were.
 
-A count alone cannot tell a title line from a header that leaves half its
-columns unnamed, so rows are skipped only when the row that becomes the header
-holds nothing but text, as column names do, or when every skipped row holds a
-single value and the header holds at least three, which is what lets a title be
-skipped above year or month columns. Rows that themselves form a table, two
-adjacent rows each holding three or more values, are never skipped, so a small
-table above a wider block stays the table. Whenever that is not so, the first
-row holding a value is the header, as it always was, and no row is lost. The
-same holds when a title line holds as many values as the header: one value above
-a one- or two-column table, or two above a three-column one. Override the
-detection wherever it guesses wrong:
+A count alone cannot tell a title line from a header that leaves most of its
+columns unnamed: `Name` alone above `Alice | North | Open` looks exactly like
+`Report` above `Case_ID | Region | Status`. Reading the first as a title would
+lose a record, so a row above the header is skipped only on evidence that it
+cannot be the header of the block below it: a blank row separates the two, or
+the row holds fewer than a third as many values as the header. A one-value title
+directly above four or more columns is skipped, as is a "Prepared by" line with
+a name beside it directly above seven or more; the same lines set apart from the
+header by a blank row are skipped above any width. Rows that themselves form a
+table, two adjacent rows each holding three or more values, are never skipped,
+so a small table above a wider block stays the table. Whenever the evidence is
+missing, the first row holding a value is the header, as it always was, and no
+row is lost. Override the detection wherever it guesses wrong:
 
 ```bash
 consultchimps sheets consolidate inputs/ \
