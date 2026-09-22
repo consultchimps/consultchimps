@@ -103,6 +103,7 @@ const ALLOWLIST: readonly AllowlistEntry[] = [];
 // image, where a dash is not the repository's prose to fix.
 const TEXT_EXTENSIONS: readonly string[] = [
   ".css",
+  ".html",
   ".json",
   ".md",
   ".mdx",
