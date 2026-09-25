@@ -13,7 +13,12 @@ import type { CatalogColumn, CatalogTable } from "./catalog.js";
 import { readPbiModelPart } from "./container.js";
 import { noExportableTables, unreadableModel } from "./errors.js";
 import type { ExclusionCounts, PbiReasonCode } from "./errors.js";
-import { assembleTable, decodeColumn, tallyUnverified } from "./model.js";
+import {
+  assembleTable,
+  columnFailureReason,
+  decodeColumn,
+  tallyUnverified,
+} from "./model.js";
 import type {
   ColumnOutcome,
   PbiColumn,
@@ -84,6 +89,139 @@ const CELL_BYTES: Record<number, number> = {
 /** The fallback is the widest measured shape, not the narrowest. */
 function cellBytes(dataType: number): number {
   return CELL_BYTES[dataType] ?? 32;
+}
+
+/**
+ * What the workbook stage costs, charged from what the writer will emit.
+ *
+ * Measured, not assumed: `scripts/measure-cell-cost.ts --workbook` runs the
+ * stage and reads the peak heap it reaches, which is the worksheet XML of every
+ * part, the package writer's copy of each entry, its compression buffers, the
+ * churn the escaping loop produces and the finished archive, all at once. Five
+ * terms, because five different shapes of model reach the peak a different way:
+ *
+ * - `WORKBOOK_CELL_BYTES`, per emitted cell, data cells and the header cell
+ *   above each column of each part.
+ * - `WORKBOOK_ROW_BYTES`, per emitted row, which carries its own element and
+ *   reference whatever it holds. A one-column table pays this per cell, which is
+ *   why a flat per-cell figure calibrated on wide models underestimates it.
+ * - `WORKBOOK_TEXT_UNIT_BYTES`, per code unit the worksheet actually carries,
+ *   counted after escaping, so text that escapes sevenfold is charged sevenfold
+ *   rather than being averaged away.
+ * - `WORKBOOK_PART_BYTES`, per worksheet part, for the package writer's
+ *   per-entry compression structures, which two hundred small sheets showed are
+ *   worth about a third of a megabyte each.
+ * - `WORKBOOK_FIXED_BYTES`, once, for the writer's own structures.
+ *
+ * Every figure is the measured cost rounded up. Against the eleven synthetic
+ * shapes measured, from 50,000 numbers in one column to 16,384 columns of
+ * escaping headers, and against the nine-sample corpus, the reservation covers
+ * the measured peak with between 1.33 and 4.6 times to spare; the tightest is a
+ * wide, cell-heavy model with little text. The largest sample, ten parts and
+ * 7,591,765 cells, reserves about 3.56 GB against a measured 1.44 GB, which is
+ * what sets the command line's 4 GiB default. Charging the measured figure is deliberate: the first build's
+ * 48 bytes per cell described a cell's XML, not the heap the stage holds, so an
+ * export that could not fit began writing anyway. Streaming the worksheet XML,
+ * which is what would lower these terms rather than raise the limit, belongs to
+ * the browser release.
+ */
+const WORKBOOK_CELL_BYTES = 320;
+const WORKBOOK_ROW_BYTES = 448;
+const WORKBOOK_TEXT_UNIT_BYTES = 48;
+const WORKBOOK_PART_BYTES = 512 * 1024;
+const WORKBOOK_FIXED_BYTES = 8 * 1024 * 1024;
+
+/** What one escaped code unit becomes: `_xHHHH_`. */
+const ESCAPED_UNITS = 7;
+
+/**
+ * The code units one string occupies in the worksheet once escaped.
+ *
+ * An upper bound rather than the exact escaping: every unit the writer could
+ * expand is charged the widest expansion, which is the `_xHHHH_` form. The scan
+ * reads code units and allocates nothing, so measuring the text costs one pass
+ * over it and no memory.
+ */
+function emittedUnits(text: string): number {
+  let units = 0;
+  for (let index = 0; index < text.length; index++) {
+    const unit = text.charCodeAt(index);
+    units +=
+      unit < 0x20 ||
+      unit === 0x22 ||
+      unit === 0x26 ||
+      unit === 0x3c ||
+      unit === 0x3e ||
+      unit === 0x5f ||
+      (unit >= 0xd800 && unit <= 0xdfff) ||
+      unit === 0xfffe ||
+      unit === 0xffff
+        ? ESCAPED_UNITS
+        : 1;
+  }
+  return units;
+}
+
+export interface WorkbookExtent {
+  readonly cells: number;
+  readonly rows: number;
+  readonly parts: number;
+  readonly textUnits: number;
+}
+
+/**
+ * Everything the writer will emit, counted the way the terms above charge it.
+ *
+ * Cells are the data cells of every part plus that part's header row, because a
+ * split table repeats its header on every part and a header cell costs the same
+ * XML as any other inline string. Rows are the same count of rows, header row
+ * included. Text is every code unit that reaches the worksheet after escaping:
+ * the values of string columns, binary counted as the base64 it becomes, every
+ * column header once per part, and each part's sheet name, which the workbook
+ * part carries.
+ *
+ * Nothing is allocated: the loops read lengths and code units, so the
+ * measurement the reservation is made from costs one pass and no memory.
+ */
+export function workbookExtent(
+  plans: readonly WorksheetPlan[],
+): WorkbookExtent {
+  let cells = 0;
+  let rows = 0;
+  let textUnits = 0;
+  for (const plan of plans) {
+    // The sheet name reaches xl/workbook.xml, once per part.
+    textUnits += emittedUnits(plan.sheetName);
+    rows += plan.end - plan.start + 1;
+    for (const column of plan.columns) {
+      // The data cells of this part, and the header cell above them.
+      cells += plan.end - plan.start + 1;
+      textUnits += emittedUnits(column.header);
+      if (column.type !== "string" && column.type !== "binary") continue;
+      for (let row = plan.start; row < plan.end; row++) {
+        const value = column.values[row];
+        if (typeof value === "string") textUnits += emittedUnits(value);
+        else if (value instanceof Uint8Array)
+          // Base64 carries no character the writer has to escape.
+          textUnits += Math.ceil(value.byteLength / 3) * 4;
+      }
+    }
+  }
+  return { cells, rows, parts: plans.length, textUnits };
+}
+
+/** The whole workbook-stage term, from the extent the plans describe. */
+export function workbookReservationBytes(
+  plans: readonly WorksheetPlan[],
+): number {
+  const extent = workbookExtent(plans);
+  return (
+    extent.cells * WORKBOOK_CELL_BYTES +
+    extent.rows * WORKBOOK_ROW_BYTES +
+    extent.textUnits * WORKBOOK_TEXT_UNIT_BYTES +
+    extent.parts * WORKBOOK_PART_BYTES +
+    WORKBOOK_FIXED_BYTES
+  );
 }
 
 interface ExcludedTable {
@@ -162,12 +300,14 @@ export function decodeColumnWithBudget(
     if (column.dictionary !== null)
       dictionaryBytes =
         memberBytes(image, backup, column.dictionary).byteLength * 2;
-  } catch {
+  } catch (error) {
     return {
       column,
       type: undefined,
       values: undefined,
-      excluded: "PBI_COLUMN_UNREADABLE",
+      // The same classification the decoder itself uses: a missing member is
+      // this column's own problem, an engine fault here is this reader's.
+      excluded: columnFailureReason(error),
     };
   }
   if (dictionaryBytes > 0)
@@ -197,6 +337,31 @@ export function tableExclusion(
   return undefined;
 }
 
+type StageReporter = (
+  stage: "container" | "model" | "catalog" | "decode" | "workbook",
+  completed: number,
+  total: number,
+) => void;
+
+/**
+ * The caller's reporter, or a reporter that does nothing. Events carry stage
+ * counts and never a table name: progress is written to a terminal, and nothing
+ * from inside the model should arrive there before the manifest decides what
+ * may be named. A reporter that throws is the host's own failure and is left to
+ * propagate rather than being swallowed into a half-reported export.
+ */
+function progressReporter(
+  options: PbiExportOptions,
+  includeOutput: boolean,
+): StageReporter {
+  const report = options.onProgress;
+  if (typeof report !== "function") return () => {};
+  const operation = includeOutput ? "pbi.export" : "pbi.read-tables";
+  return (stage, completed, total) => {
+    report({ operation, stage, completed, total });
+  };
+}
+
 /**
  * Decode every eligible table. Failures are exclusions, not refusals: a table
  * survives on one decodable column, and dropping a column never shifts a row.
@@ -208,11 +373,13 @@ async function decodeModel(
 ): Promise<DecodeResult> {
   const limits = validateExportOptions(options, includeOutput);
   const budget = new PipelineBudget(limits);
+  const report = progressReporter(options, includeOutput);
   const modelPart = readPbiModelPart(input, {
     inputBytes: limits.inputBytes,
     decodedBytes: limits.decodedBytes,
     peakBytes: limits.peakBytes,
   });
+  report("container", 1, 1);
   budget.reserve("retainedInput", input.byteLength, "container");
   budget.reserve("modelPart", modelPart.byteLength, "model-part");
   budget.decode(modelPart.byteLength, "model-part");
@@ -226,19 +393,26 @@ async function decodeModel(
   if (stream.compression === "multithreaded")
     tallyUnverified(unverified, "PBI_UNVERIFIED_XPRESS9_MULTITHREADED");
 
+  report("model", 1, 1);
+
   const backup = parseAbf(stream.bytes, budget);
   if (!hasMember(backup, CATALOG_MEMBER)) throw unreadableModel("backup");
   const catalogBytes = memberBytes(stream.bytes, backup, CATALOG_MEMBER);
   budget.reserve("catalogBuffer", catalogBytes.byteLength, "catalog");
   const catalog = await readCatalog(catalogBytes, options.runtime?.sql);
   reserveCatalogMemory(catalog, budget);
+  report("catalog", 1, 1);
 
   const tables: PbiTable[] = [];
   const manifestTables = new Map<number, PbiManifestTable>();
   const excluded: ExcludedTable[] = [];
   let hiddenExcluded = false;
   try {
+    const tableCount = catalog.tables.length;
+    let decoded = 0;
     for (const source of catalog.tables) {
+      report("decode", decoded, tableCount);
+      decoded++;
       const ineligible = tableExclusion(source, limits.includeHiddenTables);
       if (ineligible !== undefined) {
         if (ineligible === "PBI_TABLE_HIDDEN") hiddenExcluded = true;
@@ -299,6 +473,7 @@ async function decodeModel(
         columns: columnEntries,
       });
     }
+    report("decode", tableCount, tableCount);
   } catch (error) {
     // A close failure must not mask the failure that is already propagating:
     // the decode error is the actionable one, and whatever the reader could not
@@ -542,18 +717,18 @@ export async function exportPbiTables(
   const budget = result.budget;
   // The materialized worksheet XML and the finished ZIP both stay live while
   // the package is produced, so both are reserved before either is allocated.
-  let cells = 0;
-  for (const plan of plans)
-    cells += (plan.end - plan.start) * plan.columns.length;
-  budget.reserve("workbook", cells * 48 + 1024 * 1024, "workbook");
+  budget.reserve("workbook", workbookReservationBytes(plans), "workbook");
   // The limit is enforced while the package is produced: the worksheet XML is
   // refused as it is built, and the compressed bytes are counted as they arrive,
   // so an over-limit export costs neither the whole archive nor the memory the
   // limit existed to guard.
+  const report = progressReporter(options, true);
+  report("workbook", 0, 1);
   const { bytes: workbookBytes, counts } = await writeWorkbook(
     plans,
     budget.limits.outputBytes,
   );
+  report("workbook", 1, 1);
 
   const manifest = buildManifest(result, parts, counts);
   const manifestBytes = serializeManifest(manifest);
@@ -583,7 +758,7 @@ export async function exportPbiTables(
   }
   return {
     result: {
-      operation: "pbi.export-tables",
+      operation: "pbi.export",
       artifacts: outputs.map((output) => ({
         kind: "file" as const,
         path: output.name,

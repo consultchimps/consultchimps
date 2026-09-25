@@ -26,8 +26,9 @@ work the same.
   stderr and never mix into the JSON.
 - Source files are never modified, and existing outputs are never overwritten
   unless `--force` is passed.
-- Command groups: `sheets` (merge, consolidate, split), `pptx`
-  (inspect-template, populate), `pdf` (split, merge). Run
+- Command groups: `sheets` (merge, consolidate, split, inspect, unprotect),
+  `pptx` (inspect-template, populate), `pdf` (split, merge), `db` (create,
+  schema, import, export, inspect), `pbi` (export). Run
   `node consultchimps.mjs <group> --help` for options with realistic examples.
 - Expected failures exit nonzero with a stable error code in the JSON envelope.
 

@@ -24,6 +24,8 @@ export interface MessageVocabulary {
   readonly artifactListReference: string;
   /** Where to find worked examples for the attempted work. */
   readonly examplesReference: string;
+  /** How to include the tables a Power BI model marks hidden. */
+  readonly hiddenTableOption: string;
   /** How to include hidden worksheets in a spreadsheet operation. */
   readonly hiddenWorksheetOption: string;
   /** Where to find the expected input format. */
@@ -38,6 +40,10 @@ export interface MessageVocabulary {
   readonly pdfOptionsReference: string;
   /** Where to find a complete PowerPoint population example. */
   readonly powerPointExampleReference: string;
+  /** How to raise the memory ceiling a Power BI export is allowed to reserve. */
+  readonly memoryLimitOption: string;
+  /** Where to find the available Power BI options and examples. */
+  readonly powerBiOptionsReference: string;
   /** How to try again after choosing a different output location. */
   readonly retryAfterChoosingDifferentOutput: string;
   /** How to try the same work again once the user is ready. */
@@ -52,6 +58,13 @@ export interface MessageVocabulary {
 export interface MessageFormatOptions {
   /** Interface wording to use. Defaults to {@link GENERIC_VOCABULARY}. */
   readonly vocabulary?: MessageVocabulary;
+  /**
+   * The failing operation's structured details, when there are any. A few
+   * refusals carry a fact that decides which recovery step is true, such as
+   * whether hidden tables were among the ones excluded, and guessing at it gives
+   * a reader advice that does not apply to their file.
+   */
+  readonly details?: Readonly<Record<string, unknown>> | undefined;
 }
 
 /**
@@ -62,18 +75,24 @@ export const GENERIC_VOCABULARY: MessageVocabulary = {
   actionNoun: "task",
   artifactListReference: "shown in the list of created files",
   examplesReference: "Review the reference for this task if you need examples.",
+  hiddenTableOption:
+    "If the tables you need are marked hidden in the model, turn on the option that includes hidden tables and try again.",
   hiddenWorksheetOption:
     "If the data is on a hidden worksheet, turn on the option that includes hidden worksheets.",
   inputFormatReference:
     "Review the reference for this task if you want to check the expected input format.",
   inspectTemplateFirst:
     "Inspect the PowerPoint template to review its placeholders before populating the presentation.",
+  memoryLimitOption:
+    "Raise the memory the export is allowed to use, but only as far as the machine can actually spare.",
   overwriteCaution:
     "Allow the existing output to be replaced only after confirming that it is safe to replace.",
   patternQuoting:
     "If you used a pattern such as *.xlsx or *.pdf, check that it is written exactly as you intended and try again.",
   pdfOptionsReference:
     "Review the reference for this task to see the available PDF options and examples.",
+  powerBiOptionsReference:
+    "Review the reference for this task to see the available Power BI options and examples.",
   powerPointExampleReference:
     "Review the reference for populating a presentation to see a complete example.",
   retryAfterChoosingDifferentOutput:
@@ -93,18 +112,24 @@ export const CLI_VOCABULARY: MessageVocabulary = {
   actionNoun: "command",
   artifactListReference: "listed below",
   examplesReference: "Run the command again with --help if you need examples.",
+  hiddenTableOption:
+    "If the tables you need are marked hidden in the model, rerun the command with --include-hidden.",
   hiddenWorksheetOption:
     "If the data is on a hidden worksheet, review the --hidden option in the command help.",
   inputFormatReference:
     "Run the command with --help if you want to review the expected input format.",
   inspectTemplateFirst:
     "Run consultchimps pptx inspect-template to review placeholders before populating the presentation.",
+  memoryLimitOption:
+    "Raise the memory ceiling with --max-memory, such as --max-memory 8g, but only as far as the machine can actually spare.",
   overwriteCaution:
     "Use --force only after confirming that the existing output is safe to replace.",
   patternQuoting:
     "If you used a pattern such as *.xlsx or *.pdf, place it in quotation marks and try again.",
   pdfOptionsReference:
     "Run the command with --help to review the available PDF options and examples.",
+  powerBiOptionsReference:
+    "Run consultchimps pbi export --help to review the available Power BI options and examples.",
   powerPointExampleReference:
     "Run consultchimps pptx populate --help for a complete example.",
   retryAfterChoosingDifferentOutput:
@@ -257,6 +282,22 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
     ],
     nextSteps: () => [
       "Open the exported file with a tool that supports its format and verify the tables you need.",
+    ],
+  },
+  // A Power BI export always writes two files, and the manifest is the half a
+  // reader has to be told about: the workbook carries the rows, and everything
+  // the export could not carry is named in the manifest beside it.
+  "pbi.export": {
+    title: "Your Power BI tables were exported.",
+    summary: (result) => [
+      `ConsultChimps exported ${quantity(metric(result, "exportedTables"), "table")} as ${quantity(metric(result, "outputWorksheets"), "worksheet")}, holding ${quantity(metric(result, "exportedColumns"), "column")} and ${quantity(metric(result, "exportedRows"), "row")}.`,
+      "The workbook holds the model's stored values, not Power BI's formatting, and the manifest beside it records every table and column that was left out and why.",
+      "Your original Power BI file was not changed.",
+    ],
+    nextSteps: (vocabulary) => [
+      `Open the new Excel workbook ${vocabulary.artifactListReference} and check the worksheets against the model you expected.`,
+      "Read the manifest for the tables and columns that were left out, for any table split across numbered worksheets, and for the values written as text.",
+      "Review any warnings above before relying on the figures: each one is either something the export could not carry across or a reading with no verified example.",
     ],
   },
   "sheets.merge": {
@@ -497,6 +538,9 @@ const metricLabels: Readonly<Record<string, string>> = {
   capturesLinked: "Source captures linked to the batch",
   dataRows: "Data rows described",
   excelTables: "Excel Tables found",
+  exportedColumns: "Power BI columns exported",
+  exportedRows: "Power BI rows exported",
+  exportedTables: "Power BI tables exported",
   generatedSlides: "PowerPoint slides generated",
   groups: "Distinct groups found",
   headerColumns: "Columns described across worksheets",
@@ -511,6 +555,7 @@ const metricLabels: Readonly<Record<string, string>> = {
   outputFiles: "New files created",
   outputRows: "Data rows written",
   outputSheets: "Source worksheets copied",
+  outputWorksheets: "Worksheets written",
   pages: "PDF pages processed",
   placeholderFields: "Distinct placeholder fields",
   placeholderOccurrences: "Placeholder occurrences per template slide",
@@ -535,7 +580,7 @@ const metricLabels: Readonly<Record<string, string>> = {
   worksheets: "Worksheets described",
 };
 
-function artifactType(artifact: Artifact): string {
+function artifactType(artifact: Artifact, operation: string): string {
   if (artifact.mediaType === "application/vnd.sqlite3")
     return "SQLite database";
   if (artifact.mediaType === "application/vnd.duckdb") return "DuckDB database";
@@ -556,12 +601,13 @@ function artifactType(artifact: Artifact): string {
   if (artifact.mediaType === "application/pdf") {
     return "PDF document";
   }
-  // The drafted column mapping is the only JSON document any operation
-  // produces, so the label names it rather than saying "JSON file", which
-  // would tell a non-technical reader nothing. Revisit when a second one
-  // appears.
+  // Two operations write a JSON document, and "JSON file" would tell a
+  // non-technical reader nothing about either, so each is named for what it is.
+  // The operation is what separates them: both carry the same media type.
   if (artifact.mediaType === MAPPING_MEDIA_TYPE) {
-    return "Column mapping file";
+    return operation === "pbi.export"
+      ? "Power BI export manifest"
+      : "Column mapping file";
   }
   if (
     artifact.mediaType ===
@@ -633,7 +679,7 @@ function renderResult(
     result.artifacts.forEach((artifact, index) => {
       lines.push(
         `  ${index + 1}. ${artifact.path}`,
-        `     Type: ${artifactType(artifact)}`,
+        `     Type: ${artifactType(artifact, result.operation)}`,
       );
     });
   }
@@ -662,6 +708,7 @@ function renderResult(
 function recoverySteps(
   code: string | undefined,
   vocabulary: MessageVocabulary,
+  details: Readonly<Record<string, unknown>> | undefined,
 ): readonly string[] {
   if (code === "OPERATION_ABORTED") {
     return [
@@ -740,6 +787,112 @@ function recoverySteps(
       vocabulary.powerPointExampleReference,
     ];
   }
+  // The Power BI refusals below. Each one says what the reader found, what a
+  // person can do about it, and nothing about the model's contents: a refusal
+  // never carries a table name, a column name, or a path from inside the file.
+  if (code === "PBI_INVALID_OPTIONS") {
+    return [
+      "Nothing was read: the options are checked before the file is opened.",
+      "Every byte limit must be a whole number of bytes above zero, and each WebAssembly runtime needs exactly one source, either a locator or the binary itself.",
+      vocabulary.powerBiOptionsReference,
+    ];
+  }
+  if (code === "PBI_INVALID_CONTAINER") {
+    return [
+      "Confirm the file is a Power BI .pbix, not a renamed, truncated, or partly downloaded copy.",
+      "Open it in Power BI Desktop and save a new .pbix, then try again.",
+      vocabulary.inputFormatReference,
+    ];
+  }
+  if (code === "PBI_NO_MODEL") {
+    return [
+      "The file is readable but carries no embedded model, so there are no rows to export.",
+      "Templates, reports on a live connection, and DirectQuery-only reports hold no imported data. Ask for a .pbix saved with its data imported.",
+      "A report that does hold imported data keeps it after Save As in Power BI Desktop.",
+    ];
+  }
+  if (code === "PBI_MODEL_ENCRYPTED") {
+    return [
+      "The embedded model is protected, and this reader never asks for or stores a password.",
+      "Ask the file owner for an unencrypted .pbix saved with imported data.",
+    ];
+  }
+  if (code === "PBI_MODEL_UNREADABLE") {
+    return [
+      "Nothing was written: the model's compressed stream, its backup container, or its catalog could not be read through.",
+      "Download or copy the file again in case the transfer truncated it, then open it in Power BI Desktop and save a new .pbix.",
+      "If a new copy fails the same way, keep the error reference below and report it: a file Power BI Desktop opens should be readable here.",
+    ];
+  }
+  if (code === "PBI_NO_EXPORTABLE_TABLES") {
+    return [
+      "No workbook was written: every table in the model was left out, and the message above counts the reasons without naming anything from the file.",
+      // Only where hidden tables were actually among the excluded ones. A model
+      // whose tables were all unreadable is not helped by including hidden ones,
+      // and being told to try it sends the reader down a path that cannot work.
+      ...(details?.["hiddenExcluded"] === true
+        ? [vocabulary.hiddenTableOption]
+        : []),
+      "A model of measures and relationships alone carries no rows to export.",
+    ];
+  }
+  if (code === "PBI_RUNTIME_UNAVAILABLE") {
+    return [
+      "The reader needs two WebAssembly runtimes, one for the model's catalog and one for its compressed stream, and the message above names which one failed.",
+      "Install or serve the missing runtime asset, or supply it explicitly, and try again.",
+      vocabulary.powerBiOptionsReference,
+    ];
+  }
+  if (code === "PBI_EXPORT_LIMIT_EXCEEDED") {
+    return [
+      "Nothing was written: the export is refused before it reserves memory it cannot get, so a model too large for this machine stops here rather than part way through a workbook.",
+      vocabulary.memoryLimitOption,
+      "If the message names a ZIP layout rather than a limit, save the file again in Power BI Desktop and try again.",
+    ];
+  }
+  if (code?.startsWith("PBI_")) {
+    return [
+      "Check the Power BI file and the options named in the message above.",
+      "The original file is never changed, so it is safe to try again after correcting the problem.",
+      vocabulary.powerBiOptionsReference,
+    ];
+  }
+  // The Power BI command's own refusals. They describe what the command could
+  // not do with the files it was given, so their recovery is about the
+  // destination and the request rather than about the model.
+  if (code === "CLI_PBI_OUTPUT_INCOMPLETE") {
+    return [
+      "One of the two files was written and the other was not, so what is on disk is not a complete export. The message above names which is which.",
+      "Remove the file that was written, or make the destination writable, before relying on either: a workbook without its manifest does not say what was left out.",
+      vocabulary.retryWithOverwrite,
+    ];
+  }
+  if (code === "CLI_PBI_OUTPUT_CLEANUP_REQUIRED") {
+    return [
+      "Both files were written and the export is complete. What remains is a staging file the export could not delete, named in the message above.",
+      "Close whatever is holding that file open, then delete it. Nothing needs to be exported again.",
+    ];
+  }
+  if (code === "CLI_PBI_ONE_INPUT") {
+    return [
+      "Nothing was read: this task exports one Power BI file at a time, because both of its outputs have fixed names inside one folder.",
+      "Name a single file, or repeat the task once for each, sending each one to its own folder.",
+    ];
+  }
+  if (code === "CLI_PBI_UNEXPECTED_OUTPUTS") {
+    return [
+      "Nothing was written: the export produced files this interface does not recognize, which means the two halves of the toolkit are at different versions.",
+      "Update the Power BI package and the interface that calls it together, then try again.",
+      "If they are already at matching versions, this is a defect: report it with the error reference below.",
+    ];
+  }
+  if (code?.startsWith("CLI_PBI_")) {
+    return [
+      "Check the message above: it describes what the task could not do with the files it was given.",
+      "The original Power BI file is never changed, so it is safe to try again after correcting the problem.",
+      vocabulary.powerBiOptionsReference,
+    ];
+  }
   return [
     `Read the message above and check the supplied files, folders, and ${vocabulary.actionNoun} options.`,
     vocabulary.examplesReference,
@@ -760,7 +913,9 @@ export function formatHumanError(
     `  ${message}`,
     "",
     "What you can do:",
-    ...recoverySteps(code, vocabulary).map((step) => `  - ${step}`),
+    ...recoverySteps(code, vocabulary, options?.details).map(
+      (step) => `  - ${step}`,
+    ),
     ...(code
       ? [
           "",

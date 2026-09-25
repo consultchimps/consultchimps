@@ -1,4 +1,5 @@
 import { ConsultChimpsError } from "@consultchimps/core";
+import type { ProgressReporter } from "@consultchimps/core";
 import type { SqliteReadRuntimeConfig } from "@consultchimps/db/sqlite-read";
 import type { PbiStage } from "./errors.js";
 import type { Xpress9RuntimeConfig } from "./xpress9/runtime.js";
@@ -29,6 +30,17 @@ export interface PbiReadOptions {
 export interface PbiExportOptions extends PbiReadOptions {
   readonly outputBytes?: number;
   readonly outputName?: string;
+  /**
+   * Stage progress for a host that shows it. The stages are `container`,
+   * `model`, `catalog`, `decode`, one event per table, and `workbook`. Events
+   * carry counts only: a table name is model data, and progress is written to a
+   * terminal before anything has decided what may be named.
+   *
+   * A value that is not a function is ignored rather than collected into
+   * `PBI_INVALID_OPTIONS`: reporting is presentation, and a host that supplies a
+   * broken reporter should still get its export.
+   */
+  readonly onProgress?: ProgressReporter;
 }
 
 export interface ContainerLimits {

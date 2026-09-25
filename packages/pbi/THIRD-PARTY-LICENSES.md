@@ -1,16 +1,14 @@
 # Third-party licences
 
-ConsultChimps is Apache-2.0; see `LICENSE`. This file covers the third-party
-code that ships inside this repository, either vendored as source or ported into
-our own TypeScript. It does not cover ordinary npm dependencies, which carry
-their own licences in `node_modules` and in the published package metadata.
+`@consultchimps/pbi` is licensed under the Apache License, Version 2.0. See the
+[repository `LICENSE`](https://github.com/consultchimps/consultchimps/blob/main/LICENSE)
+for the full text.
 
-A `docs:check` rule asserts that every vendored tree under `packages/*/vendor`
-is listed here, so a future vendored dependency cannot be added silently.
-
-The two notices below also ship inside `@consultchimps/pbi`, in that package's
-own `THIRD-PARTY-LICENSES.md`, because the code they cover is published in that
-package's tarball. Change one and change the other.
+This package ships a WebAssembly binary compiled from vendored third-party C,
+and a TypeScript port of a third-party kernel. The notices below apply to that
+code and travel with the published package, so an npm consumer receives them
+with the binary they are about to run. The repository root
+`THIRD-PARTY-LICENSES.md` carries the same two notices for the workspace.
 
 ---
 

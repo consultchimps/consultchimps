@@ -117,7 +117,11 @@ describe("warnings", () => {
         },
       ],
     };
-    expect(buildWarnings(manifest, 0)[0]).toContain("includeHiddenTables");
+    // The cure is named in words every surface can use: an option name belongs
+    // to a caller's interface, and this line is read in a terminal and in a
+    // browser alike.
+    expect(buildWarnings(manifest, 0)[0]).toContain("Export hidden tables");
+    expect(buildWarnings(manifest, 0)[0]).not.toContain("includeHiddenTables");
   });
 
   it("counts split tables from the allocation, not from a column", () => {
