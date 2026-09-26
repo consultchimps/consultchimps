@@ -8,9 +8,10 @@ Two tools cover part of it. `scripts/check_workbook.py`, a heuristic lint for
 the common library mistakes rather than a proof, checks the items marked
 (script) below from the file alone, and the part of each (script, partly) item
 that the file shows: Assumptions cells reached by address, formats of filled
-cells, and comments. ConsultChimps `sheets inspect`, run from the release file
-on GitHub, confirms the sheets, headers and columns are the ones you meant.
-Everything unmarked is read by you.
+cells, comments, and the colour of formulas, numbers and dates (not text
+inputs). ConsultChimps `sheets inspect`, run from the release file on GitHub,
+confirms the sheets, headers and columns are the ones you meant. Everything
+unmarked is read by you.
 
 ## Formulas
 
@@ -35,7 +36,8 @@ Everything unmarked is read by you.
 ## Formatting
 
 - [ ] (script) No merged cells outside a title row
-- [ ] (script) Input cells blue, formula cells black, cross-sheet formulas green
+- [ ] (script, partly) Input cells blue, formula cells black, cross-sheet
+      formulas green
 - [ ] (script) Header row frozen and autofilter on, on every data sheet
 - [ ] (script, partly) One number format per column, applied to blank cells too
 - [ ] No column showing `####`

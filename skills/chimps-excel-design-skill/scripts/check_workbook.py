@@ -16,8 +16,10 @@ rather than parsing them as Excel does, so a clean run means none of the
 common mistakes below were found, not that the workbook is correct. Known
 limits: formulas using LET or LAMBDA skip the undefined-name check, because
 their local names are not defined names; a function on none of its lists is
-reported for review rather than judged; and a table is recognised by a header
-row of two or more text labels in the first five rows.
+reported for review rather than judged; font colour is checked for formulas,
+numbers and dates but not for text inputs, which cannot be told from labels;
+and a table is recognised by a header row of two or more text labels in the
+first five rows.
 
 What it cannot check, and so leaves to the checklist: invented figures, sources
 and owners on Assumptions, hardcoded figures inside calculation ranges, visible
@@ -219,12 +221,19 @@ def main(path: str, as_json: bool) -> int:
                 add("FAIL", "freeze", sheet,
                     f"header row {header} is not frozen")
         if is_data:
-            # The filter's first row must be the table's header row.
+            # The filter must start on the header row and span every column
+            # that has a header label.
+            label_columns = [c.column for c in ws[header]
+                             if isinstance(c.value, str) and c.value.strip()]
             ref = ws.auto_filter.ref
-            filter_row = range_boundaries(ref)[1] if ref else None
-            if filter_row != header:
+            bounds = range_boundaries(ref) if ref else None
+            if (bounds is None or bounds[1] != header
+                    or bounds[0] > min(label_columns)
+                    or bounds[2] < max(label_columns)):
                 add("FAIL", "autofilter", sheet,
-                    f"autofilter is not on header row {header}")
+                    f"autofilter does not cover header row {header} across "
+                    f"columns {get_column_letter(min(label_columns))} to "
+                    f"{get_column_letter(max(label_columns))}")
 
         # Rows down to the header hold titles and labels: formulas there are
         # checked, the data rules are not.

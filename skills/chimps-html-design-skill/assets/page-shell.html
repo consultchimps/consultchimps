@@ -112,8 +112,17 @@
         // Slots in order, never cycled: see references/charts.md
         color: [1, 2, 3, 4, 5, 6, 7, 8].map((slot) => token(`--cat-${slot}`)),
         textStyle: { fontFamily: getComputedStyle(document.body).fontFamily },
-        xAxis: { type: "category", data: data.categories },
-        yAxis: { type: "value" },
+        // Sober gridlines: one hairline in --rule on the value axis only
+        xAxis: {
+          type: "category",
+          data: data.categories,
+          splitLine: { show: false },
+        },
+        yAxis: {
+          type: "value",
+          axisLine: { show: false },
+          splitLine: { lineStyle: { color: token("--rule"), width: 1 } },
+        },
         series: data.series,
       });
       addEventListener("resize", () => chart.resize());

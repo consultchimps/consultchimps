@@ -129,6 +129,12 @@ The whole procedure, done by hand with an unzip tool and a text editor, is in
    pattern = r"""(?:src|srcset|href|action|poster|data)\s*=\s*["']?\s*(?!data:|#|mailto:)[^\s"'>]+|url\(\s*["']?\s*(?!data:|#)[^\s"')]+|@import|fetch\(|XMLHttpRequest|googleapis"""
    for hit in re.finditer(pattern, html, re.IGNORECASE):
        print(html.count("\n", 0, hit.start()) + 1, hit.group(0))
+   # srcset lists several candidates; the pattern above sees only the first.
+   for attr in re.finditer(r"srcset\s*=\s*([\"'])(.*?)\1", html, re.IGNORECASE):
+       for candidate in re.split(r",\s+", attr.group(2)):
+           url = (candidate.split() or [""])[0]
+           if url and not url.lower().startswith("data:"):
+               print(html.count("\n", 0, attr.start()) + 1, "srcset", url)
    ```
 
 2. Open it with the network disabled and confirm every chart draws.
