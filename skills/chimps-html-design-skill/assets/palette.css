@@ -1,0 +1,33 @@
+/*
+ * ConsultChimps default palette for HTML deliverables, version 1.
+ * Light surface only: version 1 ships no dark-mode palette.
+ * Paste this block into the deliverable's inline <style>. Use a client's
+ * Office theme instead only after it passes references/theme-resolution.md.
+ */
+
+:root {
+  /* Surface and ink */
+  --surface: #fcfcfb;
+  --surface-sunken: #f2f1ed;
+  --rule: #dfded9;
+  --ink: #0b0b0b;
+  --ink-secondary: #52514e;
+  --ink-muted: #898781;
+
+  /*
+   * Categorical slots, in assignment order. Take slot 1 for the first series,
+   * slot 2 for the second, and so on. Never wrap back to slot 1: nine series
+   * means the chart has too many series, not that the palette is too short.
+   */
+  --cat-1: #2a78d6;
+  --cat-2: #eb6834;
+  --cat-3: #1baf7a;
+  --cat-4: #eda100;
+  --cat-5: #e87ba4;
+  --cat-6: #008300;
+  --cat-7: #4a3aa7;
+  --cat-8: #e34948;
+
+  /* One-series charts and single-value emphasis */
+  --accent: var(--cat-1);
+}

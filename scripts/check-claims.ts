@@ -150,6 +150,10 @@ const PACKAGE_README_ROOT = "packages";
 const SCANNED_TREES = [
   { root: "apps/docs/content", extensions: [".md", ".mdx"] },
   { root: "apps/docs/src", extensions: [".ts", ".tsx"] },
+  // Agent skills are read by a model that then acts on them without a person
+  // checking each step, which makes an over-promise here more expensive than
+  // the same sentence on a page someone skims.
+  { root: "skills", extensions: [".md"] },
   // CLI help is read by more people than any page on the site, and it is
   // written in string literals like the site's copy. Comments in these files
   // are stripped before matching, so only the text the executable prints is a
