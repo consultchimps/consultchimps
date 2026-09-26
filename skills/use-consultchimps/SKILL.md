@@ -6,7 +6,7 @@ description:
   --json envelope, refusals, warnings and errors without a code. Use before
   writing code that combines, splits, inspects, populates or unprotects .xlsx,
   .xlsm, .pptx or .pdf files, or when the user mentions ConsultChimps.
-license: MIT
+license: Apache-2.0
 metadata:
   cli-version: "0.12.0"
   repository: consultchimps/consultchimps

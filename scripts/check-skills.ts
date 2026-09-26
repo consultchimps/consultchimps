@@ -20,6 +20,12 @@ import { fileURLToPath } from "node:url";
 // whose description is longer than 200 characters, so those skills are held
 // to that limit rather than the specification's 1,024.
 //
+// Each skill carries its own LICENSE.txt, a copy of the repository's LICENSE,
+// and declares that license in its frontmatter. A skill installed alone or
+// zipped for a chat leaves the repository behind, so the terms have to travel
+// inside the skill directory, as they do in Anthropic's and OpenAI's skill
+// repositories.
+//
 // Plain (unquoted) scalars are held to YAML's own rules as well, because a real
 // YAML parser is what reads them after install. A description containing ": "
 // looks like a nested mapping to YAML, and the `skills` CLI skips the whole
@@ -31,6 +37,19 @@ const workspaceRoot = path.resolve(
   "..",
 );
 const skillsRoot = path.join(workspaceRoot, "skills");
+
+const normalized = (text: string): string => text.replace(/\r\n/g, "\n");
+const repositoryLicenseText = normalized(
+  readFileSync(path.join(workspaceRoot, "LICENSE"), "utf8"),
+);
+const repositoryLicense: unknown = (
+  JSON.parse(
+    readFileSync(path.join(workspaceRoot, "package.json"), "utf8"),
+  ) as { license?: unknown }
+).license;
+if (typeof repositoryLicense !== "string") {
+  throw new Error("package.json declares no license string.");
+}
 
 const NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const NAME_MAX = 64;
@@ -249,6 +268,25 @@ for (const skill of skills) {
   ) {
     problems.push(
       `${label}: description is ${String(description.length)} characters; a "${CHAT_UPLOAD_SUFFIX}" skill is uploaded to Claude.ai, which accepts at most ${String(CHAT_UPLOAD_DESCRIPTION_MAX)}.`,
+    );
+  }
+
+  const license = fields.get("license");
+  if (license !== repositoryLicense) {
+    problems.push(
+      `${label}: license is "${license ?? ""}"; it must be "${repositoryLicense}", the repository's license.`,
+    );
+  }
+  const licenseFile = path.join(skillDirectory, "LICENSE.txt");
+  if (!existsSync(licenseFile)) {
+    problems.push(
+      `${label}: no LICENSE.txt. Copy the repository's LICENSE into the skill directory so the terms travel with it.`,
+    );
+  } else if (
+    normalized(readFileSync(licenseFile, "utf8")) !== repositoryLicenseText
+  ) {
+    problems.push(
+      `${label}: LICENSE.txt differs from the repository's LICENSE. Copy it again.`,
     );
   }
 

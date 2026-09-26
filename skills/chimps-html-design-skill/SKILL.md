@@ -4,7 +4,7 @@ description:
   Standards for a client-ready HTML report, dashboard or one-pager that opens
   offline, as one self-contained file with ECharts charts, an ordered palette,
   system fonts and RTL support.
-license: MIT
+license: Apache-2.0
 metadata:
   palette: consultchimps-neutral-light
   version: "1"

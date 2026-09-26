@@ -7,7 +7,7 @@ description:
   mapping, and reconciling row counts. Use when .xlsx or .xlsm files that
   already exist must be stacked, tabbed together, divided by a column, or
   described before a decision.
-license: MIT
+license: Apache-2.0
 metadata:
   cli-version: "0.12.0"
   repository: consultchimps/consultchimps

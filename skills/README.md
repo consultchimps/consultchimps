@@ -69,6 +69,9 @@ there is no submission step. What it needs from this directory:
   `description` of at most 1,024 characters; `metadata` values as strings.
 - `SKILL.md` stays under 500 lines, with detail in `references/`, linked one
   level deep.
+- Each skill carries `LICENSE.txt`, a copy of the repository's Apache-2.0
+  `LICENSE`, and says `license: Apache-2.0` in its frontmatter, so the terms
+  travel with a skill installed or uploaded on its own.
 
 `pnpm docs:check` runs `scripts/check-skills.ts`, which fails on a broken rule
 above.

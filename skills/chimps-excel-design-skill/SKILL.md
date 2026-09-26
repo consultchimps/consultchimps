@@ -4,7 +4,7 @@ description:
   Standards for building a new client-facing Excel workbook, with Excel 365
   formulas, named-range inputs, no invented figures, mandatory formatting and a
   handover. Not for editing existing files.
-license: MIT
+license: Apache-2.0
 metadata:
   cli-version: "0.12.0"
   repository: consultchimps/consultchimps
