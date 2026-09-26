@@ -35,6 +35,7 @@ from collections import defaultdict
 try:
     import openpyxl
     from openpyxl.utils import get_column_letter
+    from openpyxl.utils.cell import coordinate_from_string
     from openpyxl.utils.formulas import FORMULAE
 except ImportError:  # pragma: no cover
     sys.exit("openpyxl is required: pip install openpyxl")
@@ -199,12 +200,20 @@ def main(path: str, as_json: bool) -> int:
         header = header_row(ws)
         is_data = header is not None and sheet.lower() != "assumptions"
 
+        # A merge may only sit on a title row: above a table's header, or on
+        # row 1 of a sheet that is not a table.
         for rng in ws.merged_cells.ranges:
-            if rng.max_row > 1:
+            allowed = rng.max_row < header if header else rng.max_row == 1
+            if not allowed:
                 add("FAIL", "merged-cells", f"{sheet}!{rng.coord}",
-                    "merged beyond the title row")
-        if is_data and not ws.freeze_panes:
-            add("FAIL", "freeze", sheet, "header row is not frozen")
+                    "merged outside a title row")
+        if is_data:
+            # The first unfrozen row must sit below the header.
+            first_unfrozen = (coordinate_from_string(ws.freeze_panes)[1]
+                              if ws.freeze_panes else 1)
+            if first_unfrozen <= header:
+                add("FAIL", "freeze", sheet,
+                    f"header row {header} is not frozen")
         if is_data and not ws.auto_filter.ref:
             add("FAIL", "autofilter", sheet, "autofilter is not on")
 
@@ -218,11 +227,11 @@ def main(path: str, as_json: bool) -> int:
                 value = cell.value
                 in_labels = cell.row <= last_label_row
                 is_formula = isinstance(value, str) and value.startswith("=")
-                if in_labels and not is_formula:
-                    continue
                 if cell.comment is not None:
                     add("REVIEW", "comments", where,
                         "cell comment; keep only if the user asked for it")
+                if in_labels and not is_formula:
+                    continue
                 if value is None:
                     continue
                 colour = rgb(cell.font)
