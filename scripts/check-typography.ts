@@ -109,6 +109,7 @@ const TEXT_EXTENSIONS: readonly string[] = [
   ".mdx",
   ".mjs",
   ".mts",
+  ".py",
   ".ts",
   ".tsx",
   ".txt",

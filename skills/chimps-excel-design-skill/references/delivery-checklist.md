@@ -4,21 +4,24 @@ Apply this before handing the workbook over. There is no ConsultChimps operation
 that checks an authored workbook: a `sheets check` operation is planned and does
 not exist yet, so this list is the gate.
 
-`consultchimps sheets inspect <file>` covers one part of it. It reports each
-worksheet, its used range, the header row, the columns and up to five sample
-values per column, so it confirms that the sheets, headers and columns are the
-ones you meant to produce. It reports nothing about formulas, formatting or
-document properties, so the rest of this list is read by you.
+Two tools cover part of it. `scripts/check_workbook.py` checks the items marked
+(script) below from the file alone, and the part of each (script, partly) item
+that the file shows: Assumptions cells reached by address, formats of filled
+cells, and comments. ConsultChimps `sheets inspect`, run from the release file
+on GitHub, confirms the sheets, headers and columns are the ones you meant.
+Everything unmarked is read by you.
 
 ## Formulas
 
-- [ ] Every function newer than Excel 2007 carries its `_xlfn.` prefix, FILTER
-      and SORT carry `_xlfn._xlws.`, and no older function carries a prefix
-- [ ] One lookup family across the whole workbook
+- [ ] (script) Every function newer than Excel 2007 carries its `_xlfn.` prefix,
+      FILTER and SORT carry `_xlfn._xlws.`, and no older function carries a
+      prefix
+- [ ] (script) One lookup family across the whole workbook
 - [ ] No hardcoded figure inside a calculation range
-- [ ] Every input reference uses a named range, not a cell address
-- [ ] Every named range used in a formula is registered in the workbook's
-      defined names
+- [ ] (script, partly) Every input reference uses a named range, not a cell
+      address
+- [ ] (script) Every named range used in a formula is registered in the
+      workbook's defined names
 - [ ] No error value visible anywhere: open the file and look
 
 ## Data honesty
@@ -30,17 +33,19 @@ document properties, so the rest of this list is read by you.
 
 ## Formatting
 
-- [ ] No merged cells outside a title row
-- [ ] Input cells blue, formula cells black, cross-sheet formulas green
-- [ ] Header row frozen and autofilter on, on every data sheet
-- [ ] One number format per column, applied to blank cells too
+- [ ] (script) No merged cells outside a title row
+- [ ] (script) Input cells blue, formula cells black, cross-sheet formulas green
+- [ ] (script) Header row frozen and autofilter on, on every data sheet
+- [ ] (script, partly) One number format per column, applied to blank cells too
 - [ ] No column showing `####`
-- [ ] No cell comments the user did not ask for, and no decorative styling
+- [ ] (script, partly) No cell comments the user did not ask for, and no
+      decorative styling
 
 ## File
 
-- [ ] `creator` and `lastModifiedBy` set, neither reading as a library name
-- [ ] Title set
+- [ ] (script) `creator` and `lastModifiedBy` set, neither reading as a library
+      name
+- [ ] (script) Title set
 - [ ] Opened in Excel once, after the final save
 
 ## Handover

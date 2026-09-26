@@ -1,7 +1,10 @@
 ---
 name: chimps-excel-design-skill
-description: Consulting standards for authoring a new Excel workbook deliverable: Excel 365 functions written with the _xlfn. prefix, one lookup family per file, inputs on an Assumptions sheet behind named ranges, no invented figures, mandatory formatting and document properties, and a handover before delivery. Layers on the built-in xlsx skill rather than replacing it: that skill writes the file, this skill decides what the file contains. Use when building a model, budget, tracker, scorecard, dashboard, calculator or any client-facing .xlsx from scratch or from supplied data. Do not use for changing a workbook that already exists, including consolidating, merging, splitting, inspecting and unprotecting: that is the chimps-xlsx skill.
-license: MIT
+description:
+  Standards for building a new client-facing Excel workbook, with Excel 365
+  formulas, named-range inputs, no invented figures, mandatory formatting and a
+  handover. Not for editing existing files.
+license: Apache-2.0
 metadata:
   cli-version: "0.12.0"
   repository: consultchimps/consultchimps
@@ -11,25 +14,12 @@ metadata:
 
 ## Scope
 
-| Task                                                    | Skill                     |
-| ------------------------------------------------------- | ------------------------- |
-| Build a new workbook: model, budget, tracker, scorecard | this skill                |
-| Change a workbook that already exists                   | `chimps-xlsx`             |
-| Open, write and save a file in a library                | the built-in `xlsx` skill |
+This skill decides what a new workbook contains. The library skill you write the
+file with (the built-in `xlsx` skill, or your own openpyxl or SheetJS code)
+handles the mechanics, which this skill does not repeat. To change a workbook
+that already exists, use `chimps-xlsx` where it is installed.
 
-Read the built-in `xlsx` skill for library mechanics. This skill does not repeat
-them: no openpyxl API, no cell-writing examples, no recalculation walkthrough.
-
-### What this adds
-
-This skill adds an Excel 365 function policy and the `_xlfn.` prefix table, one
-lookup family per workbook, an Assumptions sheet reached by named range, the
-Needs Input rule for unsourced values, mandatory formatting and document
-properties, and a handover that precedes delivery.
-
-### What this overrides
-
-Where the built-in skill's guidance differs, follow the rule on the right.
+Where the library's habits differ, follow the rule on the right.
 
 | Habit                                           | Rule here                                     |
 | ----------------------------------------------- | --------------------------------------------- |
@@ -116,18 +106,40 @@ An empty section is stated as empty, not omitted.
 
 ## Delivery gate
 
-ConsultChimps has no operation that validates a workbook you authored. A
-`sheets check` operation is planned and does not exist yet: do not run it and do
-not tell the user it ran.
-
-`consultchimps sheets inspect <file>` does exist. It reports each worksheet, its
-used range, the header row, the columns and up to five sample values per column,
-which confirms that sheets, headers and columns landed where you intended. It
-says nothing about formulas, formatting or provenance.
-
 The gate is
-[references/delivery-checklist.md](references/delivery-checklist.md), which you
-apply yourself, item by item, before you hand the file over.
+[references/delivery-checklist.md](references/delivery-checklist.md). Run what
+your environment allows, in this order, then apply the rest of the checklist
+yourself. Tell the user which of these ran.
+
+1. **ConsultChimps, when you can reach GitHub.** Each release ships the CLI as
+   one file that needs only Node, no install:
+
+   ```bash
+   curl -sSLO https://github.com/consultchimps/consultchimps/releases/download/consultchimps%400.12.0/consultchimps.mjs
+   node consultchimps.mjs --json sheets inspect model.xlsx
+   ```
+
+   Inspect reports each worksheet, its used range, header row, columns and
+   sample values, which confirms the sheets and columns landed where you meant.
+   It says nothing about formulas, formatting or properties. There is no
+   `sheets check` operation yet: do not run one or say one ran.
+
+2. **The bundled script, with or without network.** It needs Python and
+   openpyxl, which ChatGPT and Claude sandboxes have, and changes nothing:
+
+   ```bash
+   python scripts/check_workbook.py model.xlsx
+   ```
+
+   It checks function prefixes, one lookup family, Assumptions cells reached by
+   address, named ranges that are not defined, merged cells, font colours,
+   frozen headers and autofilters, mixed number formats, dates stored as text,
+   comments, and document properties, and lists every `Needs Input` cell for the
+   handover. Fix each FAIL, judge each REVIEW.
+
+3. **The checklist by hand**, for everything the two above cannot see: invented
+   figures, sources and owners, hardcoded figures inside calculations, and error
+   values, which appear only when Excel opens the file.
 
 ## Library pitfalls
 
