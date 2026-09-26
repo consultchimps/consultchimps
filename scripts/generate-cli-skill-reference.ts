@@ -1,13 +1,17 @@
-// The CLI reference bundled with the use-consultchimps skill is generated from
-// the built CLI, never written by hand, for the same reason
+// The CLI references bundled with the tool skills are generated from the built
+// CLI, never written by hand, for the same reason
 // check-cli-reference.ts exists: a hand-written command list drifts, and a
 // skill that names a flag the CLI does not have sends an agent down a path
 // that ends in an error it cannot diagnose.
 //
 // The generator is also the check. `--check` regenerates into memory and
-// compares against the committed file, so `pnpm docs:check` fails when the CLI
-// gains, loses, or renames anything the skill documents, and the fix is one
+// compares against the committed files, so `pnpm docs:check` fails when the CLI
+// gains, loses, or renames anything a skill documents, and the fix is one
 // command rather than an edit.
+//
+// Each tool skill carries its own copy of the commands it drives. A registry
+// such as skills.sh installs one skill on its own, so a link from one skill
+// into another skill's folder would break after install.
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -18,14 +22,6 @@ const workspaceRoot = path.resolve(
   "..",
 );
 const cliPath = path.join(workspaceRoot, "packages", "cli", "dist", "index.js");
-const referencePath = path.join(
-  workspaceRoot,
-  "skills",
-  "use-consultchimps",
-  "references",
-  "cli-reference.md",
-);
-const referenceLabel = "skills/use-consultchimps/references/cli-reference.md";
 const generatorLabel = "pnpm skills:reference";
 
 /**
@@ -134,9 +130,32 @@ function readCliVersion(): string {
   return manifest.version;
 }
 
-function render(): string {
+interface ReferenceTarget {
+  /** The skill directory the reference is written into. */
+  readonly skill: string;
+  /** Which command paths the skill documents. */
+  readonly includes: (commandPath: readonly string[]) => boolean;
+  /** What the reference covers, completing "The ... of `consultchimps` X". */
+  readonly scope: string;
+}
+
+const TARGETS: readonly ReferenceTarget[] = [
+  {
+    skill: "use-consultchimps",
+    includes: () => true,
+    scope: "document commands",
+  },
+  {
+    skill: "chimps-xlsx",
+    includes: (commandPath) => commandPath[0] === "sheets",
+    scope: "`sheets` commands",
+  },
+];
+
+function render(target: ReferenceTarget): string {
   const version = readCliVersion();
-  const sections = discoverCommandPaths([]).map((commandPath) => {
+  const commandPaths = discoverCommandPaths([]).filter(target.includes);
+  const sections = commandPaths.map((commandPath) => {
     const label = ["consultchimps", ...commandPath].join(" ");
     return `## ${label}\n\n\`\`\`text\n${readHelpText(commandPath)}\n\`\`\``;
   });
@@ -146,13 +165,17 @@ function render(): string {
     "",
     "# ConsultChimps CLI reference",
     "",
-    `The document commands of \`consultchimps\` ${version}, as the CLI itself`,
+    `The ${target.scope} of \`consultchimps\` ${version}, as the CLI itself`,
     "prints them. A flag absent here does not exist in that version.",
     "",
-    `The \`${EXCLUDED_SUBTREES.join("`, `")}\` commands are left out: they need`,
-    "native database bindings and no skill carries recipes for them. Run",
-    "`consultchimps db --help` against an install to see them.",
-    "",
+    ...(target.skill === "use-consultchimps"
+      ? [
+          `The \`${EXCLUDED_SUBTREES.join("`, `")}\` commands are left out: they need`,
+          "native database bindings and no skill carries recipes for them. Run",
+          "`consultchimps db --help` against an install to see them.",
+          "",
+        ]
+      : []),
     ...sections.flatMap((section) => [section, ""]),
   ]
     .join("\n")
@@ -165,30 +188,34 @@ function commandCount(reference: string): number {
   return reference.match(/^## /gm)?.length ?? 0;
 }
 
-const generated = render();
+const check = process.argv.includes("--check");
 
-if (process.argv.includes("--check")) {
-  let committed: string;
-  try {
-    committed = readFileSync(referencePath, "utf8").replace(/\r\n/g, "\n");
-  } catch {
-    throw new Error(
-      `${referenceLabel} is missing. Run \`${generatorLabel}\` to create it.`,
+for (const target of TARGETS) {
+  const referenceLabel = `skills/${target.skill}/references/cli-reference.md`;
+  const referencePath = path.join(workspaceRoot, ...referenceLabel.split("/"));
+  const generated = render(target);
+
+  if (check) {
+    let committed: string;
+    try {
+      committed = readFileSync(referencePath, "utf8").replace(/\r\n/g, "\n");
+    } catch {
+      throw new Error(
+        `${referenceLabel} is missing. Run \`${generatorLabel}\` to create it.`,
+      );
+    }
+    if (committed !== generated) {
+      throw new Error(
+        `${referenceLabel} no longer matches the built CLI's help output. The skill would document a command surface the CLI does not have. Run \`${generatorLabel}\` and commit the result.`,
+      );
+    }
+    process.stdout.write(
+      `Verified ${referenceLabel} against ${String(commandCount(generated))} commands of the built CLI.\n`,
+    );
+  } else {
+    writeFileSync(referencePath, generated, "utf8");
+    process.stdout.write(
+      `Wrote ${referenceLabel} from ${String(commandCount(generated))} commands of the built CLI.\n`,
     );
   }
-  if (committed !== generated) {
-    throw new Error(
-      `${referenceLabel} no longer matches the built CLI's help output. The skill would document a command surface the CLI does not have. Run \`${generatorLabel}\` and commit the result.`,
-    );
-  }
-  process.stdout.write(
-    `Verified ${referenceLabel} against ${String(commandCount(generated))} commands of the built CLI.
-`,
-  );
-} else {
-  writeFileSync(referencePath, generated, "utf8");
-  process.stdout.write(
-    `Wrote ${referenceLabel} from ${String(commandCount(generated))} commands of the built CLI.
-`,
-  );
 }

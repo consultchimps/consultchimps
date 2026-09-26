@@ -1,6 +1,12 @@
 ---
 name: chimps-excel-design-skill
-description: Consulting standards for authoring a new Excel workbook deliverable: Excel 365 functions written with the _xlfn. prefix, one lookup family per file, inputs on an Assumptions sheet behind named ranges, no invented figures, mandatory formatting and document properties, and a handover before delivery. Layers on the built-in xlsx skill rather than replacing it: that skill writes the file, this skill decides what the file contains. Use when building a model, budget, tracker, scorecard, dashboard, calculator or any client-facing .xlsx from scratch or from supplied data. Do not use for changing a workbook that already exists, including consolidating, merging, splitting, inspecting and unprotecting: that is the chimps-xlsx skill.
+description:
+  Consulting standards for authoring a new Excel workbook deliverable, covering
+  Excel 365 functions with the _xlfn. prefix, inputs on an Assumptions sheet
+  behind named ranges, no invented figures, mandatory formatting and a handover.
+  Use when building a model, budget, tracker, scorecard, dashboard or any
+  client-facing .xlsx from scratch or from supplied data, not when changing an
+  existing one.
 license: MIT
 metadata:
   cli-version: "0.12.0"
@@ -11,25 +17,12 @@ metadata:
 
 ## Scope
 
-| Task                                                    | Skill                     |
-| ------------------------------------------------------- | ------------------------- |
-| Build a new workbook: model, budget, tracker, scorecard | this skill                |
-| Change a workbook that already exists                   | `chimps-xlsx`             |
-| Open, write and save a file in a library                | the built-in `xlsx` skill |
+This skill decides what a new workbook contains. The library skill you write the
+file with (the built-in `xlsx` skill, or your own openpyxl or SheetJS code)
+handles the mechanics, which this skill does not repeat. To change a workbook
+that already exists, use `chimps-xlsx` instead.
 
-Read the built-in `xlsx` skill for library mechanics. This skill does not repeat
-them: no openpyxl API, no cell-writing examples, no recalculation walkthrough.
-
-### What this adds
-
-This skill adds an Excel 365 function policy and the `_xlfn.` prefix table, one
-lookup family per workbook, an Assumptions sheet reached by named range, the
-Needs Input rule for unsourced values, mandatory formatting and document
-properties, and a handover that precedes delivery.
-
-### What this overrides
-
-Where the built-in skill's guidance differs, follow the rule on the right.
+Where the library's habits differ, follow the rule on the right.
 
 | Habit                                           | Rule here                                     |
 | ----------------------------------------------- | --------------------------------------------- |

@@ -18,24 +18,52 @@ it is there.
 
 ## Install
 
-From this repository, as a Claude Code plugin:
+With the Agent Skills CLI, which is how [skills.sh](https://skills.sh) lists
+them:
+
+```bash
+npx skills add consultchimps/consultchimps                     # choose interactively
+npx skills add consultchimps/consultchimps --skill chimps-xlsx # one skill
+npx skills add consultchimps/consultchimps --list              # see what is here
+```
+
+Or from this repository, as a Claude Code plugin:
 
 ```bash
 /plugin install consultchimps@consultchimps/consultchimps
 ```
 
-Or with the registry CLI, which reads the same directory:
+An agent reads a skill's description only when deciding whether to load it. In a
+project that relies on these skills, a line in its `AGENTS.md` or `CLAUDE.md`
+such as "Use the ConsultChimps skills for Excel, PowerPoint and PDF work" makes
+the agent look for them.
 
-```bash
-npx skills add consultchimps/consultchimps
-```
+## Publishing on skills.sh
+
+skills.sh indexes a public repository from installs made with `npx skills add`;
+there is no submission step. What it needs from this directory:
+
+- Each skill stands alone. `npx skills add --skill <name>` copies one skill
+  directory and nothing else, so a skill links only to files inside its own
+  directory and names other skills rather than linking to them.
+- Frontmatter follows the
+  [Agent Skills specification](https://agentskills.io/specification): `name` of
+  lowercase letters, digits and single hyphens, matching the directory;
+  `description` of at most 1,024 characters; `metadata` values as strings.
+- `SKILL.md` stays under 500 lines, with detail in `references/`, linked one
+  level deep.
+
+`pnpm docs:check` runs `scripts/check-skills.ts`, which fails on a broken rule
+above.
 
 ## The generated CLI reference
 
-`use-consultchimps/references/cli-reference.md` is generated from the built CLI
-and must never be hand-edited. A skill that names a flag the CLI does not have
-sends an agent into an error it cannot diagnose, so `pnpm docs:check`
-regenerates the file and fails when the committed copy differs.
+`references/cli-reference.md` in `use-consultchimps` and in `chimps-xlsx` is
+generated from the built CLI and must never be hand-edited. Each tool skill
+carries its own copy so that it works when installed alone. A skill that names a
+flag the CLI does not have sends an agent into an error it cannot diagnose, so
+`pnpm docs:check` regenerates the file and fails when the committed copy
+differs.
 
 ```bash
 pnpm build          # the reference is read from packages/cli/dist
@@ -53,5 +81,11 @@ command surface stops matching.
   because it is all an agent sees until the skill fires
 - keep `SKILL.md` short and push detail into `references/`, which is loaded only
   when needed
+- `description` leads with what the skill does and the words a user would say,
+  and stays near 60 words; rules and refusals go in the body
+- a claim about how the CLI behaves names the version it was checked against,
+  because the drift check covers flags, not behaviour; re-check those claims
+  when a release changes a reader
+- link only inside the skill's own directory
 - claim nothing the tools cannot do today
 - no em dashes or en dashes anywhere; `pnpm docs:check` fails on one

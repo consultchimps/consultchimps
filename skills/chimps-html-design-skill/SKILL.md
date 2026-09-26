@@ -1,10 +1,16 @@
 ---
 name: chimps-html-design-skill
-description: Standards for a client-ready HTML deliverable: one self-contained .html file with CSS, JS and data inlined and zero external requests offline, ECharts for every chart, an ordered categorical palette, a system font stack, and dir-aware RTL support. Use when asked to produce or review an HTML report, findings page, dashboard, one-pager or interactive handout for a client, when charting inside a web page, when matching a deliverable to a client's Office theme from a supplied .xlsx or .pptx, or when choosing chart colours, gridlines, fonts or layout for a page that will be emailed and opened offline. States what to refuse: 3D charts, pie charts past two slices, Google Fonts links, cycled palettes, external scripts.
+description:
+  Standards for a client-ready HTML deliverable that opens offline, as one
+  self-contained .html file with everything inlined, ECharts for charts, an
+  ordered palette, a system font stack and RTL support. Use when producing or
+  reviewing an HTML report, dashboard, one-pager or handout for a client, when
+  charting in a web page, or when matching a client's Office theme.
 license: MIT
 metadata:
   palette: consultchimps-neutral-light
   version: "1"
+  repository: consultchimps/consultchimps
 ---
 
 # Client-ready HTML deliverables
@@ -25,6 +31,12 @@ network and it works completely, first time.
 - Print to PDF cleanly if you can: `break-inside: avoid` on figures and tables
   is most of it. It is a nice to have, not a requirement, and never a reason to
   cripple an interactive chart.
+
+## Refuse on sight
+
+3D charts, pie charts past two slices, Google Fonts or any hosted font, a
+palette that cycles back to its first colour, and any external script or
+stylesheet. Each has a section below saying why and what to use instead.
 
 ## Start from the shell
 
