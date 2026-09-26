@@ -168,8 +168,11 @@ that only look numeric.
 | `TABLE_MAPPING_INVALID`       | valid JSON that breaks a mapping rule; see [references/mapping.md](references/mapping.md)                   |
 | `TABLE_MAPPING_*`             | other mapping failures, such as a column collision; see [references/mapping.md](references/mapping.md)      |
 
-A refusal means nothing was written. Fix the cause rather than retrying or
-falling back to a script.
+The codes above come from checking the input and options, before anything is
+written. Fix the cause rather than retrying or falling back to a script. After
+any error, look at the output location before retrying:
+`FILES_PUBLICATION_CLEANUP_FAILED` means the output was published
+(`error.details.published` is `true`) and only a staging file was left behind.
 
 `"code": null` with `Maximum call stack size exceeded` from `sheets inspect`
 means a large worksheet without a stored used range. `sheets consolidate` reads

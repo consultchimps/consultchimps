@@ -91,8 +91,15 @@ Read the result, not the exit code alone, when you need counts or files created.
 ## Refusals, warnings and errors
 
 **A refusal** carries a namespaced code such as `XLSX_SPLIT_COLUMN_NOT_FOUND`.
-It stopped before writing anything. Fix the input or the option and run again;
-do not retry unchanged and do not work around it with a script.
+Most refusals come from checking the input and options, before anything is
+written. Fix the input or the option and run again; do not retry unchanged and
+do not work around it with a script.
+
+A few codes arrive after output exists. `FILES_PUBLICATION_CLEANUP_FAILED` means
+the output was published (`error.details.published` is `true`) but a staging
+file was left behind, and `PDF_PAGE_COPY_FAILED` from `pdf split` comes after
+the earlier pages were written. On any error, look at the output location before
+retrying, and tell the user what is already there.
 
 **A warning** means the operation completed and dropped or changed something on
 the way, for example a column no mapping claimed. Report warnings to the user.
