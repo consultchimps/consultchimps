@@ -158,8 +158,9 @@ that only look numeric.
 | ----------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `XLSX_SPLIT_COLUMN_NOT_FOUND` | the column name is not on the resolved header row; inspect, then use `--header-row` or correct the spelling |
 | `XLSX_INVALID_HEADER_ROW`     | the row named by `--header-row` is outside the sheet's used range                                           |
-| `XLSX_MAPPING_FILE_INVALID`   | the mapping document is not valid JSON or breaks its own rules                                              |
-| `TABLE_MAPPING_*`             | a mapping rule was broken; see [references/mapping.md](references/mapping.md)                               |
+| `XLSX_MAPPING_FILE_INVALID`   | the mapping file is not valid JSON                                                                          |
+| `TABLE_MAPPING_INVALID`       | valid JSON that breaks a mapping rule; see [references/mapping.md](references/mapping.md)                   |
+| `TABLE_MAPPING_*`             | other mapping failures, such as a column collision; see [references/mapping.md](references/mapping.md)      |
 
 A refusal means nothing was written. Fix the cause rather than retrying or
 falling back to a script.

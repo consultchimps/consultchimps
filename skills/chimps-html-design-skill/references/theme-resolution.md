@@ -67,7 +67,9 @@ Check, in this order:
 2. `--surface` is lighter than `--ink`. If the theme inverts them, the client
    uses a dark deck: version 1 does not, so substitute both.
 3. Ink roles clear 4.5:1 against the resolved surface.
-4. Accent roles clear 3:1 against the resolved surface.
+4. Accent roles clear 3:1 against the resolved surface. A default slot that
+   replaces a failing accent follows the labelling rule in `SKILL.md` when it
+   sits under 3:1 itself, as slots 3, 4 and 5 do.
 5. An accent whose highest sRGB channel minus its lowest is under 25 reads as
    grey and cannot carry identity in a chart. It fails.
 6. Two accents that clear less than 1.5:1 against each other are one colour to

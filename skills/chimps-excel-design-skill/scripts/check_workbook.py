@@ -72,11 +72,13 @@ def strip_strings(formula: str) -> str:
 
 
 def check_formula(where: str, formula: str, lookups: dict[str, list[str]],
-                  names_used: set[str]) -> None:
+                  names_used: dict[str, set[str]]) -> None:
     body = strip_strings(formula)
+    sheet = where.split("!")[0]
+    # Excel reads function names without regard to case, and so does this.
     for match in re.finditer(r"((?:_xlfn\.)?(?:_xlws\.)?)([A-Z][A-Z0-9.]*)\(",
-                             body):
-        prefix, name = match.group(1), match.group(2)
+                             body, re.IGNORECASE):
+        prefix, name = match.group(1).lower(), match.group(2).upper()
         if name in XLWS and prefix != "_xlfn._xlws.":
             add("FAIL", "prefix", where,
                 f"{name} must be written _xlfn._xlws.{name}")
@@ -101,7 +103,7 @@ def check_formula(where: str, formula: str, lookups: dict[str, list[str]],
                 or token.startswith("_xl")):
             continue
         if "_" in token:
-            names_used.add(token)
+            names_used.setdefault(token, set()).add(sheet)
 
 
 def main(path: str, as_json: bool) -> int:
@@ -117,10 +119,12 @@ def main(path: str, as_json: bool) -> int:
     if not (props.title or "").strip():
         add("FAIL", "properties", "workbook", "title is not set")
 
-    defined = {name.upper() for name in wb.defined_names}
-    for ws in wb.worksheets:
-        defined.update(name.upper() for name in ws.defined_names)
-    names_used: set[str] = set()
+    # A workbook-scoped name resolves on every sheet; a worksheet-scoped name
+    # only on its own sheet.
+    workbook_names = {name.upper() for name in wb.defined_names}
+    sheet_names = {ws.title: {name.upper() for name in ws.defined_names}
+                   for ws in wb.worksheets}
+    names_used: dict[str, set[str]] = {}
     lookups: dict[str, list[str]] = defaultdict(list)
 
     for ws in wb.worksheets:
@@ -184,10 +188,13 @@ def main(path: str, as_json: bool) -> int:
             f"XLOOKUP ({lookups['XLOOKUP'][0]}) and INDEX/MATCH or VLOOKUP "
             f"({lookups['INDEX/MATCH'][0]}) are both used")
     for name in sorted(names_used):
-        if name.upper() not in defined:
-            add("REVIEW", "defined-names", "workbook",
-                f"'{name}' reads like a named range but is not defined; "
-                "an unregistered name shows #NAME?")
+        for sheet in sorted(names_used[name]):
+            key = name.upper()
+            if key in workbook_names or key in sheet_names.get(sheet, set()):
+                continue
+            add("REVIEW", "defined-names", sheet,
+                f"'{name}' reads like a named range but is not defined for "
+                "this sheet; an unregistered name shows #NAME?")
 
     failed = sum(f["level"] == "FAIL" for f in findings)
     if as_json:

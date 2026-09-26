@@ -97,7 +97,10 @@
     <script></script>
 
     <script>
-      // Data, inlined: keep it here and keep rendering code below it
+      // Data, inlined: keep it here and keep rendering code below it.
+      // Paste JSON with every "<" written as \u003c, for example from Python
+      // json.dumps(data).replace("<", "\\u003c"), so a client string holding
+      // a closing script tag cannot end this script.
       const data = { categories: [], series: [] };
 
       const root = document.documentElement;
@@ -107,7 +110,7 @@
       });
       chart.setOption({
         // Slots in order, never cycled: see references/charts.md
-        color: [token("--cat-1"), token("--cat-2"), token("--cat-3")],
+        color: [1, 2, 3, 4, 5, 6, 7, 8].map((slot) => token(`--cat-${slot}`)),
         textStyle: { fontFamily: getComputedStyle(document.body).fontFamily },
         xAxis: { type: "category", data: data.categories },
         yAxis: { type: "value" },

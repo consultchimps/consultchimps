@@ -51,6 +51,34 @@ if (typeof repositoryLicense !== "string") {
   throw new Error("package.json declares no license string.");
 }
 
+// Every CLI version a skill names, in `npx consultchimps@X`, a release
+// download URL (`consultchimps%40X`) or `metadata.cli-version`, must be the
+// version of packages/cli. The generated references take their version from
+// the same file, so a release that bumps it fails here until every pin moves
+// with it, and no skill can run one version while documenting another.
+const cliVersion: unknown = (
+  JSON.parse(
+    readFileSync(
+      path.join(workspaceRoot, "packages", "cli", "package.json"),
+      "utf8",
+    ),
+  ) as { version?: unknown }
+).version;
+if (typeof cliVersion !== "string") {
+  throw new Error("packages/cli/package.json declares no version string.");
+}
+const VERSION_PIN = /consultchimps(?:@|%40)(\d+\.\d+\.\d+)/g;
+
+function skillTextFiles(directory: string): string[] {
+  return readdirSync(directory).flatMap((entry) => {
+    const full = path.join(directory, entry);
+    if (statSync(full).isDirectory()) {
+      return skillTextFiles(full);
+    }
+    return /\.(?:md|py|html|css|js|ts|sh|ps1)$/.test(entry) ? [full] : [];
+  });
+}
+
 const NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const NAME_MAX = 64;
 const DESCRIPTION_MAX = 1024;
@@ -305,6 +333,26 @@ for (const skill of skills) {
     problems.push(
       `${label}: SKILL.md is ${String(lineCount)} lines; keep it under ${String(SKILL_MD_MAX_LINES)} and move detail into references/.`,
     );
+  }
+
+  const pinnedVersion = frontmatter.metadata.get("cli-version");
+  if (pinnedVersion !== undefined && pinnedVersion !== cliVersion) {
+    problems.push(
+      `${label}: metadata.cli-version is ${pinnedVersion}, but packages/cli is ${cliVersion}.`,
+    );
+  }
+  for (const file of skillTextFiles(skillDirectory)) {
+    const fileLabel = path
+      .relative(workspaceRoot, file)
+      .split(path.sep)
+      .join("/");
+    for (const match of readFileSync(file, "utf8").matchAll(VERSION_PIN)) {
+      if (match[1] !== cliVersion) {
+        problems.push(
+          `${fileLabel}: pins consultchimps ${match[1] ?? ""}, but packages/cli is ${cliVersion}. Move every pin with the release.`,
+        );
+      }
+    }
   }
 
   // A link must resolve inside this skill's own directory: after a single

@@ -24,7 +24,9 @@ network and it works completely, first time.
 - No `fetch`, no `XMLHttpRequest`, no web font, no analytics, no telemetry
 - No build step: the file a text editor produces is the file the client opens
 - Keep the data literal in its own `<script>` above the rendering code, so a
-  figure can be corrected without reading the rest of the page.
+  figure can be corrected without reading the rest of the page. Serialize it as
+  JSON with every `<` written as `\u003c`, so a client string holding
+  `</script>` cannot end the script and run as code.
 - Include only the client data the deliverable actually shows.
 - Print to PDF cleanly if you can: `break-inside: avoid` on figures and tables
   is most of it. It is a nice to have, not a requirement, and never a reason to
@@ -50,7 +52,10 @@ pasted into the shell verbatim. Both are short enough to read before using.
   Series that outrun the palette are a signal to reduce series.
 - Surface and ink roles carry every non-data colour: `--surface`,
   `--surface-sunken`, `--rule`, `--ink`, `--ink-secondary`, `--ink-muted`.
-- Body text clears 4.5:1 against its surface, and a chart mark clears 3:1.
+- Body text clears 4.5:1 against its surface. A chart mark below 3:1 against its
+  surface needs a direct label on the mark or a data table beside the chart. On
+  the default surface that is slots 3, 4 and 5 (2.1 to 2.7:1), kept for
+  distinctness between neighbouring series.
 - Never reach past the tokens for a colour. A hex value written inline in a rule
   is a bug, because the theme resolution step cannot reach it.
 - Version 1 ships one light palette, with no dark mode and no theme toggle.

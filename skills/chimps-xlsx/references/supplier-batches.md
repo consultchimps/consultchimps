@@ -11,10 +11,23 @@ becomes the handover.
 
 ## 1. Inspect every input
 
+In bash, zsh or Git Bash:
+
 ```bash
+mkdir -p inspect
 for f in templates/sources/*.xlsx; do
   npx consultchimps@0.12.0 --json sheets inspect "$f" > "inspect/$(basename "$f" .xlsx).json"
 done
+```
+
+In Windows PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force inspect | Out-Null
+Get-ChildItem templates/sources -Filter *.xlsx | ForEach-Object {
+  npx consultchimps@0.12.0 --json sheets inspect $_.FullName |
+    Set-Content -Encoding utf8 "inspect/$($_.BaseName).json"
+}
 ```
 
 From each result record the worksheet names and visibility, `headerRow`,
