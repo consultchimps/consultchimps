@@ -86,9 +86,17 @@ flag the CLI does not have sends an agent into an error it cannot diagnose, so
 differs.
 
 ```bash
-pnpm build          # the reference is read from packages/cli/dist
 pnpm skills:reference
 ```
+
+The reference is read from the published release of the version in
+`packages/cli/package.json`: the single-file `consultchimps.mjs` on that
+version's GitHub release, checked against the SHA-256 digest GitHub publishes
+for it. Rebuilding the checkout does not change it, because the skills run the
+published version. Only a version with no release yet, such as a version bump
+waiting to publish, is read from the local build (`pnpm build` first), and the
+command says so. If GitHub cannot be reached, the command stops rather than
+falling back.
 
 Both tool skills pin the CLI version they document in frontmatter. The pin is a
 minimum: a later CLI keeps working, and the drift check catches the day its

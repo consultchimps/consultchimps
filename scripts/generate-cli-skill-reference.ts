@@ -17,11 +17,15 @@
 // is read from the published release of that version, the single-file
 // `consultchimps.mjs` attached to its GitHub release, not from the checkout:
 // between releases the checkout can print help the published version does not
-// have. Only when that version has no release yet (a version bump waiting to
-// publish) or the download fails does it fall back to the local build, and it
-// says so.
+// have. The file is downloaded afresh into a private temporary directory and
+// checked against the SHA-256 digest GitHub publishes for the release asset
+// before it runs; nothing is reused from a shared path. Only a version with no
+// release at all (a version bump waiting to publish) falls back to the local
+// build, and the output says so. Any other failure, such as GitHub being
+// unreachable, stops the run rather than quietly documenting the checkout.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,38 +43,86 @@ const localCliPath = path.join(
 );
 const generatorLabel = "pnpm skills:reference";
 
-/** The published single-file CLI for `version`, downloaded once and cached. */
-async function releasedCli(version: string): Promise<string | null> {
-  const cached = path.join(
-    tmpdir(),
-    "consultchimps-release",
-    version,
-    "consultchimps.mjs",
-  );
-  if (existsSync(cached)) {
-    return cached;
+const repository = "consultchimps/consultchimps";
+
+interface ReleaseAsset {
+  name?: unknown;
+  digest?: unknown;
+  browser_download_url?: unknown;
+}
+
+/**
+ * The published single-file CLI for `version`, verified against its release
+ * digest, in a fresh private directory; or null when that version has no
+ * release yet. Every other failure throws.
+ */
+async function releasedCli(
+  version: string,
+): Promise<{ file: string; directory: string } | null> {
+  const headers: Record<string, string> = {
+    accept: "application/vnd.github+json",
+  };
+  const token = process.env.GITHUB_TOKEN;
+  if (token) {
+    headers.authorization = `Bearer ${token}`;
   }
-  const url = `https://github.com/consultchimps/consultchimps/releases/download/consultchimps%40${version}/consultchimps.mjs`;
-  try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      return null;
-    }
-    mkdirSync(path.dirname(cached), { recursive: true });
-    writeFileSync(cached, Buffer.from(await response.arrayBuffer()));
-    return cached;
-  } catch {
+  const tag = encodeURIComponent(`consultchimps@${version}`);
+  const releaseResponse = await fetch(
+    `https://api.github.com/repos/${repository}/releases/tags/${tag}`,
+    { headers },
+  );
+  if (releaseResponse.status === 404) {
     return null;
   }
+  if (!releaseResponse.ok) {
+    throw new Error(
+      `Could not read the consultchimps ${version} release from GitHub (HTTP ${String(releaseResponse.status)}). The reference is generated from that release; retry when GitHub is reachable.`,
+    );
+  }
+  const release = (await releaseResponse.json()) as { assets?: unknown };
+  const asset = (Array.isArray(release.assets) ? release.assets : []).find(
+    (candidate: ReleaseAsset) => candidate.name === "consultchimps.mjs",
+  ) as ReleaseAsset | undefined;
+  if (
+    typeof asset?.browser_download_url !== "string" ||
+    typeof asset.digest !== "string" ||
+    !asset.digest.startsWith("sha256:")
+  ) {
+    throw new Error(
+      `The consultchimps ${version} release has no consultchimps.mjs with a SHA-256 digest to verify.`,
+    );
+  }
+  const download = await fetch(asset.browser_download_url);
+  if (!download.ok) {
+    throw new Error(
+      `Could not download consultchimps.mjs for ${version} (HTTP ${String(download.status)}).`,
+    );
+  }
+  const bytes = Buffer.from(await download.arrayBuffer());
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  if (`sha256:${digest}` !== asset.digest) {
+    throw new Error(
+      `consultchimps.mjs for ${version} does not match its published digest; refusing to run it.`,
+    );
+  }
+  const directory = mkdtempSync(path.join(tmpdir(), "consultchimps-release-"));
+  const file = path.join(directory, "consultchimps.mjs");
+  writeFileSync(file, bytes, { mode: 0o600 });
+  return { file, directory };
 }
 
 const cliVersion = readCliVersion();
-const releasedPath = await releasedCli(cliVersion);
-const cliPath = releasedPath ?? localCliPath;
+const released = await releasedCli(cliVersion);
+const cliPath = released?.file ?? localCliPath;
 const cliSource =
-  releasedPath === null
-    ? `the local build, because consultchimps ${cliVersion} has no release to read`
+  released === null
+    ? `the local build, because consultchimps ${cliVersion} has no release yet`
     : `the published consultchimps ${cliVersion} release`;
+process.on("exit", () => {
+  if (released !== null) {
+    rmSync(released.directory, { recursive: true, force: true });
+  }
+});
 
 /**
  * Help is read with stdio piped so Commander sees a non-TTY stream and wraps
