@@ -112,7 +112,8 @@ def check_formula(where: str, formula: str, lookups: dict[str, list[str]],
             lookups["INDEX/MATCH"].append(where)
     if re.search(r"#(REF|NAME|VALUE|DIV/0|N/A)[!?]?", body):
         add("FAIL", "error-in-formula", where, "the formula text holds an error")
-    if re.search(r"(?:^|[^A-Za-z_])'?Assumptions'?!\$?[A-Z]{1,3}\$?\d+", body):
+    if re.search(r"(?:^|[^A-Za-z_])'?Assumptions'?!\$?[A-Z]{1,3}\$?\d+", body,
+                 re.IGNORECASE):
         add("FAIL", "named-range", where,
             "points at an Assumptions cell by address; use its named range")
     for token in re.findall(r"(?<![A-Za-z0-9_.!$'])([A-Za-z_][A-Za-z0-9_.]*)"
@@ -157,10 +158,12 @@ def main(path: str, as_json: bool) -> int:
 
     for ws in wb.worksheets:
         sheet = ws.title
-        if ws.max_row < 2:
-            continue
-        # A header row and at least one row under it make a data sheet.
-        is_data = sheet.lower() != "assumptions"
+        # A table is a header row of at least two labels with rows under it.
+        # A cover, summary or notes sheet is not held to the table rules.
+        labels = [c.value for c in ws[1] if isinstance(c.value, str)
+                  and c.value.strip() and not c.value.startswith("=")]
+        is_data = (len(labels) >= 2 and ws.max_row >= 2
+                   and sheet.lower() != "assumptions")
 
         for rng in ws.merged_cells.ranges:
             if rng.min_row > 1:
@@ -172,10 +175,16 @@ def main(path: str, as_json: bool) -> int:
             add("FAIL", "autofilter", sheet, "autofilter is not on")
 
         formats: dict[int, set[str]] = defaultdict(set)
-        for row in ws.iter_rows(min_row=2):
+        for row in ws.iter_rows(min_row=1):
             for cell in row:
                 where = f"{sheet}!{cell.coordinate}"
                 value = cell.value
+                in_header = cell.row == 1
+                is_formula = isinstance(value, str) and value.startswith("=")
+                # Row 1 is headers or a title: formulas there are checked,
+                # the data rules below are not.
+                if in_header and not is_formula:
+                    continue
                 if cell.comment is not None:
                     add("REVIEW", "comments", where,
                         "cell comment; keep only if the user asked for it")
@@ -204,7 +213,8 @@ def main(path: str, as_json: bool) -> int:
                         add("INFO", "needs-input", where,
                             "list this in the handover")
                 # Text labels carry no number format worth comparing.
-                if not isinstance(value, str) or value.startswith("="):
+                if not in_header and (not isinstance(value, str)
+                                      or value.startswith("=")):
                     formats[cell.column].add(cell.number_format)
         for column, found in formats.items():
             if len(found) > 1:
