@@ -35,7 +35,7 @@ from collections import defaultdict
 try:
     import openpyxl
     from openpyxl.utils import get_column_letter
-    from openpyxl.utils.cell import coordinate_from_string
+    from openpyxl.utils.cell import coordinate_from_string, range_boundaries
     from openpyxl.utils.formulas import FORMULAE
 except ImportError:  # pragma: no cover
     sys.exit("openpyxl is required: pip install openpyxl")
@@ -214,8 +214,13 @@ def main(path: str, as_json: bool) -> int:
             if first_unfrozen <= header:
                 add("FAIL", "freeze", sheet,
                     f"header row {header} is not frozen")
-        if is_data and not ws.auto_filter.ref:
-            add("FAIL", "autofilter", sheet, "autofilter is not on")
+        if is_data:
+            # The filter's first row must be the table's header row.
+            ref = ws.auto_filter.ref
+            filter_row = range_boundaries(ref)[1] if ref else None
+            if filter_row != header:
+                add("FAIL", "autofilter", sheet,
+                    f"autofilter is not on header row {header}")
 
         # Rows down to the header hold titles and labels: formulas there are
         # checked, the data rules are not.
@@ -252,8 +257,9 @@ def main(path: str, as_json: bool) -> int:
                             "range should be a formula")
                 elif isinstance(value, str):
                     if DATE_TEXT.match(value):
+                        # Findings name cells, never their client content.
                         add("FAIL", "date-as-text", where,
-                            f"'{value}' is text that looks like a date")
+                            "text that looks like a date")
                     if value.strip().lower() == "needs input":
                         add("INFO", "needs-input", where,
                             "list this in the handover")
