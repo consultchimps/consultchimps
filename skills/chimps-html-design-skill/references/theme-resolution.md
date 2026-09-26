@@ -66,7 +66,11 @@ Check, in this order:
    fails here.
 2. `--surface` is lighter than `--ink`. If the theme inverts them, the client
    uses a dark deck: version 1 does not, so substitute both.
-3. Ink roles clear 4.5:1 against the resolved surface.
+3. Ink roles clear 4.5:1 against the resolved surface. `--surface-sunken`
+   (`lt2`) holds text too, so the resolved `--ink` clears 4.5:1 against it. The
+   link colour (`hlink`) clears 4.5:1 against the resolved surface; a failing
+   link colour is replaced by the resolved `--ink`, with the link underlined,
+   because no palette token is dark enough to stand in for it.
 4. Accent roles clear 3:1 against the resolved surface. A default slot that
    replaces a failing accent follows the labelling rule in `SKILL.md` when it
    sits under 3:1 itself, as slots 3, 4 and 5 do.
@@ -76,7 +80,8 @@ Check, in this order:
    the reader. Keep the earlier slot, fail the later one.
 
 A role that fails any check is replaced by the same token's value in
-`assets/palette.css`. Never nudge a client colour into passing: substitute it.
+`assets/palette.css`, apart from the link colour, which step 3 handles. Never
+nudge a client colour into passing: substitute it.
 
 ## 5. Resolve the font
 

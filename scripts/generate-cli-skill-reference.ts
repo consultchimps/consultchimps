@@ -136,6 +136,15 @@ process.on("exit", () => {
 // which is the difference between a fast check and one people skip.
 const helpCache = new Map<string, string>();
 
+// Only what Node needs to start and locate temporary files on each platform.
+const helpEnvironment: NodeJS.ProcessEnv = { FORCE_COLOR: "0", NO_COLOR: "1" };
+for (const name of ["PATH", "Path", "SystemRoot", "TEMP", "TMP", "TMPDIR"]) {
+  const value = process.env[name];
+  if (value !== undefined) {
+    helpEnvironment[name] = value;
+  }
+}
+
 function readHelpText(commandPath: readonly string[]): string {
   const label = ["consultchimps", ...commandPath].join(" ");
   const cached = helpCache.get(label);
@@ -147,7 +156,9 @@ function readHelpText(commandPath: readonly string[]): string {
     [cliPath, ...commandPath, "--help"],
     {
       encoding: "utf8",
-      env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
+      // A minimal environment: the downloaded CLI is verified against its
+      // digest, but it still has no reason to see tokens or other secrets.
+      env: helpEnvironment,
     },
   );
 

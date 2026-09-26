@@ -221,7 +221,12 @@ function parseFrontmatter(text: string, label: string): Frontmatter {
 /** Relative link targets in a Markdown file, without anchors. */
 function linkTargets(markdown: string): string[] {
   const targets: string[] = [];
-  for (const match of markdown.matchAll(/\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
+  // Code is not prose: a regular expression or a snippet in a fenced block
+  // or an inline span can hold "](" without being a link.
+  const prose = markdown
+    .replace(/^( *)(```|~~~)[^\n]*\n[\s\S]*?^\1\2[^\n]*$/gm, "")
+    .replace(/`[^`\n]*`/g, "");
+  for (const match of prose.matchAll(/\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
     const target = match[1] ?? "";
     if (/^(?:[a-z]+:|#|\/)/i.test(target)) {
       continue;

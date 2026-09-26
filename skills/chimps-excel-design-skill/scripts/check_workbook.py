@@ -160,8 +160,10 @@ def check_formula(where: str, formula: str, lookups: dict[str, list[str]],
             lookups["INDEX/MATCH"].append(where)
     if re.search(r"#(REF|NAME|VALUE|DIV/0|N/A)[!?]?", body):
         add("FAIL", "error-in-formula", where, "the formula text holds an error")
-    if re.search(r"(?:^|[^A-Za-z_])'?Assumptions'?!\$?[A-Z]{1,3}\$?\d+", body,
-                 re.IGNORECASE):
+    # A cell, a range, a whole column (B:B) or a whole row (7:7).
+    if re.search(r"(?:^|[^A-Za-z_])'?Assumptions'?!"
+                 r"(?:\$?[A-Z]{1,3}\$?\d+|\$?[A-Z]{1,3}:\$?[A-Z]{1,3}"
+                 r"|\$?\d+:\$?\d+)", body, re.IGNORECASE):
         add("FAIL", "named-range", where,
             "points at an Assumptions cell by address; use its named range")
 
@@ -256,17 +258,25 @@ def main(path: str, as_json: bool) -> int:
             # A sheet filter, or an Excel Table, which carries its own filter.
             refs = [ws.auto_filter.ref] if ws.auto_filter.ref else []
             refs += [table.ref for table in ws.tables.values()]
+            # The last row holding a value under the header, not the sheet's
+            # styled extent: formatted blank rows below a table are normal.
+            last_body_row = max(
+                (row[0].row for row in ws.iter_rows(
+                    min_row=header + 1, min_col=min(label_columns),
+                    max_col=max(label_columns))
+                 if any(c.value not in (None, "") for c in row)),
+                default=header)
 
             def covers(ref: str) -> bool:
                 left, top, right, bottom = range_boundaries(ref)
                 return (top == header and left <= min(label_columns)
                         and right >= max(label_columns)
-                        and bottom >= ws.max_row)
+                        and bottom >= last_body_row)
 
             if not any(covers(ref) for ref in refs):
                 add("FAIL", "autofilter", sheet,
                     f"autofilter does not cover the table from header row "
-                    f"{header} to row {ws.max_row}, columns "
+                    f"{header} to row {last_body_row}, columns "
                     f"{get_column_letter(min(label_columns))} to "
                     f"{get_column_letter(max(label_columns))}")
 
