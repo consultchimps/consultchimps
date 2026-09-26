@@ -4,8 +4,8 @@ description:
   Run the ConsultChimps CLI for Excel, PowerPoint and PDF operations instead of
   writing a throwaway script. Covers invocation, running from a checkout, the
   --json envelope, refusals, warnings and errors without a code. Use before
-  writing code that combines, splits, inspects, populates or unprotects .xlsx,
-  .xlsm, .pptx or .pdf files, or when the user mentions ConsultChimps.
+  writing code that combines, splits, inspects, populates or unprotects Excel,
+  PowerPoint or PDF files, or when the user mentions ConsultChimps.
 license: Apache-2.0
 metadata:
   cli-version: "0.12.0"
@@ -41,7 +41,9 @@ knows which part of the result the toolkit stands behind.
 | Combine PDFs into one file                  | `pdf merge`             |
 | Prepare a reviewed database import batch    | `db import prepare`     |
 
-The `db` commands need native database bindings and are not covered here.
+The `db` commands need native database bindings and are not covered here. In
+0.12.0, `sheets consolidate` and `sheets merge` read `.xlsx` only; the other
+`sheets` commands also take `.xlsm`.
 
 "Combine these files" is ambiguous. Ask which shape the user wants: one table of
 stacked rows (consolidate), or one workbook of separate tabs (merge).

@@ -13,9 +13,9 @@ Everything unmarked is read by you.
 
 ## Formulas
 
-- [ ] (script) Every function newer than Excel 2007 carries its `_xlfn.` prefix,
-      FILTER and SORT carry `_xlfn._xlws.`, and no older function carries a
-      prefix
+- [ ] (script, partly) Every function newer than Excel 2007 carries its `_xlfn.`
+      prefix, FILTER and SORT carry `_xlfn._xlws.`, and no older function
+      carries a prefix
 - [ ] (script) One lookup family across the whole workbook
 - [ ] No hardcoded figure inside a calculation range
 - [ ] (script, partly) Every input reference uses a named range, not a cell

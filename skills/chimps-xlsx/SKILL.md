@@ -4,9 +4,8 @@ description:
   Consolidate, merge, split and inspect existing Excel workbooks with the
   ConsultChimps CLI. Covers choosing the operation, header rows under title
   blocks, folding mismatched supplier headers onto one schema with a column
-  mapping, and reconciling row counts. Use when .xlsx or .xlsm files that
-  already exist must be stacked, tabbed together, divided by a column, or
-  described before a decision.
+  mapping, and reconciling row counts. Use when existing .xlsx workbooks must be
+  stacked, tabbed together, divided by a column, or described before a decision.
 license: Apache-2.0
 metadata:
   cli-version: "0.12.0"
@@ -31,6 +30,13 @@ machine-readable result. Every flag used here is in
 
 "Combine" and "merge" in a user's sentence usually mean consolidate. Confirm the
 shape before running: stacked rows, or separate tabs.
+
+In 0.12.0 `sheets consolidate` and `sheets merge` read `.xlsx` only, and skip a
+`.xlsm` input without a warning, even one named on the command line. Compare
+`metrics.inputFiles` with the number of files you meant to pass.
+`sheets inspect`, `sheets split` and `sheets unprotect` take `.xlsx` and
+`.xlsm`. To stack or tab macro workbooks together, ask the user to save copies
+as `.xlsx` first, which drops the macros.
 
 ## Inspect before you decide
 
