@@ -123,6 +123,15 @@ def check_formula(where: str, formula: str, lookups: dict[str, list[str]],
             continue
         if "_" in token:
             names_used.setdefault(token, set()).add(sheet)
+    # A sheet-qualified name, Sheet1!Tax_Rate or 'My Sheet'!Tax_Rate, is looked
+    # up on the sheet it names. Recorded as "Sheet1!Tax_Rate" for main().
+    for match in re.finditer(r"(?:'((?:[^']|'')+)'|([A-Za-z_][A-Za-z0-9_.]*))!"
+                             r"([A-Za-z_][A-Za-z0-9_.]*)(?![A-Za-z0-9_.(!:])",
+                             body):
+        target = (match.group(1) or "").replace("''", "'") or match.group(2)
+        name = match.group(3)
+        if "_" in name and not CELL_REF.match(name.upper()):
+            names_used.setdefault(f"{target}!{name}", set()).add(sheet)
 
 
 def main(path: str, as_json: bool) -> int:
@@ -150,7 +159,8 @@ def main(path: str, as_json: bool) -> int:
         sheet = ws.title
         if ws.max_row < 2:
             continue
-        is_data = ws.max_row > 2 and sheet.lower() != "assumptions"
+        # A header row and at least one row under it make a data sheet.
+        is_data = sheet.lower() != "assumptions"
 
         for rng in ws.merged_cells.ranges:
             if rng.min_row > 1:
@@ -208,6 +218,16 @@ def main(path: str, as_json: bool) -> int:
             f"({lookups['INDEX/MATCH'][0]}) are both used")
     for name in sorted(names_used):
         for sheet in sorted(names_used[name]):
+            if "!" in name:
+                target, bare = name.rsplit("!", 1)
+                key = bare.upper()
+                if target in sheet_names and (
+                        key in sheet_names[target] or key in workbook_names):
+                    continue
+                add("REVIEW", "defined-names", sheet,
+                    f"'{name}' names a range that is not defined on "
+                    f"'{target}'; an unregistered name shows #NAME?")
+                continue
             key = name.upper()
             if key in workbook_names or key in sheet_names.get(sheet, set()):
                 continue

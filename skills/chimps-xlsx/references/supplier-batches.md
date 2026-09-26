@@ -43,26 +43,35 @@ From each result record the worksheet names and visibility, `headerRow`,
 
 ## 2. Group files by header row
 
-`--header-row` applies to every file in a run. Files whose real headers sit on
-row 1 go in one run; files with a two row title block go in a run with
-`--header-row 3`, and so on. Pass the same `--map` to every group run so the
-columns line up.
+`--header-row` applies to every file in a run, so each group of files that share
+a header row needs its own runs. Put each group in its own folder, for example
+`groups/row1` for files whose headers sit on row 1 and `groups/row3` for files
+with a two row title block. Steps 3 and 4 run once per group folder, with that
+group's `--header-row`; row 1 is the default and needs no flag.
 
-Combine the group outputs in a last run with `--no-source`. Each group output
+The group outputs are then combined with `--no-source`. Each group output
 already carries `_source_file`, `_source_sheet` and `_source_row` naming the
 original workbooks, and those pass through as ordinary columns. Without the flag
 the run refuses with `TABLE_SOURCE_COLUMN_COLLISION`.
 
-## 3. Trial run and column audit
+With a single group, skip the folders and the combining runs.
+
+## 3. Trial runs and column audit
+
+One trial run per group, then one combined trial to audit:
 
 ```bash
-npx consultchimps@0.12.0 sheets consolidate templates/sources \
-  --normalize-headers --suggest-map draft.json -o trial.xlsx
+npx consultchimps@0.12.0 sheets consolidate groups/row1 \
+  --normalize-headers --suggest-map draft-row1.json -o trial-row1.xlsx
+npx consultchimps@0.12.0 sheets consolidate groups/row3 --header-row 3 \
+  --normalize-headers --suggest-map draft-row3.json -o trial-row3.xlsx
+npx consultchimps@0.12.0 sheets consolidate trial-row1.xlsx trial-row3.xlsx \
+  --no-source -o trial.xlsx
 ```
 
-List each output column with the suppliers that fill it. This reads the trial
-output rather than transforming it, so a short script is fine; say that you used
-one. In Python:
+List each column of `trial.xlsx` with the suppliers that fill it. This reads the
+trial output rather than transforming it, so a short script is fine; say that
+you used one. In Python:
 
 ```python
 import openpyxl
@@ -84,18 +93,25 @@ Read the list for:
 
 ## 4. Map and run
 
-Write the mapping (see `mapping.md`), listing every column you mean to keep as a
-canonical entry and the synonyms as aliases. Then:
+Write one mapping (see `mapping.md`) for every group, listing every column you
+mean to keep as a canonical entry and the synonyms as aliases, so the group
+outputs line up. Then run each group with it, and combine:
 
 ```bash
-npx consultchimps@0.12.0 --json sheets consolidate templates/sources \
-  --map mapping.json -o "consolidated/sources.xlsx"
+npx consultchimps@0.12.0 --json sheets consolidate groups/row1 \
+  --map mapping.json -o mapped-row1.xlsx
+npx consultchimps@0.12.0 --json sheets consolidate groups/row3 --header-row 3 \
+  --map mapping.json -o mapped-row3.xlsx
+npx consultchimps@0.12.0 --json sheets consolidate mapped-row1.xlsx mapped-row3.xlsx \
+  --no-source -o consolidated/sources.xlsx
 ```
 
 ## 5. Reconcile and hand over
 
-- The sum of `dataRowCount` across the inputs equals `metrics.outputRows`, less
-  any annotation rows you removed.
+- The sum of `dataRowCount` across the inputs equals `metrics.outputRows` of the
+  last run, less any annotation rows you removed. For a file with a title block,
+  step 1's `dataRowCount` also counts every filled row between the title and the
+  real header, and the real header itself; subtract those rows.
 - `warnings` is empty, or every warning is explained.
 - Tell the user: which folds you made and why, which supplier values sit under a
   folded name, any column left unfolded on purpose, and any file you ran
