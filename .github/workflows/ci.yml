@@ -134,6 +134,10 @@ jobs:
 
       - name: Check package tarballs and documentation
         if: runner.os == 'Linux'
+        # The skill reference generator reads the published release through
+        # the GitHub API; the token keeps it clear of the anonymous rate limit.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: pnpm package:check && pnpm docs:check
 
       - name: Run the test suites
