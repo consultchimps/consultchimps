@@ -129,10 +129,17 @@ The whole procedure, done by hand with an unzip tool and a text editor, is in
    pattern = r"""(?:src|srcset|href|action|poster|data)\s*=\s*["']?\s*(?!data:|#|mailto:)[^\s"'>]+|url\(\s*["']?\s*(?!data:|#)[^\s"')]+|@import|fetch\(|XMLHttpRequest|googleapis"""
    for hit in re.finditer(pattern, html, re.IGNORECASE):
        print(html.count("\n", 0, hit.start()) + 1, hit.group(0))
-   # srcset lists several candidates; the pattern above sees only the first.
+   # srcset lists several candidates. As HTML parses it, a URL runs to the
+   # next whitespace, then its descriptors run to the next comma.
    for attr in re.finditer(r"srcset\s*=\s*([\"'])(.*?)\1", html, re.IGNORECASE):
-       for candidate in re.split(r",\s+", attr.group(2)):
-           url = (candidate.split() or [""])[0]
+       value, pos = attr.group(2), 0
+       while (m := re.compile(r"[,\s]*(\S+)").match(value, pos)):
+           url, pos = m.group(1), m.end()
+           if url.endswith(","):
+               url = url.rstrip(",")
+           else:
+               comma = value.find(",", pos)
+               pos = len(value) if comma < 0 else comma + 1
            if url and not url.lower().startswith("data:"):
                print(html.count("\n", 0, attr.start()) + 1, "srcset", url)
    ```

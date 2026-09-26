@@ -229,10 +229,12 @@ def main(path: str, as_json: bool) -> int:
             bounds = range_boundaries(ref) if ref else None
             if (bounds is None or bounds[1] != header
                     or bounds[0] > min(label_columns)
-                    or bounds[2] < max(label_columns)):
+                    or bounds[2] < max(label_columns)
+                    or bounds[3] < ws.max_row):
                 add("FAIL", "autofilter", sheet,
-                    f"autofilter does not cover header row {header} across "
-                    f"columns {get_column_letter(min(label_columns))} to "
+                    f"autofilter does not cover the table from header row "
+                    f"{header} to row {ws.max_row}, columns "
+                    f"{get_column_letter(min(label_columns))} to "
                     f"{get_column_letter(max(label_columns))}")
 
         # Rows down to the header hold titles and labels: formulas there are
