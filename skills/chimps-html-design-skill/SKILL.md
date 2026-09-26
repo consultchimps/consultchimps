@@ -119,14 +119,16 @@ The whole procedure, done by hand with an unzip tool and a text editor, is in
 1. Search the file for anything it loads from outside itself: a host, a
    protocol-relative `//host` URL, or a relative file such as `echarts.min.js`
    or `images/logo.png`, which works on your machine and breaks once the file is
-   sent alone. The pattern ignores case and allows either quote and spaces
-   around `=`. Inline every hit, or confirm it is a link the reader chooses to
-   follow:
+   sent alone. It also reports any `http://` or `https://` URL and any quoted
+   `//host` string, such as one inside a chart option or a script, but not the
+   `w3.org` namespace URLs inline SVG carries. The pattern ignores case and
+   allows either quote and spaces around `=`. Inline every hit, or confirm it is
+   a link the reader chooses to follow:
 
    ```python
    import re
    html = open("report.html", encoding="utf-8").read()
-   pattern = r"""(?:src|srcset|href|action|poster|data)\s*=\s*["']?\s*(?!data:|#|mailto:)[^\s"'>]+|url\(\s*["']?\s*(?!data:|#)[^\s"')]+|@import|fetch\(|XMLHttpRequest|googleapis"""
+   pattern = r"""(?:src|srcset|href|action|poster|data)\s*=\s*["']?\s*(?!data:|#|mailto:)[^\s"'>]+|url\(\s*["']?\s*(?!data:|#)[^\s"')]+|@import|fetch\(|XMLHttpRequest|googleapis|https?://(?!www\.w3\.org/)[^\s"'<>)]+|["']//[^\s"'/][^\s"']*"""
    for hit in re.finditer(pattern, html, re.IGNORECASE):
        print(html.count("\n", 0, hit.start()) + 1, hit.group(0))
    # srcset lists several candidates. As HTML parses it, a URL runs to the

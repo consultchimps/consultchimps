@@ -16,7 +16,7 @@ In bash, zsh or Git Bash:
 ```bash
 mkdir -p inspect
 for f in templates/sources/*.xlsx; do
-  npx consultchimps@0.12.0 --json sheets inspect "$f" > "inspect/$(basename "$f" .xlsx).json"
+  npx consultchimps@0.12.0 --json sheets inspect --samples 0 "$f" > "inspect/$(basename "$f" .xlsx).json"
 done
 ```
 
@@ -25,13 +25,15 @@ In Windows PowerShell:
 ```powershell
 New-Item -ItemType Directory -Force inspect | Out-Null
 Get-ChildItem templates/sources -Filter *.xlsx | ForEach-Object {
-  npx consultchimps@0.12.0 --json sheets inspect $_.FullName |
+  npx consultchimps@0.12.0 --json sheets inspect --samples 0 $_.FullName |
     Set-Content -Encoding utf8 "inspect/$($_.BaseName).json"
 }
 ```
 
-From each result record the worksheet names and visibility, `headerRow`,
-`rowCount`, `dataRowCount` and the header list. Look for:
+`--samples 0` keeps client cell values out of these saved files; inspect one
+file without it when you need to see values. From each result record the
+worksheet names and visibility, `headerRow`, `rowCount`, `dataRowCount` and the
+header list. Look for:
 
 - more than one visible worksheet: decide which one is the data, and pass
   `--sheet` with its exact name

@@ -9,7 +9,8 @@ Needs only Python 3.9+ and openpyxl, which ChatGPT and Claude code sandboxes
 ship with. It reads the file and changes nothing.
 
 Each finding is FAIL (breaks the checklist), REVIEW (needs a person to judge)
-or INFO (for the handover). The exit code is 1 when anything FAILs.
+or INFO (for the handover). The exit code is 1 when anything FAILs, and 2 when
+the file cannot be opened as a workbook.
 
 This is a heuristic lint, not a proof. It reads formulas as text with patterns
 rather than parsing them as Excel does, so a clean run means none of the
@@ -97,10 +98,25 @@ def add(level: str, rule: str, where: str, detail: str) -> None:
 
 
 def rgb(font) -> str | None:
+    """The font's colour as RRGGBB; None for the default font colour. A theme
+    or indexed colour is reported as black only when it is the usual dark text
+    colour (theme 1 without tint, index 8 or 64, or automatic); any other
+    theme or indexed colour comes back as "theme:N" or "indexed:N", which no
+    rule accepts, rather than passing as the default."""
     color = font.color if font else None
-    if color is None or color.type != "rgb" or not isinstance(color.rgb, str):
+    if color is None:
         return None
-    return color.rgb[-6:].upper()
+    if color.type == "rgb" and isinstance(color.rgb, str):
+        return color.rgb[-6:].upper()
+    if color.type == "auto":
+        return None
+    if color.type == "theme":
+        if color.theme == 1 and not color.tint:
+            return None
+        return f"theme:{color.theme}"
+    if color.type == "indexed":
+        return None if color.indexed in (8, 64) else f"indexed:{color.indexed}"
+    return None
 
 
 def strip_strings(formula: str) -> str:
@@ -177,7 +193,19 @@ def check_formula(where: str, formula: str, lookups: dict[str, list[str]],
 
 
 def main(path: str, as_json: bool) -> int:
-    wb = openpyxl.load_workbook(path)
+    name = Path(path).name
+    try:
+        wb = openpyxl.load_workbook(path)
+    except Exception as error:  # noqa: BLE001, reported below
+        # Name the file only: a full path can name the client.
+        message = (f"could not open {name} as a workbook "
+                   f"({type(error).__name__}); check the file exists, is an "
+                   ".xlsx or .xlsm, and is not open or locked")
+        if as_json:
+            print(json.dumps({"file": name, "error": message}, indent=2))
+        else:
+            print(f"ERROR  {message}")
+        return 2
     props = wb.properties
     for field in ("creator", "lastModifiedBy"):
         value = (getattr(props, field) or "").strip()
@@ -225,12 +253,17 @@ def main(path: str, as_json: bool) -> int:
             # that has a header label.
             label_columns = [c.column for c in ws[header]
                              if isinstance(c.value, str) and c.value.strip()]
-            ref = ws.auto_filter.ref
-            bounds = range_boundaries(ref) if ref else None
-            if (bounds is None or bounds[1] != header
-                    or bounds[0] > min(label_columns)
-                    or bounds[2] < max(label_columns)
-                    or bounds[3] < ws.max_row):
+            # A sheet filter, or an Excel Table, which carries its own filter.
+            refs = [ws.auto_filter.ref] if ws.auto_filter.ref else []
+            refs += [table.ref for table in ws.tables.values()]
+
+            def covers(ref: str) -> bool:
+                left, top, right, bottom = range_boundaries(ref)
+                return (top == header and left <= min(label_columns)
+                        and right >= max(label_columns)
+                        and bottom >= ws.max_row)
+
+            if not any(covers(ref) for ref in refs):
                 add("FAIL", "autofilter", sheet,
                     f"autofilter does not cover the table from header row "
                     f"{header} to row {ws.max_row}, columns "
@@ -323,7 +356,7 @@ def main(path: str, as_json: bool) -> int:
     failed = sum(f["level"] == "FAIL" for f in findings)
     if as_json:
         # The file name only: a full path can name the client.
-        print(json.dumps({"file": Path(path).name, "failed": failed,
+        print(json.dumps({"file": name, "failed": failed,
                           "findings": findings}, indent=2))
     else:
         for level in ("FAIL", "REVIEW", "INFO"):
