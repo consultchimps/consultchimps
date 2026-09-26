@@ -1,21 +1,17 @@
-<!-- Generated from the built CLI by scripts/generate-cli-skill-reference.ts. Do not edit; run `pnpm skills:reference`. -->
+<!-- Generated from the CLI's own help by scripts/generate-cli-skill-reference.ts. Do not edit; run `pnpm skills:reference`. -->
 
 # ConsultChimps CLI reference
 
 The document commands of `consultchimps` 0.12.0, as the CLI itself
 prints them. A flag absent here does not exist in that version.
 
-The `db` commands are left out: they need
-native database bindings and no skill carries recipes for them. Run
-`consultchimps db --help` against an install to see them.
-
 ## consultchimps
 
 ```text
 Usage: consultchimps [options] [command]
 
-Local-first tools for spreadsheets, persistent databases, presentations, and
-PDFs.
+Clear, local-first tools that explain how they process your spreadsheets,
+presentations, and PDFs.
 
 Options:
   -V, --version   output the version number
@@ -29,13 +25,9 @@ Commands:
   pptx            inspect or populate PowerPoint templates without changing the
                   source files
   pdf             split or combine PDF documents without changing the originals
-  db              Create persistent local databases, manage schemas, and import
-                  workbook submissions
   help [command]  display help for command
 
 Quick start:
-  consultchimps db create -o inventory.duckdb
-  consultchimps db import prepare inventory.duckdb --input inventory.xlsx -o review.ccplan
   consultchimps sheets inspect clients.xlsx
   consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
   consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx

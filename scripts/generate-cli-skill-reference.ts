@@ -12,8 +12,17 @@
 // Each tool skill carries its own copy of the commands it drives. A registry
 // such as skills.sh installs one skill on its own, so a link from one skill
 // into another skill's folder would break after install.
+//
+// The skills run the published CLI (`npx consultchimps@X`), so the reference
+// is read from the published release of that version, the single-file
+// `consultchimps.mjs` attached to its GitHub release, not from the checkout:
+// between releases the checkout can print help the published version does not
+// have. Only when that version has no release yet (a version bump waiting to
+// publish) or the download fails does it fall back to the local build, and it
+// says so.
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,8 +30,47 @@ const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
-const cliPath = path.join(workspaceRoot, "packages", "cli", "dist", "index.js");
+const localCliPath = path.join(
+  workspaceRoot,
+  "packages",
+  "cli",
+  "dist",
+  "index.js",
+);
 const generatorLabel = "pnpm skills:reference";
+
+/** The published single-file CLI for `version`, downloaded once and cached. */
+async function releasedCli(version: string): Promise<string | null> {
+  const cached = path.join(
+    tmpdir(),
+    "consultchimps-release",
+    version,
+    "consultchimps.mjs",
+  );
+  if (existsSync(cached)) {
+    return cached;
+  }
+  const url = `https://github.com/consultchimps/consultchimps/releases/download/consultchimps%40${version}/consultchimps.mjs`;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      return null;
+    }
+    mkdirSync(path.dirname(cached), { recursive: true });
+    writeFileSync(cached, Buffer.from(await response.arrayBuffer()));
+    return cached;
+  } catch {
+    return null;
+  }
+}
+
+const cliVersion = readCliVersion();
+const releasedPath = await releasedCli(cliVersion);
+const cliPath = releasedPath ?? localCliPath;
+const cliSource =
+  releasedPath === null
+    ? `the local build, because consultchimps ${cliVersion} has no release to read`
+    : `the published consultchimps ${cliVersion} release`;
 
 /**
  * Help is read with stdio piped so Commander sees a non-TTY stream and wraps
@@ -161,14 +209,15 @@ function render(target: ReferenceTarget): string {
   });
 
   return [
-    `<!-- Generated from the built CLI by scripts/generate-cli-skill-reference.ts. Do not edit; run \`${generatorLabel}\`. -->`,
+    `<!-- Generated from the CLI's own help by scripts/generate-cli-skill-reference.ts. Do not edit; run \`${generatorLabel}\`. -->`,
     "",
     "# ConsultChimps CLI reference",
     "",
     `The ${target.scope} of \`consultchimps\` ${version}, as the CLI itself`,
     "prints them. A flag absent here does not exist in that version.",
     "",
-    ...(target.skill === "use-consultchimps"
+    ...(target.skill === "use-consultchimps" &&
+    /^ {2}db\s/m.test(readHelpText([]))
       ? [
           `The \`${EXCLUDED_SUBTREES.join("`, `")}\` commands are left out: they need`,
           "native database bindings and no skill carries recipes for them. Run",
@@ -206,16 +255,16 @@ for (const target of TARGETS) {
     }
     if (committed !== generated) {
       throw new Error(
-        `${referenceLabel} no longer matches the built CLI's help output. The skill would document a command surface the CLI does not have. Run \`${generatorLabel}\` and commit the result.`,
+        `${referenceLabel} no longer matches the help of ${cliSource}. The skill would document a command surface the CLI does not have. Run \`${generatorLabel}\` and commit the result.`,
       );
     }
     process.stdout.write(
-      `Verified ${referenceLabel} against ${String(commandCount(generated))} commands of the built CLI.\n`,
+      `Verified ${referenceLabel} against ${String(commandCount(generated))} commands of ${cliSource}.\n`,
     );
   } else {
     writeFileSync(referencePath, generated, "utf8");
     process.stdout.write(
-      `Wrote ${referenceLabel} from ${String(commandCount(generated))} commands of the built CLI.\n`,
+      `Wrote ${referenceLabel} from ${String(commandCount(generated))} commands of ${cliSource}.\n`,
     );
   }
 }

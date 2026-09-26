@@ -20,10 +20,10 @@ listed in [references/cli-reference.md](references/cli-reference.md).
 
 ## Decision rule
 
-Ten operations ship as tested CLI commands. For any of them, run the CLI. Do not
-write a script that opens a workbook, walks a PDF, or edits OOXML by hand: the
-CLI already handles hidden sheets, merged cells, cached formula values, and
-refusing to overwrite its own input.
+Nine operations ship as tested CLI commands in 0.12.0. For any of them, run the
+CLI. Do not write a script that opens a workbook, walks a PDF, or edits OOXML by
+hand: the CLI already handles hidden sheets, merged cells, cached formula
+values, and refusing to overwrite its own input.
 
 Write custom code only for work outside the list below, and say so, so the user
 knows which part of the result the toolkit stands behind.
@@ -39,9 +39,8 @@ knows which part of the result the toolkit stands behind.
 | Describe a PowerPoint template              | `pptx inspect-template` |
 | One file per page of a PDF                  | `pdf split`             |
 | Combine PDFs into one file                  | `pdf merge`             |
-| Prepare a reviewed database import batch    | `db import prepare`     |
 
-The `db` commands need native database bindings and are not covered here. In
+Database commands (`db`) are newer than 0.12.0 and are not covered here. In
 0.12.0, `sheets consolidate` and `sheets merge` read `.xlsx` only; the other
 `sheets` commands also take `.xlsm`.
 

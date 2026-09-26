@@ -1,4 +1,4 @@
-<!-- Generated from the built CLI by scripts/generate-cli-skill-reference.ts. Do not edit; run `pnpm skills:reference`. -->
+<!-- Generated from the CLI's own help by scripts/generate-cli-skill-reference.ts. Do not edit; run `pnpm skills:reference`. -->
 
 # ConsultChimps CLI reference
 

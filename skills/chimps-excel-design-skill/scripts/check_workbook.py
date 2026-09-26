@@ -31,6 +31,7 @@ import json
 import re
 import sys
 from collections import defaultdict
+from datetime import date, datetime, time
 from pathlib import Path
 
 try:
@@ -189,7 +190,9 @@ def main(path: str, as_json: bool) -> int:
     # A workbook-scoped name resolves on every sheet; a worksheet-scoped name
     # only on its own sheet.
     workbook_names = {name.upper() for name in wb.defined_names}
-    sheet_names = {ws.title: {name.upper() for name in ws.defined_names}
+    # Keyed by lower-cased title: Excel matches sheet names without regard
+    # to case, so =sheet1!Tax_Rate reaches a sheet named Sheet1.
+    sheet_names = {ws.title.lower(): {name.upper() for name in ws.defined_names}
                    for ws in wb.worksheets}
     names_used: dict[str, set[str]] = {}
     unknown_calls: dict[str, set[str]] = {}
@@ -249,11 +252,11 @@ def main(path: str, as_json: bool) -> int:
                             colour is None and want == GREEN):
                         add("FAIL", "font-colour", where,
                             f"formula font should be {want}, is {colour}")
-                elif isinstance(value, (int, float)) and not isinstance(
-                        value, bool):
+                elif (isinstance(value, (int, float, date, datetime, time))
+                      and not isinstance(value, bool)):
                     if colour != BLUE:
                         add("REVIEW", "font-colour", where,
-                            f"hardcoded number in {colour or 'default'}; an "
+                            f"hardcoded value in {colour or 'default'}; an "
                             f"input is blue {BLUE}, a figure in a calculation "
                             "range should be a formula")
                 elif isinstance(value, str):
@@ -290,15 +293,17 @@ def main(path: str, as_json: bool) -> int:
             if "!" in name:
                 target, bare = name.rsplit("!", 1)
                 key = bare.upper()
-                if target in sheet_names and (
-                        key in sheet_names[target] or key in workbook_names):
+                scope = sheet_names.get(target.lower())
+                if scope is not None and (key in scope
+                                          or key in workbook_names):
                     continue
                 add("REVIEW", "defined-names", sheet,
                     f"'{name}' names a range that is not defined on "
                     f"'{target}'; an unregistered name shows #NAME?")
                 continue
             key = name.upper()
-            if key in workbook_names or key in sheet_names.get(sheet, set()):
+            if key in workbook_names or key in sheet_names.get(sheet.lower(),
+                                                               set()):
                 continue
             add("REVIEW", "defined-names", sheet,
                 f"'{name}' reads like a named range but is not defined for "
