@@ -16,3 +16,7 @@ pnpm-lock.yaml
 CLAUDE.md
 # Generated Emscripten glue, committed for reproducibility.
 packages/pbi/wasm/xpress9.mjs
+# Generated from the built CLI by scripts/generate-cli-skill-reference.ts and
+# compared byte for byte by pnpm docs:check.
+skills/use-consultchimps/references/cli-reference.md
+skills/chimps-xlsx/references/cli-reference.md
