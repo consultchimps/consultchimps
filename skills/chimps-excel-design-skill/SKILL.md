@@ -124,8 +124,10 @@ yourself. Tell the user which of these ran.
    It says nothing about formulas, formatting or properties. There is no
    `sheets check` operation yet: do not run one or say one ran.
 
-2. **The bundled script, with or without network.** It needs Python and
-   openpyxl, which ChatGPT and Claude sandboxes have, and changes nothing:
+2. **The bundled lint, with or without network.** It needs Python and openpyxl,
+   which ChatGPT and Claude sandboxes have, and changes nothing. It reads
+   formulas as text with patterns, so it catches the common library mistakes
+   rather than proving the workbook correct:
 
    ```bash
    python scripts/check_workbook.py model.xlsx

@@ -1,5 +1,6 @@
-"""Check an authored workbook against the machine-checkable part of the
-delivery checklist (references/delivery-checklist.md).
+"""Lint an authored workbook for the mistakes a library most often makes,
+against the machine-checkable part of the delivery checklist
+(references/delivery-checklist.md).
 
 Usage:
     python scripts/check_workbook.py model.xlsx [--json]
@@ -9,6 +10,14 @@ ship with. It reads the file and changes nothing.
 
 Each finding is FAIL (breaks the checklist), REVIEW (needs a person to judge)
 or INFO (for the handover). The exit code is 1 when anything FAILs.
+
+This is a heuristic lint, not a proof. It reads formulas as text with patterns
+rather than parsing them as Excel does, so a clean run means none of the
+common mistakes below were found, not that the workbook is correct. Known
+limits: formulas using LET or LAMBDA skip the undefined-name check, because
+their local names are not defined names; a function on none of its lists is
+reported for review rather than judged; and a table is recognised by a header
+row of two or more text labels in the first five rows.
 
 What it cannot check, and so leaves to the checklist: invented figures, sources
 and owners on Assumptions, hardcoded figures inside calculation ranges, visible
@@ -26,12 +35,13 @@ from collections import defaultdict
 try:
     import openpyxl
     from openpyxl.utils import get_column_letter
+    from openpyxl.utils.formulas import FORMULAE
 except ImportError:  # pragma: no cover
     sys.exit("openpyxl is required: pip install openpyxl")
 
 # Functions that must be written with a prefix, and the prefix each needs:
 # the table in references/formula-prefixes.md, plus the other functions Excel
-# added after 2007. A function missing from both lists is not checked.
+# added after 2007.
 XLWS = {"FILTER", "SORT"}
 XLFN = {
     "XLOOKUP", "XMATCH", "SORTBY", "UNIQUE", "SEQUENCE", "RANDARRAY", "LET",
@@ -58,18 +68,20 @@ SKEW.P STDEV.P STDEV.S STOCKHISTORY T.DIST T.DIST.2T T.DIST.RT T.INV T.INV.2T
 T.TEST TAKE TRIMRANGE UNICHAR UNICODE VALUETOTEXT VAR.P VAR.S WEBSERVICE
 WEIBULL.DIST WORKDAY.INTL WRAPCOLS WRAPROWS XOR Z.TEST
 """.split())
-# Functions Excel 2007 already had: a prefix on one of these is also #NAME?.
-LEGACY = {
-    "SUM", "IF", "INDEX", "MATCH", "VLOOKUP", "HLOOKUP", "SUMIFS", "SUMIF",
-    "COUNTIFS", "COUNTIF", "AVERAGEIFS", "IFERROR", "AND", "OR", "ROUND",
-    "MAX", "MIN", "AVERAGE", "COUNT", "COUNTA", "LOOKUP", "OFFSET", "TEXT",
-}
+# Functions whose prefix this lint does not judge either way.
+UNJUDGED = {"ISO.CEILING", "ECMA.CEILING"}
+# Functions Excel 2007 already had, from openpyxl's catalogue of the built-in
+# functions: a prefix on one of these is also #NAME?.
+LEGACY = set(FORMULAE) - XLFN - XLWS - UNJUDGED
+KNOWN = LEGACY | XLFN | XLWS | UNJUDGED
+
 LIBRARY_NAMES = ("openpyxl", "sheetjs", "xlsx", "xlsxwriter", "python",
                  "pandas", "exceljs", "apache poi", "epplus")
 BLUE, BLACK, GREEN = "0000FF", "000000", "008000"
 DATE_TEXT = re.compile(
     r"^\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{4}-\d{2}-\d{2})\s*$")
 CELL_REF = re.compile(r"^\$?[A-Z]{1,3}\$?\d+$")
+HEADER_SCAN_ROWS = 5
 
 findings: list[dict[str, str]] = []
 
@@ -90,12 +102,25 @@ def strip_strings(formula: str) -> str:
     return re.sub(r'"[^"]*"', '""', formula)
 
 
+def header_row(ws) -> int | None:
+    """The first of the top rows holding two or more text labels with rows
+    under it, which is where a table's header sits under an optional title."""
+    for row in ws.iter_rows(min_row=1, max_row=min(HEADER_SCAN_ROWS,
+                                                    ws.max_row)):
+        labels = [c.value for c in row if isinstance(c.value, str)
+                  and c.value.strip() and not c.value.startswith("=")]
+        if len(labels) >= 2 and ws.max_row > row[0].row:
+            return row[0].row
+    return None
+
+
 def check_formula(where: str, formula: str, lookups: dict[str, list[str]],
-                  names_used: dict[str, set[str]]) -> None:
+                  names_used: dict[str, set[str]],
+                  unknown_calls: dict[str, set[str]]) -> None:
     body = strip_strings(formula)
     sheet = where.split("!")[0]
     # Excel reads function names without regard to case, and so does this.
-    for match in re.finditer(r"((?:_xlfn\.)?(?:_xlws\.)?)([A-Z][A-Z0-9.]*)\(",
+    for match in re.finditer(r"((?:_xlfn\.)?(?:_xlws\.)?)([A-Z][A-Z0-9._]*)\(",
                              body, re.IGNORECASE):
         prefix, name = match.group(1).lower(), match.group(2).upper()
         if name in XLWS and prefix != "_xlfn._xlws.":
@@ -106,6 +131,8 @@ def check_formula(where: str, formula: str, lookups: dict[str, list[str]],
         elif name in LEGACY and prefix:
             add("FAIL", "prefix", where,
                 f"{name} existed in Excel 2007 and takes no prefix")
+        elif name not in KNOWN:
+            unknown_calls.setdefault(name, set()).add(where)
         if name in {"XLOOKUP", "XMATCH"}:
             lookups["XLOOKUP"].append(where)
         elif name in {"VLOOKUP", "HLOOKUP", "INDEX", "MATCH"}:
@@ -116,22 +143,31 @@ def check_formula(where: str, formula: str, lookups: dict[str, list[str]],
                  re.IGNORECASE):
         add("FAIL", "named-range", where,
             "points at an Assumptions cell by address; use its named range")
-    for token in re.findall(r"(?<![A-Za-z0-9_.!$'])([A-Za-z_][A-Za-z0-9_.]*)"
-                            r"(?![A-Za-z0-9_.(!])", body):
+
+    # LET and LAMBDA declare local names that are not defined names.
+    if re.search(r"(?:_xlfn\.)?(?:LET|LAMBDA)\(", body, re.IGNORECASE):
+        return
+    # Drop what is not a name before looking for names: error literals and
+    # the insides of structured references such as Table1[Amount].
+    names_body = re.sub(r"#[A-Z0-9/]+[!?]?", " ", body, flags=re.IGNORECASE)
+    names_body = re.sub(r"\[[^\]]*\]", "[]", names_body)
+    # A quoted sheet name such as 'My Sheet'! holds words that are not names.
+    bare_body = re.sub(r"'(?:[^']|'')+'!", "Q!", names_body)
+    for token in re.findall(r"(?<![A-Za-z0-9_.!$':@#\[])([A-Za-z_][A-Za-z0-9_.]*)"
+                            r"(?![A-Za-z0-9_.(!:\[])", bare_body):
         upper = token.upper()
         if (CELL_REF.match(upper) or upper in {"TRUE", "FALSE"}
-                or token.startswith("_xl")):
+                or token.lower().startswith("_xl")):
             continue
-        if "_" in token:
-            names_used.setdefault(token, set()).add(sheet)
+        names_used.setdefault(token, set()).add(sheet)
     # A sheet-qualified name, Sheet1!Tax_Rate or 'My Sheet'!Tax_Rate, is looked
     # up on the sheet it names. Recorded as "Sheet1!Tax_Rate" for main().
     for match in re.finditer(r"(?:'((?:[^']|'')+)'|([A-Za-z_][A-Za-z0-9_.]*))!"
                              r"([A-Za-z_][A-Za-z0-9_.]*)(?![A-Za-z0-9_.(!:])",
-                             body):
+                             names_body):
         target = (match.group(1) or "").replace("''", "'") or match.group(2)
         name = match.group(3)
-        if "_" in name and not CELL_REF.match(name.upper()):
+        if not CELL_REF.match(name.upper()):
             names_used.setdefault(f"{target}!{name}", set()).add(sheet)
 
 
@@ -154,36 +190,35 @@ def main(path: str, as_json: bool) -> int:
     sheet_names = {ws.title: {name.upper() for name in ws.defined_names}
                    for ws in wb.worksheets}
     names_used: dict[str, set[str]] = {}
+    unknown_calls: dict[str, set[str]] = {}
     lookups: dict[str, list[str]] = defaultdict(list)
 
     for ws in wb.worksheets:
         sheet = ws.title
-        # A table is a header row of at least two labels with rows under it.
         # A cover, summary or notes sheet is not held to the table rules.
-        labels = [c.value for c in ws[1] if isinstance(c.value, str)
-                  and c.value.strip() and not c.value.startswith("=")]
-        is_data = (len(labels) >= 2 and ws.max_row >= 2
-                   and sheet.lower() != "assumptions")
+        header = header_row(ws)
+        is_data = header is not None and sheet.lower() != "assumptions"
 
         for rng in ws.merged_cells.ranges:
-            if rng.min_row > 1:
+            if rng.max_row > 1:
                 add("FAIL", "merged-cells", f"{sheet}!{rng.coord}",
-                    "merged outside the title row")
+                    "merged beyond the title row")
         if is_data and not ws.freeze_panes:
             add("FAIL", "freeze", sheet, "header row is not frozen")
         if is_data and not ws.auto_filter.ref:
             add("FAIL", "autofilter", sheet, "autofilter is not on")
 
+        # Rows down to the header hold titles and labels: formulas there are
+        # checked, the data rules are not.
+        last_label_row = header or 1
         formats: dict[int, set[str]] = defaultdict(set)
         for row in ws.iter_rows(min_row=1):
             for cell in row:
                 where = f"{sheet}!{cell.coordinate}"
                 value = cell.value
-                in_header = cell.row == 1
+                in_labels = cell.row <= last_label_row
                 is_formula = isinstance(value, str) and value.startswith("=")
-                # Row 1 is headers or a title: formulas there are checked,
-                # the data rules below are not.
-                if in_header and not is_formula:
+                if in_labels and not is_formula:
                     continue
                 if cell.comment is not None:
                     add("REVIEW", "comments", where,
@@ -191,8 +226,9 @@ def main(path: str, as_json: bool) -> int:
                 if value is None:
                     continue
                 colour = rgb(cell.font)
-                if isinstance(value, str) and value.startswith("="):
-                    check_formula(where, value, lookups, names_used)
+                if is_formula:
+                    check_formula(where, value, lookups, names_used,
+                                  unknown_calls)
                     want = GREEN if "!" in strip_strings(value) else BLACK
                     if colour not in (None, want) or (
                             colour is None and want == GREEN):
@@ -213,8 +249,8 @@ def main(path: str, as_json: bool) -> int:
                         add("INFO", "needs-input", where,
                             "list this in the handover")
                 # Text labels carry no number format worth comparing.
-                if not in_header and (not isinstance(value, str)
-                                      or value.startswith("=")):
+                if not in_labels and (not isinstance(value, str)
+                                      or is_formula):
                     formats[cell.column].add(cell.number_format)
         for column, found in formats.items():
             if len(found) > 1:
@@ -226,6 +262,13 @@ def main(path: str, as_json: bool) -> int:
         add("FAIL", "lookup-family", "workbook",
             f"XLOOKUP ({lookups['XLOOKUP'][0]}) and INDEX/MATCH or VLOOKUP "
             f"({lookups['INDEX/MATCH'][0]}) are both used")
+    for name in sorted(unknown_calls):
+        # A named LAMBDA is called like a function and is a defined name.
+        if name in workbook_names:
+            continue
+        add("REVIEW", "unknown-function", sorted(unknown_calls[name])[0],
+            f"{name} is not a function this lint knows; check its spelling "
+            "and whether it needs the _xlfn. prefix")
     for name in sorted(names_used):
         for sheet in sorted(names_used[name]):
             if "!" in name:
@@ -252,11 +295,11 @@ def main(path: str, as_json: bool) -> int:
     else:
         for level in ("FAIL", "REVIEW", "INFO"):
             for f in (f for f in findings if f["level"] == level):
-                print(f"{level:6} {f['rule']:14} {f['where']:22} {f['detail']}")
+                print(f"{level:6} {f['rule']:16} {f['where']:22} {f['detail']}")
         print(f"\n{failed} failing, "
               f"{sum(f['level'] == 'REVIEW' for f in findings)} to review. "
-              "The rest of references/delivery-checklist.md is still yours "
-              "to apply.")
+              "This is a heuristic lint: the rest of "
+              "references/delivery-checklist.md is still yours to apply.")
     return 1 if failed else 0
 
 

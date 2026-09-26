@@ -4,7 +4,8 @@ Apply this before handing the workbook over. There is no ConsultChimps operation
 that checks an authored workbook: a `sheets check` operation is planned and does
 not exist yet, so this list is the gate.
 
-Two tools cover part of it. `scripts/check_workbook.py` checks the items marked
+Two tools cover part of it. `scripts/check_workbook.py`, a heuristic lint for
+the common library mistakes rather than a proof, checks the items marked
 (script) below from the file alone, and the part of each (script, partly) item
 that the file shows: Assumptions cells reached by address, formats of filled
 cells, and comments. ConsultChimps `sheets inspect`, run from the release file
