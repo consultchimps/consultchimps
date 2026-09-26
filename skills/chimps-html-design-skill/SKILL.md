@@ -116,8 +116,18 @@ The whole procedure, done by hand with an unzip tool and a text editor, is in
 
 ## Before handing it over
 
-1. Search the file for `src="http`, `href="http`, `url(http`, `fetch(` and
-   `googleapis`. Every hit is a broken deliverable.
+1. Search the file for anything that reaches a network. Every hit is a broken
+   deliverable. The pattern ignores case and allows either quote, spaces around
+   `=` and protocol-relative `//host` URLs:
+
+   ```python
+   import re
+   html = open("report.html", encoding="utf-8").read()
+   pattern = r"""(?:src|srcset|href|action|poster|data)\s*=\s*["']?\s*(?:https?:)?//|url\(\s*["']?\s*(?:https?:)?//|@import|fetch\(|XMLHttpRequest|googleapis"""
+   for hit in re.finditer(pattern, html, re.IGNORECASE):
+       print(html.count("\n", 0, hit.start()) + 1, hit.group(0))
+   ```
+
 2. Open it with the network disabled and confirm every chart draws.
 3. Confirm the palette slots run in order and none repeats.
 4. Set `dir="rtl"`, reload, confirm the layout mirrors, then set it back.

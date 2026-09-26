@@ -31,6 +31,7 @@ import json
 import re
 import sys
 from collections import defaultdict
+from pathlib import Path
 
 try:
     import openpyxl
@@ -305,7 +306,8 @@ def main(path: str, as_json: bool) -> int:
 
     failed = sum(f["level"] == "FAIL" for f in findings)
     if as_json:
-        print(json.dumps({"file": path, "failed": failed,
+        # The file name only: a full path can name the client.
+        print(json.dumps({"file": Path(path).name, "failed": failed,
                           "findings": findings}, indent=2))
     else:
         for level in ("FAIL", "REVIEW", "INFO"):
