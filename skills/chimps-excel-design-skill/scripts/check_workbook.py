@@ -195,16 +195,16 @@ def check_formula(where: str, formula: str, lookups: dict[str, list[str]],
 
 
 def main(path: str, as_json: bool) -> int:
-    name = Path(path).name
+    workbook_file = Path(path).name
     try:
         wb = openpyxl.load_workbook(path)
     except Exception as error:  # noqa: BLE001, reported below
         # Name the file only: a full path can name the client.
-        message = (f"could not open {name} as a workbook "
+        message = (f"could not open {workbook_file} as a workbook "
                    f"({type(error).__name__}); check the file exists, is an "
                    ".xlsx or .xlsm, and is not open or locked")
         if as_json:
-            print(json.dumps({"file": name, "error": message}, indent=2))
+            print(json.dumps({"file": workbook_file, "error": message}, indent=2))
         else:
             print(f"ERROR  {message}")
         return 2
@@ -214,8 +214,10 @@ def main(path: str, as_json: bool) -> int:
         if not value:
             add("FAIL", "properties", "workbook", f"{field} is not set")
         elif any(lib in value.lower() for lib in LIBRARY_NAMES):
+            # Name the library, not the whole value, which can name a person.
+            lib = next(lib for lib in LIBRARY_NAMES if lib in value.lower())
             add("FAIL", "properties", "workbook",
-                f"{field} reads '{value}', a library name")
+                f"{field} contains the library name '{lib}'")
     if not (props.title or "").strip():
         add("FAIL", "properties", "workbook", "title is not set")
 
@@ -366,7 +368,7 @@ def main(path: str, as_json: bool) -> int:
     failed = sum(f["level"] == "FAIL" for f in findings)
     if as_json:
         # The file name only: a full path can name the client.
-        print(json.dumps({"file": name, "failed": failed,
+        print(json.dumps({"file": workbook_file, "failed": failed,
                           "findings": findings}, indent=2))
     else:
         for level in ("FAIL", "REVIEW", "INFO"):
