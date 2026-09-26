@@ -15,6 +15,11 @@ import { fileURLToPath } from "node:url";
 // map. Anything else stops the check rather than being skipped, so a skill
 // cannot pass by using syntax this reader does not understand.
 //
+// A name ending in "-skill" marks a craft skill meant for upload into ChatGPT
+// and Claude chats as well as for the registry. Claude.ai rejects an upload
+// whose description is longer than 200 characters, so those skills are held
+// to that limit rather than the specification's 1,024.
+//
 // Plain (unquoted) scalars are held to YAML's own rules as well, because a real
 // YAML parser is what reads them after install. A description containing ": "
 // looks like a nested mapping to YAML, and the `skills` CLI skips the whole
@@ -30,6 +35,8 @@ const skillsRoot = path.join(workspaceRoot, "skills");
 const NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const NAME_MAX = 64;
 const DESCRIPTION_MAX = 1024;
+const CHAT_UPLOAD_SUFFIX = "-skill";
+const CHAT_UPLOAD_DESCRIPTION_MAX = 200;
 const COMPATIBILITY_MAX = 500;
 const SKILL_MD_MAX_LINES = 500;
 const KNOWN_KEYS = new Set([
@@ -233,6 +240,15 @@ for (const skill of skills) {
   if (description.length === 0 || description.length > DESCRIPTION_MAX) {
     problems.push(
       `${label}: description is ${String(description.length)} characters; it must be 1 to ${String(DESCRIPTION_MAX)}.`,
+    );
+  }
+
+  if (
+    name.endsWith(CHAT_UPLOAD_SUFFIX) &&
+    description.length > CHAT_UPLOAD_DESCRIPTION_MAX
+  ) {
+    problems.push(
+      `${label}: description is ${String(description.length)} characters; a "${CHAT_UPLOAD_SUFFIX}" skill is uploaded to Claude.ai, which accepts at most ${String(CHAT_UPLOAD_DESCRIPTION_MAX)}.`,
     );
   }
 

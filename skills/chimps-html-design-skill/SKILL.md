@@ -1,11 +1,9 @@
 ---
 name: chimps-html-design-skill
 description:
-  Standards for a client-ready HTML deliverable that opens offline, as one
-  self-contained .html file with everything inlined, ECharts for charts, an
-  ordered palette, a system font stack and RTL support. Use when producing or
-  reviewing an HTML report, dashboard, one-pager or handout for a client, when
-  charting in a web page, or when matching a client's Office theme.
+  Standards for a client-ready HTML report, dashboard or one-pager that opens
+  offline, as one self-contained file with ECharts charts, an ordered palette,
+  system fonts and RTL support.
 license: MIT
 metadata:
   palette: consultchimps-neutral-light

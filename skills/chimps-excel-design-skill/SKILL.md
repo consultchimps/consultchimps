@@ -1,12 +1,9 @@
 ---
 name: chimps-excel-design-skill
 description:
-  Consulting standards for authoring a new Excel workbook deliverable, covering
-  Excel 365 functions with the _xlfn. prefix, inputs on an Assumptions sheet
-  behind named ranges, no invented figures, mandatory formatting and a handover.
-  Use when building a model, budget, tracker, scorecard, dashboard or any
-  client-facing .xlsx from scratch or from supplied data, not when changing an
-  existing one.
+  Standards for building a new client-facing Excel workbook, with Excel 365
+  formulas, named-range inputs, no invented figures, mandatory formatting and a
+  handover. Not for editing existing files.
 license: MIT
 metadata:
   cli-version: "0.12.0"
@@ -20,7 +17,7 @@ metadata:
 This skill decides what a new workbook contains. The library skill you write the
 file with (the built-in `xlsx` skill, or your own openpyxl or SheetJS code)
 handles the mechanics, which this skill does not repeat. To change a workbook
-that already exists, use `chimps-xlsx` instead.
+that already exists, use `chimps-xlsx` where it is installed.
 
 Where the library's habits differ, follow the rule on the right.
 

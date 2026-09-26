@@ -12,9 +12,11 @@ Claude Code, Codex and ChatGPT alike; nothing here is specific to one client.
 | `chimps-excel-design-skill` | craft | authoring a workbook deliverable: formulas, layout, handover        |
 | `chimps-html-design-skill`  | craft | authoring a self-contained HTML deliverable: charts, theme, RTL     |
 
-The two tool skills drive the published CLI. The two craft skills are standards
-for consulting work and need no ConsultChimps install, though they use it when
-it is there.
+The two tool skills drive the published CLI, so they belong in an agent with a
+terminal: Claude Code, Codex and similar. The two craft skills are standards for
+consulting work and need no ConsultChimps install, though they use it when it is
+there. They are also meant for upload into ChatGPT and Claude chats, and the
+`-skill` ending on their names marks that.
 
 ## Install
 
@@ -32,6 +34,21 @@ Or from this repository, as a Claude Code plugin:
 ```bash
 /plugin install consultchimps@consultchimps/consultchimps
 ```
+
+### Uploading a craft skill to ChatGPT or Claude
+
+Zip the skill's directory so the directory itself is the root of the archive,
+for example `chimps-html-design-skill.zip` holding
+`chimps-html-design-skill/SKILL.md` and its `assets/` and `references/`. Then
+upload it under Skills in the ChatGPT or Claude settings.
+
+Claude.ai rejects a description longer than 200 characters, so a `-skill`
+description stays within 200; `scripts/check-skills.ts` enforces it. ChatGPT has
+no fixed limit, but the list of every installed skill shares a small part of the
+context, so a short description that leads with its trigger words is what gets
+the skill chosen there too.
+
+### Pointing a project at the skills
 
 An agent reads a skill's description only when deciding whether to load it. In a
 project that relies on these skills, a line in its `AGENTS.md` or `CLAUDE.md`
@@ -81,8 +98,10 @@ command surface stops matching.
   because it is all an agent sees until the skill fires
 - keep `SKILL.md` short and push detail into `references/`, which is loaded only
   when needed
-- `description` leads with what the skill does and the words a user would say,
-  and stays near 60 words; rules and refusals go in the body
+- `description` leads with what the skill does and the words a user would say;
+  rules and refusals go in the body. A `-skill` description stays within 200
+  characters for Claude.ai uploads; a tool skill may run to about 60 words
+- a name ends in `-skill` only when the skill is meant for chat upload
 - a claim about how the CLI behaves names the version it was checked against,
   because the drift check covers flags, not behaviour; re-check those claims
   when a release changes a reader
