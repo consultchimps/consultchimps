@@ -106,18 +106,40 @@ An empty section is stated as empty, not omitted.
 
 ## Delivery gate
 
-ConsultChimps has no operation that validates a workbook you authored. A
-`sheets check` operation is planned and does not exist yet: do not run it and do
-not tell the user it ran.
-
-`consultchimps sheets inspect <file>` does exist. It reports each worksheet, its
-used range, the header row, the columns and up to five sample values per column,
-which confirms that sheets, headers and columns landed where you intended. It
-says nothing about formulas, formatting or provenance.
-
 The gate is
-[references/delivery-checklist.md](references/delivery-checklist.md), which you
-apply yourself, item by item, before you hand the file over.
+[references/delivery-checklist.md](references/delivery-checklist.md). Run what
+your environment allows, in this order, then apply the rest of the checklist
+yourself. Tell the user which of these ran.
+
+1. **ConsultChimps, when you can reach GitHub.** Each release ships the CLI as
+   one file that needs only Node, no install:
+
+   ```bash
+   curl -sSLO https://github.com/consultchimps/consultchimps/releases/download/consultchimps%400.12.0/consultchimps.mjs
+   node consultchimps.mjs --json sheets inspect model.xlsx
+   ```
+
+   Inspect reports each worksheet, its used range, header row, columns and
+   sample values, which confirms the sheets and columns landed where you meant.
+   It says nothing about formulas, formatting or properties. There is no
+   `sheets check` operation yet: do not run one or say one ran.
+
+2. **The bundled script, with or without network.** It needs Python and
+   openpyxl, which ChatGPT and Claude sandboxes have, and changes nothing:
+
+   ```bash
+   python scripts/check_workbook.py model.xlsx
+   ```
+
+   It checks function prefixes, one lookup family, Assumptions cells reached by
+   address, named ranges that are not defined, merged cells, font colours,
+   frozen headers and autofilters, mixed number formats, dates stored as text,
+   comments, and document properties, and lists every `Needs Input` cell for the
+   handover. Fix each FAIL, judge each REVIEW.
+
+3. **The checklist by hand**, for everything the two above cannot see: invented
+   figures, sources and owners, hardcoded figures inside calculations, and error
+   values, which appear only when Excel opens the file.
 
 ## Library pitfalls
 
