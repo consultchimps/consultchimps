@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { copyFile, mkdir, stat } from "node:fs/promises";
+import { copyFile, mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
 const requireFromDocs = createRequire(
@@ -21,6 +21,9 @@ const assets = [
   },
 ] as const;
 
+// Recreated on every run so a file dropped from the list above cannot linger in
+// public/ and be exported with the site.
+await rm(outputDirectory, { recursive: true, force: true });
 await mkdir(outputDirectory, { recursive: true });
 for (const asset of assets) {
   const destination = path.join(outputDirectory, asset.name);

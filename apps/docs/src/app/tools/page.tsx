@@ -1,4 +1,4 @@
-import { BROWSER_TOOL_GROUPS, isBrowserTool, TOOLS } from "@/lib/tools";
+import { BROWSER_TOOL_GROUPS, isBrowserTool, SITE_TOOLS } from "@/lib/tools";
 import { ArrowRight, BookOpen } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -6,10 +6,10 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Online tools",
   description:
-    "Run local document operations and manage persistent SQLite or DuckDB databases in your browser.",
+    "Run local Excel, PDF, and PowerPoint operations in your browser.",
 };
 
-const guideOnlyTools = TOOLS.filter((tool) => !isBrowserTool(tool));
+const guideOnlyTools = SITE_TOOLS.filter((tool) => !isBrowserTool(tool));
 
 export default function Page() {
   return (
@@ -21,10 +21,8 @@ export default function Page() {
         </h1>
         <p className="mt-5 max-w-2xl text-lg leading-8 text-fd-muted-foreground">
           These tools process your files locally using operation code shared
-          with the ConsultChimps command line and libraries. Document tools
-          produce downloads. The database tool keeps a persistent browser
-          working copy and exports a separate file. Each guide explains its
-          storage, naming, and interface defaults
+          with the ConsultChimps command line and libraries, and produce
+          downloads. Each guide explains its naming and interface defaults
         </p>
 
         <div className="mt-10 space-y-14">

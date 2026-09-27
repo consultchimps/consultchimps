@@ -22,6 +22,8 @@ that can be reused in a server, desktop app, workflow runner, or another CLI.
 | `@consultchimps/pdf`      | PDF splitting and merging                                      |
 | `@consultchimps/messages` | Plain-language rendering of results and errors                 |
 
+<Feature name="database">
+
 ## Read a temporary SQLite catalog
 
 `@consultchimps/db/sqlite-read` opens SQLite bytes for read-only queries without
@@ -82,6 +84,8 @@ the reader's current linear-memory reservation while open; the host must also
 account for initialization, input buffers, JavaScript objects, and retained
 results. `close()` frees the catalog buffer and drops the runtime reference;
 garbage collection controls when the engine's linear memory is reclaimed.
+
+</Feature>
 
 ## Discover inputs
 
@@ -288,6 +292,8 @@ severity; a contrast shortfall against the surface is reported as a warning, so
 a palette that leans on visible labels still validates. `resolveCategorical`
 throws when a slot is past the palette's range, since categorical slots are
 assigned in order rather than cycled.
+
+<Feature name="database">
 
 ## Build a local database
 
@@ -652,6 +658,8 @@ silently overwriting an input. Scratch close failures remain retryable through
 the file or directory owner. `FILES_SCRATCH_CLEANUP_FAILED` reports a directory
 cleanup failure with its owned path and causes; resolve the storage issue and
 retry `close()` on that owner.
+
+</Feature>
 
 ## Read workbooks without writing anything
 
