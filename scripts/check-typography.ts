@@ -105,6 +105,7 @@ const TEXT_EXTENSIONS: readonly string[] = [
   ".css",
   ".html",
   ".json",
+  ".jsonc",
   ".md",
   ".mdx",
   ".mjs",
