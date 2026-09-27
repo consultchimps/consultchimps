@@ -25,6 +25,9 @@ if (!existsSync(path.join(EXPORT_DIRECTORY, "index.html"))) {
 
 export default defineConfig({
   testDir: "./e2e",
+  // The database tool at /tools/db is paused and not built, so its specs have
+  // no page to drive. Remove this line when the tool returns.
+  testIgnore: ["**/workspace*.spec.ts"],
   fullyParallel: true,
   // A stray `test.only` should fail the pull request instead of quietly
   // shrinking the suite.

@@ -210,7 +210,9 @@ export const TOOLS: readonly ConsultTool[] = [
     surfaces: {
       cli: "works",
       library: "works",
-      browser: { status: "works", href: "/tools/db" },
+      // Paused while the browser tool is reworked; the page and its e2e specs
+      // stay in the repo for when it returns.
+      browser: { status: "planned" },
     },
     icon: Database,
   },

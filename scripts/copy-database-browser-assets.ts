@@ -10,20 +10,14 @@ const outputDirectory = path.join(
   "../apps/docs/public/database-wasm",
 );
 
+// The DuckDB runtime (duckdb-eh.wasm and duckdb-browser-eh.worker.js from
+// @duckdb/duckdb-wasm/dist) is left out while the database tool is paused: only
+// that tool loads it, and at 35 MB it exceeds the 25 MiB per-file limit of the
+// Cloudflare host. Copy both again when the tool returns.
 const assets = [
   {
     source: requireFromDocs.resolve("@sqlite.org/sqlite-wasm/sqlite3.wasm"),
     name: "sqlite3.wasm",
-  },
-  {
-    source: requireFromDocs.resolve("@duckdb/duckdb-wasm/dist/duckdb-eh.wasm"),
-    name: "duckdb-eh.wasm",
-  },
-  {
-    source: requireFromDocs.resolve(
-      "@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js",
-    ),
-    name: "duckdb-browser-eh.worker.js",
   },
 ] as const;
 
