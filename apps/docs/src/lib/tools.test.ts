@@ -16,7 +16,6 @@ describe("browser tool groups", () => {
       "Excel",
       "PDF",
       "PowerPoint",
-      "Database",
     ]);
   });
 

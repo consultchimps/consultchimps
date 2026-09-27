@@ -1,5 +1,6 @@
+import { TOOL_KINDS } from "@/lib/features";
 import { cliVersion } from "@/lib/releases";
-import { isBrowserTool, TOOLS } from "@/lib/tools";
+import { isBrowserTool, SITE_TOOLS } from "@/lib/tools";
 import {
   ArrowRight,
   FileStack,
@@ -41,9 +42,8 @@ export default function HomePage() {
             More <em>useful</em> work
           </h1>
           <p className="manual-intro mt-8 max-w-2xl text-lg leading-8 text-fd-muted-foreground md:text-xl">
-            Local spreadsheet, database, PowerPoint, and PDF tools for
-            consultants who need repeatable results, visible provenance, and no
-            mystery uploads
+            Local {TOOL_KINDS} tools for consultants who need repeatable
+            results, visible provenance, and no mystery uploads
           </p>
           <div className="manual-actions mt-9 flex flex-wrap gap-3">
             <Link
@@ -122,7 +122,7 @@ export default function HomePage() {
         </div>
 
         <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-          {TOOLS.map((tool, index) => {
+          {SITE_TOOLS.map((tool, index) => {
             const { title, description, docHref, icon: Icon } = tool;
             // Only a working browser surface may light up the online link;
             // `planned` and `none` fall back to the guide (ADR 0001).
