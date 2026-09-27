@@ -1,0 +1,75 @@
+---
+title: Agent skills
+description:
+  Add the ConsultChimps skills to a repository so coding agents use the CLI and
+  follow the deliverable standards.
+icon: Sparkles
+---
+
+ConsultChimps publishes four skills in the
+[Agent Skills](https://agentskills.io/specification) format. An agent such as
+Claude Code or Codex reads each skill's description and loads the skill when a
+task matches it.
+
+| Skill                       | Use it for                                                     |
+| --------------------------- | -------------------------------------------------------------- |
+| `use-consultchimps`         | Running the CLI: invocation, `--json` output, refusals, errors |
+| `chimps-xlsx`               | Consolidating, merging, splitting, and inspecting workbooks    |
+| `chimps-excel-design-skill` | Building a new client-facing workbook to a stated standard     |
+| `chimps-html-design-skill`  | Building a self-contained HTML report, dashboard, or one-pager |
+
+The first two drive the CLI, so they need an agent with a terminal. The two
+design skills need no install and work in chat apps too.
+
+## Add the skills to a repository
+
+Run the [skills CLI](https://github.com/vercel-labs/skills) from the repository
+root:
+
+```bash
+npx skills add consultchimps/consultchimps
+```
+
+It lists the four skills, asks which ones and which agents to install them for,
+and writes them into the project. Commit the result so everyone working in the
+repository gets the same skills.
+
+To skip the prompts, name the skills and agents:
+
+```bash
+npx skills add consultchimps/consultchimps --list
+npx skills add consultchimps/consultchimps --skill use-consultchimps --skill chimps-xlsx
+npx skills add consultchimps/consultchimps --skill '*' -a claude-code -a codex -y
+```
+
+Add `-g` to install for your user account across every project instead of one
+repository, and `--copy` where symlinks are not supported.
+
+## Keep them current
+
+```bash
+npx skills list
+npx skills update
+npx skills remove chimps-xlsx
+```
+
+The CLI skills name the ConsultChimps version they were checked against, 0.12.0
+today. A later CLI keeps working with them.
+
+## Point the project at the skills
+
+An agent only sees a skill's description until it decides to load it. A line in
+the repository's `AGENTS.md` or `CLAUDE.md` makes the choice easier:
+
+```md
+Use the ConsultChimps skills for Excel, PowerPoint, and PDF work.
+```
+
+## Use a design skill in a chat app
+
+Zip the skill's folder so the folder is the root of the archive, for example
+`chimps-html-design-skill.zip` holding `chimps-html-design-skill/SKILL.md` and
+its `assets/` and `references/`. Upload it under Skills in the ChatGPT or Claude
+settings. The source is in
+[`skills/`](https://github.com/consultchimps/consultchimps/tree/main/skills) on
+GitHub.
