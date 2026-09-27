@@ -3,12 +3,14 @@ import { memberBytes } from "./abf.js";
 import type { AbfImage } from "./abf.js";
 import type { CatalogColumn, CatalogTable } from "./catalog.js";
 import type { PbiReasonCode, PbiUnverifiedCode } from "./errors.js";
+import { HuffmanError } from "./huffman.js";
 import {
   decodeSegmentIds,
   parseDictionary,
   parseIdf,
   parseIdfmeta,
   VertipaqAlignmentError,
+  VertipaqError,
   XM_DATA_ID_NULL,
   XM_FIRST_DATA_ID,
 } from "./vertipaq.js";
@@ -233,36 +235,68 @@ export function decodeColumn(
       }
     }
   } catch (error) {
-    if (error instanceof VertipaqAlignmentError)
-      return {
-        column,
-        type,
-        values: undefined,
-        excluded: "PBI_COLUMN_ROW_ALIGNMENT_UNRECOVERABLE",
-      };
-    // A capacity refusal is the caller's, not this column's, so it passes
-    // through: a budget that says stop must stop the export, not quietly drop
-    // one column and carry on. Every other controlled error here describes this
-    // column's own member and stays an exclusion.
-    if (
-      isConsultChimpsError(error) &&
-      error.code === "PBI_EXPORT_LIMIT_EXCEEDED"
-    )
-      throw error;
-    // Belt and braces over the structural ceilings above: a column is one
-    // exclusion, never a thrown runtime error, and nothing of the original
-    // error's text survives, so a file-declared length cannot ride out in a
-    // RangeError message.
-    if (error instanceof Error)
-      return {
-        column,
-        type,
-        values: undefined,
-        excluded: "PBI_COLUMN_UNREADABLE",
-      };
-    throw error;
+    return {
+      column,
+      type,
+      values: undefined,
+      excluded: columnFailureReason(error),
+    };
   }
   return { column, type, values, excluded: undefined };
+}
+
+/**
+ * Codes that say the file is at fault, and are the only refusals a column
+ * decoder may report as damaged source data.
+ *
+ * The list is explicit rather than "any error this repository raises", because
+ * `ConsultChimpsError` is this package's own class: a refusal added to the
+ * decode path later, or raised through it by a shared package, would otherwise
+ * be reported to the user as damage to their model. Each entry here is a refusal
+ * about the bytes of this column's own members.
+ */
+const FILE_FAULT_CODES: ReadonlySet<string> = new Set([
+  // The backup container could not produce this column's member.
+  "PBI_MODEL_UNREADABLE",
+  // The container the member lives in is not the shape a .pbix declares.
+  "PBI_INVALID_CONTAINER",
+  // The member is there and encrypted, which is the file's state, not ours.
+  "PBI_MODEL_ENCRYPTED",
+]);
+
+/**
+ * Which exclusion a failure inside a column decoder becomes.
+ *
+ * Classification is by code, not by class. A capacity refusal is the caller's,
+ * not this column's, so it passes through: a budget that says stop must stop the
+ * export, not quietly drop one column and carry on. A refusal whose code says
+ * the file is at fault, and the reader's two structural error types, which exist
+ * only to report a column store that contradicts itself, stay
+ * `PBI_COLUMN_UNREADABLE`.
+ *
+ * Everything else is an unexpected fault in this reader, not evidence about the
+ * file, so it excludes the column as `PBI_COLUMN_DECODER_ERROR` rather than
+ * telling the user their data is damaged. That includes a `ConsultChimpsError`
+ * carrying any other code, which is the case a class-based rule got wrong. The
+ * export continues either way, and nothing of the original error's text
+ * survives, so a file-declared length cannot ride out inside a RangeError
+ * message.
+ */
+export function columnFailureReason(error: unknown): PbiReasonCode {
+  if (error instanceof VertipaqAlignmentError)
+    return "PBI_COLUMN_ROW_ALIGNMENT_UNRECOVERABLE";
+  if (isConsultChimpsError(error)) {
+    if (error.code === "PBI_EXPORT_LIMIT_EXCEEDED") throw error;
+    return FILE_FAULT_CODES.has(error.code)
+      ? "PBI_COLUMN_UNREADABLE"
+      : "PBI_COLUMN_DECODER_ERROR";
+  }
+  // Both are declared by this package for one purpose: a member whose own
+  // structure is inconsistent. Neither is ever raised for an internal fault.
+  if (error instanceof VertipaqError || error instanceof HuffmanError)
+    return "PBI_COLUMN_UNREADABLE";
+  if (error instanceof Error) return "PBI_COLUMN_DECODER_ERROR";
+  throw error;
 }
 
 function appendSegment(

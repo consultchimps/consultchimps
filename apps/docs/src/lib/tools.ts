@@ -1,5 +1,6 @@
 import {
   Database,
+  ChartNoAxesColumn,
   FileSearch,
   FileStack,
   GitMerge,
@@ -24,7 +25,8 @@ import {
 
 export type SurfaceStatus = "works" | "planned" | "none";
 
-export type ToolCategory = "Excel" | "PDF" | "PowerPoint" | "Database";
+export type ToolCategory =
+  "Excel" | "PDF" | "PowerPoint" | "Database" | "Power BI";
 
 /**
  * The browser surface carries its route only when it works, so a card, tab,
@@ -214,6 +216,21 @@ export const TOOLS: readonly ConsultTool[] = [
     },
     icon: Database,
   },
+  {
+    slug: "power-bi-export",
+    category: "Power BI",
+    title: "Export Power BI tables to Excel",
+    tabLabel: "Power BI",
+    description:
+      "Read the tables stored inside a .pbix file into one Excel workbook, with a manifest naming every table and column left out and why",
+    docHref: "/docs/tools/power-bi-export",
+    surfaces: {
+      cli: "works",
+      library: "works",
+      browser: { status: "planned" },
+    },
+    icon: ChartNoAxesColumn,
+  },
 ] as const;
 
 export const BROWSER_TOOLS: readonly BrowserTool[] =
@@ -229,6 +246,7 @@ const TOOL_CATEGORY_ORDER: readonly ToolCategory[] = [
   "PDF",
   "PowerPoint",
   "Database",
+  "Power BI",
 ];
 
 /**

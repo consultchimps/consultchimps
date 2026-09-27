@@ -3,8 +3,12 @@
 Power BI model reading and table export for ConsultChimps. This is
 [ADR 0004](../../docs/adr/0004-power-bi-table-export.md) build items 2 through
 8: the package turns a `.pbix` into a workbook plus a JSON manifest in one call.
-The CLI command, the registry entry, and the browser tool page are not here. The
-package is private and unpublished until the CLI surface ships.
+The `consultchimps pbi export` command wraps the same call for the command line.
+The browser tool page is not here.
+
+The vendored XPress9 decoder and the ported Huffman kernel carry their own
+licences, which ship with this package in
+[`THIRD-PARTY-LICENSES.md`](./THIRD-PARTY-LICENSES.md).
 
 ## Export every table
 
@@ -20,6 +24,13 @@ const outcome = await exportPbiTables(containerBytes, {
 const [workbook, manifest] = outcome.outputs;
 outcome.result.warnings.forEach((warning) => console.warn(warning));
 ```
+
+`exportPbiTables` also accepts `onProgress`, a reporter that receives the stages
+`container`, `model`, `catalog`, `decode`, one event per table, and `workbook`.
+Events carry stage counts only: a table name is model data, and progress is
+usually rendered before anything has decided what may be named. A value that is
+not a function is ignored rather than refused, because reporting is
+presentation.
 
 `outputs` carries the workbook first and the manifest second, with the media
 types `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` and
@@ -62,6 +73,11 @@ import { readPbiModelPart } from "@consultchimps/pbi";
 
 const modelBytes = readPbiModelPart(containerBytes);
 ```
+
+The `./xpress9.wasm` export resolves to neither JavaScript nor type
+declarations, which `arethetypeswrong` reports as an unresolved entry point, so
+`scripts/check-packages.ts` excludes that one entry point by name when it checks
+this package and analyzes every other one in full.
 
 `readPbiModelPart` synchronously returns an independent `Uint8Array` containing
 the `DataModel` ZIP part. It leaves the supplied bytes unchanged and performs no
@@ -170,6 +186,14 @@ high-precision identifiers add one count to their column. `result.warnings`
 carries one plain-language line per distinct code present, in ascending ASCII
 code order.
 
+One reason code describes this reader rather than the file. A controlled failure
+inside a column decoder, a member the backup does not carry or a structure the
+column store declares inconsistently, excludes that column with
+`PBI_COLUMN_UNREADABLE`. An unexpected engine error in the same place excludes
+it with `PBI_COLUMN_DECODER_ERROR` instead, because a fault of ours is not
+evidence that the data is damaged. Both leave every other column exported, and
+neither carries any of the original error's text.
+
 ## Unverified paths
 
 The spike corpus of nine public Microsoft samples never exercised these paths.
@@ -220,17 +244,52 @@ byte lengths, never by catching an out-of-memory.
 
 It is not a bound on the process. A decoded cell is charged at its measured cost
 by type, eight bytes for a boolean, sixteen for a dictionary string, twenty-four
-for a double or a date serial and thirty-two for an int64 or a currency. Those
-are the costs of the values themselves, not of everything the JavaScript engine
-holds while it builds a workbook from them. On the largest sample file, ten
-tables and 383,399 rows, `exportPbiTables` reserved about 190 MB while the
-measured JavaScript peak was about 2.0 GB, roughly ten times more. The gap is
-the materialized worksheet XML and jszip's intermediate copies, so it is
-smallest for `readPbiTables` and largest for `exportPbiTables` on a wide table.
-Size the host for the measured figure, not for `peakBytes`.
+for a double or a date serial and thirty-two for an int64 or a currency. The
+workbook stage is charged in five terms: 320 bytes for each emitted cell, header
+cells included, 448 for each emitted row, 48 for each code unit of text the
+worksheet carries after escaping, 512 KiB for each worksheet part and 8 MiB
+once. That stage holds the worksheet XML of every part, the package writer's
+copy of each entry, its compression buffers, the churn the escaping loop
+produces and the finished archive at the same time.
 
-`scripts/measure-cell-cost.ts` is where the per-type figures come from. Run it
-again after any change to the decoded value representation.
+Five terms, because five shapes of model reach the peak differently. A
+one-column table pays the row element per cell, which a per-cell figure
+calibrated on wide models underestimates. Text is charged after escaping, so a
+code unit the writer expands sevenfold is charged sevenfold rather than averaged
+away, and a model of 32,000-character cells is bounded rather than guessed at.
+Two hundred small sheets showed the package writer's per-entry structures are
+worth about a third of a megabyte each, which no cell count reaches.
+
+Charging the workbook stage what it costs is what makes `peakBytes` a bound
+rather than an estimate. Against eleven synthetic shapes, from 50,000 numbers in
+one column to 16,384 columns of escaping headers, and against the nine-sample
+corpus, the reservation covers the measured peak by between 1.33 and 4.6 times.
+On the largest sample file, ten parts and 383,399 rows, `exportPbiTables`
+reserves about 3.84 GB against a measured JavaScript peak of about 1.94 GB. An
+export that cannot fit is refused with `PBI_EXPORT_LIMIT_EXCEEDED` before the
+worksheet XML is built, rather than beginning a workbook the host cannot finish.
+The cost of that honesty is that the 768 MiB default admits roughly a million
+narrow cells; `readPbiTables`, which never reaches the workbook stage, is
+unaffected, and a caller who has the memory raises `peakBytes` deliberately. The
+`consultchimps` command-line interface passes 4 GiB by default, exposes it as
+`--max-memory`, and derives the other three limits from it rather than leaving
+them at the browser-sized defaults above. Lowering the term rather than raising
+the limit means streaming the worksheet XML, which belongs to the browser
+release.
+
+`scripts/measure-cell-cost.ts` is where both sets of figures come from: the
+per-type costs from its default run, the workbook figure from
+`--workbook <file>`, which runs the stage on a sample and reads the peak heap it
+reaches. The script imports package sources, so build it first with the bundler
+this repository already depends on:
+
+```sh
+node_modules/.bin/esbuild scripts/measure-cell-cost.ts --bundle --platform=node   --format=esm --packages=external --outfile=scripts/measure-cell-cost.mjs
+node --expose-gc scripts/measure-cell-cost.mjs --workbook fixtures/a-2018-fuzzy.pbix
+```
+
+Run it again after any change to the decoded value representation or to the
+workbook writer.
 
 These are Node figures measured on the corpus. They are not browser defaults:
 the browser envelope, including page-held upload bytes, worker transport in both

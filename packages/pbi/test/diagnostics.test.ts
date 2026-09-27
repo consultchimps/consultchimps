@@ -55,14 +55,15 @@ describe("refusals carry no document contents", () => {
     expect(error.code).toBe("PBI_NO_EXPORTABLE_TABLES");
     expect(text).toContain("PBI_TABLE_HIDDEN");
     expect(text).not.toMatch(/[Tt]able\d|Sales|Orders/);
-    expect(error.message).toContain("includeHiddenTables");
+    expect(error.message).toContain("Export hidden tables as well");
+    expect(error.message).not.toContain("includeHiddenTables");
     expect(error.cause).toBeUndefined();
   });
 
   it("says no tables were found for a model with none", () => {
     const error = noExportableTables([], false);
     expect(error.message).toContain("no tables");
-    expect(error.message).not.toContain("includeHiddenTables");
+    expect(error.message).not.toContain("Export hidden tables");
   });
 
   it("gives a runtime label and stage, never a URL", () => {

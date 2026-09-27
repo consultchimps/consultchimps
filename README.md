@@ -31,6 +31,7 @@ documentation site renders its cards and tabs from;
 | Inspect workbooks                       | Works | Works   | Works   |
 | Unprotect Excel workbooks               | Works | Works   | Works   |
 | Prepare workbook batches for a database | Works | Works   | Works   |
+| Export Power BI tables to Excel         | Works | Works   | Planned |
 
 ## Packages
 
@@ -44,6 +45,7 @@ documentation site renders its cards and tabs from;
 | `@consultchimps/xlsx`     | Excel workbook input and output                                         |
 | `@consultchimps/pptx`     | PowerPoint template inspection and population                           |
 | `@consultchimps/pdf`      | PDF split and merge operations                                          |
+| `@consultchimps/pbi`      | Power BI model reading and table export                                 |
 | `@consultchimps/messages` | Plain-language rendering of results and errors                          |
 | `consultchimps`           | Command-line interface                                                  |
 
@@ -131,6 +133,8 @@ pnpm consultchimps pdf split report.pdf --output outputs/pages
 
 pnpm consultchimps pdf merge "inputs/**/*.pdf" \
   --output outputs/combined.pdf
+
+pnpm consultchimps pbi export sales.pbix --output outputs/sales-tables
 ```
 
 Excel consolidation reads every visible, non-empty worksheet, unions columns by

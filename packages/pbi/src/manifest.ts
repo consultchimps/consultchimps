@@ -73,6 +73,8 @@ const REASON_TEXT: Record<PbiReasonCode, (count: number) => string> = {
     `${count} binary value${count === 1 ? " was" : "s were"} written as base64 text. See the manifest for the affected columns.`,
   PBI_BINARY_CELL_TOO_LONG: (count) =>
     `${count} column${count === 1 ? " was" : "s were"} left out because a base64 value is longer than a worksheet cell can hold. See the manifest for which.`,
+  PBI_COLUMN_DECODER_ERROR: (count) =>
+    `${count} column${count === 1 ? " was" : "s were"} left out because this reader failed while decoding ${count === 1 ? "it" : "them"}. The model itself may be fine. See the manifest for which, and report the problem.`,
   PBI_COLUMN_ROW_ALIGNMENT_UNRECOVERABLE: (count) =>
     `${count} column${count === 1 ? " was" : "s were"} left out because its decoded values could not be placed on the table's rows. No row was moved or dropped. See the manifest for which.`,
   PBI_COLUMN_UNREADABLE: (count) =>
@@ -88,7 +90,7 @@ const REASON_TEXT: Record<PbiReasonCode, (count: number) => string> = {
   PBI_NUMERIC_AS_TEXT: (count) =>
     `${count} number${count === 1 ? " was" : "s were"} written as exact text because a worksheet number would lose precision. See the manifest for the affected columns.`,
   PBI_TABLE_HIDDEN: (count) =>
-    `${count} table${count === 1 ? " that the model marks hidden was" : "s that the model marks hidden were"} skipped. Set includeHiddenTables to true to export them.`,
+    `${count} table${count === 1 ? " that the model marks hidden was" : "s that the model marks hidden were"} skipped. Export hidden tables as well to include them.`,
   PBI_TABLE_NO_EXPORTABLE_COLUMNS: (count) =>
     `${count} table${count === 1 ? " was" : "s were"} left out because no column could be read. See the manifest for which.`,
   PBI_TABLE_SPLIT: (count) =>

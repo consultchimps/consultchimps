@@ -20,6 +20,7 @@ that can be reused in a server, desktop app, workflow runner, or another CLI.
 | `@consultchimps/xlsx`     | Excel reading, writing, merging, consolidation, and splitting  |
 | `@consultchimps/pptx`     | PowerPoint template inspection and population                  |
 | `@consultchimps/pdf`      | PDF splitting and merging                                      |
+| `@consultchimps/pbi`      | Power BI model reading and table export                        |
 | `@consultchimps/messages` | Plain-language rendering of results and errors                 |
 
 ## Read a temporary SQLite catalog
@@ -82,6 +83,45 @@ the reader's current linear-memory reservation while open; the host must also
 account for initialization, input buffers, JavaScript objects, and retained
 results. `close()` frees the catalog buffer and drops the runtime reference;
 garbage collection controls when the engine's linear memory is reclaimed.
+
+## Export the tables inside a Power BI file
+
+`@consultchimps/pbi` reads the model embedded in a `.pbix` and returns a
+workbook and a manifest as bytes, so the caller decides where they go.
+
+```ts
+import { exportPbiTables } from "@consultchimps/pbi";
+
+const outcome = await exportPbiTables(containerBytes, {
+  includeHiddenTables: false,
+  peakBytes: 4 * 1024 * 1024 * 1024,
+});
+
+const [workbook, manifest] = outcome.outputs;
+outcome.result.warnings.forEach((warning) => console.warn(warning));
+```
+
+`readPbiTables` returns the decoded rows as typed values instead, with `bigint`
+for 64-bit integers and for currency, `number` for doubles and date serials,
+`Uint8Array` for binary, and `null` for a null cell. `readPbiModelPart` returns
+the raw model part synchronously, reading nothing else.
+
+Two WebAssembly runtimes are involved: SQLite for the model's catalog, through
+the pinned `@sqlite.org/sqlite-wasm` peer dependency, and the XPress9 decoder
+this package ships at `@consultchimps/pbi/xpress9.wasm`. Node resolves both
+without configuration; a browser caller supplies a locator or the binary for
+each through the `runtime` option.
+
+Every limit is reserved before the allocation it covers, so a model too large
+for the host refuses with `PBI_EXPORT_LIMIT_EXCEEDED` rather than running out of
+memory. The defaults are 64 MiB of input, 256 MiB decompressed, 256 MiB of
+output, and a 768 MiB peak; the workbook stage alone is charged per cell, per
+row, per code unit of text after escaping and per worksheet, so an export of
+more than roughly a million narrow cells needs a higher `peakBytes`. Tables and
+columns that cannot be exported are excluded and named in the manifest, never
+silently dropped, and a refusal carries no name or value from inside the file.
+The package README documents the container profile, the value policy, and every
+code.
 
 ## Discover inputs
 

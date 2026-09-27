@@ -325,6 +325,32 @@ Options:
   -f, --force               replace an existing output file
 ```
 
+## Power BI table export
+
+```text
+consultchimps pbi export [options] <input>
+
+Options:
+  -o, --output <directory>  output folder for workbook.xlsx and manifest.json
+                            (default: <input name>-tables beside the input)
+  --include-hidden          export the tables the model marks hidden as well
+  --max-memory <size>       most memory the whole export may use, such as 512m
+                            or 4g (default: 4g)
+  -f, --force               replace an existing workbook.xlsx or manifest.json
+```
+
+The command writes `workbook.xlsx` and `manifest.json` into the output folder,
+and writes neither until both exist in full. `--max-memory` accepts a whole
+number of bytes or a number with a `k`, `m`, or `g` suffix, and refuses anything
+below `64m` or above twice the machine's physical memory; it bounds the whole
+run, so the input file may be up to an eighth of it, decompression up to half,
+and the outputs together up to a quarter. Both destinations are checked before
+the file is read, so an existing output refuses without doing the work.
+
+The guide page for [exporting Power BI tables](/docs/tools/power-bi-export)
+lists every refusal code, every reason a table or column is left out, and the
+readings that have no verified example.
+
 ## Database operations
 
 `consultchimps db` manages persistent local SQLite and DuckDB files. See the

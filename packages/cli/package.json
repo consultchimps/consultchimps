@@ -26,10 +26,12 @@
     "@consultchimps/db": "workspace:*",
     "@consultchimps/files": "workspace:*",
     "@consultchimps/messages": "workspace:*",
+    "@consultchimps/pbi": "workspace:*",
     "@consultchimps/pdf": "workspace:*",
     "@consultchimps/pptx": "workspace:*",
     "@consultchimps/xlsx": "workspace:*",
     "@duckdb/node-api": "1.5.5-r.4",
+    "@sqlite.org/sqlite-wasm": "3.53.4-build1",
     "better-sqlite3": "13.0.3",
     "commander": "14.0.3"
   },
