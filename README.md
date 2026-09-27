@@ -30,7 +30,7 @@ documentation site renders its cards and tabs from;
 | Inspect PowerPoint templates            | Works | Works   | Works   |
 | Inspect workbooks                       | Works | Works   | Works   |
 | Unprotect Excel workbooks               | Works | Works   | Works   |
-| Prepare workbook batches for a database | Works | Works   | Works   |
+| Prepare workbook batches for a database | Works | Works   | Planned |
 
 ## Packages
 

@@ -4,13 +4,20 @@ import {
   docsImageRoute,
   docsRoute,
 } from "@/lib/shared";
+import { isHiddenPage } from "@/lib/features";
 import { docs } from "collections/server";
 import { lucideIconsPlugin } from "fumadocs-core/source/lucide-icons";
 import { loader } from "fumadocs-core/source";
 
+const docsSource = docs.toFumadocsSource();
+
+// Every docs route (pages, sidebar, search, llms output, OG images) reads this
+// loader, so dropping a disabled feature's pages here removes them everywhere.
 export const source = loader({
   baseUrl: docsRoute,
-  source: docs.toFumadocsSource(),
+  source: {
+    files: docsSource.files.filter((file) => !isHiddenPage(file.path)),
+  },
   plugins: [lucideIconsPlugin()],
 });
 

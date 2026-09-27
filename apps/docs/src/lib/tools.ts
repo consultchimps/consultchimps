@@ -12,6 +12,10 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+// The drift-check scripts import this file under plain Node, which needs the
+// extension.
+import { isFeatureEnabled, type Feature } from "./features.ts";
+
 /**
  * Single source of truth for every operation the toolkit ships, per ADR 0001
  * (docs/adr/0001-feature-registry-and-drift-checks.md): one entry per
@@ -50,6 +54,8 @@ export interface ConsultTool {
   readonly docHref: string;
   readonly surfaces: ToolSurfaces;
   readonly icon: LucideIcon;
+  /** Site feature the entry belongs to; a disabled feature hides it (features.ts). */
+  readonly feature?: Feature;
 }
 
 /** A tool whose browser surface works: the only kind that renders browser UI. */
@@ -210,14 +216,22 @@ export const TOOLS: readonly ConsultTool[] = [
     surfaces: {
       cli: "works",
       library: "works",
-      browser: { status: "works", href: "/tools/db" },
+      // Paused while the browser tool is reworked; the page and its e2e specs
+      // stay in the repo for when it returns.
+      browser: { status: "planned" },
     },
     icon: Database,
+    feature: "database",
   },
 ] as const;
 
+/** The entries the site renders: TOOLS minus those of disabled features. */
+export const SITE_TOOLS: readonly ConsultTool[] = TOOLS.filter((tool) =>
+  isFeatureEnabled(tool.feature),
+);
+
 export const BROWSER_TOOLS: readonly BrowserTool[] =
-  TOOLS.filter(isBrowserTool);
+  SITE_TOOLS.filter(isBrowserTool);
 
 export interface BrowserToolGroup {
   readonly category: ToolCategory;
