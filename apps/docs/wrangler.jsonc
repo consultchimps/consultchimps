@@ -1,0 +1,28 @@
+// Cloudflare deploy of the static documentation site at consultchimps.com.
+// An assets-only Worker: no script runs, Cloudflare serves the Next.js static
+// export in out/ directly.
+//
+// Deploys run through Workers Builds (the Cloudflare Git integration), whose
+// settings live in the dashboard. Recreate them exactly:
+//   Worker name:      consultchimps-docs (must match "name" below)
+//   Production branch: main; non-production branch builds off
+//   Root directory:   apps/docs
+//   Build command:    cd ../.. && corepack enable && pnpm install --frozen-lockfile && pnpm --filter @consultchimps/docs... build
+//   Deploy command:   npx wrangler@4.142.0 deploy
+//   Build variables:  NODE_VERSION=24, NEXT_PUBLIC_SITE_URL=https://consultchimps.com
+//                     (NEXT_PUBLIC_BASE_PATH unset: the site serves from the root)
+{
+  "name": "consultchimps-docs",
+  "compatibility_date": "2026-09-26",
+  "assets": {
+    "directory": "./out",
+    // /docs/getting-started serves out/docs/getting-started.html, the same
+    // mapping the Playwright suite's static server applies.
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page",
+  },
+  "routes": [{ "pattern": "consultchimps.com", "custom_domain": true }],
+  // The custom domain is the only public address.
+  "workers_dev": false,
+  "preview_urls": false,
+}
