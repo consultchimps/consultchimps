@@ -1,5 +1,6 @@
 import "./global.css";
 
+import { TOOL_KINDS } from "@/lib/features";
 import { basePath } from "@/lib/shared";
 import { RootProvider } from "fumadocs-ui/provider/next";
 import type { Metadata } from "next";
@@ -36,8 +37,7 @@ export const metadata: Metadata = {
     default: "ConsultChimps: Operations tools that keep their promises",
     template: "%s · ConsultChimps",
   },
-  description:
-    "Local-first spreadsheet, database, PowerPoint, and PDF tools for consultants and operations teams.",
+  description: `Local-first ${TOOL_KINDS} tools for consultants and operations teams.`,
   icons: {
     icon: `${basePath}/favicon.png`,
   },

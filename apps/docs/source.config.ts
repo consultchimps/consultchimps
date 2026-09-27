@@ -1,6 +1,8 @@
 import { metaSchema, pageSchema } from "fumadocs-core/source/schema";
 import { defineConfig, defineDocs } from "fumadocs-mdx/config";
 
+import { remarkFeatureFlags } from "./src/lib/remark-feature-flags";
+
 export const docs = defineDocs({
   dir: "content/docs",
   docs: {
@@ -14,4 +16,8 @@ export const docs = defineDocs({
   },
 });
 
-export default defineConfig();
+export default defineConfig({
+  mdxOptions: {
+    remarkPlugins: (plugins) => [remarkFeatureFlags, ...plugins],
+  },
+});
