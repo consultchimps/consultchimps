@@ -13,7 +13,7 @@
 //                     (NEXT_PUBLIC_BASE_PATH unset: the site serves from the root)
 {
   "name": "consultchimps-docs",
-  "compatibility_date": "2026-09-28",
+  "compatibility_date": "2026-09-26",
   "assets": {
     "directory": "./out",
     // /docs/getting-started serves out/docs/getting-started.html, the same
