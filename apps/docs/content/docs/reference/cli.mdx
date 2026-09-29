@@ -13,6 +13,10 @@ Options:
   -V, --version   output the version number
   --json          print one line of machine-readable JSON for automation
                   instead of the detailed explanation
+  --no-log        do not keep a local record of this run
+  --log-names     keep input file names, progress details, and error messages
+                  in the run record
+  --cpu-profile   save a CPU profile of this run beside its record
   -h, --help      display help
 ```
 
@@ -427,6 +431,35 @@ Database counts represented by `bigint` in library results are decimal strings
 in `--json` output. Progress and errors stay out of JSON stdout.
 
 </Feature>
+
+## Run records
+
+Every command that does work keeps a local record of its run: the machine it ran
+on, how long each stage and each input took, memory sampled every second, and
+how it ended. Records stay on your machine and are never uploaded.
+
+| Command                                 | Result                                                   |
+| --------------------------------------- | -------------------------------------------------------- |
+| `consultchimps logs list`               | Lists recent runs, newest first (`--limit <count>`)      |
+| `consultchimps logs`                    | Same as `logs list`                                      |
+| `consultchimps logs show`               | Summarises the latest run: stages, slowest steps, memory |
+| `consultchimps logs show <run>`         | Summarises the run whose id starts with `<run>`          |
+| `consultchimps logs path`               | Prints the folder that holds run records                 |
+| `consultchimps --cpu-profile <command>` | Also saves a CPU profile that opens in Chrome DevTools   |
+
+A record holds counts, sizes, and timings. It keeps no file names, paths,
+worksheet names, or cell values unless you add `--log-names`, which keeps input
+file names, progress details, and error messages as printed. Options given as
+switches or numbers are kept as given, such as `--limit 7`; for options given as
+text, such as paths and worksheet names, only the fact that they were set is
+kept. A failed run prints the path of its record.
+
+Records live in `%LOCALAPPDATA%\consultchimps\logs` on Windows,
+`~/Library/Logs/consultchimps` on macOS, and `consultchimps/logs` under
+`$XDG_STATE_HOME` (default `~/.local/state`) elsewhere, or in
+`CONSULTCHIMPS_LOG_DIR` when set. The newest 100 runs are kept, none older than
+30 days. Turn recording off for one run with `--no-log`, or for every run with
+`CONSULTCHIMPS_LOG=off`.
 
 ## Exit behavior
 

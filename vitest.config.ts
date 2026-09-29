@@ -28,6 +28,10 @@ export default defineConfig({
         test: {
           name: "cli",
           include: ["packages/cli/test/**/*.test.ts"],
+          // Run records would otherwise land in the real per-user log folder
+          // from every spawned command; the run record tests switch them back
+          // on with a folder of their own.
+          env: { CONSULTCHIMPS_LOG: "off" },
           testTimeout: 120_000,
           hookTimeout: 120_000,
         },

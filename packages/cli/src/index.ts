@@ -29,7 +29,13 @@ import { Command, CommanderError } from "commander";
 
 import { formatWorkbookDescription } from "./describe-report.js";
 import { registerDbCommands } from "./commands/db.js";
+import { registerLogsCommands } from "./commands/logs.js";
 import { createCliProgress, finishActiveProgress } from "./progress.js";
+import {
+  currentRecorder,
+  loggingDisabledByEnvironment,
+  startRunRecorder,
+} from "./task-log.js";
 import {
   withoutTerminalControls,
   withoutTerminalControlsInProse,
@@ -37,6 +43,9 @@ import {
 
 interface GlobalOptions {
   json?: boolean;
+  log?: boolean;
+  logNames?: boolean;
+  cpuProfile?: boolean;
 }
 
 interface PackageMetadata {
@@ -171,6 +180,7 @@ function printResult<TMetric extends string>(
   result: OperationResult<TMetric>,
   json: boolean,
 ): void {
+  currentRecorder().result(result);
   if (json) {
     printJsonResult(result);
     return;
@@ -257,6 +267,14 @@ program
     "--json",
     "print one line of machine-readable JSON for automation instead of the detailed explanation",
   )
+  .option("--no-log", "do not keep a local record of this run")
+  .option(
+    "--log-names",
+    "keep input file names, progress details, and error messages in the run record",
+  )
+  // Not --profile: the db commands already take --profile <file>, and a
+  // program option would claim it wherever it appears on the line.
+  .option("--cpu-profile", "save a CPU profile of this run beside its record")
   .addHelpText(
     "after",
     `
@@ -324,6 +342,7 @@ sheets
       const [inputPath] = await discoverFiles([input], {
         extensions: [".xlsx", ".xlsm"],
       });
+      currentRecorder().recordInputs([inputPath!]);
       const result = await unprotectWorkbook({
         input: inputPath!,
         output: options.output,
@@ -370,6 +389,7 @@ When you want one combined sheet instead of separate tabs:
   )
   .action(async (inputs: string[], options: SheetMergeOptions) => {
     const inputPaths = await discoverFiles(inputs, { extensions: [".xlsx"] });
+    currentRecorder().recordInputs(inputPaths);
     const progress = createCliProgress(
       program.opts<GlobalOptions>().json === true,
     );
@@ -470,6 +490,7 @@ When you want each worksheet kept as its own tab instead:
   )
   .action(async (inputs: string[], options: ConsolidateOptions) => {
     const inputPaths = await discoverFiles(inputs, { extensions: [".xlsx"] });
+    currentRecorder().recordInputs(inputPaths);
     const progress = createCliProgress(
       program.opts<GlobalOptions>().json === true,
     );
@@ -595,6 +616,7 @@ Your original workbook is never changed.
     const inputPaths = await discoverFiles([input], {
       extensions: [".xlsx", ".xlsm"],
     });
+    currentRecorder().recordInputs(inputPaths);
     if (inputPaths.length !== 1) {
       throw new Error(
         `Expected exactly one input workbook; found ${inputPaths.length}.`,
@@ -684,6 +706,7 @@ rows, and column spellings those commands will match on.
     const inputPaths = await discoverFiles([input], {
       extensions: [".xlsx", ".xlsm"],
     });
+    currentRecorder().recordInputs(inputPaths);
     if (inputPaths.length !== 1) {
       throw new Error(
         `Expected exactly one input workbook; found ${inputPaths.length}.`,
@@ -705,6 +728,9 @@ rows, and column spellings those commands will match on.
       sheets: options.sheet,
     });
     progress.finish();
+    // Recorded before either rendering, so the run record is the same with
+    // and without --json.
+    currentRecorder().result(outcome.result);
 
     if (json) {
       // The whole outcome, exactly as the library returns it: the counts alone
@@ -762,6 +788,7 @@ supported.
 `,
   )
   .action(async (template: string, options: PptxInspectOptions) => {
+    currentRecorder().recordInputs([template]);
     const inspection = await inspectPowerPointTemplate(template, {
       templateSlide: options.templateSlide,
     });
@@ -839,6 +866,7 @@ The output contains only the generated slides. Source files are never changed.
 `,
   )
   .action(async (options: PptxPopulateOptions) => {
+    currentRecorder().recordInputs([options.template, options.data]);
     const progress = createCliProgress(
       program.opts<GlobalOptions>().json === true,
     );
@@ -903,6 +931,7 @@ What happens:
   )
   .action(async (input: string, options: SplitOptions) => {
     const [inputPath] = await discoverFiles([input], { extensions: [".pdf"] });
+    currentRecorder().recordInputs([inputPath!]);
     if (!inputPath) {
       throw new Error("No input PDF was found.");
     }
@@ -953,6 +982,7 @@ What happens:
   )
   .action(async (inputs: string[], options: MergeOptions) => {
     const inputPaths = await discoverFiles(inputs, { extensions: [".pdf"] });
+    currentRecorder().recordInputs(inputPaths);
     const progress = createCliProgress(
       program.opts<GlobalOptions>().json === true,
     );
@@ -966,6 +996,45 @@ What happens:
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
+// Every command that does work opens a local run record before its action
+// runs; `logs` reads records and is not one of them. Help, version, and usage
+// errors never reach an action, so they are never recorded.
+program.hook("preAction", async (_command, actionCommand) => {
+  const names: string[] = [];
+  for (
+    let command: Command | null = actionCommand;
+    command?.parent;
+    command = command.parent
+  ) {
+    names.unshift(command.name());
+  }
+  if (names[0] === "logs") return;
+  const global = program.opts<GlobalOptions>();
+  // Recording never decides whether a command runs.
+  await startRunRecorder({
+    command: names.join(" "),
+    options: actionCommand.opts(),
+    names: global.logNames === true,
+    log: global.log !== false && !loggingDisabledByEnvironment(process.env),
+    profile: global.cpuProfile === true,
+    version: cliVersion,
+    onFailure: (message) => {
+      if (!jsonRequested) {
+        process.stderr.write(
+          `Run log stopped: ${withoutTerminalControls(message)}\n`,
+        );
+      }
+    },
+  }).catch(() => undefined);
+});
+
+registerLogsCommands(program, {
+  data: (value, humanText) => {
+    if (program.opts<GlobalOptions>().json === true) printJsonResult(value);
+    else process.stdout.write(withoutTerminalControlsInProse(humanText));
+  },
+});
+
 registerDbCommands(program, {
   json: () => program.opts<GlobalOptions>().json === true,
   result: (result) =>
@@ -976,6 +1045,7 @@ registerDbCommands(program, {
   },
 });
 
+let failure: { code: string | null; message: string } | undefined;
 try {
   await program.parseAsync(process.argv);
 } catch (error) {
@@ -993,6 +1063,7 @@ try {
       // Without --json Commander has already written its own usage prose, so
       // only its exit status needs carrying over.
       process.exitCode = error.exitCode;
+      failure = { code: USAGE_ERROR_CODE, message: error.message };
     }
   } else {
     const json = program.opts<GlobalOptions>().json === true;
@@ -1006,6 +1077,7 @@ try {
     // Unexpected errors report null rather than inventing a code an automation
     // could come to depend on.
     const code = expected ? error.code : null;
+    failure = { code, message };
 
     if (json) {
       printJsonFailure(message, code);
@@ -1023,4 +1095,18 @@ try {
     }
     process.exitCode = 1;
   }
+}
+
+// The record closes after the outcome is printed, so nothing it does can change
+// what the run reported. A failed run says where its record is.
+const { recordPath, profilePath } = await currentRecorder()
+  .finish(failure ? "error" : "ok", Number(process.exitCode ?? 0), failure)
+  .catch(() => ({}) as { recordPath?: string; profilePath?: string });
+if (failure && recordPath && !jsonRequested) {
+  process.stderr.write(`Run log: ${withoutTerminalControls(recordPath)}\n`);
+}
+if (profilePath) {
+  process.stderr.write(
+    `CPU profile: ${withoutTerminalControls(profilePath)}\n`,
+  );
 }

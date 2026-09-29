@@ -1351,6 +1351,22 @@ export function consolidationInputs(
   return inputs;
 }
 
+/**
+ * What one workbook contributed to a consolidation, as counts a run record can
+ * keep: the tables read, their data rows, and the widest table's columns.
+ */
+export function consolidationMeasures(
+  inputs: ConsolidationInputs,
+): Record<string, number> {
+  let rows = 0;
+  let columns = 0;
+  for (const table of inputs.tables) {
+    rows += table.rows.length;
+    columns = Math.max(columns, table.columns.length);
+  }
+  return { tables: inputs.tables.length, rows, columns };
+}
+
 export function workbookTables(
   workbook: XLSX.WorkBook,
   workbookDates: WorkbookDates,

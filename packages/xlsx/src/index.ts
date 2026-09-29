@@ -83,6 +83,7 @@ import {
   CONSOLIDATED_SHEET_NAME,
   consolidateTables,
   consolidationInputs,
+  consolidationMeasures,
   createMergeState,
   finishMergedWorkbook,
   INSPECT_OPERATION,
@@ -740,6 +741,7 @@ export async function consolidateWorkbooks(
       completed: index + 1,
       total: absoluteInputs.length,
       detail: path.basename(absoluteInput),
+      measures: consolidationMeasures(read),
     });
   }
 

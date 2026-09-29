@@ -67,6 +67,7 @@ import {
   CONSOLIDATED_SHEET_NAME,
   consolidateTables,
   consolidationInputs,
+  consolidationMeasures,
   createMergeState,
   finishMergedWorkbook,
   INSPECT_OPERATION,
@@ -757,6 +758,7 @@ export async function consolidateWorkbooksBytes(
       completed: index + 1,
       total: options.inputs.length,
       detail: input.name,
+      measures: consolidationMeasures(read),
     });
     // Reading a workbook, stacking the tables, and serializing the result are
     // all synchronous, so this operation would otherwise occupy a worker from

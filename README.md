@@ -90,6 +90,13 @@ npm install @consultchimps/xlsx
 All published packages are public on npm under the `consultchimps` name and
 `@consultchimps` organization scope.
 
+Every CLI run keeps a local record of its stages, timings, and memory, with no
+file names unless you add `--log-names`. Read them with `consultchimps logs` and
+`consultchimps logs show`; turn them off with `--no-log` or
+`CONSULTCHIMPS_LOG=off`. The
+[CLI reference](https://consultchimps.github.io/consultchimps/docs/reference/cli#run-records)
+has the details.
+
 ## Run from source
 
 Development requires pnpm 11:
