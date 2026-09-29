@@ -113,6 +113,9 @@ describe("consolidateWorkbooks", () => {
         ["reading-workbooks", 2],
         ["writing-output", 1],
       ]);
+      // Each workbook read reports what it yielded, as counts only.
+      expect(events[0]!.measures).toEqual({ tables: 1, rows: 1, columns: 2 });
+      expect(events[2]!.measures).toBeUndefined();
 
       const controller = new AbortController();
       controller.abort();

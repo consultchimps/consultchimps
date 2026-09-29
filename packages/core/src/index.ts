@@ -1,4 +1,18 @@
 export { safeNameFragment, truncateToUtf8Bytes } from "./names.js";
+export {
+  TASK_LOG_SCHEMA,
+  summarizeTaskLog,
+  type TaskLogEnd,
+  type TaskLogInput,
+  type TaskLogMemory,
+  type TaskLogOutcome,
+  type TaskLogProgress,
+  type TaskLogRecord,
+  type TaskLogRun,
+  type TaskLogStageSummary,
+  type TaskLogSummary,
+  type TaskLogUnitSummary,
+} from "./task-log.js";
 export type { RandomAccessFile, RandomAccessSource } from "./bytes.js";
 
 export type ArtifactKind = "file" | "directory";
@@ -27,6 +41,12 @@ export interface OperationProgress {
   completed: number;
   total: number;
   detail?: string;
+  /**
+   * Sizes of the unit just completed, such as the rows and columns a workbook
+   * yielded. Counts only, never input text, so a run record can keep them
+   * without keeping anything that names a client.
+   */
+  measures?: Record<string, number>;
 }
 
 export type ProgressReporter = (progress: OperationProgress) => void;

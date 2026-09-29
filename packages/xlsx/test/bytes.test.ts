@@ -1464,6 +1464,12 @@ describe("byte-level workbook consolidation", () => {
       ["reading-workbooks", 2],
       ["writing-output", 1],
     ]);
+    // The file surface reports the same per-workbook counts.
+    expect(Object.keys(events[0]!.measures ?? {}).sort()).toEqual([
+      "columns",
+      "rows",
+      "tables",
+    ]);
 
     expect(outputs).toHaveLength(1);
     expect(outputs[0]?.name).toBe("consolidated.xlsx");
