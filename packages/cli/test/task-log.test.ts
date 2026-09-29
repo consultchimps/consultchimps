@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -192,6 +199,45 @@ describe("local run records", () => {
     expect(input?.type === "input" && input.extension).toBe("");
     expect(JSON.stringify(lines).toLowerCase()).not.toContain("acme");
   });
+
+  it("records an unreadable number as set rather than null", async () => {
+    const { directory, logs } = await workspace();
+    await writeClientWorkbook(path.join(directory, "client.xlsx"), 2);
+    await runCli(
+      [
+        "sheets",
+        "inspect",
+        path.join(directory, "client.xlsx"),
+        "--samples",
+        "nope",
+      ],
+      logs,
+    );
+    const [lines] = await records(logs);
+    const start = lines![0] as Extract<TaskLogRecord, { type: "run" }>;
+    expect(start.options.samples).toBe(true);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "keeps records and their folder private to the user",
+    async () => {
+      const { directory, logs } = await workspace();
+      await writeClientWorkbook(path.join(directory, "client.xlsx"), 2);
+      await runCli(
+        [
+          "--cpu-profile",
+          "sheets",
+          "inspect",
+          path.join(directory, "client.xlsx"),
+        ],
+        logs,
+      );
+      expect((await stat(logs)).mode & 0o777).toBe(0o700);
+      for (const name of await readdir(logs)) {
+        expect((await stat(path.join(logs, name))).mode & 0o777).toBe(0o600);
+      }
+    },
+  );
 
   it("leaves the db commands' own --profile <file> to them", async () => {
     const { directory, logs } = await workspace();

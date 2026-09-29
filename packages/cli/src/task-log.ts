@@ -82,8 +82,13 @@ export function recordedOptions(
   const recorded: Record<string, boolean | number> = {};
   for (const [key, value] of Object.entries(options)) {
     if (value === undefined) continue;
+    // A number that is not finite (a value Number could not read) would be
+    // written as null, which is not a number; it counts as set, like text.
     recorded[key] =
-      typeof value === "boolean" || typeof value === "number" ? value : true;
+      typeof value === "boolean" ||
+      (typeof value === "number" && Number.isFinite(value))
+        ? value
+        : true;
   }
   return recorded;
 }
@@ -242,7 +247,10 @@ class FileRecorder implements RunRecorder {
 
     this.#guard(() => {
       this.#directory = options.directory ?? resolveLogDirectory();
-      mkdirSync(this.#directory, { recursive: true });
+      // Private to this user: a record made with --log-names holds file names,
+      // and a profile holds code paths. Windows ignores these modes and keeps
+      // the folder under the user's own profile instead.
+      mkdirSync(this.#directory, { recursive: true, mode: 0o700 });
       if (options.log) {
         this.#recordPath = path.join(this.#directory, `${this.#runId}.jsonl`);
         const cpus = os.cpus();
@@ -454,7 +462,7 @@ class FileRecorder implements RunRecorder {
         this.#directory,
         `${this.#runId}.cpuprofile`,
       );
-      writeFileSync(profilePath, JSON.stringify(profile));
+      writeFileSync(profilePath, JSON.stringify(profile), { mode: 0o600 });
       return profilePath;
     } catch (error) {
       this.#fail(error);
@@ -473,7 +481,9 @@ class FileRecorder implements RunRecorder {
     // (a command that handles its own cancellation keeps running after an
     // interruption was recorded) has nowhere to go.
     if (!this.#recordPath || (this.#finished && record.type !== "end")) return;
-    appendFileSync(this.#recordPath, `${JSON.stringify(record)}\n`);
+    appendFileSync(this.#recordPath, `${JSON.stringify(record)}\n`, {
+      mode: 0o600,
+    });
   }
 
   #guard(action: () => void): void {
