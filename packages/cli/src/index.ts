@@ -728,6 +728,9 @@ rows, and column spellings those commands will match on.
       sheets: options.sheet,
     });
     progress.finish();
+    // Recorded before either rendering, so the run record is the same with
+    // and without --json.
+    currentRecorder().result(outcome.result);
 
     if (json) {
       // The whole outcome, exactly as the library returns it: the counts alone

@@ -469,7 +469,10 @@ class FileRecorder implements RunRecorder {
   }
 
   #append(record: TaskLogRecord): void {
-    if (!this.#recordPath) return;
+    // The end line is the last line: once it is written, a late memory sample
+    // (a command that handles its own cancellation keeps running after an
+    // interruption was recorded) has nowhere to go.
+    if (!this.#recordPath || (this.#finished && record.type !== "end")) return;
     appendFileSync(this.#recordPath, `${JSON.stringify(record)}\n`);
   }
 

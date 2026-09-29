@@ -230,7 +230,12 @@ describe("local run records", () => {
     expect(json.exitCode).toBe(0);
     expect(json.stdout.trim().split("\n")).toHaveLength(1);
     expect(JSON.parse(json.stdout).ok).toBe(true);
-    expect(await records(logs)).toHaveLength(1);
+    const all = await records(logs);
+    expect(all).toHaveLength(1);
+    // The record does not depend on the output mode.
+    const end = all[0]!.at(-1) as Extract<TaskLogRecord, { type: "end" }>;
+    expect(end.operation).toBe("sheets.inspect");
+    expect(end.metrics).toBeDefined();
   });
 
   it("lists and summarises runs, and does not record itself", async () => {
