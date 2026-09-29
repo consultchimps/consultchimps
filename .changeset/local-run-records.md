@@ -9,7 +9,7 @@ JSON Lines file with the machine it ran on, every progress event with its time,
 memory sampled every second, and how it ended, so a slow or failed run can be
 explained afterwards. Records hold counts, sizes, and timings only;
 `--log-names` adds file names, progress details, and error messages. `--no-log`
-or `CONSULTCHIMPS_LOG=off` turns recording off, `--profile` also saves a CPU
+or `CONSULTCHIMPS_LOG=off` turns recording off, `--cpu-profile` also saves a CPU
 profile, and `consultchimps logs`, `logs show`, and `logs path` read the
 records.
 

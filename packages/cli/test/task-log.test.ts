@@ -180,6 +180,41 @@ describe("local run records", () => {
     expect(end.error).toEqual({ code: "FILES_NOT_FOUND" });
   });
 
+  it("records an unrecognised extension as blank and keeps option values out", async () => {
+    const { directory, logs } = await workspace();
+    const oddName = path.join(directory, "Q3.Acme board pack");
+    await writeFile(oddName, "not a presentation");
+
+    await runCli(["pptx", "inspect-template", oddName], logs);
+
+    const [lines] = await records(logs);
+    const input = lines!.find((line) => line.type === "input");
+    expect(input?.type === "input" && input.extension).toBe("");
+    expect(JSON.stringify(lines).toLowerCase()).not.toContain("acme");
+  });
+
+  it("leaves the db commands' own --profile <file> to them", async () => {
+    const { directory, logs } = await workspace();
+    const run = await runCli(
+      [
+        "--json",
+        "db",
+        "import",
+        "run",
+        path.join(directory, "missing.duckdb"),
+        "--input",
+        `north=${path.join(directory, "missing.xlsx")}`,
+        "--profile",
+        path.join(directory, "routing.json"),
+      ],
+      logs,
+    );
+    expect(run.exitCode).toBe(1);
+    // A global --profile would have taken the flag and left the file name as
+    // an extra argument, which Commander reports as a usage error.
+    expect(JSON.parse(run.stdout).error.code).not.toBe("CLI_USAGE");
+  });
+
   it("writes nothing when switched off, and leaves --json output alone", async () => {
     const { directory, logs } = await workspace();
     await writeClientWorkbook(path.join(directory, "west-client.xlsx"), 2);

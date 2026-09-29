@@ -91,6 +91,23 @@ describe("summarizeTaskLog", () => {
     expect(summary.slowestUnits[0]!.input).toBeUndefined();
   });
 
+  it("pairs steps with inputs only on stages that read one input per step", () => {
+    const summary = summarizeTaskLog([
+      run,
+      { type: "input", index: 1, extension: ".pptx", bytes: 10 },
+      { type: "input", index: 2, extension: ".xlsx", bytes: 20 },
+      {
+        type: "progress",
+        t: 10,
+        operation: "pptx.populate",
+        stage: "generating-slides",
+        completed: 1,
+        total: 2,
+      },
+    ]);
+    expect(summary.slowestUnits[0]!.input).toBeUndefined();
+  });
+
   it("reports a record without an end line as running", () => {
     const summary = summarizeTaskLog([
       run,

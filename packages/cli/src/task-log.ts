@@ -7,10 +7,10 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { Session } from "node:inspector/promises";
 import os from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
+import type { Session } from "node:inspector/promises";
 
 import {
   TASK_LOG_SCHEMA,
@@ -38,7 +38,8 @@ const MEMORY_INTERVAL_MS = 1000;
 export interface LogEnvironment {
   env: NodeJS.ProcessEnv;
   platform: NodeJS.Platform;
-  homedir: string;
+  /** Read only when no environment variable names the folder. */
+  homedir: () => string;
 }
 
 export function loggingDisabledByEnvironment(env: NodeJS.ProcessEnv): boolean {
@@ -53,44 +54,61 @@ export function resolveLogDirectory(
   context: LogEnvironment = {
     env: process.env,
     platform: process.platform,
-    homedir: os.homedir(),
+    homedir: () => os.homedir(),
   },
 ): string {
-  const { env, platform, homedir } = context;
+  const { env, platform } = context;
+  const homedir = context.homedir;
   if (env.CONSULTCHIMPS_LOG_DIR) return path.resolve(env.CONSULTCHIMPS_LOG_DIR);
   if (platform === "win32") {
-    const base = env.LOCALAPPDATA || path.join(homedir, "AppData", "Local");
+    const base = env.LOCALAPPDATA || path.join(homedir(), "AppData", "Local");
     return path.join(base, "consultchimps", "logs");
   }
   if (platform === "darwin") {
-    return path.join(homedir, "Library", "Logs", "consultchimps");
+    return path.join(homedir(), "Library", "Logs", "consultchimps");
   }
-  const state = env.XDG_STATE_HOME || path.join(homedir, ".local", "state");
+  const state = env.XDG_STATE_HOME || path.join(homedir(), ".local", "state");
   return path.join(state, "consultchimps", "logs");
 }
 
 /**
  * Options as a record keeps them: booleans and numbers as given, anything else
- * only as having been set, unless names are kept.
+ * only as having been set. Option text carries paths, worksheet names, and
+ * column names, so it is never kept, even with names.
  */
 export function recordedOptions(
   options: Record<string, unknown>,
-  names: boolean,
-): Record<string, boolean | number | string> {
-  const recorded: Record<string, boolean | number | string> = {};
+): Record<string, boolean | number> {
+  const recorded: Record<string, boolean | number> = {};
   for (const [key, value] of Object.entries(options)) {
     if (value === undefined) continue;
-    if (typeof value === "boolean" || typeof value === "number") {
-      recorded[key] = value;
-    } else if (names) {
-      recorded[key] = Array.isArray(value)
-        ? value.map(String).join("; ")
-        : String(value);
-    } else {
-      recorded[key] = true;
-    }
+    recorded[key] =
+      typeof value === "boolean" || typeof value === "number" ? value : true;
   }
   return recorded;
+}
+
+// Extensions the toolkit reads. Anything else is recorded as "" because the
+// part after the last dot of an arbitrary name can be a client's name.
+const KNOWN_EXTENSIONS = new Set([
+  ".xlsx",
+  ".xlsm",
+  ".xls",
+  ".csv",
+  ".pptx",
+  ".potx",
+  ".pdf",
+  ".json",
+  ".sqlite",
+  ".sqlite3",
+  ".db",
+  ".duckdb",
+  ".ccplan",
+]);
+
+export function recordedExtension(inputPath: string): string {
+  const extension = path.extname(inputPath).toLowerCase();
+  return KNOWN_EXTENSIONS.has(extension) ? extension : "";
 }
 
 /** Keep the newest runs, and none older than the age limit; touch only run records. */
@@ -168,7 +186,7 @@ export interface RunRecorderOptions {
 export interface RunRecorder {
   /** The run's record, when one is being written. */
   readonly recordPath: string | undefined;
-  recordInputs(paths: readonly string[]): void;
+  recordInputs(paths: readonly (string | undefined)[]): void;
   progress(progress: OperationProgress): void;
   result(result: OperationResult): void;
   finish(
@@ -192,7 +210,7 @@ export const disabledRecorder: RunRecorder = new DisabledRecorder();
 
 class FileRecorder implements RunRecorder {
   readonly #names: boolean;
-  readonly #directory: string;
+  #directory = "";
   readonly #runId: string;
   readonly #start: number;
   readonly #onFailure: ((message: string) => void) | undefined;
@@ -205,23 +223,25 @@ class FileRecorder implements RunRecorder {
   #finished = false;
   #failed = false;
   #inputCount = 0;
+  // Records the interruption, then steps aside: a command with its own
+  // cancellation (the db commands) listens too and decides how the run ends.
+  // Only when nobody else listens does this end the process, which is what
+  // Node would have done without any listener.
   readonly #onSignal = (signal: NodeJS.Signals) => {
-    this.#writeEnd({
-      outcome: "interrupted",
-      exitCode: signal === "SIGINT" ? 130 : 143,
-    });
-    process.exit(signal === "SIGINT" ? 130 : 143);
+    const exitCode = signal === "SIGINT" ? 130 : 143;
+    this.#writeEnd({ outcome: "interrupted", exitCode });
+    if (process.listenerCount(signal) === 0) process.exit(exitCode);
   };
 
   constructor(options: RunRecorderOptions) {
     this.#names = options.names;
-    this.#directory = options.directory ?? resolveLogDirectory();
     const started = new Date();
     this.#start = started.getTime();
     this.#runId = newRunId(options.command, started);
     this.#onFailure = options.onFailure;
 
     this.#guard(() => {
+      this.#directory = options.directory ?? resolveLogDirectory();
       mkdirSync(this.#directory, { recursive: true });
       if (options.log) {
         this.#recordPath = path.join(this.#directory, `${this.#runId}.jsonl`);
@@ -242,7 +262,7 @@ class FileRecorder implements RunRecorder {
           cpuModel: cpus[0]?.model.trim() ?? "",
           totalMemory: os.totalmem(),
           names: this.#names,
-          options: recordedOptions(options.options, this.#names),
+          options: recordedOptions(options.options),
         });
         this.#startSampler();
         process.once("SIGINT", this.#onSignal);
@@ -256,8 +276,13 @@ class FileRecorder implements RunRecorder {
   }
 
   async startProfile(): Promise<void> {
+    if (this.#failed) return;
     try {
-      const session = new Session();
+      // Loaded only when asked for, so a runtime without the inspector still
+      // runs every command.
+      const { Session: InspectorSession } =
+        await import("node:inspector/promises");
+      const session = new InspectorSession();
       session.connect();
       await session.post("Profiler.enable");
       await session.post("Profiler.start");
@@ -267,9 +292,10 @@ class FileRecorder implements RunRecorder {
     }
   }
 
-  recordInputs(paths: readonly string[]): void {
+  recordInputs(paths: readonly (string | undefined)[]): void {
     this.#guard(() => {
       for (const inputPath of paths) {
+        if (typeof inputPath !== "string") continue;
         this.#inputCount += 1;
         let bytes = -1;
         try {
@@ -281,7 +307,7 @@ class FileRecorder implements RunRecorder {
         this.#append({
           type: "input",
           index: this.#inputCount,
-          extension: path.extname(inputPath).toLowerCase(),
+          extension: recordedExtension(inputPath),
           bytes,
           ...(this.#names ? { name: path.basename(inputPath) } : {}),
         });
@@ -337,7 +363,13 @@ class FileRecorder implements RunRecorder {
     }
     if (profilePath) end.profile = path.basename(profilePath);
     this.#writeEnd(end);
-    this.#guard(() => pruneRunRecords(this.#directory));
+    // Pruning is housekeeping: the record is already written, so a failure
+    // here is not reported as the record stopping.
+    try {
+      if (this.#directory) pruneRunRecords(this.#directory);
+    } catch {
+      // Left for the next run to retry.
+    }
     const paths: { recordPath?: string; profilePath?: string } = {};
     if (this.#recordPath) paths.recordPath = this.#recordPath;
     if (profilePath) paths.profilePath = profilePath;

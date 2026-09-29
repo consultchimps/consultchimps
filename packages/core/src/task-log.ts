@@ -26,8 +26,8 @@ export interface TaskLogRun {
   cpuModel: string;
   totalMemory: number;
   names: boolean;
-  /** Options set for the run: booleans and numbers as given, other values as `true`, unless names are kept. */
-  options: Record<string, boolean | number | string>;
+  /** Options set for the run: booleans and numbers as given, other values only as `true`. */
+  options: Record<string, boolean | number>;
 }
 
 export interface TaskLogInput {
@@ -51,6 +51,11 @@ export interface TaskLogProgress {
   detail?: string;
 }
 
+/**
+ * `rss` is read at `t` from a separate thread, so it keeps coming during
+ * synchronous work. Heap figures belong to the main thread and are read when
+ * it writes the line, which can be later than `t` during such work.
+ */
 export interface TaskLogMemory {
   type: "memory";
   t: number;
@@ -112,10 +117,20 @@ export interface TaskLogSummary {
 }
 
 /**
+ * Stages that finish one input per step, in input order. Only these are paired
+ * with the run's inputs; matching any stage whose step count happens to equal
+ * the input count would pin unrelated steps to files.
+ */
+export const PER_INPUT_STAGES: readonly string[] = [
+  "reading-workbooks",
+  "merging-inputs",
+];
+
+/**
  * Reduce a run's lines to durations. A stage lasts from the event before its
  * first one to its last one, and a unit from the event before it to its own, so
  * time spent between events is charged to the unit that finished. A unit is
- * matched to an input when its stage counts exactly one unit per input.
+ * matched to an input when its stage is one of PER_INPUT_STAGES.
  */
 export function summarizeTaskLog(
   records: readonly TaskLogRecord[],
@@ -186,7 +201,7 @@ export function summarizeTaskLog(
     if (event.measures !== undefined) unit.measures = event.measures;
     if (event.detail !== undefined) unit.detail = event.detail;
     const input =
-      inputs.length > 0 && event.total === inputs.length
+      PER_INPUT_STAGES.includes(event.stage) && event.total === inputs.length
         ? inputs.find((candidate) => candidate.index === event.completed)
         : undefined;
     if (input !== undefined) unit.input = input;

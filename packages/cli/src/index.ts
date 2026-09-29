@@ -45,7 +45,7 @@ interface GlobalOptions {
   json?: boolean;
   log?: boolean;
   logNames?: boolean;
-  profile?: boolean;
+  cpuProfile?: boolean;
 }
 
 interface PackageMetadata {
@@ -272,7 +272,9 @@ program
     "--log-names",
     "keep input file names, progress details, and error messages in the run record",
   )
-  .option("--profile", "save a CPU profile of this run beside its record")
+  // Not --profile: the db commands already take --profile <file>, and a
+  // program option would claim it wherever it appears on the line.
+  .option("--cpu-profile", "save a CPU profile of this run beside its record")
   .addHelpText(
     "after",
     `
@@ -1005,12 +1007,13 @@ program.hook("preAction", async (_command, actionCommand) => {
   }
   if (names[0] === "logs") return;
   const global = program.opts<GlobalOptions>();
+  // Recording never decides whether a command runs.
   await startRunRecorder({
     command: names.join(" "),
     options: actionCommand.opts(),
     names: global.logNames === true,
     log: global.log !== false && !loggingDisabledByEnvironment(process.env),
-    profile: global.profile === true,
+    profile: global.cpuProfile === true,
     version: cliVersion,
     onFailure: (message) => {
       if (!jsonRequested) {
@@ -1019,7 +1022,7 @@ program.hook("preAction", async (_command, actionCommand) => {
         );
       }
     },
-  });
+  }).catch(() => undefined);
 });
 
 registerLogsCommands(program, {
@@ -1093,11 +1096,9 @@ try {
 
 // The record closes after the outcome is printed, so nothing it does can change
 // what the run reported. A failed run says where its record is.
-const { recordPath, profilePath } = await currentRecorder().finish(
-  failure ? "error" : "ok",
-  Number(process.exitCode ?? 0),
-  failure,
-);
+const { recordPath, profilePath } = await currentRecorder()
+  .finish(failure ? "error" : "ok", Number(process.exitCode ?? 0), failure)
+  .catch(() => ({}) as { recordPath?: string; profilePath?: string });
 if (failure && recordPath && !jsonRequested) {
   process.stderr.write(`Run log: ${withoutTerminalControls(recordPath)}\n`);
 }
