@@ -449,9 +449,10 @@ how it ended. Records stay on your machine and are never uploaded.
 
 A record holds counts, sizes, and timings. It keeps no file names, paths,
 worksheet names, or cell values unless you add `--log-names`, which keeps input
-file names, progress details, and error messages as printed. Option values are
-never kept, only which options were set. A failed run prints the path of its
-record.
+file names, progress details, and error messages as printed. Options given as
+switches or numbers are kept as given, such as `--limit 7`; for options given as
+text, such as paths and worksheet names, only the fact that they were set is
+kept. A failed run prints the path of its record.
 
 Records live in `%LOCALAPPDATA%\consultchimps\logs` on Windows,
 `~/Library/Logs/consultchimps` on macOS, and `consultchimps/logs` under
