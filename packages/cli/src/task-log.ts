@@ -30,7 +30,7 @@ import {
  */
 
 export const RUN_RECORD_PATTERN: RegExp =
-  /^(\d{8}T\d{9}Z)-[a-z0-9-]+-[0-9a-f]{4}\.(jsonl|cpuprofile)$/u;
+  /^(\d{8}T\d{9}Z)-[a-z0-9-]+-[0-9a-f]{8}\.(jsonl|cpuprofile)$/u;
 const KEEP_RUNS = 100;
 const KEEP_DAYS = 30;
 const MEMORY_INTERVAL_MS = 1000;
@@ -152,7 +152,7 @@ export function runIdTime(runId: string): number | undefined {
 function newRunId(command: string, started: Date): string {
   const stamp = started.toISOString().replace(/[-:.]/gu, "");
   const slug = command.toLowerCase().replace(/[^a-z0-9]+/gu, "-") || "run";
-  return `${stamp}-${slug}-${randomBytes(2).toString("hex")}`;
+  return `${stamp}-${slug}-${randomBytes(4).toString("hex")}`;
 }
 
 // Runs on its own thread so it keeps sampling while the main thread is busy in
@@ -226,6 +226,7 @@ class FileRecorder implements RunRecorder {
   #peakHeapUsed = 0;
   #result: OperationResult | undefined;
   #finished = false;
+  #interrupted = false;
   #failed = false;
   #inputCount = 0;
   // Records the interruption, then steps aside: a command with its own
@@ -233,9 +234,15 @@ class FileRecorder implements RunRecorder {
   // Only when nobody else listens does this end the process, which is what
   // Node would have done without any listener.
   readonly #onSignal = (signal: NodeJS.Signals) => {
+    if (process.listenerCount(signal) > 0) {
+      // Another listener ends this run; finish() writes the end line with the
+      // exit code the run actually leaves with.
+      this.#interrupted = true;
+      return;
+    }
     const exitCode = signal === "SIGINT" ? 130 : 143;
     this.#writeEnd({ outcome: "interrupted", exitCode });
-    if (process.listenerCount(signal) === 0) process.exit(exitCode);
+    process.exit(exitCode);
   };
 
   constructor(options: RunRecorderOptions) {
@@ -355,7 +362,7 @@ class FileRecorder implements RunRecorder {
     const profilePath = await this.#stopProfile();
     await this.#stopSampler();
     const end: Omit<TaskLogEnd, "type" | "t" | "peakRss" | "peakHeapUsed"> = {
-      outcome,
+      outcome: this.#interrupted ? "interrupted" : outcome,
       exitCode,
     };
     if (this.#result) {
@@ -481,8 +488,11 @@ class FileRecorder implements RunRecorder {
     // (a command that handles its own cancellation keeps running after an
     // interruption was recorded) has nowhere to go.
     if (!this.#recordPath || (this.#finished && record.type !== "end")) return;
+    // The first line creates the file exclusively: two runs that drew the same
+    // id stop one record rather than interleave into one file.
     appendFileSync(this.#recordPath, `${JSON.stringify(record)}\n`, {
       mode: 0o600,
+      flag: record.type === "run" ? "wx" : "a",
     });
   }
 
