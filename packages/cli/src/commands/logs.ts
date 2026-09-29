@@ -58,9 +58,10 @@ export function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   const seconds = ms / 1000;
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const minutes = Math.floor(seconds / 60);
-  const rest = Math.round(seconds - minutes * 60);
-  return `${minutes}m ${String(rest).padStart(2, "0")}s`;
+  // Rounded before splitting, so 119.6s reads 2m 00s, never 1m 60s.
+  const whole = Math.round(seconds);
+  const minutes = Math.floor(whole / 60);
+  return `${minutes}m ${String(whole % 60).padStart(2, "0")}s`;
 }
 
 export function formatBytes(bytes: number): string {
@@ -248,10 +249,22 @@ export function registerLogsCommands(
     .action((run: string) => {
       const directory = resolveLogDirectory();
       const runs = listRuns(directory);
-      const listing =
-        run === "latest"
-          ? runs[0]
-          : runs.find((candidate) => candidate.runId.startsWith(run));
+      // An exact id wins; otherwise a prefix must name exactly one run, so a
+      // date or command prefix never silently picks the wrong one.
+      const matches = runs.filter((candidate) =>
+        candidate.runId.startsWith(run),
+      );
+      const exact = runs.find((candidate) => candidate.runId === run);
+      if (run !== "latest" && !exact && matches.length > 1) {
+        throw new ConsultChimpsError(
+          "CLI_LOG_AMBIGUOUS",
+          `"${run}" matches ${matches.length} runs; give more of the id. Newest: ${matches
+            .slice(0, 3)
+            .map((candidate) => candidate.runId)
+            .join(", ")}`,
+        );
+      }
+      const listing = run === "latest" ? runs[0] : (exact ?? matches[0]);
       if (!listing) {
         throw new ConsultChimpsError(
           "CLI_LOG_NOT_FOUND",

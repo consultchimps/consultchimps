@@ -17,6 +17,8 @@ import * as XLSX from "xlsx";
 
 import type { TaskLogRecord } from "@consultchimps/core";
 
+import { formatDuration } from "../src/commands/logs.js";
+
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../dist/index.js", import.meta.url));
 const temporaryDirectories: string[] = [];
@@ -308,5 +310,20 @@ describe("local run records", () => {
     const missing = await runCli(["--json", "logs", "show", "19990101"], logs);
     expect(missing.exitCode).toBe(1);
     expect(JSON.parse(missing.stdout).error.code).toBe("CLI_LOG_NOT_FOUND");
+
+    // A prefix two runs share is refused rather than resolved to one of them.
+    await runCli(
+      ["sheets", "inspect", path.join(directory, "client.xlsx")],
+      logs,
+    );
+    const ambiguous = await runCli(["--json", "logs", "show", "20"], logs);
+    expect(ambiguous.exitCode).toBe(1);
+    expect(JSON.parse(ambiguous.stdout).error.code).toBe("CLI_LOG_AMBIGUOUS");
+  });
+
+  it("carries rounded seconds into minutes", () => {
+    expect(formatDuration(119_600)).toBe("2m 00s");
+    expect(formatDuration(61_000)).toBe("1m 01s");
+    expect(formatDuration(59_940)).toBe("59.9s");
   });
 });
