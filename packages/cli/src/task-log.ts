@@ -258,14 +258,6 @@ class FileRecorder implements RunRecorder {
       // and a profile holds code paths. Windows ignores these modes and keeps
       // the folder under the user's own profile instead.
       mkdirSync(this.#directory, { recursive: true, mode: 0o700 });
-      // Pruned when a run starts rather than when it ends, so the limits
-      // hold however runs end, including interrupted ones that exit early.
-      // Housekeeping only: a failure here does not stop the record.
-      try {
-        pruneRunRecords(this.#directory);
-      } catch {
-        // Left for the next run to retry.
-      }
       if (options.log) {
         this.#recordPath = path.join(this.#directory, `${this.#runId}.jsonl`);
         const cpus = os.cpus();
@@ -290,6 +282,15 @@ class FileRecorder implements RunRecorder {
         this.#startSampler();
         process.once("SIGINT", this.#onSignal);
         process.once("SIGTERM", this.#onSignal);
+      }
+      // Pruned once this run's record exists, so it counts toward the limit,
+      // and when a run starts rather than ends, so the limits hold however
+      // runs end, interrupted ones included. Housekeeping only: a failure
+      // here does not stop the record.
+      try {
+        pruneRunRecords(this.#directory);
+      } catch {
+        // Left for the next run to retry.
       }
     });
   }

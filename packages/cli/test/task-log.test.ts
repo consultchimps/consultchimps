@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import {
+  mkdir,
   mkdtemp,
   readdir,
   readFile,
@@ -18,6 +19,7 @@ import * as XLSX from "xlsx";
 import type { TaskLogRecord } from "@consultchimps/core";
 
 import { formatDuration } from "../src/commands/logs.js";
+import { pruneRunRecords } from "../src/task-log.js";
 
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../dist/index.js", import.meta.url));
@@ -319,6 +321,30 @@ describe("local run records", () => {
     const ambiguous = await runCli(["--json", "logs", "show", "20"], logs);
     expect(ambiguous.exitCode).toBe(1);
     expect(JSON.parse(ambiguous.stdout).error.code).toBe("CLI_LOG_AMBIGUOUS");
+  });
+
+  it("keeps exactly the newest 100 runs, the current one included", async () => {
+    const { logs } = await workspace();
+    await mkdir(logs);
+    const now = Date.UTC(2026, 8, 29, 12);
+    const ids = Array.from({ length: 101 }, (_, index) => {
+      const stamp = new Date(now - (101 - index) * 1000)
+        .toISOString()
+        .replace(/[-:.]/gu, "");
+      return `${stamp}-sheets-inspect-0000000${index % 10}`;
+    });
+    await Promise.all(
+      ids.map((id) => writeFile(path.join(logs, `${id}.jsonl`), "{}\n")),
+    );
+    await writeFile(path.join(logs, "notes.txt"), "not a record");
+
+    pruneRunRecords(logs, now);
+
+    const left = (await readdir(logs)).sort();
+    expect(left.filter((name) => name.endsWith(".jsonl"))).toHaveLength(100);
+    expect(left).not.toContain(`${ids[0]}.jsonl`);
+    expect(left).toContain(`${ids[100]}.jsonl`);
+    expect(left).toContain("notes.txt");
   });
 
   it("carries rounded seconds into minutes", () => {
