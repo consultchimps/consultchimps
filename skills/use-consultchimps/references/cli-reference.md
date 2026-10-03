@@ -2,21 +2,29 @@
 
 # ConsultChimps CLI reference
 
-The document commands of `consultchimps` 0.12.0, as the CLI itself
+The document commands of `consultchimps` 0.13.0, as the CLI itself
 prints them. A flag absent here does not exist in that version.
+
+The `db` commands are left out: they need
+native database bindings and no skill carries recipes for them. Run
+`consultchimps db --help` against an install to see them.
 
 ## consultchimps
 
 ```text
 Usage: consultchimps [options] [command]
 
-Clear, local-first tools that explain how they process your spreadsheets,
-presentations, and PDFs.
+Local-first tools for spreadsheets, persistent databases, presentations, and
+PDFs.
 
 Options:
   -V, --version   output the version number
   --json          print one line of machine-readable JSON for automation instead
                   of the detailed explanation
+  --no-log        do not keep a local record of this run
+  --log-names     keep input file names, progress details, and error messages in
+                  the run record
+  --cpu-profile   save a CPU profile of this run beside its record
   -h, --help      display help for command
 
 Commands:
@@ -25,9 +33,14 @@ Commands:
   pptx            inspect or populate PowerPoint templates without changing the
                   source files
   pdf             split or combine PDF documents without changing the originals
+  logs            list and read the local records of earlier runs
+  db              Create persistent local databases, manage schemas, and import
+                  workbook submissions
   help [command]  display help for command
 
 Quick start:
+  consultchimps db create -o inventory.duckdb
+  consultchimps db import prepare inventory.duckdb --input inventory.xlsx -o review.ccplan
   consultchimps sheets inspect clients.xlsx
   consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
   consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx
@@ -468,4 +481,65 @@ What happens:
   ConsultChimps reads the matching PDFs in their resolved order, copies every
   page into one new document, reports the final page count, and leaves every
   source PDF unchanged.
+```
+
+## consultchimps logs
+
+```text
+Usage: consultchimps logs [options] [command]
+
+list and read the local records of earlier runs
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  list [options]  list recent runs, newest first
+  show [run]      summarise one run: stages, slowest steps, memory, and outcome
+  path            print the folder that holds run records
+  help [command]  display help for command
+
+Examples:
+  consultchimps logs
+  consultchimps logs show
+  consultchimps logs path
+
+Records stay on this machine. They hold counts, sizes, and timings, and names only for runs made with --log-names.
+```
+
+## consultchimps logs list
+
+```text
+Usage: consultchimps logs list [options]
+
+list recent runs, newest first
+
+Options:
+  --limit <count>  how many runs to list (default: 20)
+  -h, --help       display help for command
+```
+
+## consultchimps logs show
+
+```text
+Usage: consultchimps logs show [options] [run]
+
+summarise one run: stages, slowest steps, memory, and outcome
+
+Arguments:
+  run         a run id or its start, or latest (default: "latest")
+
+Options:
+  -h, --help  display help for command
+```
+
+## consultchimps logs path
+
+```text
+Usage: consultchimps logs path [options]
+
+print the folder that holds run records
+
+Options:
+  -h, --help  display help for command
 ```
