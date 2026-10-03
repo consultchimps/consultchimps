@@ -5,7 +5,6 @@
  */
 import { ConsultChimpsError } from "@consultchimps/core";
 import {
-  applyColumnMappingToTables,
   type CellValue,
   type ColumnHeaderSource,
   type ColumnMapping,
@@ -16,8 +15,6 @@ import {
   type Table,
   type TableRow,
   uniqueHeaders,
-  unionTables,
-  validateColumnMapping,
 } from "@consultchimps/tabular";
 import * as XLSX from "xlsx";
 
@@ -45,6 +42,7 @@ import {
 import type { AllWorksheetSplitMetric } from "./split/all-worksheet.js";
 import { splitOutputFilenames } from "./split/names.js";
 import { stripPivotParts } from "./tier1/pivot.js";
+import { CellError } from "./package/cell-error.js";
 import { convertWorkbookToValues } from "./values-only.js";
 import {
   cellWidthLength,
@@ -130,32 +128,6 @@ export function yieldToEventLoop(): Promise<void> {
   });
 }
 
-export interface ConsolidateTablesOptions {
-  addSourceColumns?: boolean | undefined;
-  /**
-   * Fold the source headers into canonical columns before the union. The
-   * mapping is matched by normalized column key whatever `normalizeHeaders`
-   * says, so the two options never compete: see {@link consolidateTables}.
-   */
-  mapping?: ColumnMapping | undefined;
-  /**
-   * Match columns whose headers differ only in case, spacing, or punctuation
-   * (for example "Failed Checks" and "Failed_Checks") instead of requiring
-   * the exact same header in every worksheet.
-   */
-  normalizeHeaders?: boolean | undefined;
-}
-
-/** One consolidated table, plus the columns no mapping entry claimed. */
-export interface ConsolidateTablesResult {
-  table: Table;
-  /**
-   * Every distinct unmapped spelling across the inputs, in first-seen order.
-   * Empty when no mapping was applied.
-   */
-  unmappedColumns: string[];
-}
-
 /** The portable filename a byte-level mapping draft is offered under. */
 export const SUGGESTED_MAPPING_FILE_NAME = "mapping-draft.json";
 /** The media type a written column mapping carries as an artifact. */
@@ -203,7 +175,8 @@ function tableSourceRowNumber(table: Table, index: number): number {
  * this as a date" from ordinary text it should try to parse, which is also why
  * the shape stays one shape.
  */
-const WORKBOOK_DATE_TEXT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
+export const WORKBOOK_DATE_TEXT: RegExp =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 
 /**
  * Refuse a declared date coercion the worksheet cannot honestly satisfy.
@@ -228,7 +201,7 @@ const WORKBOOK_DATE_TEXT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
  * Either refuses before anything is written, naming the file, the worksheet,
  * the column, and the row, so the message says which cell to look at.
  */
-function refuseNonTextDateColumns(
+export function refuseNonTextDateColumns(
   tables: Table[],
   mapping: ColumnMapping,
 ): void {
@@ -290,7 +263,11 @@ function refuseNonTextDateColumns(
                 }
               : {
                   message: `${location} does not hold text, and ${declared}. Correct that cell, or remove the date coercion for "${canonical.name}". Nothing was written.`,
-                  valueType: typeof value,
+                  // An error cell reaches here as the error it holds.
+                  valueType:
+                    (value as unknown) instanceof CellError
+                      ? "error"
+                      : typeof value,
                 };
 
         throw new ConsultChimpsError(
@@ -310,54 +287,6 @@ function refuseNonTextDateColumns(
       }
     });
   }
-}
-
-/**
- * The consolidation core both surfaces call: fold the source headers into
- * canonical columns when a mapping is supplied, then stack every worksheet
- * table read from the inputs into one union table. Keeping the refusal, the
- * mapping, and the union in one place is what makes the file API and the byte
- * API produce the same columns, the same row order, and the same bytes for the
- * same workbooks.
- *
- * The mapping is applied per source table, before the union, so that two
- * columns of one worksheet folding into a single canonical column is caught as
- * that worksheet's ambiguity rather than silently merged across the inputs.
- *
- * `mapping` and `normalizeHeaders` do not compete. A mapping always matches by
- * normalized column key, so the flag changes nothing about which source header
- * reaches which canonical column; canonical names are written verbatim and are
- * identical in every mapped table, so they union exactly either way.
- * `normalizeHeaders` continues to govern only how the columns the mapping did
- * not claim are matched against each other.
- */
-export function consolidateTables(
-  tables: Table[],
-  options: ConsolidateTablesOptions = {},
-): ConsolidateTablesResult {
-  if (tables.length === 0) {
-    throw new ConsultChimpsError(
-      XLSX_ERRORS.XLSX_NO_TABLES,
-      "No visible, non-empty worksheets were found in the input workbooks.",
-    );
-  }
-
-  const unionOptions = {
-    addSourceColumns: options.addSourceColumns,
-    normalizeHeaders: options.normalizeHeaders,
-  };
-
-  if (!options.mapping) {
-    return { table: unionTables(tables, unionOptions), unmappedColumns: [] };
-  }
-
-  const mapping = validateColumnMapping(options.mapping);
-  refuseNonTextDateColumns(tables, mapping);
-  const mapped = applyColumnMappingToTables(tables, mapping);
-  return {
-    table: unionTables(mapped.tables, unionOptions),
-    unmappedColumns: mapped.unmappedColumns,
-  };
 }
 
 /**
@@ -952,7 +881,9 @@ function keptColumnOffsets(
  * nothing: a `!ref` padded to the bottom of the sheet by formatting is not
  * walked to refuse an option that was wrong on its face.
  */
-function declaredHeaderRowIndex(configuredRow?: number): number | undefined {
+export function declaredHeaderRowIndex(
+  configuredRow?: number,
+): number | undefined {
   if (configuredRow === undefined) {
     return undefined;
   }
@@ -1354,22 +1285,6 @@ export function consolidationInputs(
   return inputs;
 }
 
-/**
- * What one workbook contributed to a consolidation, as counts a run record can
- * keep: the tables read, their data rows, and the widest table's columns.
- */
-export function consolidationMeasures(
-  inputs: ConsolidationInputs,
-): Record<string, number> {
-  let rows = 0;
-  let columns = 0;
-  for (const table of inputs.tables) {
-    rows += table.rows.length;
-    columns = Math.max(columns, table.columns.length);
-  }
-  return { tables: inputs.tables.length, rows, columns };
-}
-
 export function workbookTables(
   workbook: XLSX.WorkBook,
   workbookDates: WorkbookDates,
@@ -1708,7 +1623,7 @@ const SHEET_NAME_FORBIDDEN = /[\\/?*[\]:]/u;
 // eslint-disable-next-line no-control-regex -- the pattern exists to find control characters.
 const SHEET_NAME_CONTROL = /[\u0000-\u001F\u007F]/u;
 
-function assertSheetName(sheetName: string): void {
+export function assertSheetName(sheetName: string): void {
   const problem =
     sheetName.length === 0
       ? "is empty"

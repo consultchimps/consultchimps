@@ -1,6 +1,11 @@
 import type { CellValue } from "@consultchimps/tabular";
 import { Zip, ZipDeflate, strToU8 } from "fflate";
 
+import { CellError } from "./cell-error.js";
+
+/** A value the writer can store: a table value, or an error cell. */
+export type WritableCellValue = CellValue | CellError;
+
 /**
  * A single-worksheet workbook written row by row (ADR 0006). The worksheet XML
  * is deflated as it is produced, so memory holds one batch of rows and the
@@ -71,7 +76,7 @@ export function tableColumnWidth(longest: number): number {
 }
 
 /** The length a value contributes to its column's width. */
-export function cellWidthLength(value: CellValue): number {
+export function cellWidthLength(value: WritableCellValue): number {
   return value === null ? 0 : String(value).length;
 }
 
@@ -146,7 +151,7 @@ export class TableWorkbookWriter {
     this.#appendRow(1, columns);
   }
 
-  writeRow(values: readonly CellValue[]): void {
+  writeRow(values: readonly WritableCellValue[]): void {
     if (this.#written >= this.#rowCount) {
       throw new Error(
         `More rows were written than the ${this.#rowCount} declared.`,
@@ -173,7 +178,7 @@ export class TableWorkbookWriter {
     if (this.#error) throw this.#error;
   }
 
-  #appendRow(rowNumber: number, values: readonly CellValue[]): void {
+  #appendRow(rowNumber: number, values: readonly WritableCellValue[]): void {
     let xml = `<row r="${rowNumber}">`;
     for (let index = 0; index < this.#columns; index += 1) {
       const value = values[index] ?? null;
@@ -184,6 +189,8 @@ export class TableWorkbookWriter {
         // readers treat one.
         if (Number.isFinite(value))
           xml += `<c r="${ref}"><v>${String(value)}</v></c>`;
+      } else if (value instanceof CellError) {
+        xml += `<c r="${ref}" t="e"><v>${escapeCellText(value.text)}</v></c>`;
       } else if (typeof value === "boolean") {
         xml += `<c r="${ref}" t="b"><v>${value ? 1 : 0}</v></c>`;
       } else {

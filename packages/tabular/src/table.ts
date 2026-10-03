@@ -235,11 +235,41 @@ export function groupTableByColumn(
   };
 }
 
-export function unionTables(
-  tables: Table[],
+/** The source columns a union appends, by role. */
+export interface UnionSourceColumns {
+  file: string;
+  sheet: string;
+  row: string;
+}
+
+/**
+ * How tables stack into one union, decided from their headers alone: the
+ * output columns, and for each input, which of its columns fills each output
+ * column. A caller that streams rows applies it row by row; `unionTables` is
+ * this plan applied to rows held in memory.
+ */
+export interface TableUnionPlan {
+  columns: string[];
+  /**
+   * Per input, per output column, the input column that fills it, or
+   * undefined when the input has no such column or the column is a source
+   * column.
+   */
+  inputColumns: Array<Array<string | undefined>>;
+  /** The appended source columns, or undefined when none are added. */
+  sourceColumns: UnionSourceColumns | undefined;
+}
+
+/**
+ * Plan a union of tables with these column lists. The first spelling seen
+ * names each output column; the source columns, when added, come last and
+ * may not collide with an input column.
+ */
+export function planTableUnion(
+  columnLists: ReadonlyArray<readonly string[]>,
   options: UnionTablesOptions = {},
-): Table {
-  if (tables.length === 0) {
+): TableUnionPlan {
+  if (columnLists.length === 0) {
     throw new ConsultChimpsError(
       "TABLES_EMPTY",
       "At least one table is required for a union.",
@@ -252,8 +282,8 @@ export function unionTables(
     options.normalizeHeaders === true ? normalizedColumnKey : columnKey;
   const outputColumnByKey = new Map<string, string>();
 
-  for (const table of tables) {
-    for (const column of table.columns) {
+  for (const columns of columnLists) {
+    for (const column of columns) {
       const key = keyOf(column);
       if (!outputColumnByKey.has(key)) {
         outputColumnByKey.set(key, column);
@@ -261,6 +291,7 @@ export function unionTables(
     }
   }
 
+  const sourceKeys = new Set<string>();
   if (addSourceColumns) {
     for (const column of Object.values(sourceColumns)) {
       const key = keyOf(column);
@@ -272,53 +303,75 @@ export function unionTables(
         );
       }
       outputColumnByKey.set(key, column);
+      sourceKeys.add(key);
     }
   }
 
-  const columns = [...outputColumnByKey.values()];
-  const rows: TableRow[] = [];
-
-  for (const table of tables) {
+  const inputColumns = columnLists.map((columns) => {
     const inputColumnByKey = new Map<string, string>();
-    for (const column of table.columns) {
+    for (const column of columns) {
       const key = keyOf(column);
       if (!inputColumnByKey.has(key)) {
         inputColumnByKey.set(key, column);
       }
     }
+    return [...outputColumnByKey.keys()].map((key) =>
+      sourceKeys.has(key) ? undefined : inputColumnByKey.get(key),
+    );
+  });
 
+  return {
+    columns: [...outputColumnByKey.values()],
+    inputColumns,
+    sourceColumns: addSourceColumns
+      ? {
+          file: sourceColumns.file,
+          sheet: sourceColumns.sheet,
+          row: sourceColumns.row,
+        }
+      : undefined,
+  };
+}
+
+export function unionTables(
+  tables: Table[],
+  options: UnionTablesOptions = {},
+): Table {
+  const plan = planTableUnion(
+    tables.map((table) => table.columns),
+    options,
+  );
+  const rows: TableRow[] = [];
+
+  tables.forEach((table, tableIndex) => {
+    const inputColumns = plan.inputColumns[tableIndex]!;
     table.rows.forEach((inputRow, index) => {
       const outputRow: TableRow = {};
 
-      for (const [key, outputColumn] of outputColumnByKey) {
+      plan.columns.forEach((outputColumn, position) => {
         if (
-          addSourceColumns &&
-          [
-            keyOf(sourceColumns.file),
-            keyOf(sourceColumns.sheet),
-            keyOf(sourceColumns.row),
-          ].includes(key)
+          plan.sourceColumns !== undefined &&
+          position >= plan.columns.length - 3
         ) {
-          continue;
+          return;
         }
-
-        const inputColumn = inputColumnByKey.get(key);
+        const inputColumn = inputColumns[position];
         outputRow[outputColumn] = inputColumn
           ? (inputRow[inputColumn] ?? null)
           : null;
-      }
+      });
 
-      if (addSourceColumns) {
-        outputRow[sourceColumns.file] = table.source?.file ?? null;
-        outputRow[sourceColumns.sheet] = table.source?.sheet ?? null;
-        outputRow[sourceColumns.row] =
+      if (plan.sourceColumns !== undefined) {
+        outputRow[plan.sourceColumns.file] = table.source?.file ?? null;
+        outputRow[plan.sourceColumns.sheet] = table.source?.sheet ?? null;
+        outputRow[plan.sourceColumns.row] =
           table.sourceRows?.[index] ??
           (table.source?.firstDataRow ?? 2) + index;
       }
 
       rows.push(outputRow);
     });
-  }
+  });
 
-  return { columns, rows };
+  return { columns: plan.columns, rows };
 }

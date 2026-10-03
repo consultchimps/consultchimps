@@ -1,5 +1,10 @@
+import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
 import {
+  copyFile,
+  link,
   mkdtemp,
+  open,
   readFile,
   rename,
   rm,
@@ -22,8 +27,10 @@ import {
   ensureDirectory,
   ensureOutputAvailable,
   ensureParentDirectory,
+  FILES_ERRORS,
   isPathWithin,
   isSameFilesystemPath,
+  openRandomAccessSource,
   pathExists,
   refuseInputOverwrite,
 } from "@consultchimps/files";
@@ -40,6 +47,14 @@ import {
 } from "./bytes.js";
 
 import { XLSX_ERRORS } from "./errors.js";
+import {
+  planConsolidation,
+  writeConsolidation,
+  type ConsolidationSettings,
+  type ConsolidationSink,
+  type ConsolidationSource,
+  type OpenedSource,
+} from "./operations/consolidate/consolidate.js";
 import { WorkbookRead } from "./operations/read-model.js";
 import {
   readWorksheetReports,
@@ -81,9 +96,8 @@ import {
   buildTableWorkbookBytes,
   CONSOLIDATE_OPERATION,
   CONSOLIDATED_SHEET_NAME,
-  consolidateTables,
+  assertSheetName,
   consolidationInputs,
-  consolidationMeasures,
   createMergeState,
   finishMergedWorkbook,
   INSPECT_OPERATION,
@@ -101,7 +115,6 @@ import {
   skippedRowsWarning,
   splitOutputFileNames,
   SPLIT_OPERATION,
-  suggestMappingForTables,
   unmappedColumnsWarning,
   WORKBOOK_EXTENSION,
   WORKBOOK_MEDIA_TYPE,
@@ -496,6 +509,139 @@ export async function writeTable(
   return absoluteOutput;
 }
 
+/**
+ * Open a workbook file for random access, reporting one that cannot be opened
+ * with the read error every workbook reader raises.
+ */
+async function openWorkbookSource(absolutePath: string): Promise<OpenedSource> {
+  try {
+    return await openRandomAccessSource(absolutePath);
+  } catch (error) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_READ_FAILED,
+      `Could not read workbook: ${absolutePath}`,
+      { cause: error, details: { filePath: absolutePath } },
+    );
+  }
+}
+
+/**
+ * Write an output as it is produced, into a staging file beside the
+ * destination that replaces it only once every byte is written, so a run that
+ * fails or is cancelled partway leaves no partial workbook behind. The
+ * destination is checked first, as `writeTable` checks it.
+ */
+/**
+ * Move a finished staging file into place. Without overwrite, the destination
+ * is linked rather than renamed onto, so a file another process created there
+ * while the output was being written is refused, not replaced.
+ */
+function isAlreadyThere(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | undefined)?.code === "EEXIST";
+}
+
+/** The refusal the destination check gives before writing, for a file that appeared since. */
+async function refuseExistingOutput(destination: string): Promise<never> {
+  await ensureOutputAvailable(destination);
+  throw new ConsultChimpsError(
+    FILES_ERRORS.FILES_OUTPUT_EXISTS,
+    `Output already exists: ${destination}`,
+    { details: { outputPath: destination } },
+  );
+}
+
+/**
+ * Remove the staging name once the output is published. The output already
+ * stands complete, so a staging name that cannot be removed (a scanner holding
+ * it, say) is left behind rather than failing a run that succeeded.
+ */
+async function removePublishedStaging(staging: string): Promise<void> {
+  await rm(staging, { force: true }).catch(() => undefined);
+}
+
+async function publishStaging(
+  staging: string,
+  destination: string,
+  overwrite: boolean,
+): Promise<void> {
+  if (overwrite) {
+    await rename(staging, destination);
+    return;
+  }
+  try {
+    await link(staging, destination);
+  } catch (linkError) {
+    if (!isAlreadyThere(linkError)) {
+      // A filesystem without hard links: copy, still refusing to replace.
+      try {
+        await copyFile(staging, destination, constants.COPYFILE_EXCL);
+      } catch (copyError) {
+        if (!isAlreadyThere(copyError)) throw copyError;
+        await refuseExistingOutput(destination);
+      }
+      await removePublishedStaging(staging);
+      return;
+    }
+    await refuseExistingOutput(destination);
+  }
+  await removePublishedStaging(staging);
+}
+
+async function writeStagedFile(
+  outputPath: string,
+  options: { overwrite?: boolean | undefined },
+  produce: (sink: ConsolidationSink) => Promise<void>,
+): Promise<string> {
+  const absoluteOutput = await ensureParentDirectory(outputPath);
+  await ensureOutputAvailable(absoluteOutput, { overwrite: options.overwrite });
+  const staging = path.join(
+    path.dirname(absoluteOutput),
+    // A short fixed name, so a destination whose own name is near the
+    // filesystem's limit still has room for its staging file.
+    `.consultchimps-${randomUUID()}.partial`,
+  );
+  const handle = await open(staging, "wx");
+  let pending: Uint8Array[] = [];
+  const sink: ConsolidationSink = {
+    write(chunk) {
+      pending.push(chunk);
+    },
+    async flush() {
+      if (pending.length === 0) return;
+      const bytes = Buffer.concat(pending);
+      pending = [];
+      // A write may take less than it was given; the rest follows.
+      for (let offset = 0; offset < bytes.length;) {
+        const { bytesWritten } = await handle.write(
+          bytes,
+          offset,
+          bytes.length - offset,
+        );
+        if (bytesWritten === 0) {
+          // The run fails and the staging file is removed, rather than retrying forever.
+          throw new Error(
+            `The consolidated workbook could not be written to ${absoluteOutput}: the disk accepted no more data.`,
+          );
+        }
+        offset += bytesWritten;
+      }
+    },
+  };
+  let closed = false;
+  try {
+    await produce(sink);
+    await sink.flush();
+    await handle.close();
+    closed = true;
+    await publishStaging(staging, absoluteOutput, options.overwrite === true);
+  } catch (error) {
+    if (!closed) await handle.close().catch(() => undefined);
+    await rm(staging, { force: true }).catch(() => undefined);
+    throw error;
+  }
+  return absoluteOutput;
+}
+
 interface ResolvedConsolidate {
   absoluteInputs: string[];
   absoluteOutput: string;
@@ -724,40 +870,37 @@ export async function consolidateWorkbooks(
     await ensureParentDirectory(absoluteSuggestOutput);
   }
 
-  const tables: Table[] = [];
-  let skippedTitleRows = 0;
-  let skippedSpacerColumns = 0;
-  for (const [index, absoluteInput] of absoluteInputs.entries()) {
-    throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
-    const read = consolidationInputs(
-      await readWorkbookTableReports(absoluteInput, options),
-    );
-    tables.push(...read.tables);
-    skippedTitleRows += read.skippedTitleRows;
-    skippedSpacerColumns += read.skippedSpacerColumns;
-    options.onProgress?.({
-      operation: CONSOLIDATE_OPERATION,
-      stage: "reading-workbooks",
-      completed: index + 1,
-      total: absoluteInputs.length,
-      detail: path.basename(absoluteInput),
-      measures: consolidationMeasures(read),
-    });
-  }
-
-  const { table, unmappedColumns } = consolidateTables(tables, {
-    ...options,
+  const sources: ConsolidationSource[] = absoluteInputs.map(
+    (absoluteInput) => ({
+      file: path.basename(absoluteInput),
+      source: absoluteInput,
+      details: { filePath: absoluteInput },
+      open: () => openWorkbookSource(absoluteInput),
+    }),
+  );
+  const settings: ConsolidationSettings = {
+    headerRow: options.headerRow,
+    includeHiddenSheets: options.includeHiddenSheets,
+    sheets: options.sheets,
+    addSourceColumns: options.addSourceColumns,
+    normalizeHeaders: options.normalizeHeaders,
     mapping,
-  });
-  const suggestion =
-    absoluteSuggestOutput === undefined
-      ? undefined
-      : suggestMappingForTables(tables);
+    suggestMapping: absoluteSuggestOutput !== undefined,
+    signal: options.signal,
+    onProgress: options.onProgress,
+    outputContext: "files",
+    yieldControl: false,
+  };
+  const plan = await planConsolidation(sources, settings);
+  const { suggestion, unmappedColumns } = plan;
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
-  const output = await writeTable(absoluteOutput, table, {
-    overwrite: options.overwrite,
-    sheetName: options.outputSheetName,
-  });
+  const sheetName = options.outputSheetName ?? CONSOLIDATED_SHEET_NAME;
+  assertSheetName(sheetName);
+  const output = await writeStagedFile(
+    absoluteOutput,
+    { overwrite: options.overwrite },
+    (sink) => writeConsolidation(sources, plan, settings, sheetName, sink),
+  );
   options.onProgress?.({
     operation: CONSOLIDATE_OPERATION,
     stage: "writing-output",
@@ -801,15 +944,15 @@ export async function consolidateWorkbooks(
     artifacts,
     warnings:
       unmappedColumns.length > 0
-        ? [unmappedColumnsWarning(unmappedColumns)]
+        ? [unmappedColumnsWarning([...unmappedColumns])]
         : [],
     metrics: {
       inputFiles: absoluteInputs.length,
-      inputTables: tables.length,
-      outputColumns: table.columns.length,
-      outputRows: table.rows.length,
-      skippedSpacerColumns,
-      skippedTitleRows,
+      inputTables: plan.inputTables,
+      outputColumns: plan.columns.length,
+      outputRows: plan.rowCount,
+      skippedSpacerColumns: plan.skippedSpacerColumns,
+      skippedTitleRows: plan.skippedTitleRows,
       suggestedColumns: suggestion?.mapping.columns.length ?? 0,
       unmappedColumns: unmappedColumns.length,
     },

@@ -58,7 +58,9 @@ directory and inflates one entry chunk by chunk, and `worksheet-events.ts`,
 which reports worksheet and shared-string markup as events through saxes without
 deciding what a cell holds. `preloaded-parts.ts` lets the structural readers
 written against `WorkbookPackage` read a streamed workbook's small parts. The
-cell rules on top live in `src/operations/consolidate/reader.ts`.
+cell rules on top live in `src/operations/consolidate/reader.ts`, and the
+two-pass consolidation that reads through them in
+`src/operations/consolidate/consolidate.ts`.
 
 ### Bounded read path (`src/stream/`)
 
