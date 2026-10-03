@@ -6,36 +6,11 @@ import {
   ConsultChimpsError,
   type OperationControlOptions,
 } from "@consultchimps/core";
-import {
-  applyImport,
-  applySchema,
-  draftImportProfile,
-  inspectDatabase,
-  inspectImport,
-  listBatches,
-  parseDatabaseSchema,
-  parseBatchContext,
-  parseImportProfile,
-  planSchema,
-  planConversion,
-  prepareImport,
-  recordBatch,
-  replaceImportProfile,
-  resolveImport,
-  type DatabaseFormat,
-  type ImportBatchRef,
-  type ReadyImportBatchRef,
+import type {
+  DatabaseFormat,
+  ImportBatchRef,
+  ReadyImportBatchRef,
 } from "@consultchimps/db";
-import {
-  createDatabase,
-  createImportBatch,
-  exportDatabase,
-  inspectFileKind,
-  openDatabase,
-  openImportBatch,
-  prepareImportFile,
-} from "@consultchimps/db/node";
-import { planFilePublication } from "@consultchimps/files";
 import { Option, type Command } from "commander";
 
 import {
@@ -59,6 +34,12 @@ import {
   type DbCommandOutput,
   withDeferredDbCommandOutput,
 } from "../db-command-output.js";
+import {
+  dbModule,
+  dbNodeModule,
+  filesModule,
+  type DbNodeModule,
+} from "../modules.js";
 import { createCliProgress } from "../progress.js";
 import { withoutTerminalControlsInProse } from "../text.js";
 
@@ -177,16 +158,23 @@ async function prepare(
     async (output) => {
       await withControls(output, async (controls) => {
         const delivery = options.context
-          ? parseBatchContext(await readDbDocument(options.context))
+          ? (await dbModule()).parseBatchContext(
+              await readDbDocument(options.context),
+            )
           : undefined;
-        const database = await openDatabase({ path: databasePath });
+        const database = await (
+          await dbNodeModule()
+        ).openDatabase({ path: databasePath });
         let temporary: string | undefined;
         let inputs: Awaited<ReturnType<typeof openDbInputs>> | undefined;
-        let prepared: Awaited<ReturnType<typeof createImportBatch>> | undefined;
+        let prepared:
+          Awaited<ReturnType<DbNodeModule["createImportBatch"]>> | undefined;
         let outcome: CliImportOutcome = { status: "completed" };
         try {
           const suppliedProfile = options.profile
-            ? parseImportProfile(await readDbDocument(options.profile))
+            ? (await dbModule()).parseImportProfile(
+                await readDbDocument(options.profile),
+              )
             : undefined;
           inputs = await openDbInputs(options, controls, suppliedProfile);
           const sourceList = inputs.workbooks.map(
@@ -194,14 +182,18 @@ async function prepare(
           );
           const profile =
             suppliedProfile ??
-            (await draftImportProfile({
+            (await (
+              await dbModule()
+            ).draftImportProfile({
               sources: sourceList,
               naming:
                 options.into === undefined
                   ? { kind: "source-or-selection" }
                   : { kind: "single-table", name: options.into },
             }));
-          const inspected = await inspectDatabase({ database });
+          const inspected = await (
+            await dbModule()
+          ).inspectDatabase({ database });
           if (!options.output)
             temporary = await mkdtemp(path.join(tmpdir(), "cc-import-plan-"));
           const planPath =
@@ -212,7 +204,9 @@ async function prepare(
             ...(options.context ? [options.context] : []),
           ];
           if (!apply) {
-            const preparedFile = await prepareImportFile({
+            const preparedFile = await (
+              await dbNodeModule()
+            ).prepareImportFile({
               path: planPath,
               database,
               sources: sourceList,
@@ -227,7 +221,9 @@ async function prepare(
               "Review this batch with db import inspect, then apply it with db import apply. The saved batch can contain source values; keep it private.\n",
             );
           } else {
-            prepared = await createImportBatch({
+            prepared = await (
+              await dbNodeModule()
+            ).createImportBatch({
               path: planPath,
               database,
               profile,
@@ -235,7 +231,9 @@ async function prepare(
               overwrite: options.force,
               protectedInputPaths,
             });
-            const preparedOutcome = await prepareImport({
+            const preparedOutcome = await (
+              await dbModule()
+            ).prepareImport({
               database,
               prepared,
               sources: sourceList,
@@ -245,10 +243,14 @@ async function prepare(
             const approved = requireReady(
               preparedOutcome.prepared.state === "ready"
                 ? preparedOutcome.prepared
-                : await resolveImport({ database, prepared, decisions: [] }),
+                : await (
+                    await dbModule()
+                  ).resolveImport({ database, prepared, decisions: [] }),
             );
             output.result(
-              await applyImport({
+              await (
+                await dbModule()
+              ).applyImport({
                 database,
                 prepared,
                 approved,
@@ -328,14 +330,20 @@ export function registerDbCommands(
           output,
           async (output) => {
             const schema = options.schema
-              ? parseDatabaseSchema(await readDbDocument(options.schema))
+              ? (await dbModule()).parseDatabaseSchema(
+                  await readDbDocument(options.schema),
+                )
               : undefined;
-            await planFilePublication({
+            await (
+              await filesModule()
+            ).planFilePublication({
               output: options.output,
               inputs: options.schema ? [options.schema] : [],
               overwrite: options.force,
             });
-            const created = await createDatabase({
+            const created = await (
+              await dbNodeModule()
+            ).createDatabase({
               path: options.output,
               format: chooseFormat(options.output, options.format),
               schema,
@@ -357,7 +365,9 @@ export function registerDbCommands(
     .argument("<database>", "SQLite or DuckDB database file")
     .action(async (file: string) => {
       await withDeferredDbCommandOutput(output, async (output) => {
-        const kind = await inspectFileKind({ path: file });
+        const kind = await (
+          await dbNodeModule()
+        ).inspectFileKind({ path: file });
         if (kind.kind === "unmanaged-database") {
           const tables = kind.tables
             .map(
@@ -377,9 +387,13 @@ export function registerDbCommands(
             "This file is a saved import batch. Inspect it with db import inspect.",
           );
         }
-        const database = await openDatabase({ path: file, readonly: true });
+        const database = await (
+          await dbNodeModule()
+        ).openDatabase({ path: file, readonly: true });
         try {
-          const inspection = await inspectDatabase({ database });
+          const inspection = await (
+            await dbModule()
+          ).inspectDatabase({ database });
           output.data(inspection, formatDatabaseInspection(inspection));
         } finally {
           await database.close();
@@ -402,17 +416,24 @@ export function registerDbCommands(
         await withDeferredDbCommandOutput(
           output,
           async (output) => {
-            const schema = parseDatabaseSchema(
+            const schema = (await dbModule()).parseDatabaseSchema(
               await readDbDocument(options.file),
             );
-            const database = await openDatabase({
+            const database = await (
+              await dbNodeModule()
+            ).openDatabase({
               path: databasePath,
               readonly: options.dryRun === true,
             });
             try {
-              const plan = await planSchema({ database, schema });
+              const plan = await (
+                await dbModule()
+              ).planSchema({ database, schema });
               if (options.dryRun) output.data(plan, formatSchemaPlan(plan));
-              else output.result(await applySchema({ database, plan }));
+              else
+                output.result(
+                  await (await dbModule()).applySchema({ database, plan }),
+                );
             } finally {
               await database.close();
             }
@@ -456,7 +477,9 @@ export function registerDbCommands(
         },
       ) => {
         await withDeferredDbCommandOutput(output, async (output) => {
-          const prepared = await openImportBatch({
+          const prepared = await (
+            await dbNodeModule()
+          ).openImportBatch({
             path: batch,
             readonly: true,
           });
@@ -464,12 +487,16 @@ export function registerDbCommands(
             const database =
               options.database === undefined
                 ? undefined
-                : await openDatabase({
+                : await (
+                    await dbNodeModule()
+                  ).openDatabase({
                     path: options.database,
                     readonly: true,
                   });
             try {
-              const inspection = await inspectImport({
+              const inspection = await (
+                await dbModule()
+              ).inspectImport({
                 database,
                 prepared,
                 page: { limit: options.limit, cursor: options.cursor },
@@ -533,24 +560,36 @@ export function registerDbCommands(
           async (output) => {
             await withControls(output, async (controls) => {
               const delivery = options.context
-                ? parseBatchContext(await readDbDocument(options.context))
+                ? (await dbModule()).parseBatchContext(
+                    await readDbDocument(options.context),
+                  )
                 : undefined;
-              const database = await openDatabase({ path: databasePath });
+              const database = await (
+                await dbNodeModule()
+              ).openDatabase({ path: databasePath });
               try {
-                let prepared = await openImportBatch({
+                let prepared = await (
+                  await dbNodeModule()
+                ).openImportBatch({
                   path: options.batch,
                   readonly: true,
                 });
                 try {
-                  let review = await inspectImport({
+                  let review = await (
+                    await dbModule()
+                  ).inspectImport({
                     database,
                     prepared,
                     page: { limit: 1 },
                   });
                   if (review.prepared.state !== "ready") {
                     await prepared.close();
-                    prepared = await openImportBatch({ path: options.batch });
-                    review = await inspectImport({
+                    prepared = await (
+                      await dbNodeModule()
+                    ).openImportBatch({ path: options.batch });
+                    review = await (
+                      await dbModule()
+                    ).inspectImport({
                       database,
                       prepared,
                       page: { limit: 1 },
@@ -559,14 +598,18 @@ export function registerDbCommands(
                   const approved = requireReady(
                     review.prepared.state === "ready"
                       ? review.prepared
-                      : await resolveImport({
+                      : await (
+                          await dbModule()
+                        ).resolveImport({
                           database,
                           prepared,
                           decisions: [],
                         }),
                   );
                   output.result(
-                    await applyImport({
+                    await (
+                      await dbModule()
+                    ).applyImport({
                       database,
                       prepared,
                       approved,
@@ -606,21 +649,31 @@ export function registerDbCommands(
           output,
           async (output) => {
             const profile = options.profile
-              ? parseImportProfile(await readDbDocument(options.profile))
+              ? (await dbModule()).parseImportProfile(
+                  await readDbDocument(options.profile),
+                )
               : undefined;
-            const database = await openDatabase({ path: databasePath });
+            const database = await (
+              await dbNodeModule()
+            ).openDatabase({ path: databasePath });
             try {
-              const prepared = await openImportBatch({ path: options.batch });
+              const prepared = await (
+                await dbNodeModule()
+              ).openImportBatch({ path: options.batch });
               try {
                 const resolved =
                   profile === undefined
-                    ? await resolveImport({
+                    ? await (
+                        await dbModule()
+                      ).resolveImport({
                         database,
                         prepared,
                         decisions: [],
                         rebase: true,
                       })
-                    : await replaceImportProfile({
+                    : await (
+                        await dbModule()
+                      ).replaceImportProfile({
                         database,
                         prepared,
                         profile,
@@ -654,12 +707,16 @@ export function registerDbCommands(
         options: { limit: number; cursor?: string },
       ) => {
         await withDeferredDbCommandOutput(output, async (output) => {
-          const database = await openDatabase({
+          const database = await (
+            await dbNodeModule()
+          ).openDatabase({
             path: databasePath,
             readonly: true,
           });
           try {
-            const deliveries = await listBatches({ database, ...options });
+            const deliveries = await (
+              await dbModule()
+            ).listBatches({ database, ...options });
             output.data(deliveries, formatDeliveryPage(deliveries));
           } finally {
             await database.close();
@@ -690,13 +747,17 @@ export function registerDbCommands(
         await withDeferredDbCommandOutput(
           output,
           async (output) => {
-            const context = parseBatchContext(
+            const context = (await dbModule()).parseBatchContext(
               await readDbDocument(options.context),
             );
-            const database = await openDatabase({ path: databasePath });
+            const database = await (
+              await dbNodeModule()
+            ).openDatabase({ path: databasePath });
             try {
               output.result(
-                await recordBatch({
+                await (
+                  await dbModule()
+                ).recordBatch({
                   database,
                   captureIds: options.capture,
                   context,
@@ -747,14 +808,18 @@ export function registerDbCommands(
           output,
           async (output) => {
             if (options.dryRun !== true) {
-              await planFilePublication({
+              await (
+                await filesModule()
+              ).planFilePublication({
                 output: options.output,
                 inputs: [databasePath],
                 overwrite: options.force,
               });
             }
             await withControls(output, async (controls) => {
-              const database = await openDatabase({
+              const database = await (
+                await dbNodeModule()
+              ).openDatabase({
                 path: databasePath,
                 readonly: options.dryRun === true,
               });
@@ -765,11 +830,15 @@ export function registerDbCommands(
                   database.format,
                 );
                 if (options.dryRun) {
-                  const plan = await planConversion({ database, format });
+                  const plan = await (
+                    await dbModule()
+                  ).planConversion({ database, format });
                   output.data(plan, formatConversionPlan(plan));
                 } else
                   output.result(
-                    await exportDatabase({
+                    await (
+                      await dbNodeModule()
+                    ).exportDatabase({
                       database,
                       output: options.output,
                       format,

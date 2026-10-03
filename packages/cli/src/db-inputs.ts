@@ -6,17 +6,11 @@ import {
   ConsultChimpsError,
   type OperationControlOptions,
 } from "@consultchimps/core";
-import {
-  createWorkbookImportSource,
-  type WorkbookImportSource,
-  type ImportProfile,
-} from "@consultchimps/db";
-import {
-  createScratchDirectory,
-  openRandomAccessSource,
-  type FileSource,
-} from "@consultchimps/files";
+import type { WorkbookImportSource, ImportProfile } from "@consultchimps/db";
+import type { FileSource } from "@consultchimps/files";
 import type { WorkbookSelection } from "@consultchimps/xlsx/stream";
+
+import { dbModule, filesModule } from "./modules.js";
 
 import {
   createDbInputCloser,
@@ -132,7 +126,7 @@ export async function openDbInputs(
       "Use one region flag with one workbook, or save multiple source selections in an import profile.",
     );
   }
-  const scratch = await createScratchDirectory(tmpdir());
+  const scratch = await (await filesModule()).createScratchDirectory(tmpdir());
   const files: FileSource[] = [];
   const workbooks: WorkbookImportSource[] = [];
   const paths: string[] = [];
@@ -147,7 +141,9 @@ export async function openDbInputs(
         );
       keys.add(key);
       paths.push(path.resolve(filePath));
-      const bytes = await openRandomAccessSource(filePath);
+      const bytes = await (
+        await filesModule()
+      ).openRandomAccessSource(filePath);
       files.push(bytes);
       const selection: WorkbookSelection | undefined = options.sheet
         ? { sheet: options.sheet, headerRow: options.headerRow ?? 1 }
@@ -157,7 +153,9 @@ export async function openDbInputs(
             ? { range: options.range }
             : undefined;
       workbooks.push(
-        await createWorkbookImportSource({
+        await (
+          await dbModule()
+        ).createWorkbookImportSource({
           key,
           bytes,
           scratch,
