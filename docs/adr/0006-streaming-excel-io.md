@@ -1,6 +1,6 @@
 # Streaming Excel reading and writing
 
-Status: Proposed.
+Status: Accepted (2026-10-03).
 
 Consolidation holds every input's cells, the stacked table, and the output
 workbook in memory at once, through SheetJS. A real job of 66 workbooks (80 MB)
