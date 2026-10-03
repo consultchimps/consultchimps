@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
 import {
+  copyFile,
   link,
   mkdtemp,
   open,
@@ -25,6 +27,7 @@ import {
   ensureDirectory,
   ensureOutputAvailable,
   ensureParentDirectory,
+  FILES_ERRORS,
   isPathWithin,
   isSameFilesystemPath,
   openRandomAccessSource,
@@ -533,6 +536,20 @@ async function openWorkbookSource(absolutePath: string): Promise<OpenedSource> {
  * is linked rather than renamed onto, so a file another process created there
  * while the output was being written is refused, not replaced.
  */
+function isAlreadyThere(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | undefined)?.code === "EEXIST";
+}
+
+/** The refusal the destination check gives before writing, for a file that appeared since. */
+async function refuseExistingOutput(destination: string): Promise<never> {
+  await ensureOutputAvailable(destination);
+  throw new ConsultChimpsError(
+    FILES_ERRORS.FILES_OUTPUT_EXISTS,
+    `Output already exists: ${destination}`,
+    { details: { outputPath: destination } },
+  );
+}
+
 async function publishStaging(
   staging: string,
   destination: string,
@@ -544,14 +561,19 @@ async function publishStaging(
   }
   try {
     await link(staging, destination);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      // The same refusal the destination check gives before writing.
-      await ensureOutputAvailable(destination);
+  } catch (linkError) {
+    if (!isAlreadyThere(linkError)) {
+      // A filesystem without hard links: copy, still refusing to replace.
+      try {
+        await copyFile(staging, destination, constants.COPYFILE_EXCL);
+      } catch (copyError) {
+        if (!isAlreadyThere(copyError)) throw copyError;
+        await refuseExistingOutput(destination);
+      }
+      await rm(staging, { force: true });
+      return;
     }
-    // A filesystem without hard links: fall back to the rename.
-    await rename(staging, destination);
-    return;
+    await refuseExistingOutput(destination);
   }
   await rm(staging, { force: true });
 }
