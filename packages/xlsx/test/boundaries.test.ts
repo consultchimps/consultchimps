@@ -37,7 +37,7 @@ const JSZIP_ALLOWLIST: readonly string[] = [];
 // Every ZIP library the package depends on. The boundary is about owning ZIP
 // assembly, not about one library, so a new backend joins this list rather than
 // slipping past a check that only knew the old one.
-const ZIP_LIBRARIES: readonly string[] = ["jszip", "fflate"];
+const ZIP_LIBRARIES: readonly string[] = ["jszip", "fflate", "@zip.js/zip.js"];
 
 interface SourceFile {
   /** Path relative to src/, always with forward slashes. */
@@ -212,7 +212,10 @@ describe("boundaries: src/package/ is the only owner of ZIP concerns", () => {
       .filter(
         (file) =>
           ZIP_LIBRARIES.some((library) => importsPackage(file, library)) &&
-          !inDirectory(file, "package"),
+          // The two ZIP owners ARCHITECTURE.md allows: the package model and
+          // the bounded read path.
+          !inDirectory(file, "package") &&
+          !inDirectory(file, "stream"),
       )
       .map((file) => file.relativePath)
       .sort();
