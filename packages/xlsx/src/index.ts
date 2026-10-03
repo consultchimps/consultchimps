@@ -536,7 +536,9 @@ async function writeStagedFile(
   await ensureOutputAvailable(absoluteOutput, { overwrite: options.overwrite });
   const staging = path.join(
     path.dirname(absoluteOutput),
-    `.${path.basename(absoluteOutput)}.${randomUUID()}.partial`,
+    // A short fixed name, so a destination whose own name is near the
+    // filesystem's limit still has room for its staging file.
+    `.consultchimps-${randomUUID()}.partial`,
   );
   const handle = await open(staging, "wx");
   let pending: Uint8Array[] = [];

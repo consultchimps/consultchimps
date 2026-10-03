@@ -85,6 +85,11 @@ export interface ConsolidationSource {
 
 export interface OpenedSource extends RandomAccessSource {
   close(): Promise<void>;
+  /**
+   * Refuse when the source changed while it was open, which a fingerprint
+   * taken when it was opened cannot see. A file source checks its identity.
+   */
+  verifyUnchanged?(): Promise<void>;
 }
 
 export interface ConsolidationSettings {
@@ -439,11 +444,18 @@ async function withWorkbook<T>(
     if (expectedVersion !== undefined && version !== expectedVersion) {
       throw changedWhileRead(source);
     }
+    let result: T;
     try {
-      return await use(workbook, version);
+      result = await use(workbook, version);
     } finally {
       workbook.releaseStrings();
     }
+    try {
+      await opened.verifyUnchanged?.();
+    } catch {
+      throw changedWhileRead(source);
+    }
+    return result;
   } finally {
     await opened.close();
   }
