@@ -6,6 +6,7 @@ import {
   forEachOpenTag,
   tagAttribute,
   WorkbookPackage,
+  type WorkbookPartReader,
 } from "./package/index.js";
 
 const TABLE_RELATIONSHIP_SUFFIX = "/table";
@@ -64,7 +65,7 @@ function parseWorkbookSheets(xml: string, fileName: string): WorkbookSheet[] {
   return sheets;
 }
 
-function workbookSheets(workbookPackage: WorkbookPackage): WorkbookSheet[] {
+function workbookSheets(workbookPackage: WorkbookPartReader): WorkbookSheet[] {
   return parseWorkbookSheets(
     workbookPackage.requireText(WORKBOOK_PART),
     WORKBOOK_PART,
@@ -73,7 +74,7 @@ function workbookSheets(workbookPackage: WorkbookPackage): WorkbookSheet[] {
 
 /** Every worksheet the workbook declares, in workbook order. */
 export function readWorkbookSheetsFrom(
-  workbookPackage: WorkbookPackage,
+  workbookPackage: WorkbookPartReader,
 ): WorkbookSheetEntry[] {
   const relationships = new Map(
     workbookPackage
@@ -159,7 +160,7 @@ function parseTableDefinition(
 
 /** Every Excel Table the package declares, in worksheet order. */
 export function readExcelTableDefinitionsFrom(
-  workbookPackage: WorkbookPackage,
+  workbookPackage: WorkbookPartReader,
 ): ExcelTableDefinition[] {
   const definitions: ExcelTableDefinition[] = [];
 

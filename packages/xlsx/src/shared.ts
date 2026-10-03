@@ -732,7 +732,7 @@ function parsedDateText(value: Date): string | undefined {
   return isComponentsInRange(parts) ? calendarIsoText(parts) : undefined;
 }
 
-function cellToPrimitive(
+export function cellToPrimitive(
   cell: XLSX.CellObject | undefined,
   date: CellDate | undefined,
 ): CellValue {

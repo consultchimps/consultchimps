@@ -52,7 +52,13 @@ concerns; the previous parallel implementations in `values-only.ts`,
 `workbook-column-split.ts`, and `preserve-table-split.ts` converge here.
 `table-writer.ts` is the layer's streaming writer for a single-table workbook
 (ADR 0006): it deflates worksheet XML row by row through fflate, with the same
-fixed timestamps and part ordering, so no whole sheet is held in memory.
+fixed timestamps and part ordering, so no whole sheet is held in memory. Its
+reading counterpart is `zip-reader.ts`, which reads a zip from its central
+directory and inflates one entry chunk by chunk, and `worksheet-events.ts`,
+which reports worksheet and shared-string markup as events through saxes without
+deciding what a cell holds. `preloaded-parts.ts` lets the structural readers
+written against `WorkbookPackage` read a streamed workbook's small parts. The
+cell rules on top live in `src/operations/consolidate/reader.ts`.
 
 ### Bounded read path (`src/stream/`)
 

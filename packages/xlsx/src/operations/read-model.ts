@@ -87,7 +87,7 @@ export class WorkbookRead {
  * caller reporting the error can say which workbook, which sheet, and what the
  * parser objected to.
  */
-function readFailure(
+export function readFailure(
   context: WorkbookReadContext,
   worksheet: string | undefined,
   cause: unknown,

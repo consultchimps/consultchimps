@@ -10,6 +10,7 @@ import {
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 
+import { consolidateWorkbooksBytes } from "../src/bytes.js";
 import {
   consolidateWorkbooks,
   planConsolidateWorkbooks,
@@ -406,6 +407,62 @@ describe("consolidateWorkbooks title rows and spacer columns", () => {
         ["A", 10, "Open", "North"],
         ["B", 20, "Closed", "South"],
       ]);
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+});
+
+/**
+ * A password-protected workbook as Excel saves one: not a zip package but a
+ * compound file holding the encryption header and the encrypted package. The
+ * bytes inside are placeholders; no reader gets as far as decrypting them.
+ */
+function encryptedWorkbookBytes(): Uint8Array {
+  const container = XLSX.CFB.utils.cfb_new();
+  XLSX.CFB.utils.cfb_add(
+    container,
+    "/EncryptionInfo",
+    new Uint8Array([4, 0, 4, 0, 0x40, 0, 0, 0]),
+  );
+  XLSX.CFB.utils.cfb_add(container, "/EncryptedPackage", new Uint8Array(64));
+  return new Uint8Array(
+    XLSX.CFB.write(container, { type: "array" }) as number[],
+  );
+}
+
+describe("consolidateWorkbooks password-protected inputs", () => {
+  it("refuses an encrypted workbook on both surfaces and writes nothing", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
+
+    try {
+      const encrypted = path.join(directory, "locked.xlsx");
+      const plain = path.join(directory, "north.xlsx");
+      const output = path.join(directory, "consolidated.xlsx");
+      await writeFile(encrypted, encryptedWorkbookBytes());
+      await createWorkbook(plain, "North", [
+        ["Client", "Amount"],
+        ["A", 10],
+      ]);
+
+      await expect(
+        consolidateWorkbooks({ inputs: [plain, encrypted], output }),
+      ).rejects.toMatchObject({
+        code: "XLSX_READ_FAILED",
+        message: `Could not read workbook: ${encrypted}`,
+        details: { filePath: encrypted },
+      });
+      await expect(readFile(output)).rejects.toMatchObject({ code: "ENOENT" });
+
+      await expect(
+        consolidateWorkbooksBytes({
+          inputs: [{ name: "locked.xlsx", bytes: encryptedWorkbookBytes() }],
+        }),
+      ).rejects.toMatchObject({
+        code: "XLSX_READ_FAILED",
+        message: "Could not read workbook: locked.xlsx",
+        details: { source: "locked.xlsx" },
+      });
     } finally {
       await rm(directory, { force: true, recursive: true });
     }

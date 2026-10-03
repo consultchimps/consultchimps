@@ -18,7 +18,18 @@ export type {
   LoadWorkbookPackageOptions,
   PackagePart,
   RelationshipEntry,
+  WorkbookPartReader,
 } from "./types.js";
+export { PreloadedParts } from "./preloaded-parts.js";
+export {
+  decodeEscapes,
+  readSharedStrings,
+  readWorksheetEvents,
+  type RawCell,
+  type RawFormula,
+  type WorksheetEvents,
+} from "./worksheet-events.js";
+export { bytesSource, ZipReader } from "./zip-reader.js";
 export {
   forEachOpenTag,
   MACRO_WORKBOOK_MAIN_CONTENT_TYPE,
