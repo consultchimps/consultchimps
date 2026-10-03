@@ -677,6 +677,7 @@ async function openImportBatchUnlocked(options: {
   try {
     engine = NodeSqliteEngine.open(input, options.readonly);
   } catch (cause) {
+    rethrowNativeEngineUnavailable(cause);
     retainInitializationFailure(input, cause);
     throw databaseError(
       "DB_INVALID_PREPARED_IMPORT",

@@ -4,6 +4,10 @@ import { throwIfAborted, type ConsultChimpsError } from "@consultchimps/core";
 
 import { databaseError } from "../../errors.js";
 import { betterSqlite3 } from "./binding.js";
+import {
+  isNativeLoadFailure,
+  nativeEngineUnavailable,
+} from "../native-engine.js";
 import type {
   DatabaseEngine,
   EngineRow,
@@ -12,6 +16,16 @@ import type {
 } from "../../internal/engine.js";
 import { quoteIdentifier } from "../../schema.js";
 import { rollbackAfterFailure } from "../../internal/transaction-cleanup.js";
+
+function connect(open: () => BetterSqlite3.Database): BetterSqlite3.Database {
+  try {
+    return open();
+  } catch (cause) {
+    if (isNativeLoadFailure(cause))
+      throw nativeEngineUnavailable("sqlite", "better-sqlite3", cause);
+    throw cause;
+  }
+}
 
 function sqliteValue(
   value: EngineValue,
@@ -74,13 +88,16 @@ export class NodeSqliteEngine implements DatabaseEngine {
 
   static create(path: string): NodeSqliteEngine {
     const Database = betterSqlite3();
-    return new NodeSqliteEngine(new Database(path), false);
+    return new NodeSqliteEngine(
+      connect(() => new Database(path)),
+      false,
+    );
   }
 
   static open(path: string, readonly = false): NodeSqliteEngine {
     const Database = betterSqlite3();
     return new NodeSqliteEngine(
-      new Database(path, { fileMustExist: true, readonly }),
+      connect(() => new Database(path, { fileMustExist: true, readonly })),
       readonly,
     );
   }
