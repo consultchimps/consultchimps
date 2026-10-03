@@ -29,6 +29,7 @@ import {
 import { databaseError } from "./errors.js";
 import { NodeDuckDbEngine } from "./engines/duckdb/node.js";
 import { NodeSqliteEngine } from "./engines/sqlite/node.js";
+import { NATIVE_ENGINE_UNAVAILABLE } from "./engines/native-engine.js";
 import {
   PREPARED_METADATA_TABLE,
   createImportBatchHandle,
@@ -50,6 +51,13 @@ import type {
 const SQLITE_HEADER = new TextEncoder().encode("SQLite format 3\0");
 const databasePaths = new WeakMap<Database, string>();
 const nativeFiles = new NativeFileRegistry();
+
+// A native engine that could not load says nothing about the file, so it
+// passes through the open paths that would otherwise blame the file.
+function rethrowNativeEngineUnavailable(cause: unknown): void {
+  if (isConsultChimpsError(cause) && cause.code === NATIVE_ENGINE_UNAVAILABLE)
+    throw cause;
+}
 
 function retainInitializationFailure(filePath: string, cause: unknown): void {
   if (
@@ -258,6 +266,7 @@ async function openEngine(
       ? NodeSqliteEngine.open(filePath, readonly)
       : await NodeDuckDbEngine.create(filePath, readonly);
   } catch (cause) {
+    rethrowNativeEngineUnavailable(cause);
     retainInitializationFailure(filePath, cause);
     throw databaseError(
       "DB_OPEN_FAILED",
@@ -281,6 +290,7 @@ async function inspectFileKindUnlocked(options: {
       engine = await openEngine(input, format, true);
       owner = engine;
     } catch (cause) {
+      rethrowNativeEngineUnavailable(cause);
       retainInitializationFailure(input, cause);
       throw databaseError(
         "DB_UNSUPPORTED_FILE_FORMAT",

@@ -7,10 +7,10 @@ import type * as XlsxPackage from "@consultchimps/xlsx";
 
 /**
  * The packages a command needs, loaded when that command runs rather than when
- * the CLI starts. Each one takes one to several seconds to load (the database
- * entry brings two native engines), and without this every command, --version
- * and --help included, paid for all of them. Each loader caches its promise, so
- * a package loads at most once per run. The imports above are types only.
+ * the CLI starts. Each one takes one to several seconds to load, and without
+ * this every command, --version and --help included, paid for all of them.
+ * Each loader caches its promise, so a package loads at most once per run. The
+ * imports above are types only.
  */
 export type DbNodeModule = typeof DbNodePackage;
 

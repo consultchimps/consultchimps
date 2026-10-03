@@ -14,6 +14,7 @@ import type {
   EngineValue,
 } from "../../internal/engine.js";
 import { databaseError } from "../../errors.js";
+import { nativeEngineUnavailable } from "../native-engine.js";
 import { rollbackAfterFailure } from "../../internal/transaction-cleanup.js";
 import { quoteIdentifier } from "../../schema.js";
 
@@ -181,7 +182,12 @@ export class NodeDuckDbEngine implements DatabaseEngine {
     path: string,
     readonly = false,
   ): Promise<NodeDuckDbEngine> {
-    const duckdb = await import("@duckdb/node-api");
+    let duckdb: DuckDbModule;
+    try {
+      duckdb = await import("@duckdb/node-api");
+    } catch (cause) {
+      throw nativeEngineUnavailable("duckdb", "@duckdb/node-api", cause);
+    }
     const instance = await duckdb.DuckDBInstance.create(path, {
       access_mode: readonly ? "READ_ONLY" : "READ_WRITE",
     });
