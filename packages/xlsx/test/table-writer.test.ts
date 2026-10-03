@@ -105,6 +105,8 @@ describe("table workbook writer", () => {
       "x".repeat(32),
       "a/b",
       "a[1]",
+      "Q1\nData",
+      "Q1\tData",
       "'quoted'",
       "History",
     ]) {

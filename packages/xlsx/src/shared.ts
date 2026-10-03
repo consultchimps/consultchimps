@@ -1703,6 +1703,10 @@ export function buildTableWorkbookBytes(
 // fails to open with. SheetJS enforced them with an unexplained error before
 // the writer moved off it.
 const SHEET_NAME_FORBIDDEN = /[\\/?*[\]:]/u;
+// Excel accepts no control characters in a name, and a tab or line feed would
+// not survive the XML attribute that carries it: parsers turn it into a space.
+// eslint-disable-next-line no-control-regex -- the pattern exists to find control characters.
+const SHEET_NAME_CONTROL = /[\u0000-\u001F\u007F]/u;
 
 function assertSheetName(sheetName: string): void {
   const problem =
@@ -1712,11 +1716,13 @@ function assertSheetName(sheetName: string): void {
         ? "is longer than 31 characters"
         : SHEET_NAME_FORBIDDEN.test(sheetName)
           ? "contains one of \\ / ? * [ ] :"
-          : sheetName.startsWith("'") || sheetName.endsWith("'")
-            ? "starts or ends with an apostrophe"
-            : sheetName.toLowerCase() === "history"
-              ? 'is "History", which Excel reserves'
-              : undefined;
+          : SHEET_NAME_CONTROL.test(sheetName)
+            ? "contains a control character such as a tab or line break"
+            : sheetName.startsWith("'") || sheetName.endsWith("'")
+              ? "starts or ends with an apostrophe"
+              : sheetName.toLowerCase() === "history"
+                ? 'is "History", which Excel reserves'
+                : undefined;
   if (problem !== undefined) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_INVALID_SHEET_NAME,
