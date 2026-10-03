@@ -21,12 +21,40 @@ export function bytesSource(
 
 interface ZipEntry {
   readonly method: number;
+  readonly crc: number;
   readonly compressedSize: number;
   readonly size: number;
   readonly localHeader: number;
 }
 
 const READ_CHUNK = 1024 * 1024;
+/**
+ * The most a structural part read whole may inflate to. Worksheets and shared
+ * strings are streamed and never read whole; a workbook, relationships,
+ * content-types, styles or table part this large is not one Excel writes, and
+ * the cap keeps a crafted size from allocating before a byte is checked.
+ */
+const MAX_WHOLE_PART = 64 * 1024 * 1024;
+
+const CRC_TABLE = (() => {
+  const table = new Int32Array(256);
+  for (let index = 0; index < 256; index += 1) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+    }
+    table[index] = value;
+  }
+  return table;
+})();
+
+function updateCrc(crc: number, bytes: Uint8Array): number {
+  let value = crc;
+  for (let index = 0; index < bytes.length; index += 1) {
+    value = CRC_TABLE[(value ^ bytes[index]!) & 0xff]! ^ (value >>> 8);
+  }
+  return value;
+}
 const END_OF_DIRECTORY = 0x06054b50;
 const ZIP64_LOCATOR = 0x07064b50;
 const ZIP64_END = 0x06064b50;
@@ -46,18 +74,25 @@ const u64 = (b: Uint8Array, o: number): number =>
  * inflated as a stream, one read chunk at a time, so a worksheet is never held
  * whole. Encrypted entries and compression methods other than stored and
  * deflate are refused, as is any entry whose data reaches past the source or
- * whose inflated length differs from the length the directory declares.
+ * whose inflated length or CRC-32 differs from what the directory declares.
  */
 export class ZipReader {
   readonly #source: RandomAccessSource;
   readonly #entries: ReadonlyMap<string, ZipEntry>;
+  /**
+   * The CRC-32 of the central directory, which lists every entry's size and
+   * CRC: a reader that opens the archive twice can tell whether it changed.
+   */
+  readonly fingerprint: number;
 
   private constructor(
     source: RandomAccessSource,
     entries: ReadonlyMap<string, ZipEntry>,
+    fingerprint: number,
   ) {
     this.#source = source;
     this.#entries = entries;
+    this.fingerprint = fingerprint;
   }
 
   static async open(source: RandomAccessSource): Promise<ZipReader> {
@@ -113,6 +148,7 @@ export class ZipReader {
       }
       const flags = u16(directory, offset + 8);
       const method = u16(directory, offset + 10);
+      const crc = u32(directory, offset + 16);
       let compressedSize = u32(directory, offset + 20);
       let size = u32(directory, offset + 24);
       const nameLength = u16(directory, offset + 28);
@@ -150,9 +186,13 @@ export class ZipReader {
       if (name.endsWith("/")) {
         continue;
       }
-      entries.set(name, { method, compressedSize, size, localHeader });
+      entries.set(name, { method, crc, compressedSize, size, localHeader });
     }
-    return new ZipReader(source, entries);
+    return new ZipReader(
+      source,
+      entries,
+      (updateCrc(-1, directory) ^ -1) >>> 0,
+    );
   }
 
   has(name: string): boolean {
@@ -164,6 +204,11 @@ export class ZipReader {
     const entry = this.#entries.get(name);
     if (entry === undefined) {
       return undefined;
+    }
+    if (entry.size > MAX_WHOLE_PART) {
+      throw new Error(
+        `The zip entry ${name} declares ${String(entry.size)} bytes, more than a structural part may hold.`,
+      );
     }
     const bytes = new Uint8Array(entry.size);
     let offset = 0;
@@ -210,8 +255,10 @@ export class ZipReader {
     }
 
     let produced = 0;
+    let crc = -1;
     const accept = (chunk: Uint8Array): void => {
       produced += chunk.length;
+      crc = updateCrc(crc, chunk);
       if (produced > entry.size) {
         throw new Error(`The zip entry ${name} is longer than declared.`);
       }
@@ -237,6 +284,9 @@ export class ZipReader {
     }
     if (produced !== entry.size) {
       throw new Error(`The zip entry ${name} is shorter than declared.`);
+    }
+    if ((crc ^ -1) >>> 0 !== entry.crc) {
+      throw new Error(`The zip entry ${name} fails its CRC check.`);
     }
   }
 }

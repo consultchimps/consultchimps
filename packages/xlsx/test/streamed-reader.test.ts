@@ -453,6 +453,40 @@ describe("streamed reader: what it refuses", () => {
     ).rejects.toMatchObject({ code: "XLSX_READ_FAILED" });
   });
 
+  it("refuses an entry whose bytes fail its CRC, though its length holds", async () => {
+    const bytes = await handWorkbook({
+      sheets: [
+        { name: "Data", data: `<row r="1"><c r="A1"><v>1234</v></c></row>` },
+      ],
+    });
+    const at = Buffer.from(bytes).indexOf("<v>1234</v>");
+    bytes[at + 3] = "9".charCodeAt(0);
+    const workbook = await open(bytes);
+    await expect(
+      workbook.readWorksheet(workbook.sheets[0]!, { begin() {}, row() {} }),
+    ).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+      message: 'Could not read worksheet "Data" in workbook: book.xlsx',
+    });
+  });
+
+  it("refuses a structural part that declares an implausible size before allocating it", async () => {
+    const bytes = await handWorkbook({
+      sheets: [{ name: "Data", data: "" }],
+    });
+    const name = Buffer.from("[Content_Types].xml");
+    const header = Buffer.from(bytes).lastIndexOf(name) - 46;
+    new DataView(bytes.buffer, bytes.byteOffset).setUint32(
+      header + 24,
+      0x7fffffff,
+      true,
+    );
+    await expect(open(bytes)).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+      message: "Could not read workbook: book.xlsx",
+    });
+  });
+
   it("refuses a package with no workbook part", async () => {
     const zip = new JSZip();
     zip.file(

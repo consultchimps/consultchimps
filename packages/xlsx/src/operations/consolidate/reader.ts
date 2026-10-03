@@ -241,6 +241,11 @@ class OutOfOrder extends Error {}
 export class StreamedWorkbook {
   readonly sheets: readonly StreamedSheet[];
   readonly #zip: ZipReader;
+
+  /** Changes whenever the package's contents change; see `ZipReader`. */
+  get fingerprint(): number {
+    return this.#zip.fingerprint;
+  }
   readonly #context: StreamedWorkbookContext;
   readonly #styles: StyleTable;
   readonly #date1904: boolean;
