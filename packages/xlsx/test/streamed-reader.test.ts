@@ -129,11 +129,14 @@ function rangeText(range: {
 }
 
 async function streamedGrids(bytes: Uint8Array): Promise<SheetGrid[]> {
-  const workbook = await StreamedWorkbook.open(bytesSource(bytes), {
-    source: "book.xlsx",
-    file: "book.xlsx",
-    details: { source: "book.xlsx" },
-  });
+  const workbook = await StreamedWorkbook.open(
+    bytesSource("book.xlsx", bytes),
+    {
+      source: "book.xlsx",
+      file: "book.xlsx",
+      details: { source: "book.xlsx" },
+    },
+  );
   const grids: SheetGrid[] = [];
   for (const sheet of workbook.sheets) {
     const cells = new Map<string, StreamedValue>();
@@ -284,7 +287,7 @@ describe("streamed reader: values match the engine's", () => {
     await expectSameAsEngine(
       await handWorkbook({
         styles: DATE_STYLES,
-        strings: `<si><t>plain</t></si><si><r><t>ri</t></r><r><rPr><b/></rPr><t>ch</t></r><rPh><t>skip</t></rPh></si><si><t xml:space="preserve"> sp </t></si><si><t>a</t><rPh><t>b</t></rPh></si>`,
+        strings: `<si><t>plain</t></si><si><r><t>ri</t></r><r><rPr><b/></rPr><t>ch</t></r><rPh><t>skip</t></rPh></si><si><t xml:space="preserve"> sp </t></si><si><t>a</t><rPh><t>b</t></rPh></si><si></si><si> </si>`,
         sheets: [
           {
             name: "NoDimension",
@@ -295,6 +298,14 @@ describe("streamed reader: values match the engine's", () => {
               `<row r="5"><c r="B5"><f>1+1</f></c><c r="C5" t="n"/><c r="D5" s="1"/><c r="H5" t="s"/><c r="E5" t="inlineStr"><is><r><t>in</t></r><r><t>line</t></r></is></c><c r="F5" t="inlineStr"/></row>` +
               `<row r="6"/><row r="7"><c><v>1</v></c><c><v>2</v></c><c r="F7"><v>12abc</v></c><c><v>3</v></c></row>` +
               `<row r="8" ht="20"></row><row r="12"/><row r="14"/>`,
+          },
+          {
+            name: "Formulas",
+            data: `<row r="1"><c r="A1"><v>1</v></c><c r="B1"><f>1+1</f></c></row><row r="2"><c r="A2"><f t="shared" ref="A2:A3" si="0">B1</f><v>2</v></c><c r="D2"><f t="shared" si="0"/></c><c r="C2"><f t="array" ref="C2:E3">X</f><v>3</v></c></row><row r="3"><c r="E3" s="0"/><c r="F3"><f t="shared" si="9"/></c></row>`,
+          },
+          {
+            name: "EmptyItems",
+            data: `<row r="1"><c r="A1" t="s"><v>5</v></c><c r="B1" t="s"><v>6</v></c><c r="C1" t="inlineStr"><is></is></c><c r="D1" t="inlineStr"><is> </is></c><c r="E1"><v>1</v></c></row>`,
           },
           {
             name: "Dimension",
@@ -413,7 +424,7 @@ describe("streamed reader: where it deliberately differs", () => {
 
 describe("streamed reader: what it refuses", () => {
   const open = (bytes: Uint8Array) =>
-    StreamedWorkbook.open(bytesSource(bytes), {
+    StreamedWorkbook.open(bytesSource("book.xlsx", bytes), {
       source: "book.xlsx",
       file: "book.xlsx",
       details: { source: "book.xlsx" },

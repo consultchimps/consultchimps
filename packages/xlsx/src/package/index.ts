@@ -26,13 +26,10 @@ export {
   readSharedStrings,
   readWorksheetEvents,
   type RawCell,
+  type RawFormula,
   type WorksheetEvents,
 } from "./worksheet-events.js";
-export {
-  bytesSource,
-  ZipReader,
-  type RandomAccessSource,
-} from "./zip-reader.js";
+export { bytesSource, ZipReader } from "./zip-reader.js";
 export {
   forEachOpenTag,
   MACRO_WORKBOOK_MAIN_CONTENT_TYPE,

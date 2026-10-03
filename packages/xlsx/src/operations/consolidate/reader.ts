@@ -17,7 +17,10 @@
  * declares `t="d"` or when its style formats a number as one, and its value is
  * the model's ISO timestamp, through the one calendar route.
  */
-import { ConsultChimpsError } from "@consultchimps/core";
+import {
+  ConsultChimpsError,
+  type RandomAccessSource,
+} from "@consultchimps/core";
 
 import { XLSX_ERRORS } from "../../errors.js";
 import {
@@ -40,7 +43,6 @@ import {
   readWorksheetEvents,
   tagAttribute,
   ZipReader,
-  type RandomAccessSource,
   type RawCell,
 } from "../../package/index.js";
 import { CellError } from "../../package/cell-error.js";
@@ -426,9 +428,13 @@ export class StreamedWorkbook {
   }
 
   /** What the engine stores for a cell, before dates. */
-  #engineCell(raw: RawCell): EngineCell {
+  #engineCell(raw: RawCell, formula: boolean): EngineCell {
     const type = raw.type;
-    if (type === undefined && raw.value === undefined) return ABSENT;
+    if (type === undefined && raw.value === undefined) {
+      // A formula with no cached value reads as nothing, but the engine counts
+      // it towards the used range all the same.
+      return formula ? COUNTED : ABSENT;
+    }
     const text = raw.value === undefined ? undefined : decodeEscapes(raw.value);
     switch (type ?? "n") {
       case "n": {
@@ -514,6 +520,44 @@ export class StreamedWorkbook {
     let lastRow = -1;
     let pendingSelfClosing: string | undefined | null = null;
     const merges: CellRectangle[] = [];
+    // Shared formulas defined so far, and array formula ranges, which make a
+    // cell with no value of its own a formula cell, as the engine reads them.
+    const sharedFormulas = new Set<number>();
+    const arrayRanges: CellRectangle[] = [];
+    const hasFormula = (
+      raw: RawCell,
+      row: number | undefined,
+      column: number,
+    ): boolean => {
+      const formula = raw.formula;
+      let found = false;
+      if (formula !== undefined) {
+        const shared =
+          formula.sharedIndex === undefined
+            ? Number.NaN
+            : Number.parseInt(formula.sharedIndex, 10);
+        if (formula.text !== "") {
+          found = true;
+          if (formula.type === "array" && formula.ref?.includes(":")) {
+            arrayRanges.push(decodeRange(formula.ref));
+          } else if (formula.type === "shared" && !Number.isNaN(shared)) {
+            sharedFormulas.add(shared);
+          }
+        } else if (sharedFormulas.has(shared)) {
+          found = true;
+        }
+      }
+      if (!found && row !== undefined) {
+        found = arrayRanges.some(
+          (range) =>
+            row >= range.startRow &&
+            row <= range.endRow &&
+            column >= range.startColumn &&
+            column <= range.endColumn,
+        );
+      }
+      return found;
+    };
     // The whole worksheet, keyed the way the engine keys it, when gathering.
     const gathered = gather
       ? new Map<number, Map<number, StreamedValue | null>>()
@@ -548,7 +592,7 @@ export class StreamedWorkbook {
           columnTag += 1;
           row = tagValid ? rowTag - 1 : undefined;
         }
-        const engine = this.#engineCell(raw);
+        const engine = this.#engineCell(raw, hasFormula(raw, row, columnTag));
         if (engine.kind === "absent") continue;
         if (columnTag >= 0) {
           guessStartColumn = Math.min(guessStartColumn, columnTag);

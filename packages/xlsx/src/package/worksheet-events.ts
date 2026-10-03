@@ -24,6 +24,16 @@ export interface RawCell {
    * and `_xHHHH_` escapes resolved; null when the cell has no `<is>`.
    */
   readonly inline: string | undefined | null;
+  /** The cell's `<f>` element as written, or undefined when it has none. */
+  readonly formula: RawFormula | undefined;
+}
+
+/** A `<f>` element: its text and the attributes that say what it shares. */
+export interface RawFormula {
+  readonly text: string;
+  readonly type: string | undefined;
+  readonly sharedIndex: string | undefined;
+  readonly ref: string | undefined;
 }
 
 export interface WorksheetEvents {
@@ -65,6 +75,8 @@ function localName(name: string): string {
  * phonetic runs (`<rPh>`) left out. An item that is neither holds no text.
  */
 class StringItem {
+  readonly #trimmed: boolean;
+  #sawText = false;
   #first: string | undefined;
   #joined = "";
   #plain = false;
@@ -74,6 +86,15 @@ class StringItem {
   #phonetic = 0;
   #textCount = 0;
   #current = "";
+
+  /**
+   * `trimmed` says whether the item's content is trimmed before it is read,
+   * as a shared-string item's is and an inline one's is not: an item holding
+   * only spaces is then empty text rather than no text.
+   */
+  constructor(trimmed: boolean) {
+    this.#trimmed = trimmed;
+  }
 
   open(name: string): void {
     if (!this.#seenElement) {
@@ -99,10 +120,15 @@ class StringItem {
   }
 
   text(text: string, escaped: boolean): void {
+    if (!this.#seenElement && text !== "") this.#sawText = true;
     if (this.#inText) this.#current += escaped ? decodeEscapes(text) : text;
   }
 
   value(): string | undefined {
+    // An item with no elements is empty text when it holds nothing at all.
+    if (!this.#seenElement) {
+      return this.#trimmed || !this.#sawText ? "" : undefined;
+    }
     if (this.#plain) return this.#first ?? "";
     return this.#rich ? this.#joined : undefined;
   }
@@ -188,6 +214,8 @@ export async function readWorksheetEvents(
   let item: StringItem | undefined;
   let itemDepth = 0;
   let inlineText: string | undefined | null = null;
+  let formula: RawFormula | undefined;
+  let inFormula = false;
 
   const parser = createParser(part, {
     open(name, tag) {
@@ -218,8 +246,16 @@ export async function readWorksheetEvents(
           inValue = true;
           value = "";
         } else if (name === "is" && !tag.isSelfClosing) {
-          item = new StringItem();
+          item = new StringItem(false);
           itemDepth = 0;
+        } else if (name === "f") {
+          inFormula = true;
+          formula = {
+            text: "",
+            type: attribute(tag, "t"),
+            sharedIndex: attribute(tag, "si"),
+            ref: attribute(tag, "ref"),
+          };
         }
         return;
       }
@@ -236,6 +272,8 @@ export async function readWorksheetEvents(
         value = undefined;
         inValue = false;
         inlineText = null;
+        formula = undefined;
+        inFormula = false;
       }
     },
     close(name) {
@@ -253,6 +291,8 @@ export async function readWorksheetEvents(
       if (cell !== undefined) {
         if (name === "v") {
           inValue = false;
+        } else if (name === "f") {
+          inFormula = false;
         } else if (name === "c") {
           cells?.push({
             ref: cell.ref,
@@ -260,6 +300,7 @@ export async function readWorksheetEvents(
             style: cell.style,
             value: value === "" ? undefined : value,
             inline: inlineText,
+            formula,
           });
           cell = undefined;
         }
@@ -276,6 +317,9 @@ export async function readWorksheetEvents(
     text(text, escaped) {
       if (item !== undefined) item.text(text, escaped);
       else if (inValue) value = (value ?? "") + text;
+      else if (inFormula && formula !== undefined) {
+        formula = { ...formula, text: formula.text + text };
+      }
     },
   });
   await parsePart(zip, part, parser, between);
@@ -307,7 +351,7 @@ export async function readSharedStrings(
       } else if (inTable && name === "si") {
         if (tag.isSelfClosing) strings.push("");
         else {
-          item = new StringItem();
+          item = new StringItem(true);
           depth = 0;
         }
       }

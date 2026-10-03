@@ -1,20 +1,20 @@
+import type { RandomAccessSource } from "@consultchimps/core";
 import { Inflate } from "fflate";
 
 /**
- * Bytes that can be read at any offset: a file handle on the command line, a
- * byte array in the browser. A workbook is read from its zip central directory,
- * which sits at the end of the file, so reading needs random access (ADR 0006).
+ * A source over bytes already in memory. A workbook is read from its zip
+ * central directory, which sits at the end of the file, so reading needs
+ * random access (ADR 0006): a file handle on the command line, this in the
+ * browser.
  */
-export interface RandomAccessSource {
-  readonly size: number;
-  read(offset: number, length: number): Promise<Uint8Array>;
-}
-
-/** A source over bytes already in memory. */
-export function bytesSource(bytes: Uint8Array): RandomAccessSource {
+export function bytesSource(
+  name: string,
+  bytes: Uint8Array,
+): RandomAccessSource {
   return {
+    name,
     size: bytes.length,
-    read: (offset, length) =>
+    readAt: (offset, length) =>
       Promise.resolve(bytes.subarray(offset, offset + length)),
   };
 }
@@ -63,7 +63,7 @@ export class ZipReader {
   static async open(source: RandomAccessSource): Promise<ZipReader> {
     const tailLength = Math.min(source.size, 65_557);
     const tailStart = source.size - tailLength;
-    const tail = await source.read(tailStart, tailLength);
+    const tail = await source.readAt(tailStart, tailLength);
     let end = -1;
     for (let index = tail.length - 22; index >= 0; index -= 1) {
       if (u32(tail, index) === END_OF_DIRECTORY) {
@@ -84,11 +84,11 @@ export class ZipReader {
     ) {
       const locatorOffset = tailStart + end - 20;
       const locator =
-        locatorOffset >= 0 ? await source.read(locatorOffset, 20) : undefined;
+        locatorOffset >= 0 ? await source.readAt(locatorOffset, 20) : undefined;
       if (locator === undefined || u32(locator, 0) !== ZIP64_LOCATOR) {
         throw new Error("The zip64 end of central directory is missing.");
       }
-      const record = await source.read(u64(locator, 8), 56);
+      const record = await source.readAt(u64(locator, 8), 56);
       if (record.length < 56 || u32(record, 0) !== ZIP64_END) {
         throw new Error("The zip64 end of central directory is unreadable.");
       }
@@ -100,7 +100,7 @@ export class ZipReader {
       throw new Error("The zip central directory lies outside the file.");
     }
 
-    const directory = await source.read(directoryOffset, directorySize);
+    const directory = await source.readAt(directoryOffset, directorySize);
     const decoder = new TextDecoder();
     const entries = new Map<string, ZipEntry>();
     let offset = 0;
@@ -197,7 +197,7 @@ export class ZipReader {
         `The zip entry ${name} uses compression method ${String(entry.method)}.`,
       );
     }
-    const header = await this.#source.read(entry.localHeader, 30);
+    const header = await this.#source.readAt(entry.localHeader, 30);
     if (header.length < 30 || u32(header, 0) !== LOCAL_HEADER) {
       throw new Error(`The zip entry ${name} has no local header.`);
     }
@@ -229,7 +229,7 @@ export class ZipReader {
     }
     while (position < end) {
       const length = Math.min(READ_CHUNK, end - position);
-      const chunk = await this.#source.read(position, length);
+      const chunk = await this.#source.readAt(position, length);
       position += length;
       if (inflate) inflate.push(chunk, position >= end);
       else accept(chunk);
