@@ -158,8 +158,11 @@ export interface ConsolidationPlan {
   readonly inputTables: number;
   readonly skippedTitleRows: number;
   readonly skippedSpacerColumns: number;
-  /** Each input's size in the first pass, which the second must match. */
-  readonly inputSizes: readonly number[];
+  /**
+   * Each input's size and zip directory fingerprint in the first pass, which
+   * every later read must match.
+   */
+  readonly inputVersions: readonly string[];
 }
 
 /** Where the output's bytes go, in order. */
@@ -420,21 +423,24 @@ function changedWhileRead(source: ConsolidationSource): ConsultChimpsError {
 
 async function withWorkbook<T>(
   source: ConsolidationSource,
-  expectedSize: number | undefined,
-  use: (workbook: StreamedWorkbook, size: number) => Promise<T>,
+  expectedVersion: string | undefined,
+  use: (workbook: StreamedWorkbook, version: string) => Promise<T>,
 ): Promise<T> {
   const opened = await source.open();
   try {
-    if (expectedSize !== undefined && opened.size !== expectedSize) {
-      throw changedWhileRead(source);
-    }
     const workbook = await StreamedWorkbook.open(opened, {
       file: source.file,
       source: source.source,
       details: source.details,
     });
+    // The directory lists every entry's size and CRC, so any change to the
+    // workbook's contents between two reads changes this.
+    const version = `${String(opened.size)}:${String(workbook.fingerprint)}`;
+    if (expectedVersion !== undefined && version !== expectedVersion) {
+      throw changedWhileRead(source);
+    }
     try {
-      return await use(workbook, opened.size);
+      return await use(workbook, version);
     } finally {
       workbook.releaseStrings();
     }
@@ -566,15 +572,19 @@ export async function planConsolidation(
   const mapping = settings.mapping;
   const dateKeys = dateColumnKeys(mapping);
   const tables: SheetTable[] = [];
-  const inputSizes: number[] = [];
+  const inputVersions: string[] = [];
+  const checkpoint = async (): Promise<void> => {
+    if (settings.yieldControl) await yieldToEventLoop();
+    throwIfAborted(signal, CONSOLIDATE_OPERATION, outputContext);
+  };
   let skippedTitleRows = 0;
   let skippedSpacerColumns = 0;
 
   for (const [input, source] of sources.entries()) {
     throwIfAborted(signal, CONSOLIDATE_OPERATION, outputContext);
     const before = tables.length;
-    await withWorkbook(source, undefined, async (workbook, size) => {
-      inputSizes.push(size);
+    await withWorkbook(source, undefined, async (workbook, version) => {
+      inputVersions.push(version);
       for (const { sheet, index } of selectedSheets(
         workbook.sheets,
         settings,
@@ -721,21 +731,30 @@ export async function planConsolidation(
         projection: [],
       };
       const source = sources[table.input]!;
-      await withWorkbook(source, inputSizes[table.input], async (workbook) => {
-        const rows = new TableRows(output, source, mapping, (values) => {
-          values.forEach((value, position) => {
-            widths[position] = Math.max(
-              widths[position]!,
-              cellWidthLength(value),
-            );
+      await withWorkbook(
+        source,
+        inputVersions[table.input],
+        async (workbook) => {
+          const rows = new TableRows(output, source, mapping, (values) => {
+            values.forEach((value, position) => {
+              widths[position] = Math.max(
+                widths[position]!,
+                cellWidthLength(value),
+              );
+            });
           });
-        });
-        await workbook.readWorksheet(workbook.sheets[table.sheetIndex]!, rows, {
-          gather: table.gathered,
-        });
-        rows.flush();
-        if (rows.rows !== table.rowCount) throw changedWhileRead(source);
-      });
+          await workbook.readWorksheet(
+            workbook.sheets[table.sheetIndex]!,
+            rows,
+            {
+              gather: table.gathered,
+              between: checkpoint,
+            },
+          );
+          rows.flush();
+          if (rows.rows !== table.rowCount) throw changedWhileRead(source);
+        },
+      );
       entry.widths = widths;
     }
     mappedTables.push(entry);
@@ -803,7 +822,7 @@ export async function planConsolidation(
     inputTables: tables.length,
     skippedTitleRows,
     skippedSpacerColumns,
-    inputSizes,
+    inputVersions,
   };
 }
 
@@ -842,7 +861,7 @@ export async function writeConsolidation(
     );
     if (outputs.length === 0) continue;
     throwIfAborted(signal, CONSOLIDATE_OPERATION, outputContext);
-    await withWorkbook(source, plan.inputSizes[input], async (workbook) => {
+    await withWorkbook(source, plan.inputVersions[input], async (workbook) => {
       for (const output of outputs) {
         const table = output.table;
         const rows = new TableRows(

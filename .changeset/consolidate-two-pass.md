@@ -16,8 +16,10 @@ Every cell value is read as before, with three deliberate changes. An error cell
 is written as the error it holds, `#DIV/0!`, instead of Excel's internal number
 for it. A carriage return stored before a line feed is kept rather than dropped.
 A formula's cached text is unescaped once, as all other text is, so text that
-looks like an escape reads back as written. Consolidation no longer parses each
-input twice, once for values and once for dates.
+looks like an escape reads back as written. Because an error cell no longer
+reads as a number, a mapping that coerces its column to a number now refuses it
+rather than writing Excel's internal code as an amount. Consolidation no longer
+parses each input twice, once for values and once for dates.
 
 `@consultchimps/tabular` exports `planTableUnion`, the column plan behind
 `unionTables`, for callers that stack rows as they stream.

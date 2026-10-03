@@ -317,6 +317,39 @@ describe("two-pass consolidation: what a failed run leaves behind", () => {
     }
   });
 
+  it("refuses an input changed between the passes even when its size is not", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
+    try {
+      const sheet = (amount: string) =>
+        `<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Amount</t></is></c></row><row r="2"><c r="A2"><v>${amount}</v></c></row></sheetData>`;
+      const before = await handInput("hand.xlsx", sheet("1111"));
+      const after = await handInput("hand.xlsx", sheet("2222"));
+      expect(after.bytes.length).toBe(before.bytes.length);
+      const input = path.join(directory, "hand.xlsx");
+      await writeFile(input, before.bytes);
+      const output = path.join(directory, "consolidated.xlsx");
+      await expect(
+        consolidateWorkbooks({
+          inputs: [input],
+          output,
+          onProgress: (progress) => {
+            if (progress.stage === "reading-workbooks") {
+              writeFileSync(input, after.bytes);
+            }
+          },
+        }),
+      ).rejects.toMatchObject({
+        code: "XLSX_READ_FAILED",
+        message: expect.stringContaining(
+          "changed while it was being consolidated",
+        ),
+      });
+      expect(await readdir(directory)).toEqual(["hand.xlsx"]);
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
   it("writes nothing when cancelled after the inputs were read", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
     try {
