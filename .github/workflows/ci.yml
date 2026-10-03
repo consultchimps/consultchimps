@@ -24,7 +24,7 @@ jobs:
   # system or Node line that produced it.
   build:
     name: Build
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
@@ -104,8 +104,8 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - blacksmith-4vcpu-ubuntu-2404
-          - blacksmith-4vcpu-windows-2025
+          - ubuntu-24.04
+          - windows-2025
 
     steps:
       - name: Check out repository
@@ -156,7 +156,7 @@ jobs:
     name: Runtime (Node ${{ matrix.node }})
     needs: build
     if: github.event_name == 'push'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     strategy:
@@ -195,7 +195,7 @@ jobs:
   e2e:
     name: Browser tools
     needs: build
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
@@ -259,7 +259,7 @@ jobs:
     name: Check
     needs: [build, test, runtime, e2e]
     if: always()
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
 
     steps:
