@@ -7,19 +7,6 @@ import {
   isConsultChimpsError,
   type OperationResult,
 } from "@consultchimps/core";
-import { discoverFiles } from "@consultchimps/files";
-import { mergePdfs, splitPdf } from "@consultchimps/pdf";
-import {
-  inspectPowerPointTemplate,
-  populatePowerPointTemplate,
-} from "@consultchimps/pptx";
-import {
-  consolidateWorkbooks,
-  describeWorkbook,
-  mergeWorkbooks,
-  splitWorkbookByColumn,
-  unprotectWorkbook,
-} from "@consultchimps/xlsx";
 import {
   CLI_VOCABULARY,
   formatHumanError,
@@ -28,6 +15,7 @@ import {
 import { Command, CommanderError } from "commander";
 
 import { formatWorkbookDescription } from "./describe-report.js";
+import { filesModule, pdfModule, pptxModule, xlsxModule } from "./modules.js";
 import { registerDbCommands } from "./commands/db.js";
 import { registerLogsCommands } from "./commands/logs.js";
 import { createCliProgress, finishActiveProgress } from "./progress.js";
@@ -339,11 +327,15 @@ sheets
   )
   .action(
     async (input: string, options: { output: string; force?: boolean }) => {
-      const [inputPath] = await discoverFiles([input], {
+      const [inputPath] = await (
+        await filesModule()
+      ).discoverFiles([input], {
         extensions: [".xlsx", ".xlsm"],
       });
       currentRecorder().recordInputs([inputPath!]);
-      const result = await unprotectWorkbook({
+      const result = await (
+        await xlsxModule()
+      ).unprotectWorkbook({
         input: inputPath!,
         output: options.output,
         overwrite: options.force === true,
@@ -388,12 +380,16 @@ When you want one combined sheet instead of separate tabs:
 `,
   )
   .action(async (inputs: string[], options: SheetMergeOptions) => {
-    const inputPaths = await discoverFiles(inputs, { extensions: [".xlsx"] });
+    const inputPaths = await (
+      await filesModule()
+    ).discoverFiles(inputs, { extensions: [".xlsx"] });
     currentRecorder().recordInputs(inputPaths);
     const progress = createCliProgress(
       program.opts<GlobalOptions>().json === true,
     );
-    const result = await mergeWorkbooks(inputPaths, options.output, {
+    const result = await (
+      await xlsxModule()
+    ).mergeWorkbooks(inputPaths, options.output, {
       includeSheetIndex: options.index,
       onProgress: progress.report,
       overwrite: options.force === true,
@@ -489,12 +485,16 @@ When you want each worksheet kept as its own tab instead:
 `,
   )
   .action(async (inputs: string[], options: ConsolidateOptions) => {
-    const inputPaths = await discoverFiles(inputs, { extensions: [".xlsx"] });
+    const inputPaths = await (
+      await filesModule()
+    ).discoverFiles(inputs, { extensions: [".xlsx"] });
     currentRecorder().recordInputs(inputPaths);
     const progress = createCliProgress(
       program.opts<GlobalOptions>().json === true,
     );
-    const result = await consolidateWorkbooks({
+    const result = await (
+      await xlsxModule()
+    ).consolidateWorkbooks({
       inputs: inputPaths,
       output: options.output,
       addSourceColumns: options.source !== false,
@@ -613,7 +613,9 @@ Your original workbook is never changed.
         "Choose either --output or --output-dir; they name the same destination option.",
       );
     }
-    const inputPaths = await discoverFiles([input], {
+    const inputPaths = await (
+      await filesModule()
+    ).discoverFiles([input], {
       extensions: [".xlsx", ".xlsm"],
     });
     currentRecorder().recordInputs(inputPaths);
@@ -635,7 +637,9 @@ Your original workbook is never changed.
     const progress = createCliProgress(
       program.opts<GlobalOptions>().json === true,
     );
-    const result = await splitWorkbookByColumn({
+    const result = await (
+      await xlsxModule()
+    ).splitWorkbookByColumn({
       input: inputPath,
       outputDirectory,
       column: options.column,
@@ -703,7 +707,9 @@ rows, and column spellings those commands will match on.
 `,
   )
   .action(async (input: string, options: SheetInspectOptions) => {
-    const inputPaths = await discoverFiles([input], {
+    const inputPaths = await (
+      await filesModule()
+    ).discoverFiles([input], {
       extensions: [".xlsx", ".xlsm"],
     });
     currentRecorder().recordInputs(inputPaths);
@@ -720,7 +726,9 @@ rows, and column spellings those commands will match on.
 
     const json = program.opts<GlobalOptions>().json === true;
     const progress = createCliProgress(json);
-    const outcome = await describeWorkbook(inputPath, {
+    const outcome = await (
+      await xlsxModule()
+    ).describeWorkbook(inputPath, {
       headerRow: options.headerRow,
       includeHiddenSheets: options.hidden === true,
       onProgress: progress.report,
@@ -789,7 +797,9 @@ supported.
   )
   .action(async (template: string, options: PptxInspectOptions) => {
     currentRecorder().recordInputs([template]);
-    const inspection = await inspectPowerPointTemplate(template, {
+    const inspection = await (
+      await pptxModule()
+    ).inspectPowerPointTemplate(template, {
       templateSlide: options.templateSlide,
     });
     if (program.opts<GlobalOptions>().json === true) {
@@ -870,7 +880,9 @@ The output contains only the generated slides. Source files are never changed.
     const progress = createCliProgress(
       program.opts<GlobalOptions>().json === true,
     );
-    const result = await populatePowerPointTemplate({
+    const result = await (
+      await pptxModule()
+    ).populatePowerPointTemplate({
       headerRow: options.headerRow,
       onProgress: progress.report,
       outputPath: options.output,
@@ -930,7 +942,9 @@ What happens:
 `,
   )
   .action(async (input: string, options: SplitOptions) => {
-    const [inputPath] = await discoverFiles([input], { extensions: [".pdf"] });
+    const [inputPath] = await (
+      await filesModule()
+    ).discoverFiles([input], { extensions: [".pdf"] });
     currentRecorder().recordInputs([inputPath!]);
     if (!inputPath) {
       throw new Error("No input PDF was found.");
@@ -941,7 +955,9 @@ What happens:
     const progress = createCliProgress(
       program.opts<GlobalOptions>().json === true,
     );
-    const result = await splitPdf({
+    const result = await (
+      await pdfModule()
+    ).splitPdf({
       input: inputPath,
       outputDirectory,
       filenamePrefix: options.prefix,
@@ -981,12 +997,16 @@ What happens:
 `,
   )
   .action(async (inputs: string[], options: MergeOptions) => {
-    const inputPaths = await discoverFiles(inputs, { extensions: [".pdf"] });
+    const inputPaths = await (
+      await filesModule()
+    ).discoverFiles(inputs, { extensions: [".pdf"] });
     currentRecorder().recordInputs(inputPaths);
     const progress = createCliProgress(
       program.opts<GlobalOptions>().json === true,
     );
-    const result = await mergePdfs({
+    const result = await (
+      await pdfModule()
+    ).mergePdfs({
       inputs: inputPaths,
       onProgress: progress.report,
       output: options.output,
