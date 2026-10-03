@@ -33,7 +33,7 @@ permissions:
 jobs:
   rebuild:
     name: Rebuild xpress9.wasm twice and compare
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     # Emscripten 6.0.9, pinned by immutable digest rather than by the mutable
