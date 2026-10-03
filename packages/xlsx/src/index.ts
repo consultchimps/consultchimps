@@ -550,6 +550,15 @@ async function refuseExistingOutput(destination: string): Promise<never> {
   );
 }
 
+/**
+ * Remove the staging name once the output is published. The output already
+ * stands complete, so a staging name that cannot be removed (a scanner holding
+ * it, say) is left behind rather than failing a run that succeeded.
+ */
+async function removePublishedStaging(staging: string): Promise<void> {
+  await rm(staging, { force: true }).catch(() => undefined);
+}
+
 async function publishStaging(
   staging: string,
   destination: string,
@@ -570,12 +579,12 @@ async function publishStaging(
         if (!isAlreadyThere(copyError)) throw copyError;
         await refuseExistingOutput(destination);
       }
-      await rm(staging, { force: true });
+      await removePublishedStaging(staging);
       return;
     }
     await refuseExistingOutput(destination);
   }
-  await rm(staging, { force: true });
+  await removePublishedStaging(staging);
 }
 
 async function writeStagedFile(
