@@ -2,7 +2,7 @@
 "@consultchimps/core": minor
 "@consultchimps/files": minor
 "@consultchimps/xlsx": minor
-"@consultchimps/db": major
+"@consultchimps/db": minor
 "@consultchimps/messages": minor
 "consultchimps": minor
 ---
