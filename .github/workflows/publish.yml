@@ -117,6 +117,10 @@ jobs:
             # draft until the uploads finish; a rerun replaces the assets.
             if gh release view "${tag}" >/dev/null 2>&1; then
               gh release upload "${tag}" "${assets[@]}" --clobber
+              # A release left as a draft by an interrupted create is published
+              # once its assets are in place; this does nothing to one already
+              # published.
+              gh release edit "${tag}" --draft=false
             else
               gh release create "${tag}" --verify-tag --title "${tag}" \
                 --notes "Portable CLI: download the archive matching your operating system and architecture, extract it, and run \`node consultchimps.mjs --help\` on Node.js 24. Keep its node_modules directory beside the executable. No npm access is required on the destination machine. consultchimps.mjs on its own runs every document command with Node alone; its license notices are in consultchimps-licenses.zip. Changelog: https://github.com/consultchimps/consultchimps/blob/main/packages/cli/CHANGELOG.md" \

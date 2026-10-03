@@ -56,15 +56,15 @@ a hidden worksheet.
 
 Behaviour of 0.13.0, which a checkout build can differ from.
 
-| In the source                               | What happens                                                                                                                               |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Blank rows between or after the data        | skipped; the gap shows as `rowCount > dataRowCount`                                                                                        |
-| Hidden worksheets                           | skipped unless you pass `--hidden`                                                                                                         |
-| Title or banner rows above the header       | skipped when a blank row or merged cells set them apart from a table of four or more columns; otherwise taken as the header row: see below |
-| Empty spacer columns                        | left out, counted in `metrics.skippedSpacerColumns`                                                                                        |
-| Duplicate header names                      | renamed `Name_2`, with no warning                                                                                                          |
-| Blank header over a filled column           | named `column_N`, with no warning                                                                                                          |
-| "Mandatory" / "Optional" rows under headers | kept as data rows                                                                                                                          |
+| In the source                               | What happens                                                                                                                                |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Blank rows between or after the data        | skipped; the gap shows as `rowCount > dataRowCount`                                                                                         |
+| Hidden worksheets                           | skipped unless you pass `--hidden`                                                                                                          |
+| Title or banner rows above the header       | skipped when a blank row or merged cells set them apart from rows holding clearly more values; otherwise taken as the header row: see below |
+| Empty spacer columns                        | left out, counted in `metrics.skippedSpacerColumns`                                                                                         |
+| Duplicate header names                      | renamed `Name_2`, with no warning                                                                                                           |
+| Blank header over a filled column           | named `column_N`, with no warning                                                                                                           |
+| "Mandatory" / "Optional" rows under headers | kept as data rows                                                                                                                           |
 
 The last four change your output without a warning. After a run, list the output
 columns and look for `column_N` and `_2` names, and filter the first rows of
@@ -73,14 +73,16 @@ the run, and say which you did.
 
 ## Header rows under title blocks
 
-In 0.13.0 a report title, merged banner, or "Prepared by" line above a table at
-least four columns wide is skipped when a blank row separates it from the table
-or its values sit in cells merged across columns. The result counts these in
-`metrics.skippedTitleRows`, and empty spacer columns in
-`metrics.skippedSpacerColumns`. Any other line above the headers, or a title
-over a narrower table, still becomes the header row, and the real headers become
-the first data row. Symptoms: a column named like a sentence, `column_N` names,
-and one extra row per file.
+In 0.13.0 a report title, merged banner, or "Prepared by" line is skipped when a
+blank row separates it from the table, or its values sit in cells merged across
+columns, and the rows below it hold clearly more values than it does: a one-cell
+title over three columns is skipped, one over two columns is not. The result
+counts these in `metrics.skippedTitleRows`, and empty spacer columns in
+`metrics.skippedSpacerColumns`. A line sitting directly on the headers with no
+blank row or merged cells, or a title as wide as the table, still becomes the
+header row, and the real headers become the first data row. Check with
+`sheets inspect` before overriding a detected header row. Symptoms: a column
+named like a sentence, `column_N` names, and one extra row per file.
 
 Confirm with `sheets inspect`, then name the real row:
 
