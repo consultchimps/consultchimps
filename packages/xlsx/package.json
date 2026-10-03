@@ -38,6 +38,7 @@
     "@consultchimps/files": "workspace:*",
     "@consultchimps/tabular": "workspace:*",
     "@zip.js/zip.js": "2.14.0",
+    "fflate": "0.8.3",
     "jszip": "3.10.1",
     "saxes": "6.0.0"
   },

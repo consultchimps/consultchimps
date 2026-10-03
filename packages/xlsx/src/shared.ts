@@ -46,6 +46,11 @@ import type { AllWorksheetSplitMetric } from "./split/all-worksheet.js";
 import { splitOutputFilenames } from "./split/names.js";
 import { stripPivotParts } from "./tier1/pivot.js";
 import { convertWorkbookToValues } from "./values-only.js";
+import {
+  cellWidthLength,
+  tableColumnWidth,
+  TableWorkbookWriter,
+} from "./package/table-writer.js";
 
 export const WORKBOOK_MEDIA_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -73,8 +78,6 @@ export function isMacroWorkbookName(name: string): boolean {
 
 // Identical inputs must produce byte-identical outputs, so generated workbooks
 // carry fixed document timestamps instead of the current time.
-const FIXED_WORKBOOK_DATE = new Date(0);
-const WORKBOOK_CREATOR = "ConsultChimps";
 
 export type ConsolidateWorkbooksMetric =
   | "inputFiles"
@@ -1648,33 +1651,6 @@ export function workbookWorksheetRecords(
   };
 }
 
-/** Pin document metadata so identical inputs serialize to identical bytes. */
-function applyDeterministicProperties(workbook: XLSX.WorkBook): void {
-  workbook.Props = {
-    Author: WORKBOOK_CREATOR,
-    CreatedDate: FIXED_WORKBOOK_DATE,
-    LastAuthor: WORKBOOK_CREATOR,
-    ModifiedDate: FIXED_WORKBOOK_DATE,
-  };
-}
-
-function serializeWorkbook(workbook: XLSX.WorkBook): Uint8Array {
-  applyDeterministicProperties(workbook);
-  return new Uint8Array(
-    XLSX.write(workbook, {
-      bookType: "xlsx",
-      // Deduplicate repeated text through the workbook's shared-strings table,
-      // as Excel itself does. Without it every cell carries its own text, so
-      // repetitive tables serialize considerably larger than their inputs. The
-      // table is built in first-encounter order, which keeps identical inputs
-      // producing byte-identical outputs.
-      bookSST: true,
-      compression: true,
-      type: "array",
-    }) as ArrayBuffer,
-  );
-}
-
 /** Build a single-worksheet workbook holding one table's values. */
 export function buildTableWorkbookBytes(
   table: Table,
@@ -1687,33 +1663,73 @@ export function buildTableWorkbookBytes(
     );
   }
 
-  const data: CellValue[][] = [
-    table.columns,
-    ...table.rows.map((row) =>
-      table.columns.map((column) => row[column] ?? null),
-    ),
-  ];
-  const worksheet = XLSX.utils.aoa_to_sheet(data);
-  worksheet["!autofilter"] = {
-    ref: XLSX.utils.encode_range({
-      s: { c: 0, r: 0 },
-      e: {
-        c: table.columns.length - 1,
-        r: table.rows.length,
-      },
-    }),
-  };
-  worksheet["!cols"] = table.columns.map((column) => {
-    const longest = table.rows.reduce(
-      (length, row) => Math.max(length, String(row[column] ?? "").length),
-      column.length,
-    );
-    return { wch: Math.min(Math.max(longest + 2, 10), 60) };
-  });
+  assertSheetName(sheetName);
 
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
-  return serializeWorkbook(workbook);
+  const widths = table.columns.map((column) =>
+    tableColumnWidth(
+      table.rows.reduce(
+        (length, row) => Math.max(length, cellWidthLength(row[column] ?? null)),
+        column.length,
+      ),
+    ),
+  );
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  const writer = new TableWorkbookWriter({
+    sheetName,
+    columns: table.columns,
+    widths,
+    rowCount: table.rows.length,
+    onChunk: (chunk) => {
+      chunks.push(chunk);
+      size += chunk.length;
+    },
+  });
+  for (const row of table.rows) {
+    writer.writeRow(table.columns.map((column) => row[column] ?? null));
+  }
+  writer.finish();
+
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return bytes;
+}
+
+// Excel's own rules for a worksheet name, which a workbook that breaks them
+// fails to open with. SheetJS enforced them with an unexplained error before
+// the writer moved off it.
+const SHEET_NAME_FORBIDDEN = /[\\/?*[\]:]/u;
+// Excel accepts no control characters in a name, and a tab or line feed would
+// not survive the XML attribute that carries it: parsers turn it into a space.
+// eslint-disable-next-line no-control-regex -- the pattern exists to find control characters.
+const SHEET_NAME_CONTROL = /[\u0000-\u001F\u007F]/u;
+
+function assertSheetName(sheetName: string): void {
+  const problem =
+    sheetName.length === 0
+      ? "is empty"
+      : sheetName.length > 31
+        ? "is longer than 31 characters"
+        : SHEET_NAME_FORBIDDEN.test(sheetName)
+          ? "contains one of \\ / ? * [ ] :"
+          : SHEET_NAME_CONTROL.test(sheetName)
+            ? "contains a control character such as a tab or line break"
+            : sheetName.startsWith("'") || sheetName.endsWith("'")
+              ? "starts or ends with an apostrophe"
+              : sheetName.toLowerCase() === "history"
+                ? 'is "History", which Excel reserves'
+                : undefined;
+  if (problem !== undefined) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_INVALID_SHEET_NAME,
+      `The worksheet name "${sheetName}" ${problem}; Excel cannot open a workbook with that name.`,
+      { details: { sheetName } },
+    );
+  }
 }
 
 // The worksheet merge lives in `src/merge/`: it is a part-level transplant on

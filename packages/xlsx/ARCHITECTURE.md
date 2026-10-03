@@ -50,6 +50,9 @@ serialization (fixed DOS dates, `createFolders: false`, stable part ordering),
 platform-pure `Uint8Array` I/O. This is the single owner of ZIP and part-path
 concerns; the previous parallel implementations in `values-only.ts`,
 `workbook-column-split.ts`, and `preserve-table-split.ts` converge here.
+`table-writer.ts` is the layer's streaming writer for a single-table workbook
+(ADR 0006): it deflates worksheet XML row by row through fflate, with the same
+fixed timestamps and part ordering, so no whole sheet is held in memory.
 
 ### Bounded read path (`src/stream/`)
 
