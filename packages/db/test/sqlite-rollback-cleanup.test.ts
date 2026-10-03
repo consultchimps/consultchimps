@@ -6,23 +6,26 @@ const mocks = vi.hoisted(() => ({
   inTransaction: true,
 }));
 
-vi.mock("better-sqlite3", () => ({
-  default: class {
-    pragma() {}
-    defaultSafeIntegers() {}
-    get inTransaction() {
-      return mocks.inTransaction;
-    }
-    exec(sql: string) {
-      mocks.exec(sql);
-    }
-    prepare() {
-      return { all: () => [], run: () => undefined };
-    }
-    close() {
-      mocks.close();
-    }
-  },
+// The engine requires better-sqlite3 at open time, which vi.mock does not
+// intercept, so the fake replaces the binding module that loads it.
+vi.mock("../src/engines/sqlite/binding.js", () => ({
+  betterSqlite3: () =>
+    class {
+      pragma() {}
+      defaultSafeIntegers() {}
+      get inTransaction() {
+        return mocks.inTransaction;
+      }
+      exec(sql: string) {
+        mocks.exec(sql);
+      }
+      prepare() {
+        return { all: () => [], run: () => undefined };
+      }
+      close() {
+        mocks.close();
+      }
+    },
 }));
 
 import { NodeSqliteEngine } from "../src/engines/sqlite/node.js";

@@ -1,8 +1,9 @@
-import BetterSqlite3 from "better-sqlite3";
+import type BetterSqlite3 from "better-sqlite3";
 
 import { throwIfAborted, type ConsultChimpsError } from "@consultchimps/core";
 
 import { databaseError } from "../../errors.js";
+import { betterSqlite3 } from "./binding.js";
 import type {
   DatabaseEngine,
   EngineRow,
@@ -72,12 +73,14 @@ export class NodeSqliteEngine implements DatabaseEngine {
   }
 
   static create(path: string): NodeSqliteEngine {
-    return new NodeSqliteEngine(new BetterSqlite3(path), false);
+    const Database = betterSqlite3();
+    return new NodeSqliteEngine(new Database(path), false);
   }
 
   static open(path: string, readonly = false): NodeSqliteEngine {
+    const Database = betterSqlite3();
     return new NodeSqliteEngine(
-      new BetterSqlite3(path, { fileMustExist: true, readonly }),
+      new Database(path, { fileMustExist: true, readonly }),
       readonly,
     );
   }
