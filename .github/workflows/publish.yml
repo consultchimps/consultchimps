@@ -105,7 +105,13 @@ jobs:
             gh release create "${tag}" --verify-tag --title "${tag}" \
               --notes "Portable CLI: download the archive matching your operating system and architecture, extract it, and run \`node consultchimps.mjs --help\` on Node.js 24. Keep its node_modules directory beside the executable. No npm access is required on the destination machine. Changelog: https://github.com/consultchimps/consultchimps/blob/main/packages/cli/CHANGELOG.md" \
               || true
-            gh release upload "${tag}" portable-archives/*.zip --clobber
+            # The single-file CLI is the same in every archive; it runs every
+            # document command with Node alone (the database engines load only
+            # when a database opens), and the skills and the skills reference
+            # check download it by this name.
+            archive="$(ls portable-archives/consultchimps-linux-x64-*.zip | head -n 1)"
+            unzip -p "${archive}" consultchimps.mjs > consultchimps.mjs
+            gh release upload "${tag}" portable-archives/*.zip consultchimps.mjs --clobber
           else
             echo "No CLI release was published from this commit; skipping the bundle upload."
           fi

@@ -56,15 +56,15 @@ a hidden worksheet.
 
 Behaviour of 0.13.0, which a checkout build can differ from.
 
-| In the source                               | What happens                                        |
-| ------------------------------------------- | --------------------------------------------------- |
-| Blank rows between or after the data        | skipped; the gap shows as `rowCount > dataRowCount` |
-| Hidden worksheets                           | skipped unless you pass `--hidden`                  |
-| Title or banner rows above the header       | taken as the header row: see below                  |
-| Empty spacer columns                        | kept, named `column_N`, empty                       |
-| Duplicate header names                      | renamed `Name_2`, with no warning                   |
-| Blank header over a filled column           | named `column_N`, with no warning                   |
-| "Mandatory" / "Optional" rows under headers | kept as data rows                                   |
+| In the source                               | What happens                                                                                                                               |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Blank rows between or after the data        | skipped; the gap shows as `rowCount > dataRowCount`                                                                                        |
+| Hidden worksheets                           | skipped unless you pass `--hidden`                                                                                                         |
+| Title or banner rows above the header       | skipped when a blank row or merged cells set them apart from a table of four or more columns; otherwise taken as the header row: see below |
+| Empty spacer columns                        | left out, counted in `metrics.skippedSpacerColumns`                                                                                        |
+| Duplicate header names                      | renamed `Name_2`, with no warning                                                                                                          |
+| Blank header over a filled column           | named `column_N`, with no warning                                                                                                          |
+| "Mandatory" / "Optional" rows under headers | kept as data rows                                                                                                                          |
 
 The last four change your output without a warning. After a run, list the output
 columns and look for `column_N` and `_2` names, and filter the first rows of

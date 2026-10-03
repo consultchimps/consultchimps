@@ -111,9 +111,11 @@ npx consultchimps@0.13.0 --json sheets consolidate mapped-row1.xlsx mapped-row3.
 ## 5. Reconcile and hand over
 
 - The sum of `dataRowCount` across the inputs equals `metrics.outputRows` of the
-  last run, less any annotation rows you removed. For a file with a title block,
-  step 1's `dataRowCount` also counts every filled row between the title and the
-  real header, and the real header itself; subtract those rows.
+  last run, less any annotation rows you removed. A title block 0.13.0 skips on
+  its own is already left out of both counts. For a file you consolidated with
+  `--header-row`, step 1's `dataRowCount` (read without it) also counts every
+  filled row between the title and the real header, and the real header itself;
+  subtract those rows, or rerun `sheets inspect` with the same `--header-row`.
 - `warnings` is empty, or every warning is explained.
 - Tell the user: which folds you made and why, which supplier values sit under a
   folded name, any column left unfolded on purpose, and any file you ran
