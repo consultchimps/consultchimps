@@ -3,9 +3,10 @@
 Status: Accepted (2026-10-03).
 
 Consolidation holds every input's cells, the stacked table, and the output
-workbook in memory at once, through SheetJS. A real job of 66 workbooks (80 MB)
-reached Node's default heap limit of about 4 GB on a 32 GB laptop and then ran
-at 100% CPU in garbage collection without finishing (#225). Each input is also
+workbook in memory at once, through SheetJS. It needs roughly 130 to 230 MB of
+memory per MB of input, so a large consolidation reaches Node's default heap
+limit of about 4 GB long before a laptop runs out of memory, and then runs at
+100% CPU in garbage collection without finishing (#225). Each input is also
 parsed twice, once by SheetJS and once by the document model for dates (#169),
 and the output is built three times before a byte is written (#224).
 Consolidation is a core capability, so its foundation has to be proven software,
