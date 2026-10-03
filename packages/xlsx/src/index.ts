@@ -617,6 +617,12 @@ async function writeStagedFile(
           offset,
           bytes.length - offset,
         );
+        if (bytesWritten === 0) {
+          // The run fails and the staging file is removed, rather than retrying forever.
+          throw new Error(
+            `The consolidated workbook could not be written to ${absoluteOutput}: the disk accepted no more data.`,
+          );
+        }
         offset += bytesWritten;
       }
     },
