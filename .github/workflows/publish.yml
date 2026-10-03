@@ -102,10 +102,30 @@ jobs:
           tag="consultchimps@${version}"
           tag_commit="$(git rev-parse -q --verify "refs/tags/${tag}^{commit}" || true)"
           if [ -n "${tag_commit}" ] && [ "${tag_commit}" = "$(git rev-parse HEAD)" ]; then
-            gh release create "${tag}" --verify-tag --title "${tag}" \
-              --notes "Portable CLI: download the archive matching your operating system and architecture, extract it, and run \`node consultchimps.mjs --help\` on Node.js 24. Keep its node_modules directory beside the executable. No npm access is required on the destination machine. Changelog: https://github.com/consultchimps/consultchimps/blob/main/packages/cli/CHANGELOG.md" \
-              || true
-            gh release upload "${tag}" portable-archives/*.zip --clobber
+            # The single-file CLI is the same in every archive; it runs every
+            # document command with Node alone (the database engines load only
+            # when a database opens), and the skills and the skills reference
+            # check download it by this name. Its license notices travel beside
+            # it, taken from the same archive.
+            archive="$(ls portable-archives/consultchimps-linux-x64-*.zip | head -n 1)"
+            standalone="$(mktemp -d)"
+            unzip -q "${archive}" consultchimps.mjs LICENSE THIRD-PARTY-LICENSES.md 'LICENSES/*' -d "${standalone}"
+            cp "${standalone}/consultchimps.mjs" consultchimps.mjs
+            (cd "${standalone}" && zip -qr "${GITHUB_WORKSPACE}/consultchimps-licenses.zip" LICENSE THIRD-PARTY-LICENSES.md LICENSES)
+            assets=(portable-archives/*.zip consultchimps.mjs consultchimps-licenses.zip)
+            # Created with every asset in one call, which keeps the release a
+            # draft until the uploads finish; a rerun replaces the assets.
+            if gh release view "${tag}" >/dev/null 2>&1; then
+              gh release upload "${tag}" "${assets[@]}" --clobber
+              # A release left as a draft by an interrupted create is published
+              # once its assets are in place; this does nothing to one already
+              # published.
+              gh release edit "${tag}" --draft=false
+            else
+              gh release create "${tag}" --verify-tag --title "${tag}" \
+                --notes "Portable CLI: download the archive matching your operating system and architecture, extract it, and run \`node consultchimps.mjs --help\` on Node.js 24. Keep its node_modules directory beside the executable. No npm access is required on the destination machine. consultchimps.mjs on its own runs every document command with Node alone; its license notices are in consultchimps-licenses.zip. Changelog: https://github.com/consultchimps/consultchimps/blob/main/packages/cli/CHANGELOG.md" \
+                "${assets[@]}"
+            fi
           else
             echo "No CLI release was published from this commit; skipping the bundle upload."
           fi
