@@ -19,23 +19,26 @@ const fakes = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("better-sqlite3", () => ({
-  default: class FakeSqliteDatabase {
-    pragma(): void {}
-    defaultSafeIntegers(): void {}
-    backup(
-      destination: string,
-      options: {
-        readonly progress: (info: {
-          readonly totalPages: number;
-          readonly remainingPages: number;
-        }) => number;
-      },
-    ): Promise<unknown> {
-      return fakes.sqliteBackup(destination, options);
-    }
-    close(): void {}
-  },
+// The engine requires better-sqlite3 at open time, which vi.mock does not
+// intercept, so the fake replaces the binding module that loads it.
+vi.mock("../src/engines/sqlite/binding.js", () => ({
+  betterSqlite3: () =>
+    class FakeSqliteDatabase {
+      pragma(): void {}
+      defaultSafeIntegers(): void {}
+      backup(
+        destination: string,
+        options: {
+          readonly progress: (info: {
+            readonly totalPages: number;
+            readonly remainingPages: number;
+          }) => number;
+        },
+      ): Promise<unknown> {
+        return fakes.sqliteBackup(destination, options);
+      }
+      close(): void {}
+    },
 }));
 
 vi.mock("@duckdb/node-api", () => {

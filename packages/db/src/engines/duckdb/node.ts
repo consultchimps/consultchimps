@@ -1,9 +1,8 @@
-import {
-  blobValue,
-  DuckDBBlobValue,
+import type * as DuckDb from "@duckdb/node-api";
+import type {
+  DuckDBConnection,
   DuckDBInstance,
-  type DuckDBConnection,
-  type DuckDBValue,
+  DuckDBValue,
 } from "@duckdb/node-api";
 
 import { ConsultChimpsError, throwIfAborted } from "@consultchimps/core";
@@ -15,10 +14,17 @@ import type {
   EngineValue,
 } from "../../internal/engine.js";
 import { databaseError } from "../../errors.js";
+import { nativeEngineUnavailable } from "../native-engine.js";
 import { rollbackAfterFailure } from "../../internal/transaction-cleanup.js";
 import { quoteIdentifier } from "../../schema.js";
 
 const APPENDER_FLUSH_ROWS = 2_048;
+
+// The native module is imported when a database opens, not when this module
+// loads, so the single-file portable CLI bundle does not load it for commands
+// that open no database. A static import would be hoisted to the top of that
+// bundle. Each engine keeps the module for its value helpers.
+type DuckDbModule = typeof DuckDb;
 
 function quoteStringLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
@@ -110,7 +116,7 @@ function throwResourceCleanupFailure(
   );
 }
 
-function normalizeValue(value: DuckDBValue): EngineValue {
+function normalizeValue(duckdb: DuckDbModule, value: DuckDBValue): EngineValue {
   if (
     value === null ||
     typeof value === "string" ||
@@ -120,31 +126,33 @@ function normalizeValue(value: DuckDBValue): EngineValue {
   ) {
     return value;
   }
-  if (value instanceof DuckDBBlobValue) {
+  if (value instanceof duckdb.DuckDBBlobValue) {
     return new Uint8Array(value.bytes);
   }
   return value.toString();
 }
 
 function normalizeRows(
+  duckdb: DuckDbModule,
   rows: readonly Record<string, DuckDBValue>[],
 ): EngineRow[] {
   return rows.map((row) => {
     const normalized: Record<string, EngineValue> = Object.create(null);
     for (const [name, value] of Object.entries(row)) {
-      normalized[name] = normalizeValue(value);
+      normalized[name] = normalizeValue(duckdb, value);
     }
     return normalized;
   });
 }
 
-function duckDbValue(value: EngineValue): DuckDBValue {
-  return value instanceof Uint8Array ? blobValue(value) : value;
+function duckDbValue(duckdb: DuckDbModule, value: EngineValue): DuckDBValue {
+  return value instanceof Uint8Array ? duckdb.blobValue(value) : value;
 }
 
 export class NodeDuckDbEngine implements DatabaseEngine {
   readonly format = "duckdb" as const;
   readonly interruptible = true;
+  readonly #duckdb: DuckDbModule;
   readonly #instance: DuckDBInstance;
   readonly #connection: DuckDBConnection;
   readonly #path: string;
@@ -157,11 +165,13 @@ export class NodeDuckDbEngine implements DatabaseEngine {
   #transactionFailure: ConsultChimpsError | undefined;
 
   private constructor(
+    duckdb: DuckDbModule,
     instance: DuckDBInstance,
     connection: DuckDBConnection,
     path: string,
     readonly: boolean,
   ) {
+    this.#duckdb = duckdb;
     this.#instance = instance;
     this.#connection = connection;
     this.#path = path;
@@ -172,11 +182,18 @@ export class NodeDuckDbEngine implements DatabaseEngine {
     path: string,
     readonly = false,
   ): Promise<NodeDuckDbEngine> {
-    const instance = await DuckDBInstance.create(path, {
+    let duckdb: DuckDbModule;
+    try {
+      duckdb = await import("@duckdb/node-api");
+    } catch (cause) {
+      throw nativeEngineUnavailable("duckdb", "@duckdb/node-api", cause);
+    }
+    const instance = await duckdb.DuckDBInstance.create(path, {
       access_mode: readonly ? "READ_ONLY" : "READ_WRITE",
     });
     try {
       return new NodeDuckDbEngine(
+        duckdb,
         instance,
         await instance.connect(),
         path,
@@ -231,7 +248,10 @@ export class NodeDuckDbEngine implements DatabaseEngine {
     sql: string,
     values: readonly EngineValue[] = [],
   ): Promise<void> {
-    await this.#connection.run(sql, values.map(duckDbValue));
+    await this.#connection.run(
+      sql,
+      values.map((value) => duckDbValue(this.#duckdb, value)),
+    );
   }
 
   async #query(
@@ -240,9 +260,9 @@ export class NodeDuckDbEngine implements DatabaseEngine {
   ): Promise<readonly EngineRow[]> {
     const reader = await this.#connection.runAndReadAll(
       sql,
-      values.map(duckDbValue),
+      values.map((value) => duckDbValue(this.#duckdb, value)),
     );
-    return normalizeRows(reader.getRowObjects());
+    return normalizeRows(this.#duckdb, reader.getRowObjects());
   }
 
   async execute(sql: string, values?: readonly EngineValue[]): Promise<void> {
@@ -328,7 +348,8 @@ export class NodeDuckDbEngine implements DatabaseEngine {
         }
         const row = options.rows[index];
         if (row === undefined) continue;
-        for (const value of row) appender.appendValue(duckDbValue(value));
+        for (const value of row)
+          appender.appendValue(duckDbValue(this.#duckdb, value));
         appender.endRow();
         if ((index + 1) % APPENDER_FLUSH_ROWS === 0) {
           appender.flushSync();
@@ -429,7 +450,7 @@ export class NodeDuckDbEngine implements DatabaseEngine {
         return;
       }
 
-      const instance = await DuckDBInstance.create(":memory:", {
+      const instance = await this.#duckdb.DuckDBInstance.create(":memory:", {
         temp_directory: `${destination}.tmp`,
       });
       let connection: DuckDBConnection | undefined;
