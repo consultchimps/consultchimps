@@ -63,3 +63,13 @@ export interface LoadWorkbookPackageOptions {
   /** Label used in error messages (a filename or "memory"). */
   readonly sourceLabel?: string | undefined;
 }
+
+/**
+ * The read-only part access the workbook-structure readers need, which both the
+ * editable package and a streaming reader's preloaded parts provide.
+ */
+export interface WorkbookPartReader {
+  requireText(partPath: string): string;
+  relationshipsOf(sourcePart: string): readonly RelationshipEntry[];
+  resolvePart(sourcePart: string, target: string): string;
+}

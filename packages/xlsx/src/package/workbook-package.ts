@@ -81,6 +81,34 @@ export function forEachOpenTag(
 
 export { attributeValue as tagAttribute };
 
+/** The relationships a relationships part declares, in document order. */
+export function parseRelationships(
+  xml: string,
+  partPath: string,
+): PackageRelationship[] {
+  const relationships: PackageRelationship[] = [];
+  forEachOpenTag(xml, partPath, (tag) => {
+    if (tag.local !== "Relationship") {
+      return;
+    }
+    const id = attributeValue(tag, "Id");
+    const target = attributeValue(tag, "Target");
+    const type = attributeValue(tag, "Type");
+    if (id && target && type) {
+      relationships.push({
+        id,
+        target,
+        type,
+        targetMode:
+          attributeValue(tag, "TargetMode") === "External"
+            ? "External"
+            : undefined,
+      });
+    }
+  });
+  return relationships;
+}
+
 export class WorkbookPackage implements WorkbookPackageContract {
   /** Part bytes keyed by part path, in the order the source declared them. */
   readonly #parts = new Map<string, Uint8Array>();
@@ -291,29 +319,8 @@ export class WorkbookPackage implements WorkbookPackageContract {
 
     const partPath = relationshipsPartPath(sourcePart);
     const xml = this.readText(partPath);
-    const relationships: PackageRelationship[] = [];
-
-    if (xml !== undefined) {
-      forEachOpenTag(xml, partPath, (tag) => {
-        if (tag.local !== "Relationship") {
-          return;
-        }
-        const id = attributeValue(tag, "Id");
-        const target = attributeValue(tag, "Target");
-        const type = attributeValue(tag, "Type");
-        if (id && target && type) {
-          relationships.push({
-            id,
-            target,
-            type,
-            targetMode:
-              attributeValue(tag, "TargetMode") === "External"
-                ? "External"
-                : undefined,
-          });
-        }
-      });
-    }
+    const relationships =
+      xml === undefined ? [] : parseRelationships(xml, partPath);
 
     this.#relationships.set(sourcePart, relationships);
     return relationships;
