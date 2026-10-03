@@ -487,6 +487,26 @@ describe("streamed reader: what it refuses", () => {
     });
   });
 
+  it("finds the directory record behind a zip comment that imitates one", async () => {
+    const bytes = await handWorkbook({
+      sheets: [
+        { name: "Data", data: `<row r="1"><c r="A1"><v>1</v></c></row>` },
+      ],
+    });
+    const comment = new Uint8Array(30);
+    comment.set([0x50, 0x4b, 0x05, 0x06], 2);
+    const withComment = new Uint8Array(bytes.length + comment.length);
+    withComment.set(bytes);
+    withComment.set(comment, bytes.length);
+    new DataView(withComment.buffer).setUint16(
+      bytes.length - 2,
+      comment.length,
+      true,
+    );
+    const grids = await streamedGrids(withComment);
+    expect([...grids[0]!.cells.values()]).toEqual([1]);
+  });
+
   it("refuses a package with no workbook part", async () => {
     const zip = new JSZip();
     zip.file(

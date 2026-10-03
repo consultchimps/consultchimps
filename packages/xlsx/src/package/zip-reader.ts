@@ -99,12 +99,16 @@ export class ZipReader {
     const tailLength = Math.min(source.size, 65_557);
     const tailStart = source.size - tailLength;
     const tail = await source.readAt(tailStart, tailLength);
+    // The record is the one whose comment ends exactly at the end of the
+    // file; a comment may itself hold the record's signature.
     let end = -1;
     for (let index = tail.length - 22; index >= 0; index -= 1) {
-      if (u32(tail, index) === END_OF_DIRECTORY) {
+      if (u32(tail, index) !== END_OF_DIRECTORY) continue;
+      if (index + 22 + u16(tail, index + 20) === tail.length) {
         end = index;
         break;
       }
+      if (end < 0) end = index;
     }
     if (end < 0) {
       throw new Error("The file is not a zip archive.");
