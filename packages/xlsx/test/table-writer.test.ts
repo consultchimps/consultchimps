@@ -9,7 +9,7 @@ import { buildTableWorkbookBytes } from "../src/shared.js";
 import {
   escapeCellText,
   TableWorkbookWriter,
-} from "../src/write/table-writer.js";
+} from "../src/package/table-writer.js";
 
 const originalTimeZone = process.env.TZ;
 afterEach(() => {
@@ -134,6 +134,22 @@ describe("table workbook writer", () => {
     expect(() => writer.finish()).toThrow(/1 rows were written but 2/u);
     expect(() => writer.writeRow(["two"])).not.toThrow();
     expect(() => writer.writeRow(["three"])).toThrow(/More rows/u);
+  });
+
+  it("keeps carriage returns, which XML parsers would turn into line feeds", async () => {
+    const table: Table = {
+      columns: ["Note"],
+      rows: [{ Note: "windows\r\nline" }, { Note: "lone\rreturn" }],
+    };
+    const bytes = buildTableWorkbookBytes(table, "Data");
+    // The file carries every carriage return escaped, as Excel writes them.
+    const sheet = (await part(bytes, "xl/worksheets/sheet1.xml"))!;
+    expect(sheet).toContain("windows_x000D_\nline");
+    expect(sheet).toContain("lone_x000D_return");
+    expect(escapeCellText("a\r\nb")).toBe("a_x000D_\nb");
+    // A lone return reads back. SheetJS's reader, which the table readers still
+    // use until ADR 0006 replaces them, folds CRLF to LF on its own side.
+    expect(sheetRows(bytes)[2]).toEqual(["lone\rreturn"]);
   });
 
   it("escapes OOXML's own escape sequence so it reads back literally", () => {

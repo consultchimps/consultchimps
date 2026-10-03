@@ -24,17 +24,18 @@ function fixedModificationTime(): Date {
 const FLUSH_CHARS = 64 * 1024;
 const CORE_DATE = "1970-01-01T00:00:00Z";
 
-// Characters XML 1.0 cannot carry. OOXML writes them as _xHHHH_ (ECMA-376
+// Characters XML 1.0 cannot carry, and the carriage return, which XML parsers
+// normalize to a line feed on read. OOXML writes them as _xHHHH_ (ECMA-376
 // ST_Xstring), and a literal _xHHHH_ in the text is itself escaped as
 // _x005F_xHHHH_ so a reader does not decode it into a different character.
 const INVALID_XML =
   // eslint-disable-next-line no-control-regex -- XML 1.0 cannot carry these characters; the pattern finds them so they can be escaped.
-  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/gu;
+  /[\u0000-\u0008\u000B\u000C\u000D\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/gu;
 const LITERAL_ESCAPE = /_(x[0-9A-Fa-f]{4}_)/gu;
 // Any character one of the replacements below would touch.
 const NEEDS_ESCAPE =
   // eslint-disable-next-line no-control-regex -- XML 1.0 cannot carry these characters; the pattern finds them so they can be escaped.
-  /[&<>_\u0000-\u0008\u000B\u000C\u000E-\u001F\uD800-\uDFFF\uFFFE\uFFFF]/u;
+  /[&<>_\u0000-\u0008\u000B\u000C\u000D\u000E-\u001F\uD800-\uDFFF\uFFFE\uFFFF]/u;
 
 export function escapeCellText(text: string): string {
   // Most text has nothing to escape; checking once is far cheaper than five
@@ -121,7 +122,10 @@ export class TableWorkbookWriter {
     this.#addPart("_rels/.rels", packageRelsXml());
     this.#addPart("docProps/core.xml", corePropertiesXml());
     this.#addPart("docProps/app.xml", appPropertiesXml(sheetName));
-    this.#addPart("xl/workbook.xml", workbookXml(sheetName, this.#lastRef));
+    this.#addPart(
+      "xl/workbook.xml",
+      workbookXml(sheetName, this.#letters.at(-1)!, rowCount + 1),
+    );
     this.#addPart("xl/_rels/workbook.xml.rels", workbookRelsXml());
     this.#addPart("xl/styles.xml", STYLES_XML);
 
@@ -258,11 +262,15 @@ function appPropertiesXml(sheetName: string): string {
   );
 }
 
-function workbookXml(sheetName: string, lastRef: string): string {
+function workbookXml(
+  sheetName: string,
+  lastColumn: string,
+  lastRow: number,
+): string {
   // A defined name refers to its sheet in quotes, with any quote doubled, so a
   // name with spaces or punctuation still resolves.
   const quoted = `'${sheetName.replace(/'/gu, "''")}'`;
-  const absolute = `$A$1:$${lastRef.replace(/(\d+)$/u, "$$$1")}`;
+  const absolute = `$A$1:$${lastColumn}$${lastRow}`;
   return (
     XML_HEADER +
     `<workbook xmlns="${MAIN_NS}" xmlns:r="${REL_NS}">` +

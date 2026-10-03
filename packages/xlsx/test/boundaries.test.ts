@@ -34,6 +34,11 @@ const SOURCE_DIRECTORY = fileURLToPath(new URL("../src/", import.meta.url));
  */
 const JSZIP_ALLOWLIST: readonly string[] = [];
 
+// Every ZIP library the package depends on. The boundary is about owning ZIP
+// assembly, not about one library, so a new backend joins this list rather than
+// slipping past a check that only knew the old one.
+const ZIP_LIBRARIES: readonly string[] = ["jszip", "fflate"];
+
 interface SourceFile {
   /** Path relative to src/, always with forward slashes. */
   readonly relativePath: string;
@@ -141,12 +146,13 @@ describe("boundaries: the walker sees the package", () => {
 
 describe("boundaries: operations and regions never touch ZIP", () => {
   it.each(["operations", "region"])(
-    "no file under src/%s/ imports jszip",
+    "no file under src/%s/ imports a ZIP library",
     (directory) => {
       const offenders = sourceFiles
         .filter(
           (file) =>
-            inDirectory(file, directory) && importsPackage(file, "jszip"),
+            inDirectory(file, directory) &&
+            ZIP_LIBRARIES.some((library) => importsPackage(file, library)),
         )
         .map((file) => file.relativePath);
       expect(offenders).toEqual([]);
@@ -201,11 +207,12 @@ describe("boundaries: the model and the regions never touch the filesystem", () 
 });
 
 describe("boundaries: src/package/ is the only owner of ZIP concerns", () => {
-  it("keeps the jszip allowlist exact", () => {
+  it("keeps the ZIP library allowlist exact", () => {
     const offenders = sourceFiles
       .filter(
         (file) =>
-          importsPackage(file, "jszip") && !inDirectory(file, "package"),
+          ZIP_LIBRARIES.some((library) => importsPackage(file, library)) &&
+          !inDirectory(file, "package"),
       )
       .map((file) => file.relativePath)
       .sort();

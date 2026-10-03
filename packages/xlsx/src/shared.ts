@@ -50,7 +50,7 @@ import {
   cellWidthLength,
   tableColumnWidth,
   TableWorkbookWriter,
-} from "./write/table-writer.js";
+} from "./package/table-writer.js";
 
 export const WORKBOOK_MEDIA_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
