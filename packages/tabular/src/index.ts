@@ -20,6 +20,7 @@ export {
   columnKey,
   groupTableByColumn,
   normalizedColumnKey,
+  planTableUnion,
   unionTables,
   uniqueHeaders,
   type CellValue,
@@ -29,5 +30,7 @@ export {
   type TableGroup,
   type TableRow,
   type TableSource,
+  type TableUnionPlan,
+  type UnionSourceColumns,
   type UnionTablesOptions,
 } from "./table.js";

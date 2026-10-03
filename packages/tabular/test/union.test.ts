@@ -4,6 +4,7 @@ import {
   columnKey,
   groupTableByColumn,
   normalizedColumnKey,
+  planTableUnion,
   unionTables,
   uniqueHeaders,
   type Table,
@@ -281,5 +282,45 @@ describe("groupTableByColumn", () => {
         "Office",
       ),
     ).toThrowError(/Column "Office" was not found/);
+  });
+});
+
+describe("planTableUnion", () => {
+  it("decides the union's columns and fillers from headers alone", () => {
+    const plan = planTableUnion(
+      [
+        ["Case ID", "Region"],
+        ["region", "Status", "case_id"],
+      ],
+      { normalizeHeaders: true },
+    );
+    expect(plan.columns).toEqual([
+      "Case ID",
+      "Region",
+      "Status",
+      "_source_file",
+      "_source_sheet",
+      "_source_row",
+    ]);
+    expect(plan.inputColumns).toEqual([
+      ["Case ID", "Region", undefined, undefined, undefined, undefined],
+      ["case_id", "region", "Status", undefined, undefined, undefined],
+    ]);
+    expect(plan.sourceColumns).toEqual({
+      file: "_source_file",
+      sheet: "_source_sheet",
+      row: "_source_row",
+    });
+  });
+
+  it("adds no source columns when asked not to, and refuses a collision when asked to", () => {
+    expect(planTableUnion([["A"]], { addSourceColumns: false })).toEqual({
+      columns: ["A"],
+      inputColumns: [["A"]],
+      sourceColumns: undefined,
+    });
+    expect(() => planTableUnion([["_Source_File"]])).toThrow(
+      'Source column "_source_file" already exists in the input data.',
+    );
   });
 });

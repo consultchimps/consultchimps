@@ -28,6 +28,13 @@ import {
   WORKBOOK_MAIN_PART,
   WorkbookPackage,
 } from "./package/index.js";
+import { bytesSource } from "./package/index.js";
+import {
+  planConsolidation,
+  writeConsolidation,
+  type ConsolidationSettings,
+  type ConsolidationSource,
+} from "./operations/consolidate/consolidate.js";
 import { WorkbookRead } from "./operations/read-model.js";
 import {
   readWorksheetReports,
@@ -62,12 +69,10 @@ import {
 import {
   appendWorkbookSheets,
   buildSplitGroupBytes,
-  buildTableWorkbookBytes,
   CONSOLIDATE_OPERATION,
   CONSOLIDATED_SHEET_NAME,
-  consolidateTables,
+  assertSheetName,
   consolidationInputs,
-  consolidationMeasures,
   createMergeState,
   finishMergedWorkbook,
   INSPECT_OPERATION,
@@ -88,7 +93,6 @@ import {
   splitOutputFileNames,
   SPLIT_OPERATION,
   SUGGESTED_MAPPING_FILE_NAME,
-  suggestMappingForTables,
   unmappedColumnsWarning,
   WORKBOOK_EXTENSION,
   WORKBOOK_MEDIA_TYPE,
@@ -732,58 +736,53 @@ export async function consolidateWorkbooksBytes(
     "consolidated",
   )}${WORKBOOK_EXTENSION}`;
 
-  const tables: Table[] = [];
-  let skippedTitleRows = 0;
-  let skippedSpacerColumns = 0;
-  for (const [index, input] of options.inputs.entries()) {
-    throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
-    const read = consolidationInputs(
-      workbookWorksheetReports(
-        parseWorkbookBytes(input.bytes, input.name, {
-          details: { source: input.name },
-        }),
-        await readWorkbookDates(input.bytes, input.name, {
-          source: input.name,
-        }),
-        input.name,
-        options,
-      ),
-    );
-    tables.push(...read.tables);
-    skippedTitleRows += read.skippedTitleRows;
-    skippedSpacerColumns += read.skippedSpacerColumns;
-    options.onProgress?.({
-      operation: CONSOLIDATE_OPERATION,
-      stage: "reading-workbooks",
-      completed: index + 1,
-      total: options.inputs.length,
-      detail: input.name,
-      measures: consolidationMeasures(read),
-    });
-    // Reading a workbook, stacking the tables, and serializing the result are
-    // all synchronous, so this operation would otherwise occupy a worker from
-    // its first input to its last byte and never collect a cancellation. The
-    // yields are what let one arrive; see `yieldToEventLoop`.
-    await yieldToEventLoop();
-  }
-
-  throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
-  const { table, unmappedColumns } = consolidateTables(tables, {
-    ...options,
+  const sources: ConsolidationSource[] = options.inputs.map((input) => ({
+    file: input.name,
+    source: input.name,
+    details: { source: input.name },
+    open: () =>
+      Promise.resolve({
+        ...bytesSource(input.name, input.bytes),
+        close: () => Promise.resolve(),
+      }),
+  }));
+  const settings: ConsolidationSettings = {
+    headerRow: options.headerRow,
+    includeHiddenSheets: options.includeHiddenSheets,
+    sheets: options.sheets,
+    addSourceColumns: options.addSourceColumns,
+    normalizeHeaders: options.normalizeHeaders,
     mapping,
-  });
-  const suggestion =
-    options.suggestMapping === true
-      ? suggestMappingForTables(tables)
-      : undefined;
+    suggestMapping: options.suggestMapping === true,
+    signal: options.signal,
+    onProgress: options.onProgress,
+    outputContext: "memory",
+    yieldControl: true,
+  };
+  const plan = await planConsolidation(sources, settings);
+  const { suggestion, unmappedColumns } = plan;
   await yieldToEventLoop();
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
+  const sheetName = options.outputSheetName ?? CONSOLIDATED_SHEET_NAME;
+  assertSheetName(sheetName);
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  await writeConsolidation(sources, plan, settings, sheetName, {
+    write: (chunk) => {
+      chunks.push(chunk);
+      size += chunk.length;
+    },
+    flush: () => Promise.resolve(),
+  });
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
   const output: ByteArtifact = {
     name: outputName,
-    bytes: buildTableWorkbookBytes(
-      table,
-      options.outputSheetName ?? CONSOLIDATED_SHEET_NAME,
-    ),
+    bytes,
     mediaType: WORKBOOK_MEDIA_TYPE,
   };
   options.onProgress?.({
@@ -829,15 +828,15 @@ export async function consolidateWorkbooksBytes(
     artifacts,
     warnings:
       unmappedColumns.length > 0
-        ? [unmappedColumnsWarning(unmappedColumns)]
+        ? [unmappedColumnsWarning([...unmappedColumns])]
         : [],
     metrics: {
       inputFiles: options.inputs.length,
-      inputTables: tables.length,
-      outputColumns: table.columns.length,
-      outputRows: table.rows.length,
-      skippedSpacerColumns,
-      skippedTitleRows,
+      inputTables: plan.inputTables,
+      outputColumns: plan.columns.length,
+      outputRows: plan.rowCount,
+      skippedSpacerColumns: plan.skippedSpacerColumns,
+      skippedTitleRows: plan.skippedTitleRows,
       suggestedColumns: suggestion?.mapping.columns.length ?? 0,
       unmappedColumns: unmappedColumns.length,
     },
