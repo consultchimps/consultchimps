@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  link,
   mkdtemp,
   open,
   readFile,
@@ -527,6 +528,34 @@ async function openWorkbookSource(absolutePath: string): Promise<OpenedSource> {
  * fails or is cancelled partway leaves no partial workbook behind. The
  * destination is checked first, as `writeTable` checks it.
  */
+/**
+ * Move a finished staging file into place. Without overwrite, the destination
+ * is linked rather than renamed onto, so a file another process created there
+ * while the output was being written is refused, not replaced.
+ */
+async function publishStaging(
+  staging: string,
+  destination: string,
+  overwrite: boolean,
+): Promise<void> {
+  if (overwrite) {
+    await rename(staging, destination);
+    return;
+  }
+  try {
+    await link(staging, destination);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      // The same refusal the destination check gives before writing.
+      await ensureOutputAvailable(destination);
+    }
+    // A filesystem without hard links: fall back to the rename.
+    await rename(staging, destination);
+    return;
+  }
+  await rm(staging, { force: true });
+}
+
 async function writeStagedFile(
   outputPath: string,
   options: { overwrite?: boolean | undefined },
@@ -550,7 +579,15 @@ async function writeStagedFile(
       if (pending.length === 0) return;
       const bytes = Buffer.concat(pending);
       pending = [];
-      await handle.write(bytes);
+      // A write may take less than it was given; the rest follows.
+      for (let offset = 0; offset < bytes.length;) {
+        const { bytesWritten } = await handle.write(
+          bytes,
+          offset,
+          bytes.length - offset,
+        );
+        offset += bytesWritten;
+      }
     },
   };
   let closed = false;
@@ -559,7 +596,7 @@ async function writeStagedFile(
     await sink.flush();
     await handle.close();
     closed = true;
-    await rename(staging, absoluteOutput);
+    await publishStaging(staging, absoluteOutput, options.overwrite === true);
   } catch (error) {
     if (!closed) await handle.close().catch(() => undefined);
     await rm(staging, { force: true }).catch(() => undefined);
