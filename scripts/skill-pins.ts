@@ -109,7 +109,9 @@ export function pinnedCliVersion(workspaceRoot: string): string {
   if (ranked.length > 1) {
     const strays = pins
       .filter((pin) => pin.version !== version)
-      .map((pin) => `  - ${pin.file}:${String(pin.line)} pins ${pin.version}`);
+      .map(
+        (pin) => `    - ${pin.file}:${String(pin.line)} pins ${pin.version}`,
+      );
     throw new Error(
       `The skills pin more than one consultchimps version; every pin must name ${version}, the one most of them name:\n${strays.join("\n")}`,
     );
