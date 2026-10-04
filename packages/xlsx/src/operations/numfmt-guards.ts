@@ -29,6 +29,13 @@ export function generalRoundingGuard(
   return rounded >= 1e11 ? `${sign}1E+11` : `${sign}${String(rounded)}`;
 }
 
+/**
+ * Whether a format shows a time: an hour or second token, which a minute
+ * token always sits beside. A format showing only a date drops the time
+ * rather than rounding it, so nothing carries into the next day.
+ */
+const SHOWS_TIME = /[hs]/iu;
+
 /** The decimals of a format's seconds, as numfmt reads them for rounding. */
 const SECOND_DECIMALS = /s+\.(0{1,3})/iu;
 
@@ -45,6 +52,9 @@ export function midnightCarryGuard(
   value: number,
 ): number | undefined {
   if (!(value >= 0)) return undefined;
+  // Literal text, escaped characters and bracketed sections are not tokens.
+  const bare = pattern.replace(/"[^"]*"|\\.|\[[^\]]*\]/gu, "");
+  if (!SHOWS_TIME.test(bare)) return undefined;
   const day = Math.trunc(value);
   const seconds = 86_400 * (value - day);
   if (Math.floor(seconds) !== 86_399) return undefined;

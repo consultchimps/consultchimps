@@ -64,6 +64,9 @@ describe("guard (b): a time rounding up to midnight moves to the next day", () =
       "2024-01-01 23:59:59.9",
     ],
     ["[h]:mm", 0.9999999, false, "24:00"],
+    // A format showing only the date drops the time, so nothing carries.
+    ["m/d/yy", 45292.9999999, false, "1/1/24"],
+    ["dddd", 45292.9999999, false, "Monday"],
   ])("formats %s of %s (1904: %s) as %s", (code, value, date1904, text) => {
     expect(formatDisplayText(code, value, date1904)).toBe(text);
   });

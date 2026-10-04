@@ -32,6 +32,7 @@ import {
   type ExcelTableDefinition,
   readExcelTableDefinitionsFrom,
   readWorkbookSheetsFrom,
+  stylesPartFrom,
 } from "../../excel-tables.js";
 import {
   calendarIsoText,
@@ -129,7 +130,6 @@ export interface StreamedWorkbookContext extends WorkbookReadContext {
 }
 
 const WORKBOOK_PART = "xl/workbook.xml";
-const STYLES_PART = "xl/styles.xml";
 const CONTENT_TYPES_PART = "[Content_Types].xml";
 const CONTENT_TYPES_NAMESPACE =
   "http://schemas.openxmlformats.org/package/2006/content-types";
@@ -434,7 +434,7 @@ export class StreamedWorkbook {
       sheets,
       tables,
       names,
-      StyleTable.parse(await zip.readText(STYLES_PART)),
+      StyleTable.parse(await zip.readText(stylesPartFrom(parts))),
       declared === "1" || declared === "true",
       stringsPart,
     );

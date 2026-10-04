@@ -103,11 +103,12 @@ describe("readWorksheetRecordsBytes display text", () => {
   async function formatted(
     date1904: boolean,
     shuffled = false,
+    stylesPart = "styles.xml",
   ): Promise<Uint8Array> {
     const zip = new JSZip();
     zip.file(
       "[Content_Types].xml",
-      `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`,
+      `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/${stylesPart}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`,
     );
     zip.file(
       "_rels/.rels",
@@ -119,7 +120,7 @@ describe("readWorksheetRecordsBytes display text", () => {
     );
     zip.file(
       "xl/_rels/workbook.xml.rels",
-      `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL}/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="${REL}/styles" Target="styles.xml"/></Relationships>`,
+      `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL}/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="${REL}/styles" Target="${stylesPart}"/></Relationships>`,
     );
     const custom = FORMATS.map(
       (code, index) =>
@@ -129,7 +130,7 @@ describe("readWorksheetRecordsBytes display text", () => {
       (_, index) => `<xf numFmtId="${164 + index}" applyNumberFormat="1"/>`,
     ).join("");
     zip.file(
-      "xl/styles.xml",
+      `xl/${stylesPart}`,
       `<?xml version="1.0"?><styleSheet xmlns="${MAIN}"><numFmts count="${FORMATS.length}">${custom}</numFmts><cellXfs count="${FORMATS.length + 1}"><xf numFmtId="0"/>${styles}</cellXfs></styleSheet>`,
     );
     const headers = [
@@ -167,16 +168,18 @@ describe("readWorksheetRecordsBytes display text", () => {
   }
 
   it.each([
-    [false, false],
-    [true, false],
+    [false, false, "styles.xml"],
+    [true, false, "styles.xml"],
     // Rows out of order are gathered before they are delivered.
-    [false, true],
+    [false, true, "styles.xml"],
+    // The styles part lives wherever the relationship says.
+    [false, false, "theme/formats.xml"],
   ])(
-    "applies each cell's number format (1904: %s, shuffled rows: %s)",
-    async (date1904, shuffled) => {
+    "applies each cell's number format (1904: %s, shuffled rows: %s, styles: %s)",
+    async (date1904, shuffled, stylesPart) => {
       const records = await readWorksheetRecordsBytes({
         name: "values.xlsx",
-        bytes: await formatted(date1904, shuffled),
+        bytes: await formatted(date1904, shuffled, stylesPart),
       });
 
       expect(records.rows).toEqual([
