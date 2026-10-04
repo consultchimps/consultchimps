@@ -14,21 +14,30 @@
 // into another skill's folder would break after install.
 //
 // The skills run the published CLI (`npx consultchimps@X`), so the reference
-// is read from the published release of that version, the single-file
-// `consultchimps.mjs` attached to its GitHub release, not from the checkout:
-// between releases the checkout can print help the published version does not
-// have. The file is downloaded afresh into a private temporary directory and
-// checked against the SHA-256 digest GitHub publishes for the release asset
-// before it runs; nothing is reused from a shared path. Only a version with no
-// release at all (a version bump waiting to publish) falls back to the local
-// build, and the output says so. Any other failure, such as GitHub being
-// unreachable, stops the run rather than quietly documenting the checkout.
+// is read from the published release of the version the skills pin, the
+// single-file `consultchimps.mjs` attached to its GitHub release, never from
+// packages/cli/package.json or the checkout: between releases the checkout can
+// print help the published version does not have, and a release pull request
+// bumps the package version before that version exists. The file is downloaded
+// afresh into a private temporary directory and checked against the SHA-256
+// digest GitHub publishes for the release asset before it runs; nothing is
+// reused from a shared path. A version with no release, or any other failure
+// such as GitHub being unreachable, stops the run.
+//
+// `--version X` writes the references for another release (the post-release
+// update moves the pins first, so the default is usually right). `--local`
+// reads the local build instead, for developing the generator; its output is
+// labelled with the target version and the check will reject it until that
+// version publishes with the same help.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+
+import { pinnedCliVersion, RELEASE_VERSION } from "./skill-pins.ts";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -111,12 +120,27 @@ async function releasedCli(
   return { file, directory };
 }
 
-const cliVersion = readCliVersion();
-const released = await releasedCli(cliVersion);
+const { values: options } = parseArgs({
+  options: {
+    check: { type: "boolean", default: false },
+    local: { type: "boolean", default: false },
+    version: { type: "string" },
+  },
+});
+const cliVersion = options.version ?? pinnedCliVersion(workspaceRoot);
+if (!RELEASE_VERSION.test(cliVersion)) {
+  throw new Error(`"${cliVersion}" is not a release version such as "1.2.3".`);
+}
+const released = options.local ? null : await releasedCli(cliVersion);
+if (!options.local && released === null) {
+  throw new Error(
+    `consultchimps ${cliVersion} has no GitHub release. The skills pin published releases only, and move to a new one after it publishes; pass --local to read the local build while developing.`,
+  );
+}
 const cliPath = released?.file ?? localCliPath;
 const cliSource =
   released === null
-    ? `the local build, because consultchimps ${cliVersion} has no release yet`
+    ? `the local build, labelled ${cliVersion} (development only)`
     : `the published consultchimps ${cliVersion} release`;
 process.on("exit", () => {
   if (released !== null) {
@@ -224,23 +248,6 @@ function discoverCommandPaths(commandPath: readonly string[]): string[][] {
   ];
 }
 
-function readCliVersion(): string {
-  const manifest: unknown = JSON.parse(
-    readFileSync(path.join(workspaceRoot, "packages", "cli", "package.json"), {
-      encoding: "utf8",
-    }),
-  );
-  if (
-    typeof manifest !== "object" ||
-    manifest === null ||
-    !("version" in manifest) ||
-    typeof manifest.version !== "string"
-  ) {
-    throw new Error("packages/cli/package.json declares no version string.");
-  }
-  return manifest.version;
-}
-
 interface ReferenceTarget {
   /** The skill directory the reference is written into. */
   readonly skill: string;
@@ -264,7 +271,6 @@ const TARGETS: readonly ReferenceTarget[] = [
 ];
 
 function render(target: ReferenceTarget): string {
-  const version = readCliVersion();
   const commandPaths = discoverCommandPaths([]).filter(target.includes);
   const sections = commandPaths.map((commandPath) => {
     const label = ["consultchimps", ...commandPath].join(" ");
@@ -276,7 +282,7 @@ function render(target: ReferenceTarget): string {
     "",
     "# ConsultChimps CLI reference",
     "",
-    `The ${target.scope} of \`consultchimps\` ${version}, as the CLI itself`,
+    `The ${target.scope} of \`consultchimps\` ${cliVersion}, as the CLI itself`,
     "prints them. A flag absent here does not exist in that version.",
     "",
     ...(target.skill === "use-consultchimps" &&
@@ -300,7 +306,7 @@ function commandCount(reference: string): number {
   return reference.match(/^## /gm)?.length ?? 0;
 }
 
-const check = process.argv.includes("--check");
+const check = options.check;
 
 for (const target of TARGETS) {
   const referenceLabel = `skills/${target.skill}/references/cli-reference.md`;

@@ -89,18 +89,27 @@ differs.
 pnpm skills:reference
 ```
 
-The reference is read from the published release of the version in
-`packages/cli/package.json`: the single-file `consultchimps.mjs` on that
-version's GitHub release, checked against the SHA-256 digest GitHub publishes
-for it. Rebuilding the checkout does not change it, because the skills run the
-published version. Only a version with no release yet, such as a version bump
-waiting to publish, is read from the local build (`pnpm build` first), and the
-command says so. If GitHub cannot be reached, the command stops rather than
-falling back.
+The reference is read from the published release of the version the skills pin:
+the single-file `consultchimps.mjs` on that version's GitHub release, checked
+against the SHA-256 digest GitHub publishes for it. Rebuilding the checkout does
+not change it, because the skills run the published version. If the pinned
+version has no release, or GitHub cannot be reached, the command stops.
+`--local` reads the local build instead, for developing the generator only.
 
-Both tool skills pin the CLI version they document in frontmatter. The pin is a
+## Pins and releases
+
+Every pin across the skills (`metadata.cli-version`, `npx consultchimps@X` and
+release download URLs) names one version, and it must be a published release;
+`scripts/check-skills.ts` and the reference check enforce both. The pin is a
 minimum: a later CLI keeps working, and the drift check catches the day its
 command surface stops matching.
+
+A release never touches `skills/`. After `publish.yml` creates the CLI release,
+it opens a pull request, "Update the skills to consultchimps X", that moves
+every pin and regenerates both references
+(`node scripts/update-skills-cli-version.ts X`, then `pnpm skills:reference`).
+Its description lists each line that still names the old version: re-verify each
+claim against the new release there, then move or rewrite it.
 
 ## House rules for editing a skill
 
@@ -114,8 +123,8 @@ command surface stops matching.
   characters for Claude.ai uploads; a tool skill may run to about 60 words
 - a name ends in `-skill` only when the skill is meant for chat upload
 - a claim about how the CLI behaves names the version it was checked against,
-  because the drift check covers flags, not behaviour; re-check those claims
-  when a release changes a reader
+  because the drift check covers flags, not behaviour; the update pull request
+  after each release lists those claims for re-checking
 - link only inside the skill's own directory
 - claim nothing the tools cannot do today
 - no em dashes or en dashes anywhere; `pnpm docs:check` fails on one

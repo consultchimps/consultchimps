@@ -1,0 +1,106 @@
+name: Update the skills
+
+# The skills pin a published CLI release, so the release pull request never
+# touches them. Once publish.yml has created the GitHub release for a new CLI
+# version, this moves every pin to it, regenerates both CLI references from
+# it, and opens a pull request listing each line that still names the old
+# version, for a person to re-verify against the new release.
+#
+# publish.yml calls this directly: a release created with GITHUB_TOKEN
+# raises no release event for another workflow to listen for. Run it by hand
+# to retry for a version.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published CLI version to move the skills to, such as 1.2.3
+        type: string
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    name: Update the skills to the new CLI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: skills-update
+      cancel-in-progress: false
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Move the pins to the new release
+        env:
+          VERSION: ${{ inputs.version }}
+        run:
+          node scripts/update-skills-cli-version.ts "${VERSION}" --body
+          "${RUNNER_TEMP}/body.md"
+
+      - name: Regenerate the CLI references from the new release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: pnpm skills:reference
+
+      - name: Check the skills
+        run: node scripts/check-skills.ts
+
+      - name: Open or update the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if git diff --quiet; then
+            echo "The skills already pin ${VERSION} or later; nothing to open."
+            exit 0
+          fi
+          branch="skills/consultchimps-${VERSION}"
+          title="Update the skills to consultchimps ${VERSION}"
+          # A pull request already open for this version may carry a person's
+          # claim edits; a rerun leaves it alone rather than force-pushing.
+          number="$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number')"
+          if [ -n "${number}" ]; then
+            echo "Pull request #${number} is already open for ${VERSION}; leaving it alone."
+            exit 0
+          fi
+          # An unmerged update for an earlier release is superseded: main
+          # still pins the version it started from, so this one starts there too.
+          older="$(gh pr list --state open --json number,headRefName --jq '[.[] | select(.headRefName | startswith("skills/consultchimps-")) | "#\(.number)"] | join(", ")')"
+          {
+            if [ -n "${older}" ]; then
+              echo
+              echo "Supersedes ${older}: close it and carry any claim edits over here."
+            fi
+            echo
+            echo "Opened with GITHUB_TOKEN, so CI does not start on its own: a maintainer closes and reopens this pull request, or pushes a commit to it, to run \`Check\`."
+          } >> "${RUNNER_TEMP}/body.md"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "${branch}"
+          git commit -am "${title}"
+          git push --force origin "${branch}"
+          gh pr create --base main --head "${branch}" --title "${title}" --body-file "${RUNNER_TEMP}/body.md"
