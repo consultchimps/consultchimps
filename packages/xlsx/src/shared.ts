@@ -18,10 +18,18 @@ import {
 } from "@consultchimps/tabular";
 import * as XLSX from "xlsx";
 
+import type { ExcelTableDefinition } from "./excel-tables.js";
 import {
-  type ExcelTableDefinition,
-  readExcelTableDefinitions,
-} from "./excel-tables.js";
+  decodeRange,
+  type CellRectangle,
+  type StreamedWorkbook,
+} from "./operations/consolidate/reader.js";
+import {
+  openWorkbookBytes,
+  readSheetGrid,
+  SheetGrids,
+  type SheetGrid,
+} from "./operations/sheet-grid.js";
 import { XLSX_ERRORS } from "./errors.js";
 import {
   calendarIsoText,
@@ -474,29 +482,6 @@ export function parseWorkbookBytes(
 }
 
 /**
- * Read the Excel Table definitions from a workbook package, reporting an
- * unreadable package with the same stable error as a failed workbook parse.
- */
-export async function parseExcelTableDefinitions(
-  workbookBytes: Uint8Array,
-  source: string,
-  details?: Record<string, unknown>,
-): Promise<ExcelTableDefinition[]> {
-  try {
-    return await readExcelTableDefinitions(workbookBytes);
-  } catch (error) {
-    throw new ConsultChimpsError(
-      XLSX_ERRORS.XLSX_READ_FAILED,
-      `Could not read workbook: ${source}`,
-      {
-        cause: error,
-        details: details ?? { source },
-      },
-    );
-  }
-}
-
-/**
  * What a worksheet holds in the cells it declares or formats as dates, read
  * from the document model.
  *
@@ -745,6 +730,19 @@ function getCell(
     XLSX.CellObject | undefined;
 }
 
+/** The engine's range as the streaming reader spells one. */
+function rectangleOf(range: XLSX.Range): CellRectangle {
+  return {
+    startRow: range.s.r,
+    startColumn: range.s.c,
+    endRow: range.e.r,
+    endColumn: range.e.c,
+  };
+}
+
+/** What a cell holds, in the engine's zero-based numbering. */
+type CellLookup = (rowIndex: number, columnIndex: number) => CellValue;
+
 /**
  * One walk over the used range, in the engine's zero-based numbering: what
  * each row holds, for the header rule, and the last row each column holds a
@@ -762,42 +760,38 @@ interface RangeProfile {
    */
   readonly counts: readonly RowValueCount[];
   /**
-   * Per column offset from `range.s.c`, the last row index holding a value,
-   * or -1 when the column holds none. A column is a spacer for a header row
-   * when its last value sits above that row.
+   * Per column offset from `range.startColumn`, the last row index holding a
+   * value, or -1 when the column holds none. A column is a spacer for a header
+   * row when its last value sits above that row.
    */
   readonly lastValueRow: readonly number[];
 }
 
 function profileRange(
-  worksheet: XLSX.WorkSheet,
-  range: XLSX.Range,
-  dates: SheetDates,
+  value: CellLookup,
+  range: CellRectangle,
+  merges: readonly CellRectangle[],
 ): RangeProfile {
-  const width = range.e.c - range.s.c + 1;
+  const width = range.endColumn - range.startColumn + 1;
   const counts: RowValueCount[] = [];
   const lastValueRow: number[] = new Array<number>(width).fill(-1);
   // The top-left cells of the merges spanning columns, in the engine's
   // zero-based numbering: a value there is a banner value.
   const banners = new Set<string>();
-  for (const merge of worksheet["!merges"] ?? []) {
-    if (merge.e.c > merge.s.c) {
-      banners.add(cellKey(merge.s.r, merge.s.c));
+  for (const merge of merges) {
+    if (merge.endColumn > merge.startColumn) {
+      banners.add(cellKey(merge.startRow, merge.startColumn));
     }
   }
-  for (let rowIndex = range.s.r; rowIndex <= range.e.r; rowIndex += 1) {
+  for (let rowIndex = range.startRow; rowIndex <= range.endRow; rowIndex += 1) {
     let values = 0;
     let bannerValues = 0;
     for (let offset = 0; offset < width; offset += 1) {
-      const value = cellToPrimitive(
-        getCell(worksheet, rowIndex, range.s.c + offset),
-        dates(rowIndex, range.s.c + offset),
-      );
-      if (isBlankValue(value)) {
+      if (isBlankValue(value(rowIndex, range.startColumn + offset))) {
         continue;
       }
       values += 1;
-      if (banners.has(cellKey(rowIndex, range.s.c + offset))) {
+      if (banners.has(cellKey(rowIndex, range.startColumn + offset))) {
         bannerValues += 1;
       }
       lastValueRow[offset] = rowIndex;
@@ -813,48 +807,10 @@ function profileRange(
  * The name a header cell gives its column, or null for a blank cell. The
  * region layer's `headerCellName` spells the same cell the same way from the
  * document model, which is what lets an inspection promise the columns a
- * consolidation produces. An error cell is the one type whose stored value is
- * not what the cell means (the engine hands back Excel's numeric code), so it
- * is named by its display text, `#REF!`, rather than by that code.
+ * consolidation produces. An error cell is named by its text, `#REF!`.
  */
-function headerCellName(
-  cell: XLSX.CellObject | undefined,
-  date: CellDate | undefined,
-): string | null {
-  if (cell?.t === "e") {
-    return errorCellText(cell);
-  }
-  const value = cellToPrimitive(cell, date);
+function headerCellName(value: CellValue): string | null {
   return isBlankValue(value) ? null : String(value);
-}
-
-/**
- * The text of an error cell as the worksheet shows it. The engine stores the
- * code Excel numbers each error by and, read without display text, offers
- * nothing else, so the codes are spelled here; they are the file format's
- * own, fixed since the binary workbook days.
- */
-const EXCEL_ERROR_TEXT: Readonly<Record<number, string>> = {
-  0: "#NULL!",
-  7: "#DIV/0!",
-  15: "#VALUE!",
-  23: "#REF!",
-  29: "#NAME?",
-  36: "#NUM!",
-  42: "#N/A",
-  43: "#GETTING_DATA",
-};
-
-function errorCellText(cell: XLSX.CellObject): string {
-  if (typeof cell.w === "string") {
-    return cell.w;
-  }
-  if (typeof cell.v === "string") {
-    return cell.v;
-  }
-  return typeof cell.v === "number"
-    ? (EXCEL_ERROR_TEXT[cell.v] ?? String(cell.v))
-    : String(cell.v ?? "");
 }
 
 /**
@@ -897,11 +853,14 @@ export function declaredHeaderRowIndex(
   return configuredRow - 1;
 }
 
-function isVisibleSheet(workbook: XLSX.WorkBook, sheetName: string): boolean {
-  const metadata = workbook.Workbook?.Sheets?.find(
-    (sheet) => sheet.name === sheetName,
+/** Whether the worksheet named exactly `sheetName` is visible; one the workbook does not list counts as visible. */
+function isVisibleSheet(
+  workbook: StreamedWorkbook,
+  sheetName: string,
+): boolean {
+  return (
+    workbook.sheets.find((sheet) => sheet.name === sheetName)?.visible ?? true
   );
-  return (metadata?.Hidden ?? 0) === 0;
 }
 
 /** One worksheet read as a table, with what the read left out on the way. */
@@ -915,24 +874,22 @@ interface WorksheetTableRead {
 function worksheetToTable(
   sourceFile: string,
   sheetName: string,
-  worksheet: XLSX.WorkSheet,
-  dates: SheetDates,
+  grid: SheetGrid,
   configuredHeaderRow?: number,
 ): WorksheetTableRead | undefined {
-  const reference = worksheet["!ref"];
-  if (!reference) {
+  const range = grid.range;
+  if (!range) {
     return undefined;
   }
 
-  const range = XLSX.utils.decode_range(reference);
   const declared = declaredHeaderRowIndex(configuredHeaderRow);
   if (
     declared !== undefined &&
-    (declared < range.s.r || declared > range.e.r)
+    (declared < range.startRow || declared > range.endRow)
   ) {
     return undefined;
   }
-  const profile = profileRange(worksheet, range, dates);
+  const profile = profileRange(grid.value, range, grid.merges);
   const headerRowIndex = declared ?? detectHeaderRow(profile.counts);
   if (headerRowIndex === undefined) {
     return undefined;
@@ -941,14 +898,11 @@ function worksheetToTable(
   // Spacer columns are left out; the rest are named by their position among
   // the columns that were kept, which is what `column_3` means to a reader of
   // the output: the third column of this table.
-  const width = range.e.c - range.s.c + 1;
+  const width = range.endColumn - range.startColumn + 1;
   const keptOffsets = keptColumnOffsets(profile, headerRowIndex);
   const columns = uniqueHeaders(
     keptOffsets.map((offset) =>
-      headerCellName(
-        getCell(worksheet, headerRowIndex, range.s.c + offset),
-        dates(headerRowIndex, range.s.c + offset),
-      ),
+      headerCellName(grid.value(headerRowIndex, range.startColumn + offset)),
     ),
   );
 
@@ -956,17 +910,14 @@ function worksheetToTable(
   const sourceRows: number[] = [];
   for (
     let rowIndex = headerRowIndex + 1;
-    rowIndex <= range.e.r;
+    rowIndex <= range.endRow;
     rowIndex += 1
   ) {
     // A row holding values only in spacer columns cannot exist: a column with
     // a value under the header is not a spacer. So a blank row here is blank
     // across the whole used width, as it was before spacers were left out.
     const values = keptOffsets.map((offset) =>
-      cellToPrimitive(
-        getCell(worksheet, rowIndex, range.s.c + offset),
-        dates(rowIndex, range.s.c + offset),
-      ),
+      grid.value(rowIndex, range.startColumn + offset),
     );
     if (values.every(isBlankValue)) {
       continue;
@@ -989,9 +940,9 @@ function worksheetToTable(
     // asked of a different region.
     region: {
       headerRow: headerRowIndex + 1,
-      lastRow: range.e.r + 1,
-      startColumn: range.s.c,
-      endColumn: range.e.c,
+      lastRow: range.endRow + 1,
+      startColumn: range.startColumn,
+      endColumn: range.endColumn,
     },
     skippedSpacerColumns: width - keptOffsets.length,
     skippedTitleRows: countTitleRows(profile.counts, headerRowIndex),
@@ -1011,28 +962,10 @@ function worksheetToTable(
 function excelTableToTable(
   sourceFile: string,
   definition: ExcelTableDefinition,
-  worksheet: XLSX.WorkSheet,
-  dates: SheetDates,
+  grid: SheetGrid,
 ): WorkbookExcelTable | undefined {
-  let range: XLSX.Range;
-  try {
-    range = XLSX.utils.decode_range(definition.range);
-  } catch (error) {
-    throw new ConsultChimpsError(
-      XLSX_ERRORS.XLSX_INVALID_EXCEL_TABLE,
-      `Excel Table "${definition.name}" has an invalid range.`,
-      {
-        cause: error,
-        details: {
-          range: definition.range,
-          sheet: definition.sheet,
-          table: definition.name,
-        },
-      },
-    );
-  }
-
-  const rangeColumnCount = range.e.c - range.s.c + 1;
+  const range = decodeRange(definition.range);
+  const rangeColumnCount = range.endColumn - range.startColumn + 1;
   if (rangeColumnCount !== definition.columns.length) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_INVALID_EXCEL_TABLE,
@@ -1052,8 +985,8 @@ function excelTableToTable(
   const columns = uniqueHeaders(
     definition.columns.map((column) => column || null),
   );
-  const firstDataRowIndex = range.s.r + (definition.headerRow ? 1 : 0);
-  const lastDataRowIndex = range.e.r - (definition.totalsRow ? 1 : 0);
+  const firstDataRowIndex = range.startRow + (definition.headerRow ? 1 : 0);
+  const lastDataRowIndex = range.endRow - (definition.totalsRow ? 1 : 0);
   const rows: TableRow[] = [];
   const sourceRows: number[] = [];
 
@@ -1063,10 +996,7 @@ function excelTableToTable(
     rowIndex += 1
   ) {
     const values = columns.map((_, index) =>
-      cellToPrimitive(
-        getCell(worksheet, rowIndex, range.s.c + index),
-        dates(rowIndex, range.s.c + index),
-      ),
+      grid.value(rowIndex, range.startColumn + index),
     );
 
     if (values.every((value) => value === null || value === "")) {
@@ -1121,45 +1051,29 @@ function namedRangeToTable(
   name: string,
   sheetName: string,
   rangeRef: string,
-  worksheet: XLSX.WorkSheet,
-  dates: SheetDates,
+  grid: SheetGrid,
 ): WorkbookNamedRange | undefined {
-  let range: XLSX.Range;
-  try {
-    range = XLSX.utils.decode_range(rangeRef);
-  } catch (error) {
-    throw new ConsultChimpsError(
-      XLSX_ERRORS.XLSX_INVALID_NAMED_RANGE,
-      `Named range "${name}" has an invalid cell reference.`,
-      {
-        cause: error,
-        details: { name, range: rangeRef, sheet: sheetName },
-      },
-    );
-  }
-
+  const range = decodeRange(rangeRef);
   const rawHeaders: Array<string | null> = [];
   for (
-    let columnIndex = range.s.c;
-    columnIndex <= range.e.c;
+    let columnIndex = range.startColumn;
+    columnIndex <= range.endColumn;
     columnIndex += 1
   ) {
-    const value = cellToPrimitive(
-      getCell(worksheet, range.s.r, columnIndex),
-      dates(range.s.r, columnIndex),
-    );
+    const value = grid.value(range.startRow, columnIndex);
     rawHeaders.push(value === null ? null : String(value));
   }
   const columns = uniqueHeaders(rawHeaders);
 
   const rows: TableRow[] = [];
   const sourceRows: number[] = [];
-  for (let rowIndex = range.s.r + 1; rowIndex <= range.e.r; rowIndex += 1) {
+  for (
+    let rowIndex = range.startRow + 1;
+    rowIndex <= range.endRow;
+    rowIndex += 1
+  ) {
     const values = columns.map((_, index) =>
-      cellToPrimitive(
-        getCell(worksheet, rowIndex, range.s.c + index),
-        dates(rowIndex, range.s.c + index),
-      ),
+      grid.value(rowIndex, range.startColumn + index),
     );
     if (values.every((value) => value === null || value === "")) {
       continue;
@@ -1185,7 +1099,7 @@ function namedRangeToTable(
     rangeRef,
     source: {
       file: sourceFile,
-      firstDataRow: range.s.r + 2,
+      firstDataRow: range.startRow + 2,
       sheet: sheetName,
     },
   };
@@ -1203,48 +1117,33 @@ function lowercaseSet(values: string[] | undefined): Set<string> | undefined {
  * with the tables taken out of it, so the two can never describe the same
  * worksheet differently.
  */
-export function workbookWorksheetReports(
-  workbook: XLSX.WorkBook,
-  workbookDates: WorkbookDates,
+export async function workbookWorksheetReports(
+  workbook: StreamedWorkbook,
   sourceFile: string,
   options: ReadWorkbookOptions = {},
-): WorksheetTableReport[] {
+): Promise<WorksheetTableReport[]> {
   const selectedSheets = lowercaseSet(options.sheets);
   const reports: WorksheetTableReport[] = [];
 
-  for (const sheetName of workbook.SheetNames) {
-    if (!options.includeHiddenSheets && !isVisibleSheet(workbook, sheetName)) {
+  for (const sheet of workbook.sheets) {
+    if (!options.includeHiddenSheets && !sheet.visible) {
       continue;
     }
-    if (selectedSheets && !selectedSheets.has(sheetName.toLocaleLowerCase())) {
+    if (selectedSheets && !selectedSheets.has(sheet.name.toLocaleLowerCase())) {
       continue;
     }
 
-    const worksheet = workbook.Sheets[sheetName];
-    if (!worksheet) {
-      // The workbook lists this worksheet and the engine produced nothing for
-      // it, which it does silently: a cell it cannot parse, such as a declared
-      // date holding no text at all, takes the whole part with it. Skipping
-      // would drop a worksheet from every list this feeds - the tables, the
-      // sheets an import offers - and say nothing, which is the one outcome a
-      // reader must never produce. The document model reads such a worksheet;
-      // until this reader takes its cells from there, the honest answer is to
-      // stop and name it.
-      throw new ConsultChimpsError(
-        XLSX_ERRORS.XLSX_READ_FAILED,
-        `Worksheet "${sheetName}" is listed in ${sourceFile} but could not be read from it, so what it holds is unknown.`,
-        { details: { source: sourceFile, worksheet: sheetName } },
-      );
-    }
+    // A worksheet the workbook lists but whose part cannot be found is
+    // refused by the read, never skipped: skipping would drop it from every
+    // list this feeds and say nothing.
     const read = worksheetToTable(
       sourceFile,
-      sheetName,
-      worksheet,
-      workbookDates.forSheet(sheetName),
+      sheet.name,
+      await readSheetGrid(workbook, sheet),
       options.headerRow,
     );
     reports.push({
-      sheet: sheetName,
+      sheet: sheet.name,
       table: read?.table,
       region: read?.region,
       skippedTitleRows: read?.skippedTitleRows ?? 0,
@@ -1285,29 +1184,27 @@ export function consolidationInputs(
   return inputs;
 }
 
-export function workbookTables(
-  workbook: XLSX.WorkBook,
-  workbookDates: WorkbookDates,
+export async function workbookTables(
+  workbook: StreamedWorkbook,
   sourceFile: string,
   options: ReadWorkbookOptions = {},
-): Table[] {
+): Promise<Table[]> {
   return consolidationInputs(
-    workbookWorksheetReports(workbook, workbookDates, sourceFile, options),
+    await workbookWorksheetReports(workbook, sourceFile, options),
   ).tables;
 }
 
-export function workbookExcelTables(
-  workbook: XLSX.WorkBook,
-  workbookDates: WorkbookDates,
-  definitions: ExcelTableDefinition[],
+export async function workbookExcelTables(
+  workbook: StreamedWorkbook,
   sourceFile: string,
   options: ReadWorkbookExcelTablesOptions = {},
-): WorkbookExcelTable[] {
+): Promise<WorkbookExcelTable[]> {
   const selectedSheets = lowercaseSet(options.sheets);
   const selectedTables = lowercaseSet(options.tables);
+  const grids = new SheetGrids(workbook);
   const tables: WorkbookExcelTable[] = [];
 
-  for (const definition of definitions) {
+  for (const definition of workbook.tables) {
     if (
       !options.includeHiddenSheets &&
       !isVisibleSheet(workbook, definition.sheet)
@@ -1327,16 +1224,11 @@ export function workbookExcelTables(
       continue;
     }
 
-    const worksheet = workbook.Sheets[definition.sheet];
-    if (!worksheet) {
+    const grid = await grids.named(definition.sheet);
+    if (!grid) {
       continue;
     }
-    const table = excelTableToTable(
-      sourceFile,
-      definition,
-      worksheet,
-      workbookDates.forSheet(definition.sheet),
-    );
+    const table = excelTableToTable(sourceFile, definition, grid);
     if (table) {
       tables.push(table);
     }
@@ -1345,24 +1237,24 @@ export function workbookExcelTables(
   return tables;
 }
 
-export function workbookNamedRanges(
-  workbook: XLSX.WorkBook,
-  workbookDates: WorkbookDates,
+export async function workbookNamedRanges(
+  workbook: StreamedWorkbook,
   sourceFile: string,
   options: ReadWorkbookNamedRangesOptions = {},
-): WorkbookNamedRange[] {
+): Promise<WorkbookNamedRange[]> {
   const selectedSheets = lowercaseSet(options.sheets);
   const selectedNames = lowercaseSet(options.names);
+  const grids = new SheetGrids(workbook);
   const ranges: WorkbookNamedRange[] = [];
 
-  for (const definedName of workbook.Workbook?.Names ?? []) {
+  for (const definedName of workbook.names) {
     if (
-      !definedName.Name ||
-      definedName.Name.startsWith(BUILTIN_DEFINED_NAME_PREFIX)
+      !definedName.name ||
+      definedName.name.startsWith(BUILTIN_DEFINED_NAME_PREFIX)
     ) {
       continue;
     }
-    const parsed = parseNamedRangeRef(definedName.Ref ?? "");
+    const parsed = parseNamedRangeRef(definedName.reference);
     if (!parsed) {
       continue;
     }
@@ -1380,22 +1272,21 @@ export function workbookNamedRanges(
     }
     if (
       selectedNames &&
-      !selectedNames.has(definedName.Name.toLocaleLowerCase())
+      !selectedNames.has(definedName.name.toLocaleLowerCase())
     ) {
       continue;
     }
 
-    const worksheet = workbook.Sheets[parsed.sheet];
-    if (!worksheet) {
+    const grid = await grids.named(parsed.sheet);
+    if (!grid) {
       continue;
     }
     const table = namedRangeToTable(
       sourceFile,
-      definedName.Name,
+      definedName.name,
       parsed.sheet,
       parsed.range,
-      worksheet,
-      workbookDates.forSheet(parsed.sheet),
+      grid,
     );
     if (table) {
       ranges.push(table);
@@ -1450,13 +1341,22 @@ export function workbookWorksheetRecords(
 
   const range = XLSX.utils.decode_range(reference);
   const dates = workbookDates.forSheet(worksheetName);
+  const primitive: CellLookup = (rowIndex, columnIndex) =>
+    cellToPrimitive(
+      getCell(worksheet, rowIndex, columnIndex),
+      dates(rowIndex, columnIndex),
+    );
   const declared = declaredHeaderRowIndex(options.headerRow);
   // A declared row outside the used range, on either side, is refused before
   // the sheet is profiled, for the reason `declaredHeaderRowIndex` gives.
   const profile =
     declared !== undefined && (declared < range.s.r || declared > range.e.r)
       ? undefined
-      : profileRange(worksheet, range, dates);
+      : profileRange(
+          primitive,
+          rectangleOf(range),
+          (worksheet["!merges"] ?? []).map(rectangleOf),
+        );
   const headerRowIndex =
     profile === undefined
       ? undefined
@@ -1757,18 +1657,11 @@ export async function resolveSplitSource(
   options: SplitSelectionOptions,
 ): Promise<ResolvedSplitSource> {
   const preserveWorkbook = resolvePreserveWorkbook(options);
-  const workbook = parseWorkbookBytes(workbookBytes, context.label, {
-    cellText: options.range !== undefined,
+  const workbook = await openWorkbookBytes(workbookBytes, {
+    file: context.file,
+    source: context.label,
     details: context.details,
   });
-  // The dates come from the document model, which is the only reader that sees
-  // a cell declare itself a date rather than only wear a date format.
-  const dates = workbookDatesFrom(
-    await WorkbookRead.load(workbookBytes, {
-      source: context.label,
-      details: context.details ?? { source: context.label },
-    }),
-  );
   const sheets = options.sheet ? [options.sheet] : undefined;
 
   let definitions: ExcelTableDefinition[] = [];
@@ -1777,25 +1670,18 @@ export async function resolveSplitSource(
   let tables: Table[];
 
   if (options.table) {
-    definitions = await parseExcelTableDefinitions(
-      workbookBytes,
-      context.label,
-      context.details,
-    );
-    availableExcelTables = workbookExcelTables(
-      workbook,
-      dates,
-      definitions,
-      context.file,
-      { includeHiddenSheets: options.includeHiddenSheets, sheets },
-    );
+    definitions = [...workbook.tables];
+    availableExcelTables = await workbookExcelTables(workbook, context.file, {
+      includeHiddenSheets: options.includeHiddenSheets,
+      sheets,
+    });
     tables = availableExcelTables.filter(
       (table) =>
         table.excelTableName.toLocaleLowerCase() ===
         options.table?.toLocaleLowerCase(),
     );
   } else if (options.range) {
-    availableNamedRanges = workbookNamedRanges(workbook, dates, context.file, {
+    availableNamedRanges = await workbookNamedRanges(workbook, context.file, {
       includeHiddenSheets: options.includeHiddenSheets,
       sheets,
     });
@@ -1805,7 +1691,7 @@ export async function resolveSplitSource(
         options.range?.toLocaleLowerCase(),
     );
   } else {
-    tables = workbookTables(workbook, dates, context.file, {
+    tables = await workbookTables(workbook, context.file, {
       headerRow: options.headerRow,
       includeHiddenSheets: options.includeHiddenSheets,
       sheets,

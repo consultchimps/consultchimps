@@ -55,7 +55,9 @@ import {
   type ConsolidationSource,
   type OpenedSource,
 } from "./operations/consolidate/consolidate.js";
+import type { StreamedWorkbook } from "./operations/consolidate/reader.js";
 import { WorkbookRead } from "./operations/read-model.js";
+import { openWorkbookBytes } from "./operations/sheet-grid.js";
 import {
   readWorksheetReports,
   type WorksheetImportReport,
@@ -105,7 +107,6 @@ import {
   MACRO_WORKBOOK_MEDIA_TYPE,
   MAPPING_MEDIA_TYPE,
   MERGE_OPERATION,
-  parseExcelTableDefinitions,
   parseWorkbookBytes,
   readWorkbookDates,
   preservedSplitTemplateBytes,
@@ -367,20 +368,31 @@ async function readWorkbookFile(
 }
 
 /**
- * Every selected worksheet of one file as the table reader saw it. The
- * consolidation and `readWorkbookTables` both read through here, so the tables
- * one returns are the tables the other stacks, and the title rows and spacer
- * columns the reads left out are counted from the same reads.
+ * Open a workbook on disk for the streaming reader, reporting both a missing
+ * file and an unreadable workbook as the same stable error.
+ */
+async function openWorkbookFile(
+  absolutePath: string,
+): Promise<StreamedWorkbook> {
+  return openWorkbookBytes(await readWorkbookBytes(absolutePath), {
+    file: path.basename(absolutePath),
+    source: absolutePath,
+    details: { filePath: absolutePath },
+  });
+}
+
+/**
+ * Every selected worksheet of one file as the table reader saw it. Its cells
+ * come from the streaming reader consolidation reads through, so the tables
+ * `readWorkbookTables` returns hold the values a consolidation stacks.
  */
 async function readWorkbookTableReports(
   filePath: string,
   options: ReadWorkbookOptions,
 ): Promise<WorksheetTableReport[]> {
   const absolutePath = path.resolve(filePath);
-  const { bytes, workbook } = await readWorkbookFile(absolutePath);
   return workbookWorksheetReports(
-    workbook,
-    await readWorkbookDates(bytes, absolutePath, { filePath: absolutePath }),
+    await openWorkbookFile(absolutePath),
     path.basename(absolutePath),
     options,
   );
@@ -435,14 +447,8 @@ export async function readWorkbookExcelTables(
   options: ReadWorkbookExcelTablesOptions = {},
 ): Promise<WorkbookExcelTable[]> {
   const absolutePath = path.resolve(filePath);
-  const { bytes, workbook } = await readWorkbookFile(absolutePath);
-  const definitions = await parseExcelTableDefinitions(bytes, absolutePath, {
-    filePath: absolutePath,
-  });
   return workbookExcelTables(
-    workbook,
-    await readWorkbookDates(bytes, absolutePath, { filePath: absolutePath }),
-    definitions,
+    await openWorkbookFile(absolutePath),
     path.basename(absolutePath),
     options,
   );
@@ -453,12 +459,8 @@ export async function readWorkbookNamedRanges(
   options: ReadWorkbookNamedRangesOptions = {},
 ): Promise<WorkbookNamedRange[]> {
   const absolutePath = path.resolve(filePath);
-  const { bytes, workbook } = await readWorkbookFile(absolutePath, {
-    cellText: true,
-  });
   return workbookNamedRanges(
-    workbook,
-    await readWorkbookDates(bytes, absolutePath, { filePath: absolutePath }),
+    await openWorkbookFile(absolutePath),
     path.basename(absolutePath),
     options,
   );

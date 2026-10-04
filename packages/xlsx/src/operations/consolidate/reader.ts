@@ -1,10 +1,11 @@
 /**
- * L3: the streaming workbook reader consolidation reads through (ADR 0006).
+ * L3: the streaming workbook reader (ADR 0006). Consolidation reads through it,
+ * and so do the table readers, through `../sheet-grid.ts`.
  *
  * The package layer streams a worksheet's markup; this module decides what each
- * cell holds. Every rule below is the rule the SheetJS-backed table reader in
- * `src/shared.ts` applies, cell for cell, so a consolidation reads the same
- * values it read before, with three deliberate differences:
+ * cell holds. Every rule below is the rule the SheetJS-backed table reader
+ * applied, cell for cell, so a read gives the values it gave before, with
+ * three deliberate differences:
  *
  * - an error cell holds its text (`#DIV/0!`) as a `CellError`, not the number
  *   the engine coded it as;
@@ -24,6 +25,7 @@ import {
 
 import { XLSX_ERRORS } from "../../errors.js";
 import {
+  type ExcelTableDefinition,
   readExcelTableDefinitionsFrom,
   readWorkbookSheetsFrom,
 } from "../../excel-tables.js";
@@ -37,6 +39,7 @@ import { StyleTable } from "../../model/styles.js";
 import { findElement, getAttribute } from "../../model/xml.js";
 import {
   decodeEscapes,
+  forEachDefinedName,
   forEachOpenTag,
   PreloadedParts,
   readSharedStrings,
@@ -97,6 +100,13 @@ export interface StreamedSheet {
   readonly part: string | undefined;
 }
 
+/** A defined name as the workbook part declares it. */
+export interface StreamedDefinedName {
+  readonly name: string;
+  /** The formula the name stands for, such as `Data!$A$1:$C$9`. */
+  readonly reference: string;
+}
+
 /** How one workbook is named in errors and in the output. */
 export interface StreamedWorkbookContext extends WorkbookReadContext {
   /** The name a table records as its source file. */
@@ -151,8 +161,11 @@ function referenceRow(ref: string): number | undefined {
   return match ? Number(match[2]) - 1 : undefined;
 }
 
-/** A range reference read leniently, the way the engine reads `<dimension>`. */
-function decodeRange(range: string): CellRectangle {
+/**
+ * A range reference read leniently, the way the engine reads `<dimension>`
+ * and every other range a workbook declares.
+ */
+export function decodeRange(range: string): CellRectangle {
   let index: number;
   let code = 0;
   let position = 0;
@@ -230,6 +243,33 @@ function unreadableWorksheet(
   );
 }
 
+/** A cell reference the document model can read; see `decodeCell`. */
+const MODEL_REFERENCE = /^[A-Za-z]{1,3}\d+$/u;
+
+/**
+ * Refuse what the document model refuses: a row number or a cell reference
+ * that is present but unreadable marks a damaged worksheet, where an absent
+ * one means document order. Every reader the model backed refused these.
+ */
+function assertWellFormedRow(
+  ref: string | undefined,
+  cells: readonly RawCell[],
+): void {
+  if (ref !== undefined) {
+    const number = Number(ref);
+    if (!Number.isInteger(number) || number < 1) {
+      throw new Error(
+        `Encountered a worksheet row with an invalid row number: ${ref}`,
+      );
+    }
+  }
+  for (const cell of cells) {
+    if (cell.ref !== undefined && !MODEL_REFERENCE.test(cell.ref)) {
+      throw new Error(`Encountered an invalid cell reference: ${cell.ref}`);
+    }
+  }
+}
+
 class UnresolvedString extends Error {}
 class OutOfOrder extends Error {}
 
@@ -240,6 +280,10 @@ class OutOfOrder extends Error {}
  */
 export class StreamedWorkbook {
   readonly sheets: readonly StreamedSheet[];
+  /** The Excel Tables the worksheets carry, as the document model reads them. */
+  readonly tables: readonly ExcelTableDefinition[];
+  /** The defined names, in workbook order, built-in names included. */
+  readonly names: readonly StreamedDefinedName[];
   readonly #zip: ZipReader;
 
   /** Changes whenever the package's contents change; see `ZipReader`. */
@@ -256,6 +300,8 @@ export class StreamedWorkbook {
     zip: ZipReader,
     context: StreamedWorkbookContext,
     sheets: readonly StreamedSheet[],
+    tables: readonly ExcelTableDefinition[],
+    names: readonly StreamedDefinedName[],
     styles: StyleTable,
     date1904: boolean,
     stringsPart: string | undefined,
@@ -263,6 +309,8 @@ export class StreamedWorkbook {
     this.#zip = zip;
     this.#context = context;
     this.sheets = sheets;
+    this.tables = tables;
+    this.names = names;
     this.#styles = styles;
     this.#date1904 = date1904;
     this.#stringsPart = stringsPart;
@@ -327,7 +375,7 @@ export class StreamedWorkbook {
         }
       }
     }
-    readExcelTableDefinitionsFrom(parts);
+    const tables = readExcelTableDefinitionsFrom(parts);
 
     const relationships = new Map(
       parts
@@ -357,6 +405,11 @@ export class StreamedWorkbook {
       });
     });
 
+    const names: StreamedDefinedName[] = [];
+    forEachDefinedName(workbookXml, WORKBOOK_PART, (name, reference) => {
+      names.push({ name, reference: decodeEscapes(reference) });
+    });
+
     const properties = findElement(workbookXml, "workbookPr");
     const declared = properties
       ? getAttribute(properties.openTag, "date1904")
@@ -365,6 +418,8 @@ export class StreamedWorkbook {
       zip,
       context,
       sheets,
+      tables,
+      names,
       StyleTable.parse(await zip.readText(STYLES_PART)),
       declared === "1" || declared === "true",
       stringsPart,
@@ -398,12 +453,18 @@ export class StreamedWorkbook {
    * read; a part whose rows arrive out of order is read again whole and
    * delivered in order, after `begin` is called a second time. Pass `gather`
    * to read whole from the start, as a second read of a worksheet the first
-   * read had to gather should.
+   * read had to gather should. Cells outside the used range are left out
+   * unless `clip` is false, for a reader whose rectangle is declared rather
+   * than taken from the used range, such as an Excel Table or a named range.
    */
   async readWorksheet(
     sheet: StreamedSheet,
     consumer: WorksheetConsumer,
-    options: { gather?: boolean; between?: () => Promise<void> } = {},
+    options: {
+      gather?: boolean;
+      clip?: boolean;
+      between?: () => Promise<void>;
+    } = {},
   ): Promise<WorksheetRead> {
     const file = this.#context.file;
     if (sheet.part === undefined) {
@@ -414,15 +475,28 @@ export class StreamedWorkbook {
       throw unreadableWorksheet(sheet.name, file);
     }
     await this.loadStrings();
+    const clip = options.clip ?? true;
     try {
       if (options.gather !== true) {
         try {
-          return await this.#read(sheet.part, consumer, false, options.between);
+          return await this.#read(
+            sheet.part,
+            consumer,
+            false,
+            clip,
+            options.between,
+          );
         } catch (error) {
           if (!(error instanceof OutOfOrder)) throw error;
         }
       }
-      return await this.#read(sheet.part, consumer, true, options.between);
+      return await this.#read(
+        sheet.part,
+        consumer,
+        true,
+        clip,
+        options.between,
+      );
     } catch (error) {
       if (error instanceof UnresolvedString) {
         throw unreadableWorksheet(sheet.name, file, error);
@@ -513,6 +587,7 @@ export class StreamedWorkbook {
     part: string,
     consumer: WorksheetConsumer,
     gather: boolean,
+    clip: boolean,
     between: (() => Promise<void>) | undefined,
   ): Promise<WorksheetRead> {
     consumer.begin();
@@ -569,6 +644,7 @@ export class StreamedWorkbook {
       : undefined;
 
     const inDimension = (row: number, column: number): boolean =>
+      !clip ||
       dimension === undefined ||
       (row >= dimension.startRow &&
         row <= dimension.endRow &&
@@ -643,6 +719,7 @@ export class StreamedWorkbook {
           dimension = declaredDimension(ref);
         },
         row(ref, selfClosing, cells) {
+          assertWellFormedRow(ref, cells);
           // The engine reads a self-closing row only when nothing but other
           // self-closing rows follows it, and then only the last of them.
           if (selfClosing) {
@@ -686,7 +763,9 @@ export class StreamedWorkbook {
 
     if (gathered && range !== undefined) {
       const rows = [...gathered.keys()]
-        .filter((row) => row >= range.startRow && row <= range.endRow)
+        .filter(
+          (row) => !clip || (row >= range.startRow && row <= range.endRow),
+        )
         .sort((left, right) => left - right);
       for (const row of rows) {
         const cellsOfRow = gathered.get(row)!;
@@ -696,8 +775,7 @@ export class StreamedWorkbook {
           if (
             value === null ||
             value === undefined ||
-            column < range.startColumn ||
-            column > range.endColumn
+            (clip && (column < range.startColumn || column > range.endColumn))
           ) {
             continue;
           }

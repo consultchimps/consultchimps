@@ -37,9 +37,8 @@ import { ConsultChimpsError } from "@consultchimps/core";
 
 import { XLSX_ERRORS } from "../errors.js";
 import type { CellModel, WorksheetModel } from "../model/types.js";
+import { openWorkbookBytes } from "./sheet-grid.js";
 import {
-  parseWorkbookBytes,
-  workbookDatesFrom,
   workbookWorksheetReports,
   type ReadWorkbookOptions,
   type WorksheetRegion,
@@ -164,16 +163,14 @@ export async function readWorksheetReports(
   options: ReadWorkbookOptions = {},
 ): Promise<WorksheetImportReport[]> {
   const details = { source };
-  const read = await WorkbookRead.load(bytes, { source, details });
-  const reports = workbookWorksheetReports(
-    parseWorkbookBytes(bytes, source, { details }),
-    // The dates come from the model this operation already loads: it is the
-    // only reader that sees a cell declare itself a date rather than only wear
-    // a date format.
-    workbookDatesFrom(read),
+  const reports = await workbookWorksheetReports(
+    await openWorkbookBytes(bytes, { file: source, source, details }),
     source,
     options,
   );
+  // The model counts the cells no table can show: formulas without a cached
+  // value, and error values.
+  const read = await WorkbookRead.load(bytes, { source, details });
   return reports.map((report) => {
     const worksheet = read.worksheet(report.sheet);
     if (worksheet === undefined) {

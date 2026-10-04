@@ -81,6 +81,48 @@ export function forEachOpenTag(
 
 export { attributeValue as tagAttribute };
 
+/**
+ * The defined names a workbook part declares, in document order: each name
+ * with the text of its formula, entities resolved.
+ */
+export function forEachDefinedName(
+  xml: string,
+  fileName: string,
+  onName: (name: string, reference: string) => void,
+): void {
+  const parser = new SaxesParser({
+    fileName,
+    position: true,
+    xmlns: true,
+  } as const);
+  let name: string | undefined;
+  let reference = "";
+  parser.on("doctype", () => {
+    throw new Error(`DOCTYPE declarations are not allowed in ${fileName}.`);
+  });
+  parser.on("error", (error) => {
+    throw error;
+  });
+  parser.on("opentag", (tag) => {
+    if (tag.local === "definedName") {
+      name = attributeValue(tag, "name") ?? "";
+      reference = "";
+    }
+  });
+  const onText = (text: string): void => {
+    if (name !== undefined) reference += text;
+  };
+  parser.on("text", onText);
+  parser.on("cdata", onText);
+  parser.on("closetag", (tag) => {
+    if (tag.local === "definedName" && name !== undefined) {
+      onName(name, reference);
+      name = undefined;
+    }
+  });
+  parser.write(xml).close();
+}
+
 /** The relationships a relationships part declares, in document order. */
 export function parseRelationships(
   xml: string,

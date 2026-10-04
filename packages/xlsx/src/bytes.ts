@@ -35,7 +35,9 @@ import {
   type ConsolidationSettings,
   type ConsolidationSource,
 } from "./operations/consolidate/consolidate.js";
+import type { StreamedWorkbook } from "./operations/consolidate/reader.js";
 import { WorkbookRead } from "./operations/read-model.js";
+import { openWorkbookBytes } from "./operations/sheet-grid.js";
 import {
   readWorksheetReports,
   type WorksheetImportReport,
@@ -81,7 +83,6 @@ import {
   MACRO_WORKBOOK_MEDIA_TYPE,
   MAPPING_MEDIA_TYPE,
   MERGE_OPERATION,
-  parseExcelTableDefinitions,
   parseWorkbookBytes,
   readWorkbookDates,
   preservedSplitTemplateBytes,
@@ -921,6 +922,15 @@ export async function mergeWorkbooksBytes(
   };
 }
 
+/** Open an in-memory workbook for the streaming reader. */
+function openInputBytes(input: WorkbookInputBytes): Promise<StreamedWorkbook> {
+  return openWorkbookBytes(input.bytes, {
+    file: input.name,
+    source: input.name,
+    details: { source: input.name },
+  });
+}
+
 /**
  * Read every visible worksheet that holds data as a `Table`, from bytes.
  *
@@ -936,11 +946,8 @@ export async function readWorkbookTablesBytes(
   options: ReadWorkbookOptions = {},
 ): Promise<Table[]> {
   return consolidationInputs(
-    workbookWorksheetReports(
-      parseWorkbookBytes(input.bytes, input.name, {
-        details: { source: input.name },
-      }),
-      await readWorkbookDates(input.bytes, input.name, { source: input.name }),
+    await workbookWorksheetReports(
+      await openInputBytes(input),
       input.name,
       options,
     ),
@@ -996,20 +1003,7 @@ export async function readWorkbookExcelTablesBytes(
   input: WorkbookInputBytes,
   options: ReadWorkbookExcelTablesOptions = {},
 ): Promise<WorkbookExcelTable[]> {
-  const details = { source: input.name };
-  const workbook = parseWorkbookBytes(input.bytes, input.name, { details });
-  const definitions = await parseExcelTableDefinitions(
-    input.bytes,
-    input.name,
-    details,
-  );
-  return workbookExcelTables(
-    workbook,
-    await readWorkbookDates(input.bytes, input.name, details),
-    definitions,
-    input.name,
-    options,
-  );
+  return workbookExcelTables(await openInputBytes(input), input.name, options);
 }
 
 /**
@@ -1020,15 +1014,7 @@ export async function readWorkbookNamedRangesBytes(
   input: WorkbookInputBytes,
   options: ReadWorkbookNamedRangesOptions = {},
 ): Promise<WorkbookNamedRange[]> {
-  return workbookNamedRanges(
-    parseWorkbookBytes(input.bytes, input.name, {
-      cellText: true,
-      details: { source: input.name },
-    }),
-    await readWorkbookDates(input.bytes, input.name, { source: input.name }),
-    input.name,
-    options,
-  );
+  return workbookNamedRanges(await openInputBytes(input), input.name, options);
 }
 
 /**

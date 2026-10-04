@@ -60,7 +60,9 @@ deciding what a cell holds. `preloaded-parts.ts` lets the structural readers
 written against `WorkbookPackage` read a streamed workbook's small parts. The
 cell rules on top live in `src/operations/consolidate/reader.ts`, and the
 two-pass consolidation that reads through them in
-`src/operations/consolidate/consolidate.ts`.
+`src/operations/consolidate/consolidate.ts`. The table readers (worksheet
+tables, Excel Tables, named ranges and split input) read through the same rules
+one worksheet at a time, via `src/operations/sheet-grid.ts`.
 
 ### Bounded read path (`src/stream/`)
 

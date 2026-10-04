@@ -31,6 +31,7 @@ export {
 } from "./worksheet-events.js";
 export { bytesSource, ZipReader } from "./zip-reader.js";
 export {
+  forEachDefinedName,
   forEachOpenTag,
   MACRO_WORKBOOK_MAIN_CONTENT_TYPE,
   tagAttribute,
