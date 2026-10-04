@@ -577,17 +577,22 @@ export class StreamedWorkbook {
   #displayText(raw: RawCell, value: StreamedValue, dated: boolean): string {
     if (value instanceof CellError) return value.text;
     if (raw.type === "d" || value === "") return String(value);
-    const style = raw.style === undefined ? undefined : Number(raw.style);
-    const code = this.#styles.formatCode(style);
+    // A cell without a style shows General, as SheetJS read it.
+    const code =
+      raw.style === undefined
+        ? "General"
+        : this.#styles.formatCode(Number(raw.style));
+    const fallback =
+      typeof value === "boolean" ? (value ? "TRUE" : "FALSE") : String(value);
     if (dated) {
       // A number the style formats as a date: `value` is the model's
       // timestamp, and the number it was made from is the cell's own text.
       const serial = Number(
         raw.value === undefined ? "" : decodeEscapes(raw.value).trim(),
       );
-      return formatDisplayText(code, serial, this.#date1904) ?? String(value);
+      return formatDisplayText(code, serial, this.#date1904) ?? fallback;
     }
-    return formatDisplayText(code, value, this.#date1904) ?? String(value);
+    return formatDisplayText(code, value, this.#date1904) ?? fallback;
   }
 
   /** The model's date for a cell, or undefined when it is not a date. */

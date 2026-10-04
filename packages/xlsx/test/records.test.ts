@@ -100,7 +100,10 @@ describe("readWorksheetRecordsBytes display text", () => {
     "#,##0",
   ];
 
-  async function formatted(date1904: boolean): Promise<Uint8Array> {
+  async function formatted(
+    date1904: boolean,
+    shuffled = false,
+  ): Promise<Uint8Array> {
     const zip = new JSZip();
     zip.file(
       "[Content_Types].xml",
@@ -158,17 +161,22 @@ describe("readWorksheetRecordsBytes display text", () => {
       `<c r="J2"><v>0.30000000000000004</v></c>`;
     zip.file(
       "xl/worksheets/sheet1.xml",
-      `<?xml version="1.0"?><worksheet xmlns="${MAIN}"><sheetData><row r="1">${header}</row><row r="2">${values}</row></sheetData></worksheet>`,
+      `<?xml version="1.0"?><worksheet xmlns="${MAIN}"><sheetData>${shuffled ? `<row r="2">${values}</row><row r="1">${header}</row>` : `<row r="1">${header}</row><row r="2">${values}</row>`}</sheetData></worksheet>`,
     );
     return new Uint8Array(await zip.generateAsync({ type: "uint8array" }));
   }
 
-  it.each([false, true])(
-    "applies each cell's number format (1904 date system: %s)",
-    async (date1904) => {
+  it.each([
+    [false, false],
+    [true, false],
+    // Rows out of order are gathered before they are delivered.
+    [false, true],
+  ])(
+    "applies each cell's number format (1904: %s, shuffled rows: %s)",
+    async (date1904, shuffled) => {
       const records = await readWorksheetRecordsBytes({
         name: "values.xlsx",
-        bytes: await formatted(date1904),
+        bytes: await formatted(date1904, shuffled),
       });
 
       expect(records.rows).toEqual([

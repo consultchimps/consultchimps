@@ -57,18 +57,29 @@ export async function readSheetGrid(
   sheet: StreamedSheet,
   options: { text?: boolean } = {},
 ): Promise<SheetGrid> {
-  let rows = new Map<number, Map<number, StreamedCell>>();
+  let rows = new Map<number, Map<number, StreamedValue>>();
+  // Display text is kept only for a read that asked for it.
+  let texts = new Map<number, Map<number, string>>();
   const read = await workbook.readWorksheet(
     sheet,
     {
       begin() {
         rows = new Map();
+        texts = new Map();
       },
       row(row: number, cells: readonly StreamedCell[]) {
         rows.set(
           row,
-          new Map(cells.map((cell) => [cell.column, cell] as const)),
+          new Map(cells.map((cell) => [cell.column, cell.value] as const)),
         );
+        if (options.text === true) {
+          texts.set(
+            row,
+            new Map(
+              cells.map((cell) => [cell.column, cell.text ?? ""] as const),
+            ),
+          );
+        }
       },
     },
     { clip: false, text: options.text ?? false },
@@ -76,8 +87,8 @@ export async function readSheetGrid(
   return {
     range: read.range,
     merges: read.merges,
-    value: (row, column) => tableValue(rows.get(row)?.get(column)?.value),
-    text: (row, column) => rows.get(row)?.get(column)?.text ?? "",
+    value: (row, column) => tableValue(rows.get(row)?.get(column)),
+    text: (row, column) => texts.get(row)?.get(column) ?? "",
   };
 }
 

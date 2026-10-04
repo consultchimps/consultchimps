@@ -5,6 +5,8 @@
  */
 import { format, isDateFormat, isValidFormat } from "numfmt";
 
+import { generalRoundingGuard, midnightCarryGuard } from "./numfmt-guards.js";
+
 /** Days between the 1900 and 1904 date systems' day zero. */
 const DATE_1904_OFFSET = 1462;
 
@@ -46,12 +48,18 @@ export function formatDisplayText(
     symbol === "" ? "" : `[$${symbol}]`,
   );
   if (!isValidFormat(pattern)) return undefined;
+  const general = generalRoundingGuard(pattern, value);
+  if (general !== undefined) return general;
+  if (typeof value !== "number" || !isDateFormat(pattern)) {
+    return format(pattern, value, OPTIONS);
+  }
   const shifted =
-    typeof value === "number" &&
-    date1904 &&
-    isDateFormat(pattern) &&
-    !ELAPSED_TOKEN.test(pattern.replace(/"[^"]*"/gu, ""))
+    date1904 && !ELAPSED_TOKEN.test(pattern.replace(/"[^"]*"/gu, ""))
       ? value + DATE_1904_OFFSET
       : value;
-  return format(pattern, shifted, OPTIONS);
+  return format(
+    pattern,
+    midnightCarryGuard(pattern, shifted) ?? shifted,
+    OPTIONS,
+  );
 }

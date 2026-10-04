@@ -107,10 +107,18 @@ No other maintained formatter exists on npm apart from SheetJS's own. The
 generated fixture covers every built-in id and the hard cases. Most of its
 differences are SheetJS departing from Excel: scientific notation, leading
 zeros, rounding `-0.5`, values far out of range. Neither matches Excel for dates
-before 1900, which Excel shows as `####`. Three classes favour SheetJS and are
-accepted: a negative number that rounds to zero shows `0` rather than `-0`, the
-`A/P` marker shows `AM`, and a fraction format rounding up to a whole number
-shows `1 1/1`.
+before 1900, which Excel shows as `####`.
+
+Review found two numfmt 3.2.6 defects the fixture missed, where it departs from
+both Excel and SheetJS. General cuts off a number with 10 or 11 integer digits
+and a fraction (`4403928373.5` shows `4403928373`), and a time that rounds up to
+midnight keeps the old date. `src/operations/numfmt-guards.ts` corrects exactly
+those inputs until upstream fixes them; a test pins numfmt's own answer for
+each, so it fails when an upgrade makes the guard unnecessary.
+
+Three smaller differences favour SheetJS and are accepted: a negative number
+that rounds to zero shows `0` rather than `-0`, the `A/P` marker shows `AM` or
+`PM`, and a fraction format rounding up to a whole number shows `1 1/1`.
 
 ## Build order
 

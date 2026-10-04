@@ -167,7 +167,7 @@ function tableSourceRowNumber(table: Table, index: number): number {
 }
 
 /**
- * The exact shape `cellToPrimitive` writes for a cell the workbook stores as a
+ * The exact shape the table readers write for a cell the workbook stores as a
  * real date, and nothing a person types into a cell: `workbookDateText` writes
  * the full ISO 8601 timestamp for every such cell, whether or not it carries a
  * time. Matching it is how a date coercion can tell "the workbook already holds

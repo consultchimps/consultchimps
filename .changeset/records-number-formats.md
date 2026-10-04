@@ -4,8 +4,10 @@
 
 `readWorksheetRecords` and its byte twin, which PowerPoint population reads
 through, now read through the streaming reader (ADR 0006) and render each cell's
-number format with numfmt, a maintained formatter, instead of SheetJS. Text
-matches what SheetJS produced for every format in the conformance corpus.
+number format with numfmt, a maintained formatter, instead of SheetJS. Two
+numfmt defects are corrected locally until upstream fixes them: a General number
+with 10 or 11 integer digits and a fraction rounds as Excel shows it, and a time
+that rounds up to midnight shows the next day.
 
 A few rare formats now show differently, mostly closer to Excel: scientific
 notation such as `0E+0`, leading zeros such as `00.000`, and `-0.5` under `0`,
