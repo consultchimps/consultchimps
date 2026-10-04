@@ -40,7 +40,6 @@ import {
   type ColumnMappingSuggestion,
   type Table,
 } from "@consultchimps/tabular";
-import type * as XLSX from "xlsx";
 import {
   unprotectWorkbookBytes,
   type UnprotectWorkbookMetric,
@@ -107,8 +106,6 @@ import {
   MACRO_WORKBOOK_MEDIA_TYPE,
   MAPPING_MEDIA_TYPE,
   MERGE_OPERATION,
-  parseWorkbookBytes,
-  readWorkbookDates,
   preservedSplitTemplateBytes,
   refuseMappingWithSuggestion,
   resolveSplitSource,
@@ -310,11 +307,6 @@ export interface WriteTableOptions {
   sheetName?: string | undefined;
 }
 
-interface WorkbookFile {
-  bytes: Buffer;
-  workbook: XLSX.WorkBook;
-}
-
 function isMissingPathError(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -338,33 +330,6 @@ async function readWorkbookBytes(absolutePath: string): Promise<Uint8Array> {
       { cause: error, details: { filePath: absolutePath } },
     );
   }
-}
-
-/**
- * Read and parse a workbook from disk, reporting both a missing file and an
- * unreadable workbook as the same stable error.
- */
-async function readWorkbookFile(
-  absolutePath: string,
-  options: { cellText?: boolean } = {},
-): Promise<WorkbookFile> {
-  const details = { filePath: absolutePath };
-  let bytes: Buffer;
-
-  try {
-    bytes = await readFile(absolutePath);
-  } catch (error) {
-    throw new ConsultChimpsError(
-      XLSX_ERRORS.XLSX_READ_FAILED,
-      `Could not read workbook: ${absolutePath}`,
-      { cause: error, details },
-    );
-  }
-
-  return {
-    bytes,
-    workbook: parseWorkbookBytes(bytes, absolutePath, { ...options, details }),
-  };
 }
 
 /**
@@ -432,12 +397,8 @@ export async function readWorksheetRecords(
   options: ReadWorksheetRecordsOptions,
 ): Promise<WorksheetRecords> {
   const absolutePath = path.resolve(filePath);
-  const { bytes, workbook } = await readWorkbookFile(absolutePath, {
-    cellText: true,
-  });
   return workbookWorksheetRecords(
-    workbook,
-    await readWorkbookDates(bytes, absolutePath, { filePath: absolutePath }),
+    await openWorkbookFile(absolutePath),
     options,
   );
 }

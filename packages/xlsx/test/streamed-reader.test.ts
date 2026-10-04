@@ -19,7 +19,7 @@ import {
   cellToPrimitive,
   parseWorkbookBytes,
   readWorkbookDates,
-} from "../src/shared.js";
+} from "./sheetjs-oracle.js";
 import { buildCorpusWorkbook } from "./corpus/fixtures.js";
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";

@@ -86,6 +86,32 @@ runs, so CPU time and memory are the measures to trust.
   non-standard part paths. Encrypted files have no test today and need one
   first.
 
+## Number-format display text
+
+Added 2026-10-04. The records reader, which PowerPoint population reads through,
+shows each cell as Excel displays it. That text now comes from **numfmt** (MIT,
+no dependencies, pinned exactly), with a thin adapter of our own: the built-in
+format table SheetJS used for ids 0 to 81, the 1904 date system (numfmt has
+none, so a date format reads the serial plus 1,462, except elapsed-time tokens),
+and currency tags such as `[$€-407]` keeping the reader's separators.
+
+A spike compared each candidate with SheetJS's display text, cell by cell.
+
+|                                   | numfmt 3.2.6   | excel-style-dataformatter 2.0.1 |
+| --------------------------------- | -------------- | ------------------------------- |
+| Conformance corpus, numeric cells | 162 of 162     | 23 of 162                       |
+| Generated fixture, 1900 and 1904  | 7,106 of 8,712 | 3,589 of 8,712                  |
+| Last release                      | April 2026     | 2017                            |
+
+No other maintained formatter exists on npm apart from SheetJS's own. The
+generated fixture covers every built-in id and the hard cases. Most of its
+differences are SheetJS departing from Excel: scientific notation, leading
+zeros, rounding `-0.5`, values far out of range. Neither matches Excel for dates
+before 1900, which Excel shows as `####`. Three classes favour SheetJS and are
+accepted: a negative number that rounds to zero shows `0` rather than `-0`, the
+`A/P` marker shows `AM`, and a fraction format rounding up to a whole number
+shows `1 1/1`.
+
 ## Build order
 
 1. The streaming writer, used for consolidation's output (#224).

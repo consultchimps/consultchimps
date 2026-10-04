@@ -54,6 +54,7 @@ import {
   type RawCell,
 } from "../../package/index.js";
 import { CellError } from "../../package/cell-error.js";
+import { formatDisplayText } from "../display-text.js";
 import { readFailure, type WorkbookReadContext } from "../read-model.js";
 
 /** A value a streamed cell holds: a table value, or an error cell's text. */
@@ -71,6 +72,15 @@ export interface CellRectangle {
 export interface StreamedCell {
   readonly column: number;
   readonly value: StreamedValue;
+  /** The text the worksheet shows, when the read asked for it. */
+  readonly text?: string;
+}
+
+/** How one worksheet read goes. */
+interface ReadSettings {
+  readonly clip: boolean;
+  readonly text: boolean;
+  readonly between: (() => Promise<void>) | undefined;
 }
 
 /** Receives a worksheet's rows top to bottom, cells left to right. */
@@ -460,6 +470,7 @@ export class StreamedWorkbook {
    * read had to gather should. Cells outside the used range are left out
    * unless `clip` is false, for a reader whose rectangle is declared rather
    * than taken from the used range, such as an Excel Table or a named range.
+   * Pass `text` to have each cell carry the text the worksheet shows.
    */
   async readWorksheet(
     sheet: StreamedSheet,
@@ -467,6 +478,7 @@ export class StreamedWorkbook {
     options: {
       gather?: boolean;
       clip?: boolean;
+      text?: boolean;
       between?: () => Promise<void>;
     } = {},
   ): Promise<WorksheetRead> {
@@ -479,28 +491,20 @@ export class StreamedWorkbook {
       throw unreadableWorksheet(sheet.name, file);
     }
     await this.loadStrings();
-    const clip = options.clip ?? true;
+    const settings: ReadSettings = {
+      clip: options.clip ?? true,
+      text: options.text ?? false,
+      between: options.between,
+    };
     try {
       if (options.gather !== true) {
         try {
-          return await this.#read(
-            sheet.part,
-            consumer,
-            false,
-            clip,
-            options.between,
-          );
+          return await this.#read(sheet.part, consumer, false, settings);
         } catch (error) {
           if (!(error instanceof OutOfOrder)) throw error;
         }
       }
-      return await this.#read(
-        sheet.part,
-        consumer,
-        true,
-        clip,
-        options.between,
-      );
+      return await this.#read(sheet.part, consumer, true, settings);
     } catch (error) {
       if (error instanceof UnresolvedString) {
         throw unreadableWorksheet(sheet.name, file, error);
@@ -565,6 +569,27 @@ export class StreamedWorkbook {
     }
   }
 
+  /**
+   * The text the worksheet shows for a cell holding `value`: the cell's number
+   * format applied, as Excel displays it. A declared date shows the model's
+   * timestamp, or its own text where that names no moment.
+   */
+  #displayText(raw: RawCell, value: StreamedValue, dated: boolean): string {
+    if (value instanceof CellError) return value.text;
+    if (raw.type === "d" || value === "") return String(value);
+    const style = raw.style === undefined ? undefined : Number(raw.style);
+    const code = this.#styles.formatCode(style);
+    if (dated) {
+      // A number the style formats as a date: `value` is the model's
+      // timestamp, and the number it was made from is the cell's own text.
+      const serial = Number(
+        raw.value === undefined ? "" : decodeEscapes(raw.value).trim(),
+      );
+      return formatDisplayText(code, serial, this.#date1904) ?? String(value);
+    }
+    return formatDisplayText(code, value, this.#date1904) ?? String(value);
+  }
+
   /** The model's date for a cell, or undefined when it is not a date. */
   #modelDate(raw: RawCell): string | undefined {
     const text = raw.value;
@@ -591,9 +616,9 @@ export class StreamedWorkbook {
     part: string,
     consumer: WorksheetConsumer,
     gather: boolean,
-    clip: boolean,
-    between: (() => Promise<void>) | undefined,
+    settings: ReadSettings,
   ): Promise<WorksheetRead> {
+    const { clip, between } = settings;
     consumer.begin();
     let dimension: CellRectangle | undefined;
     let guessStartRow = 2_000_000;
@@ -644,7 +669,7 @@ export class StreamedWorkbook {
     };
     // The whole worksheet, keyed the way the engine keys it, when gathering.
     const gathered = gather
-      ? new Map<number, Map<number, StreamedValue | null>>()
+      ? new Map<number, Map<number, StreamedCell | null>>()
       : undefined;
 
     const inDimension = (row: number, column: number): boolean =>
@@ -686,14 +711,25 @@ export class StreamedWorkbook {
         if (engine.kind === "counted" || row === undefined || columnTag < 0) {
           continue;
         }
-        const value = this.#modelDate(raw) ?? engine.value;
+        const date = this.#modelDate(raw);
+        const value = date ?? engine.value;
+        const cell: StreamedCell | null =
+          value === null
+            ? null
+            : settings.text
+              ? {
+                  column: columnTag,
+                  value,
+                  text: this.#displayText(raw, value, date !== undefined),
+                }
+              : { column: columnTag, value };
         if (gathered) {
           let cellsOfRow = gathered.get(row);
           if (cellsOfRow === undefined) {
             cellsOfRow = new Map();
             gathered.set(row, cellsOfRow);
           }
-          cellsOfRow.set(columnTag, value);
+          cellsOfRow.set(columnTag, cell);
           continue;
         }
         if (
@@ -704,8 +740,8 @@ export class StreamedWorkbook {
           throw new OutOfOrder();
         }
         previousColumn = columnTag;
-        if (value === null || !inDimension(row, columnTag)) continue;
-        (rowCells ??= []).push({ column: columnTag, value });
+        if (cell === null || !inDimension(row, columnTag)) continue;
+        (rowCells ??= []).push(cell);
       }
       if (!gathered && previousColumn >= 0) {
         lastRow = rowTag - 1;
@@ -775,15 +811,15 @@ export class StreamedWorkbook {
         const cellsOfRow = gathered.get(row)!;
         const delivered: StreamedCell[] = [];
         for (const column of [...cellsOfRow.keys()].sort((a, b) => a - b)) {
-          const value = cellsOfRow.get(column);
+          const cell = cellsOfRow.get(column);
           if (
-            value === null ||
-            value === undefined ||
+            cell === null ||
+            cell === undefined ||
             (clip && (column < range.startColumn || column > range.endColumn))
           ) {
             continue;
           }
-          delivered.push({ column, value });
+          delivered.push(cell);
         }
         if (delivered.length > 0) consumer.row(row, delivered);
       }

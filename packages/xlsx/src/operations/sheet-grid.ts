@@ -27,6 +27,11 @@ export interface SheetGrid {
    * text, `#DIV/0!`, which is what the worksheet shows.
    */
   value(row: number, column: number): CellValue;
+  /**
+   * The text a cell shows, its number format applied, or "" for an empty
+   * cell. Only a grid read with `text` holds it; otherwise every cell is "".
+   */
+  text(row: number, column: number): string;
 }
 
 /** A table value for a streamed one: an error cell becomes its text. */
@@ -50,8 +55,9 @@ export function openWorkbookBytes(
 export async function readSheetGrid(
   workbook: StreamedWorkbook,
   sheet: StreamedSheet,
+  options: { text?: boolean } = {},
 ): Promise<SheetGrid> {
-  let rows = new Map<number, Map<number, StreamedValue>>();
+  let rows = new Map<number, Map<number, StreamedCell>>();
   const read = await workbook.readWorksheet(
     sheet,
     {
@@ -61,16 +67,17 @@ export async function readSheetGrid(
       row(row: number, cells: readonly StreamedCell[]) {
         rows.set(
           row,
-          new Map(cells.map((cell) => [cell.column, cell.value] as const)),
+          new Map(cells.map((cell) => [cell.column, cell] as const)),
         );
       },
     },
-    { clip: false },
+    { clip: false, text: options.text ?? false },
   );
   return {
     range: read.range,
     merges: read.merges,
-    value: (row, column) => tableValue(rows.get(row)?.get(column)),
+    value: (row, column) => tableValue(rows.get(row)?.get(column)?.value),
+    text: (row, column) => rows.get(row)?.get(column)?.text ?? "",
   };
 }
 

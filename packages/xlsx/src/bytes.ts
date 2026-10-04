@@ -83,8 +83,6 @@ import {
   MACRO_WORKBOOK_MEDIA_TYPE,
   MAPPING_MEDIA_TYPE,
   MERGE_OPERATION,
-  parseWorkbookBytes,
-  readWorkbookDates,
   preservedSplitTemplateBytes,
   refuseMappingWithSuggestion,
   resolveSplitSource,
@@ -981,14 +979,7 @@ export async function readWorksheetRecordsBytes(
   input: WorkbookInputBytes,
   options: ReadWorksheetRecordsBytesOptions = {},
 ): Promise<WorksheetRecords> {
-  return workbookWorksheetRecords(
-    parseWorkbookBytes(input.bytes, input.name, {
-      cellText: true,
-      details: { source: input.name },
-    }),
-    await readWorkbookDates(input.bytes, input.name, { source: input.name }),
-    options,
-  );
+  return workbookWorksheetRecords(await openInputBytes(input), options);
 }
 
 /**

@@ -62,7 +62,9 @@ cell rules on top live in `src/operations/consolidate/reader.ts`, and the
 two-pass consolidation that reads through them in
 `src/operations/consolidate/consolidate.ts`. The table readers (worksheet
 tables, Excel Tables, named ranges and split input) read through the same rules
-one worksheet at a time, via `src/operations/sheet-grid.ts`.
+one worksheet at a time, via `src/operations/sheet-grid.ts`. The records reader
+also asks for each cell's display text, its number format applied by numfmt
+through `src/operations/display-text.ts`.
 
 ### Bounded read path (`src/stream/`)
 

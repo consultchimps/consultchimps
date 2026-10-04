@@ -44,11 +44,11 @@ Every subsequent row with at least one cell that is neither empty nor an empty
 string is an Excel record. Completely empty rows are skipped and reported. Each
 record creates one output slide in worksheet order.
 
-ConsultChimps uses Excel's stored display text when available. This preserves
-deterministic workbook formats such as percentages and dates without applying
-the computer's locale. Strings, numbers, dates, booleans, and formula cached
-values are supported when SheetJS can read them. An empty cell for a valid
-placeholder becomes empty text.
+ConsultChimps shows each value as Excel displays it, by applying the cell's
+number format with English (United States) conventions. Percentages, currency
+and dates keep their workbook format, and the computer's locale is never
+applied. Strings, numbers, dates, booleans, and the cached values of formulas
+are supported. An empty cell for a valid placeholder becomes empty text.
 
 Headers are trimmed. Empty and exactly duplicated headers are rejected. Extra
 worksheet columns are allowed, but every template placeholder must exactly match

@@ -2,9 +2,11 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 
+import { readWorksheetRecordsBytes } from "../src/bytes.js";
 import { readWorksheetRecords } from "../src/index.js";
 
 describe("readWorksheetRecords", () => {
@@ -81,4 +83,110 @@ describe("readWorksheetRecords", () => {
       await rm(directory, { force: true, recursive: true });
     }
   });
+});
+
+describe("readWorksheetRecordsBytes display text", () => {
+  const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+  const REL =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+  // Each style applies one number format, in cellXfs order from s="1".
+  const FORMATS = [
+    "m/d/yy",
+    "0.0%",
+    '"$"#,##0.00',
+    "[h]:mm",
+    '"Ref "@',
+    "[$€-407]#,##0.00",
+    "#,##0",
+  ];
+
+  async function formatted(date1904: boolean): Promise<Uint8Array> {
+    const zip = new JSZip();
+    zip.file(
+      "[Content_Types].xml",
+      `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`,
+    );
+    zip.file(
+      "_rels/.rels",
+      `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
+    );
+    zip.file(
+      "xl/workbook.xml",
+      `<?xml version="1.0"?><workbook xmlns="${MAIN}" xmlns:r="${REL}">${date1904 ? `<workbookPr date1904="1"/>` : ""}<sheets><sheet name="Values" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+    );
+    zip.file(
+      "xl/_rels/workbook.xml.rels",
+      `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL}/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="${REL}/styles" Target="styles.xml"/></Relationships>`,
+    );
+    const custom = FORMATS.map(
+      (code, index) =>
+        `<numFmt numFmtId="${164 + index}" formatCode="${code.replaceAll("&", "&amp;").replaceAll('"', "&quot;")}"/>`,
+    ).join("");
+    const styles = FORMATS.map(
+      (_, index) => `<xf numFmtId="${164 + index}" applyNumberFormat="1"/>`,
+    ).join("");
+    zip.file(
+      "xl/styles.xml",
+      `<?xml version="1.0"?><styleSheet xmlns="${MAIN}"><numFmts count="${FORMATS.length}">${custom}</numFmts><cellXfs count="${FORMATS.length + 1}"><xf numFmtId="0"/>${styles}</cellXfs></styleSheet>`,
+    );
+    const headers = [
+      "Date",
+      "Share",
+      "Amount",
+      "Elapsed",
+      "Reference",
+      "Euro",
+      "Loss",
+      "Flag",
+      "Error",
+      "Plain",
+    ];
+    const column = (index: number): string => String.fromCharCode(65 + index);
+    const header = headers
+      .map(
+        (name, index) =>
+          `<c r="${column(index)}1" t="inlineStr"><is><t>${name}</t></is></c>`,
+      )
+      .join("");
+    const serial = date1904 ? 45292 - 1462 : 45292;
+    const values =
+      `<c r="A2" s="1"><v>${serial}</v></c><c r="B2" s="2"><v>0.125</v></c>` +
+      `<c r="C2" s="3"><v>1234.5</v></c><c r="D2" s="4"><v>1.5</v></c>` +
+      `<c r="E2" s="5" t="inlineStr"><is><t>A-7</t></is></c>` +
+      `<c r="F2" s="6"><v>1234.5</v></c><c r="G2" s="7"><v>-1234.4</v></c>` +
+      `<c r="H2" t="b"><v>1</v></c><c r="I2" t="e"><v>#N/A</v></c>` +
+      `<c r="J2"><v>0.30000000000000004</v></c>`;
+    zip.file(
+      "xl/worksheets/sheet1.xml",
+      `<?xml version="1.0"?><worksheet xmlns="${MAIN}"><sheetData><row r="1">${header}</row><row r="2">${values}</row></sheetData></worksheet>`,
+    );
+    return new Uint8Array(await zip.generateAsync({ type: "uint8array" }));
+  }
+
+  it.each([false, true])(
+    "applies each cell's number format (1904 date system: %s)",
+    async (date1904) => {
+      const records = await readWorksheetRecordsBytes({
+        name: "values.xlsx",
+        bytes: await formatted(date1904),
+      });
+
+      expect(records.rows).toEqual([
+        {
+          Date: "1/1/24",
+          Share: "12.5%",
+          Amount: "$1,234.50",
+          // A duration is the same in both date systems.
+          Elapsed: "36:00",
+          Reference: "Ref A-7",
+          // The locale tag keeps its symbol and the reader's separators.
+          Euro: "€1,234.50",
+          Loss: "-1,234",
+          Flag: "TRUE",
+          Error: "#N/A",
+          Plain: "0.3",
+        },
+      ]);
+    },
+  );
 });
