@@ -2,6 +2,14 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  GENERATED_REFERENCE,
+  pinnedCliVersion,
+  RELEASE_VERSION,
+  skillDirectories,
+  workspaceLabel,
+} from "./skill-pins.ts";
+
 // Skills check: every directory under skills/ is a skill a registry can list
 // and install on its own. skills.sh installs with `npx skills add --skill
 // <name>`, which copies one skill directory and nothing beside it, and agents
@@ -49,34 +57,6 @@ const repositoryLicense: unknown = (
 ).license;
 if (typeof repositoryLicense !== "string") {
   throw new Error("package.json declares no license string.");
-}
-
-// Every CLI version a skill names, in `npx consultchimps@X`, a release
-// download URL (`consultchimps%40X`) or `metadata.cli-version`, must be the
-// version of packages/cli. The generated references take their version from
-// the same file, so a release that bumps it fails here until every pin moves
-// with it, and no skill can run one version while documenting another.
-const cliVersion: unknown = (
-  JSON.parse(
-    readFileSync(
-      path.join(workspaceRoot, "packages", "cli", "package.json"),
-      "utf8",
-    ),
-  ) as { version?: unknown }
-).version;
-if (typeof cliVersion !== "string") {
-  throw new Error("packages/cli/package.json declares no version string.");
-}
-const VERSION_PIN = /consultchimps(?:@|%40)(\d+\.\d+\.\d+)/g;
-
-function skillTextFiles(directory: string): string[] {
-  return readdirSync(directory).flatMap((entry) => {
-    const full = path.join(directory, entry);
-    if (statSync(full).isDirectory()) {
-      return skillTextFiles(full);
-    }
-    return /\.(?:md|py|html|css|js|ts|sh|ps1)$/.test(entry) ? [full] : [];
-  });
 }
 
 const NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -340,24 +320,11 @@ for (const skill of skills) {
     );
   }
 
-  const pinnedVersion = frontmatter.metadata.get("cli-version");
-  if (pinnedVersion !== undefined && pinnedVersion !== cliVersion) {
+  const cliVersion = frontmatter.metadata.get("cli-version");
+  if (cliVersion !== undefined && !RELEASE_VERSION.test(cliVersion)) {
     problems.push(
-      `${label}: metadata.cli-version is ${pinnedVersion}, but packages/cli is ${cliVersion}.`,
+      `${label}: metadata.cli-version is "${cliVersion}"; it must be a release version such as "1.2.3".`,
     );
-  }
-  for (const file of skillTextFiles(skillDirectory)) {
-    const fileLabel = path
-      .relative(workspaceRoot, file)
-      .split(path.sep)
-      .join("/");
-    for (const match of readFileSync(file, "utf8").matchAll(VERSION_PIN)) {
-      if (match[1] !== cliVersion) {
-        problems.push(
-          `${fileLabel}: pins consultchimps ${match[1] ?? ""}, but packages/cli is ${cliVersion}. Move every pin with the release.`,
-        );
-      }
-    }
   }
 
   // A link must resolve inside this skill's own directory: after a single
@@ -377,6 +344,35 @@ for (const skill of skills) {
       } else if (!existsSync(resolved)) {
         problems.push(`${fileLabel}: link "${target}" points at nothing.`);
       }
+    }
+  }
+}
+
+// Every pin across every skill names one version, and the generated references
+// record that same version. The reference generator's check verifies that the
+// version is a published release and that the references match it, so this
+// check needs no network: together they hold every pin to one published CLI.
+// The pins follow a release in a pull request of their own, so a release that
+// bumps packages/cli passes here without touching skills/.
+let pinnedVersion: string | null = null;
+try {
+  pinnedVersion = pinnedCliVersion(workspaceRoot);
+} catch (error) {
+  problems.push((error as Error).message);
+}
+if (pinnedVersion !== null) {
+  for (const directory of skillDirectories(workspaceRoot)) {
+    const reference = path.join(directory, ...GENERATED_REFERENCE.split("/"));
+    if (!existsSync(reference)) {
+      continue;
+    }
+    const recorded = /`consultchimps` (\d+\.\d+\.\d+),/.exec(
+      readFileSync(reference, "utf8"),
+    )?.[1];
+    if (recorded !== pinnedVersion) {
+      problems.push(
+        `${workspaceLabel(workspaceRoot, reference)}: documents consultchimps ${recorded ?? "(no version)"}, but the skills pin ${pinnedVersion}. Run \`pnpm skills:reference\`.`,
+      );
     }
   }
 }

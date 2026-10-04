@@ -52,6 +52,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: npm
+    outputs:
+      cli-version: ${{ steps.attach.outputs.cli-version }}
 
     steps:
       - name: Check out repository
@@ -95,6 +97,7 @@ jobs:
 
       # Attach assets only to a CLI release created from this source revision.
       - name: Attach portable CLI archives to their release
+        id: attach
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -126,6 +129,23 @@ jobs:
                 --notes "Portable CLI: download the archive matching your operating system and architecture, extract it, and run \`node consultchimps.mjs --help\` on Node.js 24. Keep its node_modules directory beside the executable. No npm access is required on the destination machine. consultchimps.mjs on its own runs every document command with Node alone; its license notices are in consultchimps-licenses.zip. Changelog: https://github.com/consultchimps/consultchimps/blob/main/packages/cli/CHANGELOG.md" \
                 "${assets[@]}"
             fi
+            # The skills follow a stable release in a pull request of their own.
+            if [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "cli-version=${version}" >> "${GITHUB_OUTPUT}"
+            fi
           else
             echo "No CLI release was published from this commit; skipping the bundle upload."
           fi
+
+  # The skills pin the published CLI, so they move after its release exists,
+  # never on the release pull request.
+  skills:
+    name: Update the skills
+    needs: publish
+    if: needs.publish.outputs.cli-version != ''
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: ./.github/workflows/skills-update.yml
+    with:
+      version: ${{ needs.publish.outputs.cli-version }}
