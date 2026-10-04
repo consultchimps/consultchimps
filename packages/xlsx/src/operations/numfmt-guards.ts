@@ -36,6 +36,21 @@ export function generalRoundingGuard(
  */
 const SHOWS_TIME = /[hs]/iu;
 
+/** A conditional section such as `[<1]`. */
+const CONDITION = /\[\s*[<>=]/u;
+
+/** The text of a format before its first unquoted, unescaped `;`. */
+function firstSection(pattern: string): string {
+  let quoted = false;
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index];
+    if (character === "\\" && !quoted) index += 1;
+    else if (character === '"') quoted = !quoted;
+    else if (character === ";" && !quoted) return pattern.slice(0, index);
+  }
+  return pattern;
+}
+
 /** The decimals of a format's seconds, as numfmt reads them for rounding. */
 const SECOND_DECIMALS = /s+\.(0{1,3})/iu;
 
@@ -52,8 +67,12 @@ export function midnightCarryGuard(
   value: number,
 ): number | undefined {
   if (!(value >= 0)) return undefined;
+  // A positive value takes the first section. A conditional format picks its
+  // section itself, which this guard does not second-guess.
+  if (CONDITION.test(pattern)) return undefined;
+  const section = firstSection(pattern);
   // Literal text, escaped characters and bracketed sections are not tokens.
-  const bare = pattern.replace(/"[^"]*"|\\.|\[[^\]]*\]/gu, "");
+  const bare = section.replace(/"[^"]*"|\\.|\[[^\]]*\]/gu, "");
   if (!SHOWS_TIME.test(bare)) return undefined;
   const day = Math.trunc(value);
   const seconds = 86_400 * (value - day);
@@ -61,7 +80,7 @@ export function midnightCarryGuard(
   const fraction = seconds - 86_399;
   // numfmt's thresholds: a near-whole second always carries; otherwise the
   // second rounds up when the fraction rounds away at the shown precision.
-  const decimals = SECOND_DECIMALS.exec(pattern.replace(/"[^"]*"/gu, ""))?.[1]
+  const decimals = SECOND_DECIMALS.exec(section.replace(/"[^"]*"/gu, ""))?.[1]
     ?.length;
   const threshold =
     decimals === 3
