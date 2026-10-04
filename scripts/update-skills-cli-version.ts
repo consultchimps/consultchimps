@@ -68,7 +68,7 @@ if (compareVersions(next, previous) <= 0) {
   process.exit(0);
 }
 
-const escaped = previous.replace(/\./g, "\\.");
+const escaped = previous.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const mentionsPrevious = new RegExp(`(?<![\\d.])${escaped}(?!\\.?\\d)`);
 const claims: string[] = [];
 let moved = 0;
