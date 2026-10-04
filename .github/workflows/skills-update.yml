@@ -87,7 +87,14 @@ jobs:
             echo "Pull request #${number} is already open for ${VERSION}; leaving it alone."
             exit 0
           fi
+          # An unmerged update for an earlier release is superseded: main
+          # still pins the version it started from, so this one starts there too.
+          older="$(gh pr list --state open --json number,headRefName --jq '[.[] | select(.headRefName | startswith("skills/consultchimps-")) | "#\(.number)"] | join(", ")')"
           {
+            if [ -n "${older}" ]; then
+              echo
+              echo "Supersedes ${older}: close it and carry any claim edits over here."
+            fi
             echo
             echo "Opened with GITHUB_TOKEN, so CI does not start on its own: a maintainer closes and reopens this pull request, or pushes a commit to it, to run \`Check\`."
           } >> "${RUNNER_TEMP}/body.md"

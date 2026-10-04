@@ -85,14 +85,19 @@ for (const directory of skillDirectories(workspaceRoot)) {
       moved += 1;
       return pin.replace(version, next);
     });
-    if (path.basename(file) === "SKILL.md") {
-      text = text.replace(
-        METADATA_PIN,
-        (_match, before: string, _version: string, after: string) => {
-          moved += 1;
-          return `${before}${next}${after}`;
-        },
-      );
+    // Only the frontmatter holds the metadata pin, as collectPins reads it.
+    const frontmatterEnd = text.indexOf("\n---", 4);
+    if (path.basename(file) === "SKILL.md" && frontmatterEnd !== -1) {
+      text =
+        text
+          .slice(0, frontmatterEnd)
+          .replace(
+            METADATA_PIN,
+            (_match, before: string, _version: string, after: string) => {
+              moved += 1;
+              return `${before}${next}${after}`;
+            },
+          ) + text.slice(frontmatterEnd);
     }
     if (text !== original) {
       // A longer version can push a wrapped Markdown line past the print
