@@ -81,6 +81,102 @@ export function forEachOpenTag(
 
 export { attributeValue as tagAttribute };
 
+/**
+ * Walk the elements at exactly `path` from the root of an XML part, every one
+ * of them in the root's namespace. A workbook's structure lives at fixed
+ * paths, and an extension may carry elements of the same names elsewhere,
+ * which are not part of that structure.
+ */
+function walkElementsAt(
+  xml: string,
+  fileName: string,
+  path: readonly string[],
+  events: {
+    open?: (tag: SaxesTagNS) => void;
+    text?: (text: string) => void;
+    close?: () => void;
+  },
+): void {
+  const parser = new SaxesParser({
+    fileName,
+    position: true,
+    xmlns: true,
+  } as const);
+  const open: SaxesTagNS[] = [];
+  const atPath = (): boolean =>
+    open.length === path.length &&
+    open.every(
+      (element, index) =>
+        element.local === path[index] && element.uri === open[0]!.uri,
+    );
+  parser.on("doctype", () => {
+    throw new Error(`DOCTYPE declarations are not allowed in ${fileName}.`);
+  });
+  parser.on("error", (error) => {
+    throw error;
+  });
+  parser.on("opentag", (tag) => {
+    open.push(tag);
+    if (atPath()) events.open?.(tag);
+  });
+  const onText = (text: string): void => {
+    if (atPath()) events.text?.(text);
+  };
+  parser.on("text", onText);
+  parser.on("cdata", onText);
+  parser.on("closetag", () => {
+    if (atPath()) events.close?.();
+    open.pop();
+  });
+  parser.write(xml).close();
+}
+
+/** The worksheets, chart sheets and other sheets a workbook part lists, in order. */
+export function forEachWorkbookSheet(
+  xml: string,
+  fileName: string,
+  onSheet: (tag: SaxesTagNS) => void,
+): void {
+  walkElementsAt(xml, fileName, ["workbook", "sheets", "sheet"], {
+    open: onSheet,
+  });
+}
+
+/**
+ * The defined names a workbook part declares, in document order: each name
+ * with the text of its formula, entities resolved.
+ */
+export function forEachDefinedName(
+  xml: string,
+  fileName: string,
+  onName: (
+    name: string,
+    reference: string,
+    localSheetId: string | undefined,
+  ) => void,
+): void {
+  let tag: SaxesTagNS | undefined;
+  let reference = "";
+  walkElementsAt(xml, fileName, ["workbook", "definedNames", "definedName"], {
+    open(opened) {
+      tag = opened;
+      reference = "";
+    },
+    text(text) {
+      reference += text;
+    },
+    close() {
+      if (tag === undefined) return;
+      onName(
+        attributeValue(tag, "name") ?? "",
+        reference,
+        attributeValue(tag, "localSheetId"),
+      );
+      tag = undefined;
+    },
+  });
+}
+
 /** The relationships a relationships part declares, in document order. */
 export function parseRelationships(
   xml: string,

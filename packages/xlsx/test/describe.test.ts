@@ -927,7 +927,10 @@ describe("describeWorkbook named ranges", () => {
  * cached value while parsing, which is the whole reason this condition has to
  * be read from the package's own model.
  */
-async function uncalculatedWorkbookBytes(rows: string): Promise<Uint8Array> {
+async function uncalculatedWorkbookBytes(
+  rows: string,
+  extra: { sheetName?: string; definedNames?: string; dimension?: string } = {},
+): Promise<Uint8Array> {
   const archive = new JSZip();
   archive.file(
     "[Content_Types].xml",
@@ -939,7 +942,7 @@ async function uncalculatedWorkbookBytes(rows: string): Promise<Uint8Array> {
   );
   archive.file(
     "xl/workbook.xml",
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Review Log" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${extra.sheetName ?? "Review Log"}" sheetId="1" r:id="rId1"/></sheets>${extra.definedNames ?? ""}</workbook>`,
   );
   archive.file(
     "xl/_rels/workbook.xml.rels",
@@ -953,7 +956,7 @@ async function uncalculatedWorkbookBytes(rows: string): Promise<Uint8Array> {
   );
   archive.file(
     "xl/worksheets/sheet1.xml",
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows}</sheetData></worksheet>`,
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${extra.dimension === undefined ? "" : `<dimension ref="${extra.dimension}"/>`}<sheetData>${rows}</sheetData></worksheet>`,
   );
   return new Uint8Array(await archive.generateAsync({ type: "nodebuffer" }));
 }
@@ -1376,25 +1379,23 @@ describe("dates a worksheet declares rather than formats", () => {
     expect(table?.rows).toEqual([{ Case: "R-1", Opened: null }]);
   });
 
-  it("refuses a worksheet the engine listed but could not read", async () => {
-    // A declared date holding no text at all takes the whole worksheet part
-    // with it: the engine lists the sheet and produces nothing for it, without
-    // raising. Skipping it would drop the worksheet from every list this feeds
-    // and say nothing. The document model reads such a worksheet, so this is a
-    // limit of the reader rather than of the file, and the honest answer until
-    // the reader takes its cells from the model is to stop and name it.
+  it("reads a worksheet holding a declared date with no text", async () => {
+    // SheetJS dropped such a worksheet whole, so the reader used to refuse it.
+    // The streaming reader reads the empty date cell as blank.
     for (const empty of ["<v></v>", "<v/>", ""]) {
       const bytes = await uncalculatedWorkbookBytes(
         `<row r="1"><c r="A1" t="d">${empty}</c></row>` +
-          `<row r="2">${textCell("A2", "Case")}</row>`,
+          `<row r="2">${textCell("A2", "Case")}</row>` +
+          `<row r="3">${textCell("A3", "R-1")}</row>`,
       );
 
-      await expect(
-        readWorkbookWorksheetsBytes({ name: "empty.xlsx", bytes }),
-      ).rejects.toMatchObject({
-        code: XLSX_ERRORS.XLSX_READ_FAILED,
-        details: { source: "empty.xlsx", worksheet: "Review Log" },
+      const [report] = await readWorkbookWorksheetsBytes({
+        name: "empty.xlsx",
+        bytes,
       });
+      expect(report?.sheet).toBe("Review Log");
+      expect(report?.region?.headerRow).toBe(2);
+      expect(report?.table?.rows).toEqual([{ Case: "R-1" }]);
     }
   });
 
@@ -1632,12 +1633,11 @@ describe("worksheets holding error values", () => {
     );
 
     expect(report?.errorCells).toBe(2);
-    // And this is why the count has to travel beside the table: the engine
-    // hands back the internal code Excel numbers each error by, so the amounts
-    // read as ordinary numbers that were never in the worksheet.
+    // The table holds each error as the text the worksheet shows, not the
+    // internal code SheetJS handed back, which read as an ordinary number.
     expect(report?.table?.rows).toEqual([
-      { Customer: "Acme", Amount: 23 },
-      { Customer: "Beta", Amount: 7 },
+      { Customer: "Acme", Amount: "#REF!" },
+      { Customer: "Beta", Amount: "#DIV/0!" },
     ]);
   });
 
@@ -1703,6 +1703,69 @@ describe("worksheets holding error values", () => {
   });
 });
 
+describe("named ranges read through the streaming reader", () => {
+  it("reads cells past the declared dimension and an escaped sheet name", async () => {
+    // The dimension claims A1:B2, but the name covers column C, and a reader
+    // takes a named range's rectangle from the name, not the used range.
+    const bytes = await uncalculatedWorkbookBytes(
+      `<row r="1">${textCell("A1", "Case")}${textCell("B1", "Region")}${textCell("C1", "Owner")}</row>` +
+        `<row r="2">${textCell("A2", "R-1")}${textCell("B2", "north")}${textCell("C2", "Ana")}</row>`,
+      {
+        sheetName: "Tom&apos;s &amp; Co",
+        dimension: "A1:B2",
+        definedNames: `<definedNames><definedName name="Cases">'Tom''s &amp; Co'!$A$1:$C$2</definedName><definedName name="_xlnm.Print_Area" localSheetId="0">'Tom''s &amp; Co'!$A$1:$B$2</definedName></definedNames>`,
+      },
+    );
+
+    const ranges = await readWorkbookNamedRangesBytes({
+      name: "cases.xlsx",
+      bytes,
+    });
+
+    expect(ranges.map((range) => range.rangeName)).toEqual(["Cases"]);
+    expect(ranges[0]?.source?.sheet).toBe("Tom's & Co");
+    expect(ranges[0]?.rows).toEqual([
+      { Case: "R-1", Region: "north", Owner: "Ana" },
+    ]);
+  });
+});
+
+describe("workbook structure outside the standard containers", () => {
+  it("is not the workbook's names or sheets, for the readers or the description", async () => {
+    const bytes = await uncalculatedWorkbookBytes(
+      `<row r="1">${textCell("A1", "Case")}</row><row r="2">${textCell("A2", "R-1")}</row>`,
+      {
+        definedNames:
+          `<definedNames><definedName name="Cases">'Review Log'!$A$1:$A$2</definedName>` +
+          `<x:definedName xmlns:x="urn:synthetic" name="Inside">'Review Log'!$A$1:$A$2</x:definedName></definedNames>` +
+          `<extLst><ext uri="urn:synthetic"><definedName name="Nested">'Review Log'!$A$1:$A$2</definedName>` +
+          `<x:definedName xmlns:x="urn:synthetic" name="Foreign">'Review Log'!$A$1:$A$2</x:definedName>` +
+          `<sheet name="Impostor" sheetId="9" r:id="rId1"/></ext></extLst>`,
+      },
+    );
+
+    const ranges = await readWorkbookNamedRangesBytes({
+      name: "cases.xlsx",
+      bytes,
+    });
+    expect(ranges.map((range) => range.rangeName)).toEqual(["Cases"]);
+
+    const { description } = await describeWorkbookBytes({
+      name: "cases.xlsx",
+      bytes,
+    });
+    expect(description.namedRanges.map((range) => range.name)).toEqual([
+      "Cases",
+    ]);
+    expect(description.sheets.map((sheet) => sheet.name)).toEqual([
+      "Review Log",
+    ]);
+
+    const tables = await readWorkbookTablesBytes({ name: "cases.xlsx", bytes });
+    expect(tables.map((table) => table.source?.sheet)).toEqual(["Review Log"]);
+  });
+});
+
 describe("worksheets the model cannot parse", () => {
   // The package opens in two steps and only the first is eager: the worksheet
   // part is parsed the first time somebody asks for it, so a malformed row
@@ -1720,6 +1783,22 @@ describe("worksheets the model cannot parse", () => {
       code: XLSX_ERRORS.XLSX_READ_FAILED,
       details: { source: "north.xlsx", worksheet: "Review Log" },
     });
+  });
+
+  it("reports the same failure from the table reader", async () => {
+    for (const rows of [
+      malformed,
+      `<row r="1">${textCell("A1", "Customer")}</row><row r="2"><c r="$A$2"><v>1</v></c></row>`,
+    ]) {
+      const bytes = await uncalculatedWorkbookBytes(rows);
+
+      await expect(
+        readWorkbookTablesBytes({ name: "north.xlsx", bytes }),
+      ).rejects.toMatchObject({
+        code: XLSX_ERRORS.XLSX_READ_FAILED,
+        details: { source: "north.xlsx", worksheet: "Review Log" },
+      });
+    }
   });
 
   it("reports the same failure from the description of the same file", async () => {

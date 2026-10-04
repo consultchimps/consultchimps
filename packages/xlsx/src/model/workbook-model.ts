@@ -19,6 +19,7 @@ import {
   type WorkbookSheetEntry,
 } from "../excel-tables.js";
 import {
+  forEachDefinedName,
   MACRO_WORKBOOK_MAIN_CONTENT_TYPE,
   WORKBOOK_MAIN_PART,
   WorkbookPackage,
@@ -165,22 +166,16 @@ export class WorkbookModel implements WorkbookModelContract, WorksheetHost {
     if (xml === undefined) {
       return Promise.resolve([]);
     }
+    // The package layer's reading, which every reader shares: only the
+    // standard container counts, in the workbook's own namespace.
     const names: DefinedNameEntry[] = [];
-    editElements(xml, "definedName", (element, text) => {
-      const name = getAttribute(element.openTag, "name");
-      if (name !== undefined) {
-        const localSheetId = getAttribute(element.openTag, "localSheetId");
-        names.push({
-          name,
-          localSheetId:
-            localSheetId === undefined ? undefined : Number(localSheetId),
-          reference: text.slice(
-            element.innerStart - element.start,
-            element.innerEnd - element.start,
-          ),
-        });
-      }
-      return text;
+    forEachDefinedName(xml, WORKBOOK_PART, (name, reference, localSheetId) => {
+      names.push({
+        name,
+        localSheetId:
+          localSheetId === undefined ? undefined : Number(localSheetId),
+        reference,
+      });
     });
     return Promise.resolve(names);
   }
