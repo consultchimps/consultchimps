@@ -40,6 +40,10 @@ import {
   utcCalendarParts,
   worksheetDateValue,
 } from "../../model/calendar.js";
+import {
+  decodeRange,
+  type CellRectangle,
+} from "../../model/references.js";
 import { StyleTable } from "../../model/styles.js";
 import { findElement, getAttribute } from "../../model/xml.js";
 import {
@@ -58,16 +62,10 @@ import { CellError } from "../../package/cell-error.js";
 import { formatDisplayText } from "../display-text.js";
 import { readFailure, type WorkbookReadContext } from "../read-model.js";
 
+export { decodeRange, type CellRectangle };
+
 /** A value a streamed cell holds: a table value, or an error cell's text. */
 export type StreamedValue = string | number | boolean | CellError;
-
-/** A zero-based rectangle, in the engine's numbering. */
-export interface CellRectangle {
-  readonly startRow: number;
-  readonly startColumn: number;
-  readonly endRow: number;
-  readonly endColumn: number;
-}
 
 /** One cell that holds something, empty text included. */
 export interface StreamedCell {
@@ -174,45 +172,6 @@ const CANONICAL_REFERENCE = /^([A-Z]+)([1-9]\d*)$/u;
 function referenceRow(ref: string): number | undefined {
   const match = CANONICAL_REFERENCE.exec(ref);
   return match ? Number(match[2]) - 1 : undefined;
-}
-
-/**
- * A range reference read leniently, the way the engine reads `<dimension>`
- * and every other range a workbook declares.
- */
-export function decodeRange(range: string): CellRectangle {
-  let index: number;
-  let code = 0;
-  let position = 0;
-  const length = range.length;
-  for (index = 0; position < length; position += 1) {
-    code = range.charCodeAt(position) - 64;
-    if (code < 1 || code > 26) break;
-    index = 26 * index + code;
-  }
-  const startColumn = index - 1;
-  for (index = 0; position < length; position += 1) {
-    code = range.charCodeAt(position) - 48;
-    if (code < 0 || code > 9) break;
-    index = 10 * index + code;
-  }
-  const startRow = index - 1;
-  if (position === length || code !== 10) {
-    return { startRow, startColumn, endRow: startRow, endColumn: startColumn };
-  }
-  position += 1;
-  for (index = 0; position !== length; position += 1) {
-    code = range.charCodeAt(position) - 64;
-    if (code < 1 || code > 26) break;
-    index = 26 * index + code;
-  }
-  const endColumn = index - 1;
-  for (index = 0; position !== length; position += 1) {
-    code = range.charCodeAt(position) - 48;
-    if (code < 0 || code > 9) break;
-    index = 10 * index + code;
-  }
-  return { startRow, startColumn, endRow: index - 1, endColumn };
 }
 
 function declaredDimension(ref: string): CellRectangle | undefined {

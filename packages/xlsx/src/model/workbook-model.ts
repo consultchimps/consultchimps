@@ -10,8 +10,6 @@
  * handed to L0 exactly as it arrived, which is what keeps untouched parts
  * byte-identical through an edit.
  */
-import * as XLSX from "xlsx";
-
 import {
   readExcelTableDefinitionsFrom,
   readWorkbookSheetsFrom,
@@ -26,6 +24,7 @@ import {
   WorkbookPackage,
 } from "../package/index.js";
 import {
+  decodeRange,
   relocateReference,
   DELETED_REFERENCE,
   type RowRelocation,
@@ -75,10 +74,10 @@ function visibilityOf(state: string | undefined): SheetInfo["visibility"] {
 }
 
 function decodeTableRange(reference: string): CellRange {
-  const range = XLSX.utils.decode_range(reference);
+  const range = decodeRange(reference);
   return {
-    start: { row: range.s.r + 1, column: range.s.c },
-    end: { row: range.e.r + 1, column: range.e.c },
+    start: { row: range.startRow + 1, column: range.startColumn },
+    end: { row: range.endRow + 1, column: range.endColumn },
   };
 }
 
@@ -93,8 +92,6 @@ export class WorkbookModel implements WorkbookModelContract, WorksheetHost {
   #calcChain: CalcChainModel | undefined;
   #calcChainChanged = false;
   #calcChainEntriesRemoved = 0;
-  #sourceBytes: Uint8Array | undefined;
-  #values: XLSX.WorkBook | undefined;
   #strings: string[] | undefined;
   #styles: StyleTable | undefined;
   #date1904: boolean | undefined;
@@ -109,14 +106,8 @@ export class WorkbookModel implements WorkbookModelContract, WorksheetHost {
     this.#tables = tables;
   }
 
-  static async load(
-    bytes: Uint8Array,
-    valuesView?: XLSX.WorkBook | undefined,
-  ): Promise<WorkbookModel> {
-    const model = WorkbookModel.fromPackage(await WorkbookPackage.load(bytes));
-    model.#sourceBytes = bytes;
-    model.#values = valuesView;
-    return model;
+  static async load(bytes: Uint8Array): Promise<WorkbookModel> {
+    return WorkbookModel.fromPackage(await WorkbookPackage.load(bytes));
   }
 
   static fromPackage(workbookPackage: WorkbookPackage): WorkbookModel {
@@ -248,28 +239,6 @@ export class WorkbookModel implements WorkbookModelContract, WorksheetHost {
       this.#package.contentTypeOverride(WORKBOOK_MAIN_PART)?.trim() ===
       MACRO_WORKBOOK_MAIN_CONTENT_TYPE
     );
-  }
-
-  /**
-   * A cell-value view of the workbook as loaded. Reading values is where a
-   * mature spreadsheet reader earns its keep - number formats, dates, inline
-   * and shared strings - so the model reads through one rather than
-   * reimplementing it. Every *write* still goes through the model itself.
-   */
-  values(): XLSX.WorkBook {
-    if (!this.#values) {
-      if (!this.#sourceBytes) {
-        throw new Error(
-          "This workbook model was built from a package and has no value view.",
-        );
-      }
-      this.#values = XLSX.read(this.#sourceBytes, {
-        cellDates: true,
-        dense: false,
-        type: "array",
-      });
-    }
-    return this.#values;
   }
 
   /** The shared string table, read far enough to resolve `t="s"` cells. */
