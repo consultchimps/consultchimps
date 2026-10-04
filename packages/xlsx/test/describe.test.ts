@@ -1736,7 +1736,8 @@ describe("defined names outside the standard container", () => {
       `<row r="1">${textCell("A1", "Case")}</row><row r="2">${textCell("A2", "R-1")}</row>`,
       {
         definedNames:
-          `<definedNames><definedName name="Cases">'Review Log'!$A$1:$A$2</definedName></definedNames>` +
+          `<definedNames><definedName name="Cases">'Review Log'!$A$1:$A$2</definedName>` +
+          `<x:definedName xmlns:x="urn:synthetic" name="Inside">'Review Log'!$A$1:$A$2</x:definedName></definedNames>` +
           `<extLst><ext uri="urn:synthetic"><definedName name="Nested">'Review Log'!$A$1:$A$2</definedName>` +
           `<x:definedName xmlns:x="urn:synthetic" name="Foreign">'Review Log'!$A$1:$A$2</x:definedName></ext></extLst>`,
       },

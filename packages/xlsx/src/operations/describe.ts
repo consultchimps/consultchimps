@@ -37,7 +37,6 @@ import type {
   WorkbookTableInfo,
   WorksheetModel,
 } from "../model/types.js";
-import { decodeXmlText } from "../model/xml.js";
 import { resolveRegions } from "../region/resolve.js";
 import type { DataRegion } from "../region/types.js";
 import { formatCellRef, parseSheetRange } from "../region/values.js";
@@ -529,17 +528,15 @@ function describeNamedRanges(
     if (definedName.name.startsWith(BUILTIN_DEFINED_NAME_PREFIX)) {
       continue;
     }
-    // The model hands back the reference as the workbook part stores it, which
-    // is escaped XML text: a worksheet called `Review & Log` arrives as
-    // `'Review &amp; Log'!$A$1`. Sheet names elsewhere in the description are
-    // decoded, so without this the membership test below would silently drop
-    // the range and undercount the `namedRanges` metric.
-    const parsed = parseSheetRange(decodeXmlText(definedName.reference));
+    // The model hands back the reference with its entities resolved, so a
+    // worksheet called `Review & Log` matches the decoded sheet names the
+    // membership test below compares against.
+    const parsed = parseSheetRange(definedName.reference);
     if (!parsed || !describedSheets.has(parsed.sheet)) {
       continue;
     }
     ranges.push({
-      name: decodeXmlText(definedName.name),
+      name: definedName.name,
       ref: formatRange(parsed.range),
       sheet: parsed.sheet,
     });

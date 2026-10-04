@@ -75,6 +75,7 @@ export interface SheetInfo {
 
 export interface DefinedNameEntry {
   readonly name: string;
+  /** The formula the name stands for, entities resolved. */
   readonly reference: string;
   /** Sheet-scoped names carry the sheet index; workbook scope is undefined. */
   readonly localSheetId?: number | undefined;

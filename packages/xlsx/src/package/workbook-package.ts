@@ -93,7 +93,11 @@ const DEFINED_NAME_PATH = ["workbook", "definedNames", "definedName"];
 export function forEachDefinedName(
   xml: string,
   fileName: string,
-  onName: (name: string, reference: string) => void,
+  onName: (
+    name: string,
+    reference: string,
+    localSheetId: string | undefined,
+  ) => void,
 ): void {
   const parser = new SaxesParser({
     fileName,
@@ -109,6 +113,7 @@ export function forEachDefinedName(
         element.uri === path[0]!.uri,
     );
   let name: string | undefined;
+  let localSheetId: string | undefined;
   let reference = "";
   parser.on("doctype", () => {
     throw new Error(`DOCTYPE declarations are not allowed in ${fileName}.`);
@@ -120,6 +125,7 @@ export function forEachDefinedName(
     path.push(tag);
     if (isDefinedName()) {
       name = attributeValue(tag, "name") ?? "";
+      localSheetId = attributeValue(tag, "localSheetId");
       reference = "";
     }
   });
@@ -130,7 +136,7 @@ export function forEachDefinedName(
   parser.on("cdata", onText);
   parser.on("closetag", () => {
     if (name !== undefined && isDefinedName()) {
-      onName(name, reference);
+      onName(name, reference, localSheetId);
       name = undefined;
     }
     path.pop();
