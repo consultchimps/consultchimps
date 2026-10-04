@@ -33,6 +33,7 @@ export { bytesSource, ZipReader } from "./zip-reader.js";
 export {
   forEachDefinedName,
   forEachOpenTag,
+  forEachWorkbookSheet,
   MACRO_WORKBOOK_MAIN_CONTENT_TYPE,
   tagAttribute,
   VBA_PROJECT_PART,

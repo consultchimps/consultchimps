@@ -45,6 +45,7 @@ import {
   decodeEscapes,
   forEachDefinedName,
   forEachOpenTag,
+  forEachWorkbookSheet,
   PreloadedParts,
   readSharedStrings,
   readWorksheetEvents,
@@ -387,8 +388,7 @@ export class StreamedWorkbook {
         .map((relationship) => [relationship.id, relationship] as const),
     );
     const sheets: StreamedSheet[] = [];
-    forEachOpenTag(workbookXml, WORKBOOK_PART, (tag) => {
-      if (tag.local !== "sheet") return;
+    forEachWorkbookSheet(workbookXml, WORKBOOK_PART, (tag) => {
       const name = tagAttribute(tag, "name");
       if (name === undefined) return;
       const id = tagAttribute(tag, "id");

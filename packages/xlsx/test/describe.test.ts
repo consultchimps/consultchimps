@@ -1730,8 +1730,8 @@ describe("named ranges read through the streaming reader", () => {
   });
 });
 
-describe("defined names outside the standard container", () => {
-  it("are not the workbook's names, for the reader or the description", async () => {
+describe("workbook structure outside the standard containers", () => {
+  it("is not the workbook's names or sheets, for the readers or the description", async () => {
     const bytes = await uncalculatedWorkbookBytes(
       `<row r="1">${textCell("A1", "Case")}</row><row r="2">${textCell("A2", "R-1")}</row>`,
       {
@@ -1739,7 +1739,8 @@ describe("defined names outside the standard container", () => {
           `<definedNames><definedName name="Cases">'Review Log'!$A$1:$A$2</definedName>` +
           `<x:definedName xmlns:x="urn:synthetic" name="Inside">'Review Log'!$A$1:$A$2</x:definedName></definedNames>` +
           `<extLst><ext uri="urn:synthetic"><definedName name="Nested">'Review Log'!$A$1:$A$2</definedName>` +
-          `<x:definedName xmlns:x="urn:synthetic" name="Foreign">'Review Log'!$A$1:$A$2</x:definedName></ext></extLst>`,
+          `<x:definedName xmlns:x="urn:synthetic" name="Foreign">'Review Log'!$A$1:$A$2</x:definedName>` +
+          `<sheet name="Impostor" sheetId="9" r:id="rId1"/></ext></extLst>`,
       },
     );
 
@@ -1756,6 +1757,12 @@ describe("defined names outside the standard container", () => {
     expect(description.namedRanges.map((range) => range.name)).toEqual([
       "Cases",
     ]);
+    expect(description.sheets.map((sheet) => sheet.name)).toEqual([
+      "Review Log",
+    ]);
+
+    const tables = await readWorkbookTablesBytes({ name: "cases.xlsx", bytes });
+    expect(tables.map((table) => table.source?.sheet)).toEqual(["Review Log"]);
   });
 });
 

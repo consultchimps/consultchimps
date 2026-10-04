@@ -4,6 +4,7 @@
  */
 import {
   forEachOpenTag,
+  forEachWorkbookSheet,
   tagAttribute,
   WorkbookPackage,
   type WorkbookPartReader,
@@ -45,11 +46,7 @@ export interface ExcelTableDefinition {
 function parseWorkbookSheets(xml: string, fileName: string): WorkbookSheet[] {
   const sheets: WorkbookSheet[] = [];
 
-  forEachOpenTag(xml, fileName, (tag) => {
-    if (tag.local !== "sheet") {
-      return;
-    }
-
+  forEachWorkbookSheet(xml, fileName, (tag) => {
     const name = tagAttribute(tag, "name");
     const relationshipId = tagAttribute(tag, "id");
     if (name && relationshipId) {

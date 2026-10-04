@@ -964,7 +964,8 @@ function excelTableToTable(
   definition: ExcelTableDefinition,
   grid: SheetGrid,
 ): WorkbookExcelTable | undefined {
-  const range = decodeRange(definition.range);
+  // A lowercase reference names the same cells; the decoder reads capitals.
+  const range = decodeRange(definition.range.toUpperCase());
   const rangeColumnCount = range.endColumn - range.startColumn + 1;
   if (rangeColumnCount !== definition.columns.length) {
     throw new ConsultChimpsError(
