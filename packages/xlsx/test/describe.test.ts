@@ -1730,6 +1730,34 @@ describe("named ranges read through the streaming reader", () => {
   });
 });
 
+describe("defined names outside the standard container", () => {
+  it("are not the workbook's names, for the reader or the description", async () => {
+    const bytes = await uncalculatedWorkbookBytes(
+      `<row r="1">${textCell("A1", "Case")}</row><row r="2">${textCell("A2", "R-1")}</row>`,
+      {
+        definedNames:
+          `<definedNames><definedName name="Cases">'Review Log'!$A$1:$A$2</definedName></definedNames>` +
+          `<extLst><ext uri="urn:synthetic"><definedName name="Nested">'Review Log'!$A$1:$A$2</definedName>` +
+          `<x:definedName xmlns:x="urn:synthetic" name="Foreign">'Review Log'!$A$1:$A$2</x:definedName></ext></extLst>`,
+      },
+    );
+
+    const ranges = await readWorkbookNamedRangesBytes({
+      name: "cases.xlsx",
+      bytes,
+    });
+    expect(ranges.map((range) => range.rangeName)).toEqual(["Cases"]);
+
+    const { description } = await describeWorkbookBytes({
+      name: "cases.xlsx",
+      bytes,
+    });
+    expect(description.namedRanges.map((range) => range.name)).toEqual([
+      "Cases",
+    ]);
+  });
+});
+
 describe("worksheets the model cannot parse", () => {
   // The package opens in two steps and only the first is eager: the worksheet
   // part is parsed the first time somebody asks for it, so a malformed row

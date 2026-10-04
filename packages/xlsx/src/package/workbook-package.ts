@@ -81,9 +81,14 @@ export function forEachOpenTag(
 
 export { attributeValue as tagAttribute };
 
+/** The path of a workbook's own defined names, below its root. */
+const DEFINED_NAME_PATH = ["workbook", "definedNames", "definedName"];
+
 /**
  * The defined names a workbook part declares, in document order: each name
- * with the text of its formula, entities resolved.
+ * with the text of its formula, entities resolved. Only the standard
+ * `<definedNames>` container counts, in the workbook's own namespace; an
+ * extension's elements of the same name are not the workbook's names.
  */
 export function forEachDefinedName(
   xml: string,
@@ -95,6 +100,14 @@ export function forEachDefinedName(
     position: true,
     xmlns: true,
   } as const);
+  const path: SaxesTagNS[] = [];
+  const isDefinedName = (): boolean =>
+    path.length === DEFINED_NAME_PATH.length &&
+    path.every(
+      (element, index) =>
+        element.local === DEFINED_NAME_PATH[index] &&
+        element.uri === path[0]!.uri,
+    );
   let name: string | undefined;
   let reference = "";
   parser.on("doctype", () => {
@@ -104,7 +117,8 @@ export function forEachDefinedName(
     throw error;
   });
   parser.on("opentag", (tag) => {
-    if (tag.local === "definedName") {
+    path.push(tag);
+    if (isDefinedName()) {
       name = attributeValue(tag, "name") ?? "";
       reference = "";
     }
@@ -114,11 +128,12 @@ export function forEachDefinedName(
   };
   parser.on("text", onText);
   parser.on("cdata", onText);
-  parser.on("closetag", (tag) => {
-    if (tag.local === "definedName" && name !== undefined) {
+  parser.on("closetag", () => {
+    if (name !== undefined && isDefinedName()) {
       onName(name, reference);
       name = undefined;
     }
+    path.pop();
   });
   parser.write(xml).close();
 }

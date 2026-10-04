@@ -165,23 +165,33 @@ export class WorkbookModel implements WorkbookModelContract, WorksheetHost {
     if (xml === undefined) {
       return Promise.resolve([]);
     }
+    // Only the standard container holds the workbook's names; an extension
+    // may carry elements of the same name, and those come after it.
+    const container = findElement(xml, "definedNames");
+    if (container === undefined || container.selfClosing) {
+      return Promise.resolve([]);
+    }
     const names: DefinedNameEntry[] = [];
-    editElements(xml, "definedName", (element, text) => {
-      const name = getAttribute(element.openTag, "name");
-      if (name !== undefined) {
-        const localSheetId = getAttribute(element.openTag, "localSheetId");
-        names.push({
-          name,
-          localSheetId:
-            localSheetId === undefined ? undefined : Number(localSheetId),
-          reference: text.slice(
-            element.innerStart - element.start,
-            element.innerEnd - element.start,
-          ),
-        });
-      }
-      return text;
-    });
+    editElements(
+      xml.slice(container.innerStart, container.innerEnd),
+      "definedName",
+      (element, text) => {
+        const name = getAttribute(element.openTag, "name");
+        if (name !== undefined) {
+          const localSheetId = getAttribute(element.openTag, "localSheetId");
+          names.push({
+            name,
+            localSheetId:
+              localSheetId === undefined ? undefined : Number(localSheetId),
+            reference: text.slice(
+              element.innerStart - element.start,
+              element.innerEnd - element.start,
+            ),
+          });
+        }
+        return text;
+      },
+    );
     return Promise.resolve(names);
   }
 
