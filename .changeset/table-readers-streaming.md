@@ -16,3 +16,6 @@ reference is present but unreadable, as every other reader does. A worksheet
 whose part cannot be found is refused by every reader, as consolidation already
 did: an Excel Table or named range on it is no longer skipped silently, and a
 sheet the workbook's relationships do not name is no longer guessed by position.
+
+Defined names inside a workbook extension are no longer read as the workbook's
+names, by the named-range reader or by inspection.
