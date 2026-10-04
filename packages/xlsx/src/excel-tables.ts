@@ -69,6 +69,22 @@ function workbookSheets(workbookPackage: WorkbookPartReader): WorkbookSheet[] {
   );
 }
 
+const STYLES_RELATIONSHIP_SUFFIX = "/styles";
+const DEFAULT_STYLES_PART = "xl/styles.xml";
+
+/**
+ * The styles part the workbook's relationships name, or the conventional
+ * `xl/styles.xml` when none does.
+ */
+export function stylesPartFrom(workbookPackage: WorkbookPartReader): string {
+  const relationship = workbookPackage
+    .relationshipsOf(WORKBOOK_PART)
+    .find((candidate) => candidate.type.endsWith(STYLES_RELATIONSHIP_SUFFIX));
+  return relationship === undefined
+    ? DEFAULT_STYLES_PART
+    : workbookPackage.resolvePart(WORKBOOK_PART, relationship.target);
+}
+
 /** Every worksheet the workbook declares, in workbook order. */
 export function readWorkbookSheetsFrom(
   workbookPackage: WorkbookPartReader,

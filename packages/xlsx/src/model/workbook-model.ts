@@ -15,6 +15,7 @@ import * as XLSX from "xlsx";
 import {
   readExcelTableDefinitionsFrom,
   readWorkbookSheetsFrom,
+  stylesPartFrom,
   type ExcelTableDefinition,
   type WorkbookSheetEntry,
 } from "../excel-tables.js";
@@ -57,7 +58,6 @@ import {
 const WORKBOOK_PART = "xl/workbook.xml";
 const CALC_CHAIN_PART = "xl/calcChain.xml";
 const SHARED_STRINGS_PART = "xl/sharedStrings.xml";
-const STYLES_PART = "xl/styles.xml";
 
 export interface DeleteRowsOptions {
   /** Close the gaps left behind so surviving rows form a contiguous block. */
@@ -402,7 +402,9 @@ export class WorkbookModel implements WorkbookModelContract, WorksheetHost {
   }
 
   isDateStyle(styleIndex: number | undefined): boolean {
-    this.#styles ??= StyleTable.parse(this.#package.readText(STYLES_PART));
+    this.#styles ??= StyleTable.parse(
+      this.#package.readText(stylesPartFrom(this.#package)),
+    );
     return this.#styles.isDateStyle(styleIndex);
   }
 
