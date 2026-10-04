@@ -180,13 +180,12 @@ first and only then anywhere on the sheet, so a title line repeating a column's
 name does not capture a split. The same module decides which columns of a region
 hold anything: a column blank in the header row and in every row under it is a
 spacer and is not a column of the region. The rule is a pure function over
-per-row value counts, so the SheetJS-backed table reader in `src/shared.ts`
-(which the consolidation, the worksheet readers, and the worksheet-records
-reader are built on) applies it to its own reading of the cells and the resolver
-applies it to the document model. That is the invariant: one worksheet has one
-header row and one set of columns, whichever reader answers, which is what lets
-the inspection promise the header row a consolidation will use. A declared
-header row is never second-guessed by either.
+per-row value counts, so the cell readers (the consolidation, and the table and
+worksheet-records readers in `src/shared.ts`) apply it to their own reading of
+the cells and the resolver applies it to the document model. That is the
+invariant: one worksheet has one header row and one set of columns, whichever
+reader answers, which is what lets the inspection promise the header row a
+consolidation will use. A declared header row is never second-guessed by either.
 
 ### L3: Operations (`src/operations/`)
 

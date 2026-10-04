@@ -3,8 +3,8 @@
  * hold anything at all.
  *
  * Two readers in this package resolve a worksheet's header without being told
- * where it is: the SheetJS-backed table reader in `src/shared.ts`, which the
- * consolidation and the worksheet-records reader are built on, and the region
+ * where it is: the cell readers (the consolidation, and the table and
+ * worksheet-records readers in `src/shared.ts`), and the region
  * resolver in `resolve.ts`, which the inspection reports through. The rule
  * both apply lives here, once, so that the header row an inspection reports is
  * the header row a consolidation reads from. Each reader supplies what it can

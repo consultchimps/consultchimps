@@ -1043,7 +1043,8 @@ function parseNamedRangeRef(
   if (!sheet || !range) {
     return undefined;
   }
-  return { range: range.replaceAll("$", ""), sheet };
+  // A lowercase reference names the same cells; the decoder reads capitals.
+  return { range: range.replaceAll("$", "").toUpperCase(), sheet };
 }
 
 function namedRangeToTable(

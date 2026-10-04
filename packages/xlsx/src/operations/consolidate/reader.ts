@@ -5,14 +5,18 @@
  * The package layer streams a worksheet's markup; this module decides what each
  * cell holds. Every rule below is the rule the SheetJS-backed table reader
  * applied, cell for cell, so a read gives the values it gave before, with
- * three deliberate differences:
+ * these deliberate differences:
  *
  * - an error cell holds its text (`#DIV/0!`) as a `CellError`, not the number
  *   the engine coded it as;
  * - text keeps a carriage return before a line feed (`_x000D_` then a new
  *   line), which the engine folded into the line feed alone;
  * - a formula's cached text is unescaped once, as every other text is, where
- *   the engine unescaped it twice and so read a literal `&amp;lt;` as `<`.
+ *   the engine unescaped it twice and so read a literal `&amp;lt;` as `<`;
+ * - a declared date with no text reads as blank, where the engine dropped the
+ *   whole worksheet;
+ * - a row number or cell reference that is present but unreadable refuses the
+ *   worksheet, the document model's rule, where the engine skipped the cell.
  *
  * Dates follow the document model, as they did before: a cell is a date when it
  * declares `t="d"` or when its style formats a number as one, and its value is
