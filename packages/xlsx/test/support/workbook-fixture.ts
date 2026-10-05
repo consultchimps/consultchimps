@@ -15,6 +15,8 @@ export interface FixtureCell {
   readonly formula?: string;
   /** An error value such as "#DIV/0!", stored or cached. */
   readonly error?: string;
+  /** ISO 8601 text stored as a declared date (`t="d"`). */
+  readonly date?: string;
 }
 
 export type FixtureValue = string | number | boolean | null | FixtureCell;
@@ -43,6 +45,8 @@ export interface FixtureWorkbook {
   readonly names?: readonly FixtureDefinedName[];
   /** Count dates from 1904 rather than 1900. */
   readonly date1904?: boolean;
+  /** Store text inline in each cell rather than in a shared table. */
+  readonly inlineStrings?: boolean;
 }
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -109,6 +113,11 @@ class Styles {
 class Strings {
   readonly #index = new Map<string, number>();
   #count = 0;
+  readonly inline: boolean;
+
+  constructor(inline = false) {
+    this.inline = inline;
+  }
 
   index(text: string): number {
     this.#count += 1;
@@ -145,6 +154,9 @@ function cellXml(
   const formula =
     cell.formula === undefined ? "" : `<f>${escapeXml(cell.formula)}</f>`;
   const value = cell.value ?? null;
+  if (cell.date !== undefined) {
+    return `<c r="${ref}"${style} t="d"><v>${escapeXml(cell.date)}</v></c>`;
+  }
   if (cell.error !== undefined) {
     return `<c r="${ref}"${style} t="e">${formula}<v>${escapeXml(cell.error)}</v></c>`;
   }
@@ -156,6 +168,9 @@ function cellXml(
   }
   if (typeof value === "string") {
     // A formula caches text inline; a plain string goes to the shared table.
+    if (formula === "" && strings.inline) {
+      return `<c r="${ref}"${style} t="inlineStr"><is><t xml:space="preserve">${escapeXml(value)}</t></is></c>`;
+    }
     return formula === ""
       ? `<c r="${ref}"${style} t="s"><v>${strings.index(value)}</v></c>`
       : `<c r="${ref}"${style} t="str">${formula}<v>${escapeXml(value)}</v></c>`;
@@ -216,7 +231,7 @@ export async function buildWorkbookFixture(
   spec: FixtureWorkbook,
 ): Promise<Uint8Array> {
   const styles = new Styles();
-  const strings = new Strings();
+  const strings = new Strings(spec.inlineStrings === true);
   const worksheets = spec.sheets.map((sheet) =>
     worksheetXml(sheet, styles, strings),
   );

@@ -147,7 +147,9 @@ async function sheetGrid(
   filePath: string,
   sheet: string,
 ): Promise<unknown[][]> {
+  // The first row is the header: no detection, so a header bug cannot hide.
   const [table] = await readWorkbookTables(filePath, {
+    headerRow: 1,
     includeHiddenSheets: true,
     sheets: [sheet],
   });
@@ -170,6 +172,11 @@ async function sheetRecords(
   );
 }
 
+/** Text matched literally inside a pattern. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
 /** An element name with any namespace prefix, as a pattern. */
 function tag(name: string): string {
   return String.raw`(?:\w+:)?` + name;
@@ -187,7 +194,7 @@ async function cellMarkup(
   const zip = await JSZip.loadAsync(await readFile(filePath));
   const read = (name: string) => zip.file(name)!.async("string");
   const id = new RegExp(
-    `<${tag("sheet")} [^>]*name="${sheet}"[^>]*r:id="([^"]+)"`,
+    `<${tag("sheet")} [^>]*name="${escapeRegExp(sheet)}"[^>]*r:id="([^"]+)"`,
     "u",
   ).exec(await read("xl/workbook.xml"))![1];
   const relationship = new RegExp(

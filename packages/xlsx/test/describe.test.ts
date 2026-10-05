@@ -940,14 +940,6 @@ describe("describeWorkbook named ranges", () => {
   });
 });
 
-/**
- * A worksheet part whose totals column holds formulas nothing has calculated:
- * each cell carries `<f>` and no `<v>`, which is what a generator writes when
- * it has no calculation engine. It is assembled by hand. The previous engine,
- * SheetJS, dropped a numeric formula cell with no
- * cached value while parsing, which is the whole reason this condition has to
- * be read from the package's own model.
- */
 /** One "Data" sheet, optionally in the 1904 date system. */
 function dataSheet(
   rows: FixtureSheet["rows"],
@@ -956,6 +948,14 @@ function dataSheet(
   return buildWorkbookFixture({ sheets: [{ name: "Data", rows }], date1904 });
 }
 
+/**
+ * A worksheet part whose totals column holds formulas nothing has calculated:
+ * each cell carries `<f>` and no `<v>`, which is what a generator writes when
+ * it has no calculation engine. It is assembled by hand. SheetJS, the previous
+ * engine, dropped a numeric formula cell with no cached value while parsing,
+ * which is the whole reason this condition has to be read from the package's
+ * own model.
+ */
 async function uncalculatedWorkbookBytes(
   rows: string,
   extra: { sheetName?: string; definedNames?: string; dimension?: string } = {},

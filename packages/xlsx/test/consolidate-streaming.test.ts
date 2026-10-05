@@ -32,9 +32,9 @@ import {
 
 type Rows = unknown[][];
 
-/** A date as the serial Excel stores, wearing a date format. */
+/** A date as a declared date cell (`t="d"`), as SheetJS wrote one. */
 function dateCell(date: Date): FixtureValue {
-  return { value: date.getTime() / 86_400_000 + 25_569, format: 14 };
+  return { date: date.toISOString() };
 }
 
 async function fixtureInput(
@@ -45,10 +45,13 @@ async function fixtureInput(
     merges?: string[];
     hidden?: boolean;
   }>,
+  options: { sharedStrings?: boolean } = {},
 ): Promise<WorkbookInputBytes> {
   return {
     name,
     bytes: await buildWorkbookFixture({
+      // Inline strings unless asked, so both string stores stay covered.
+      inlineStrings: options.sharedStrings !== true,
       sheets: sheets.map((sheet) => ({
         name: sheet.name,
         rows: sheet.rows.map((row) =>
@@ -157,25 +160,29 @@ const reviewInputs = (): Promise<WorkbookInputBytes[]> =>
         hidden: true,
       },
     ]),
-    fixtureInput("south.xlsx", [
-      {
-        name: "vF",
-        rows: [
-          ["Report title", null, null, null],
-          ["case_id", "Failed_Checks", null, "Region"],
-          ["S-1", 7, "unnamed", "South"],
-          ["S-2", 8, null, "South"],
-        ],
-        merges: ["A1:D1"],
-      },
-      {
-        name: "Dupes",
-        rows: [
-          ["A", "A", "A_2", null],
-          [1, 2, 3, 4],
-        ],
-      },
-    ]),
+    fixtureInput(
+      "south.xlsx",
+      [
+        {
+          name: "vF",
+          rows: [
+            ["Report title", null, null, null],
+            ["case_id", "Failed_Checks", null, "Region"],
+            ["S-1", 7, "unnamed", "South"],
+            ["S-2", 8, null, "South"],
+          ],
+          merges: ["A1:D1"],
+        },
+        {
+          name: "Dupes",
+          rows: [
+            ["A", "A", "A_2", null],
+            [1, 2, 3, 4],
+          ],
+        },
+      ],
+      { sharedStrings: true },
+    ),
   ]);
 
 describe("two-pass consolidation gives the in-memory pipeline's bytes", () => {

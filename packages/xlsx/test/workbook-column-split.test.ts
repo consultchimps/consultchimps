@@ -61,8 +61,8 @@ async function createPreservationWorkbook(filePath: string): Promise<void> {
             ["Entity allocation report"],
             [],
             ["Record", "Entity Name", "Calculated"],
-            [1, "DGE", money("A4*10", 10)],
-            [2, "dge ", money("A5*10", 20)],
+            [1, "Alpha", money("A4*10", 10)],
+            [2, "alpha ", money("A5*10", 20)],
             [3, "Other", money("A6*10", 30)],
             [4, null, 40],
           ],
@@ -73,7 +73,7 @@ async function createPreservationWorkbook(filePath: string): Promise<void> {
           name: "Finance",
           rows: [
             ["Code", "Amount", "Entity Name"],
-            ["A", 5, " DGE"],
+            ["A", 5, " Alpha"],
             ["B", 6, "Third"],
             ["C", 7, null],
           ],
@@ -180,7 +180,7 @@ describe("all-worksheet workbook splitting", () => {
 
     expect(
       result.artifacts.map((artifact) => path.basename(artifact.path)),
-    ).toEqual(["DGE.xlsx", "Other.xlsx", "Third.xlsx"]);
+    ).toEqual(["Alpha.xlsx", "Other.xlsx", "Third.xlsx"]);
     expect(result.metrics).toMatchObject({
       groups: 3,
       outputFiles: 3,
@@ -202,33 +202,33 @@ describe("all-worksheet workbook splitting", () => {
         { deletedRows: 2, retainedRows: 2, sheet: "Operations" },
         { deletedRows: 2, retainedRows: 1, sheet: "Finance" },
       ],
-      value: "DGE",
+      value: "Alpha",
     });
 
-    const dgePath = path.join(output, "DGE.xlsx");
-    expect(await sheetNamesOf(await readFile(dgePath))).toEqual([
+    const alphaPath = path.join(output, "Alpha.xlsx");
+    expect(await sheetNamesOf(await readFile(alphaPath))).toEqual([
       "Operations",
       "Finance",
       "Cover",
     ]);
-    expect(await records(dgePath, "Operations", 3)).toEqual([
-      { Calculated: 10, "Entity Name": "DGE", Record: 1 },
-      { Calculated: 20, "Entity Name": "dge ", Record: 2 },
+    expect(await records(alphaPath, "Operations", 3)).toEqual([
+      { Calculated: 10, "Entity Name": "Alpha", Record: 1 },
+      { Calculated: 20, "Entity Name": "alpha ", Record: 2 },
     ]);
-    expect(await records(dgePath, "Finance", 1)).toEqual([
-      { Amount: 5, Code: "A", "Entity Name": " DGE" },
+    expect(await records(alphaPath, "Finance", 1)).toEqual([
+      { Amount: 5, Code: "A", "Entity Name": " Alpha" },
     ]);
     const dgeOperations = await packagePart(
-      dgePath,
+      alphaPath,
       "xl/worksheets/sheet1.xml",
     );
     expect(worksheetCellFormula(dgeOperations, "C4")).toBe("A4*10");
-    expect(await packagePart(dgePath, "xl/workbook.xml")).toMatch(
+    expect(await packagePart(alphaPath, "xl/workbook.xml")).toMatch(
       /<sheet\b[^>]*\bname="Cover"[^>]*\bstate="veryHidden"/u,
     );
     expect(
       mergedCellReferences(
-        await packagePart(dgePath, "xl/worksheets/sheet3.xml"),
+        await packagePart(alphaPath, "xl/worksheets/sheet3.xml"),
       ),
     ).toEqual(["A2:C2"]);
     expect(
@@ -248,7 +248,7 @@ describe("all-worksheet workbook splitting", () => {
     expect(otherXml).not.toMatch(/<row\b[^>]*\br="6"/u);
 
     const dgeArchive = await JSZip.loadAsync(
-      await readFile(path.join(output, "DGE.xlsx")),
+      await readFile(path.join(output, "Alpha.xlsx")),
     );
     expect(
       await dgeArchive.file("xl/worksheets/sheet3.xml")!.async("text"),
@@ -343,11 +343,11 @@ describe("all-worksheet workbook splitting", () => {
       outputDirectory: path.join(directory, "values"),
       values: true,
     });
-    const dgePath = path.join(directory, "values", "DGE.xlsx");
-    const operations = await packagePart(dgePath, "xl/worksheets/sheet1.xml");
+    const alphaPath = path.join(directory, "values", "Alpha.xlsx");
+    const operations = await packagePart(alphaPath, "xl/worksheets/sheet1.xml");
     expect(worksheetCellFormula(operations, "C4")).toBeUndefined();
     expect(worksheetCellValue(operations, "C4")).toBe("10");
-    const cover = await packagePart(dgePath, "xl/worksheets/sheet3.xml");
+    const cover = await packagePart(alphaPath, "xl/worksheets/sheet3.xml");
     expect(worksheetCellFormula(cover, "B1")).toBeUndefined();
     expect(worksheetCellValue(cover, "B1")).toBeUndefined();
     expect(result.metrics.formulaCellsConverted).toBeGreaterThan(0);
