@@ -1,5 +1,52 @@
 # @consultchimps/xlsx
 
+## 0.19.0
+
+### Minor Changes
+
+- a17f489: `readWorksheetRecords` and its byte twin, which PowerPoint population
+  reads through, now read through the streaming reader (ADR 0006) and render
+  each cell's number format with numfmt, a maintained formatter, instead of
+  SheetJS. Two numfmt defects are corrected locally until upstream fixes them: a
+  General number with 10 or 11 integer digits and a fraction rounds as Excel
+  shows it, and a time that rounds up to midnight shows the next day.
+
+  A few rare formats now show differently, mostly closer to Excel: scientific
+  notation such as `0E+0`, leading zeros such as `00.000`, and `-0.5` under `0`,
+  now `-1`. A negative number that rounds to zero under a format without
+  decimals shows `0` rather than `-0`, the `A/P` marker shows `AM` or `PM`, and
+  a fraction that rounds to a whole number shows `1 1/1`. A cell holding text
+  where a number belongs, or a date cell holding only spaces, now shows as empty
+  instead of `#NUM!` or `1900-01-00`, and a date before 1900 shows its serial
+  number rather than nothing. As with the table readers, a carriage return
+  before a line feed is kept, a formula's cached text is unescaped once, and a
+  worksheet holding an empty declared date is read.
+
+- 33d0abc: The table readers now read through the streaming reader consolidation
+  uses (ADR 0006): `readWorkbookTables`, `readWorkbookWorksheets`,
+  `readWorkbookExcelTables`, `readWorkbookNamedRanges`, their byte twins, and
+  the input of a single-table split. Each input is parsed once instead of twice.
+
+  Values are read as before, with the changes consolidation already made. An
+  error cell holds its text, `#DIV/0!`, instead of Excel's internal number for
+  it. A carriage return before a line feed is kept. A formula's cached text is
+  unescaped once. A worksheet holding a declared date with no text is now read
+  rather than refused. Consolidation again refuses a worksheet whose row number
+  or cell reference is present but unreadable, as every other reader does. A
+  worksheet whose part cannot be found is refused by every reader, as
+  consolidation already did: an Excel Table or named range on it is no longer
+  skipped silently, and a sheet the workbook's relationships do not name is no
+  longer guessed by position.
+
+  Defined names and sheets inside a workbook extension are no longer read as the
+  workbook's own, by any reader or by inspection.
+
+### Patch Changes
+
+- f6dd1b9: The published package no longer bundles SheetJS: every read goes
+  through the streaming reader, and table ranges are read with the package's own
+  helpers.
+
 ## 0.18.0
 
 ### Minor Changes
