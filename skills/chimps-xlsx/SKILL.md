@@ -8,14 +8,14 @@ description:
   stacked, tabbed together, divided by a column, or described before a decision.
 license: Apache-2.0
 metadata:
-  cli-version: "0.13.0"
+  cli-version: "0.13.1"
   repository: consultchimps/consultchimps
 ---
 
 # Excel operations with ConsultChimps
 
 Transforming workbooks that already exist. Run everything as
-`npx consultchimps@0.13.0 <command>`; add `--json` before the command for a
+`npx consultchimps@0.13.1 <command>`; add `--json` before the command for a
 machine-readable result. Every flag used here is in
 [references/cli-reference.md](references/cli-reference.md).
 
@@ -31,7 +31,7 @@ machine-readable result. Every flag used here is in
 "Combine" and "merge" in a user's sentence usually mean consolidate. Confirm the
 shape before running: stacked rows, or separate tabs.
 
-In 0.13.0 `sheets consolidate` and `sheets merge` read `.xlsx` only, and skip a
+In 0.13.1 `sheets consolidate` and `sheets merge` read `.xlsx` only, and skip a
 `.xlsm` input without a warning, even one named on the command line. Compare
 `metrics.inputFiles` with the number of files you meant to pass.
 `sheets inspect`, `sheets split` and `sheets unprotect` take `.xlsx` and
@@ -43,7 +43,7 @@ as `.xlsx` first, which drops the macros.
 Inspection writes nothing and tells you what an operation will key on:
 
 ```bash
-npx consultchimps@0.13.0 --json sheets inspect submissions/vendor-a.xlsx
+npx consultchimps@0.13.1 --json sheets inspect submissions/vendor-a.xlsx
 ```
 
 Per worksheet it reports visibility, `headerRow`, the column names read from
@@ -54,7 +54,7 @@ a hidden worksheet.
 
 ## What the reader does for you, and what it does not
 
-Behaviour of 0.13.0, which a checkout build can differ from.
+Behaviour of 0.13.1, which a checkout build can differ from.
 
 | In the source                               | What happens                                                                                                                                |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -73,7 +73,7 @@ the run, and say which you did.
 
 ## Header rows under title blocks
 
-In 0.13.0 a report title, merged banner, or "Prepared by" line is skipped when a
+In 0.13.1 a report title, merged banner, or "Prepared by" line is skipped when a
 blank row separates it from the table, or its values sit in cells merged across
 columns, and the rows below it hold clearly more values than it does: a one-cell
 title over three columns is skipped, one over two columns is not. The result
@@ -87,7 +87,7 @@ named like a sentence, `column_N` names, and one extra row per file.
 Confirm with `sheets inspect`, then name the real row:
 
 ```bash
-npx consultchimps@0.13.0 sheets consolidate "submissions/*.xlsx" \
+npx consultchimps@0.13.1 sheets consolidate "submissions/*.xlsx" \
   --header-row 4 \
   -o consolidated.xlsx
 ```
@@ -102,16 +102,16 @@ refuses with `TABLE_SOURCE_COLUMN_COLLISION`.
 
 ```bash
 # 1. Read the spellings each file carries
-npx consultchimps@0.13.0 --json sheets inspect submissions/vendor-a.xlsx
+npx consultchimps@0.13.1 --json sheets inspect submissions/vendor-a.xlsx
 
 # 2. Trial run: draft a mapping, and a workbook to read the columns from
-npx consultchimps@0.13.0 sheets consolidate "submissions/*.xlsx" \
+npx consultchimps@0.13.1 sheets consolidate "submissions/*.xlsx" \
   --suggest-map draft-mapping.json -o trial.xlsx
 
 # 3. Review and edit the draft by hand. See references/mapping.md.
 
 # 4. Apply it
-npx consultchimps@0.13.0 sheets consolidate "submissions/*.xlsx" \
+npx consultchimps@0.13.1 sheets consolidate "submissions/*.xlsx" \
   --map mapping.json -o consolidated.xlsx
 ```
 
@@ -154,7 +154,7 @@ A full walk through for many suppliers and several templates is in
 ## Recipe: split a master by column
 
 ```bash
-npx consultchimps@0.13.0 sheets split master.xlsx \
+npx consultchimps@0.13.1 sheets split master.xlsx \
   --column Region --values -o by-region
 ```
 
@@ -189,4 +189,4 @@ file and count its rows from the consolidate output instead.
 
 - [Column mapping document format](references/mapping.md)
 - [Many suppliers, several templates](references/supplier-batches.md)
-- [The `sheets` commands and options of 0.13.0](references/cli-reference.md)
+- [The `sheets` commands and options of 0.13.1](references/cli-reference.md)

@@ -8,7 +8,7 @@ description:
   PowerPoint or PDF files, or when the user mentions ConsultChimps.
 license: Apache-2.0
 metadata:
-  cli-version: "0.13.0"
+  cli-version: "0.13.1"
   repository: consultchimps/consultchimps
 ---
 
@@ -20,7 +20,7 @@ listed in [references/cli-reference.md](references/cli-reference.md).
 
 ## Decision rule
 
-Nine operations ship as tested CLI commands in 0.13.0. For any of them, run the
+Nine operations ship as tested CLI commands in 0.13.1. For any of them, run the
 CLI. Do not write a script that opens a workbook, walks a PDF, or edits OOXML by
 hand: the CLI already handles hidden sheets, merged cells, cached formula
 values, and refusing to overwrite its own input.
@@ -41,7 +41,7 @@ knows which part of the result the toolkit stands behind.
 | Combine PDFs into one file                  | `pdf merge`             |
 
 Database commands (`db`) are still in development and are not covered here. In
-0.13.0, `sheets consolidate` and `sheets merge` read `.xlsx` only; the other
+0.13.1, `sheets consolidate` and `sheets merge` read `.xlsx` only; the other
 `sheets` commands also take `.xlsm`.
 
 "Combine these files" is ambiguous. Ask which shape the user wants: one table of
@@ -50,7 +50,7 @@ stacked rows (consolidate), or one workbook of separate tabs (merge).
 ## Invocation
 
 ```bash
-npx consultchimps@0.13.0 <command>
+npx consultchimps@0.13.1 <command>
 ```
 
 No global install and no library import. The pinned version is the one this
@@ -71,7 +71,7 @@ node packages/cli/dist/index.js <command>
 Take the pnpm version from `packageManager` in the root `package.json`. A build
 prints the same `--version` as the release it follows, so compare the time of
 `packages/cli/dist/index.js` with `git log -1` and rebuild when the build is
-older. Behaviour described in this skill is that of 0.13.0; a checkout can
+older. Behaviour described in this skill is that of 0.13.1; a checkout can
 differ.
 
 ## Output contract
@@ -80,7 +80,7 @@ Human-readable results go to stdout, progress to stderr, and a failure sets a
 nonzero exit code. Place `--json` before the command for one line of JSON:
 
 ```bash
-npx consultchimps@0.13.0 --json pdf split report.pdf -o pages
+npx consultchimps@0.13.1 --json pdf split report.pdf -o pages
 ```
 
 Success prints `{"ok":true,"result":...}` with `artifacts`, `warnings` and
@@ -106,7 +106,7 @@ the way, for example a column no mapping claimed. Report warnings to the user.
 **An error with `"code": null`** is not a refusal: the CLI hit something it did
 not anticipate, such as `Maximum call stack size exceeded`. It does not name the
 input. Re-run on each input alone to find the file, tell the user it is a defect
-in the tool, and check whether another operation reads that file (in 0.13.0,
+in the tool, and check whether another operation reads that file (in 0.13.1,
 `sheets inspect` and `sheets consolidate` use different readers).
 
 The CLI never modifies an input file, and refuses to overwrite an existing
