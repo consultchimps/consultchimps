@@ -31,7 +31,7 @@ machine-readable result. Every flag used here is in
 "Combine" and "merge" in a user's sentence usually mean consolidate. Confirm the
 shape before running: stacked rows, or separate tabs.
 
-In 0.13.0 `sheets consolidate` and `sheets merge` read `.xlsx` only, and skip a
+In 0.13.1 `sheets consolidate` and `sheets merge` read `.xlsx` only, and skip a
 `.xlsm` input without a warning, even one named on the command line. Compare
 `metrics.inputFiles` with the number of files you meant to pass.
 `sheets inspect`, `sheets split` and `sheets unprotect` take `.xlsx` and
@@ -54,7 +54,7 @@ a hidden worksheet.
 
 ## What the reader does for you, and what it does not
 
-Behaviour of 0.13.0, which a checkout build can differ from.
+Behaviour of 0.13.1, which a checkout build can differ from.
 
 | In the source                               | What happens                                                                                                                                |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -73,7 +73,7 @@ the run, and say which you did.
 
 ## Header rows under title blocks
 
-In 0.13.0 a report title, merged banner, or "Prepared by" line is skipped when a
+In 0.13.1 a report title, merged banner, or "Prepared by" line is skipped when a
 blank row separates it from the table, or its values sit in cells merged across
 columns, and the rows below it hold clearly more values than it does: a one-cell
 title over three columns is skipped, one over two columns is not. The result
@@ -189,4 +189,4 @@ file and count its rows from the consolidate output instead.
 
 - [Column mapping document format](references/mapping.md)
 - [Many suppliers, several templates](references/supplier-batches.md)
-- [The `sheets` commands and options of 0.13.0](references/cli-reference.md)
+- [The `sheets` commands and options of 0.13.1](references/cli-reference.md)
