@@ -1,10 +1,11 @@
 import type { CellValue } from "@consultchimps/tabular";
 import { Zip, ZipDeflate, strToU8 } from "fflate";
 
+import { CellDate } from "./cell-date.js";
 import { CellError } from "./cell-error.js";
 
-/** A value the writer can store: a table value, or an error cell. */
-export type WritableCellValue = CellValue | CellError;
+/** A value the writer can store: a table value, an error cell, or a date. */
+export type WritableCellValue = CellValue | CellError | CellDate;
 
 /**
  * A single-worksheet workbook written row by row (ADR 0006). The worksheet XML
@@ -189,6 +190,8 @@ export class TableWorkbookWriter {
         // readers treat one.
         if (Number.isFinite(value))
           xml += `<c r="${ref}"><v>${String(value)}</v></c>`;
+      } else if (value instanceof CellDate) {
+        xml += `<c r="${ref}" s="${value.time ? DATE_TIME_STYLE : DATE_STYLE}"><v>${String(value.serial)}</v></c>`;
       } else if (value instanceof CellError) {
         xml += `<c r="${ref}" t="e"><v>${escapeCellText(value.text)}</v></c>`;
       } else if (typeof value === "boolean") {
@@ -297,13 +300,23 @@ function workbookRelsXml(): string {
   );
 }
 
+// A date is written as its serial with one of two formats: the date alone at
+// midnight, the date and time otherwise. Both are ISO order, which reads the
+// same in every locale, where the built-in date formats follow the viewer's
+// regional settings.
+const DATE_STYLE = 1;
+const DATE_TIME_STYLE = 2;
+
 const STYLES_XML =
   XML_HEADER +
   `<styleSheet xmlns="${MAIN_NS}">` +
+  `<numFmts count="2"><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/><numFmt numFmtId="165" formatCode="yyyy-mm-dd hh:mm:ss"/></numFmts>` +
   `<fonts count="1"><font><sz val="11"/><name val="Calibri"/><family val="2"/></font></fonts>` +
   `<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>` +
   `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
   `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
-  `<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>` +
+  `<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+  `<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>` +
+  `<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>` +
   `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
   `</styleSheet>`;
