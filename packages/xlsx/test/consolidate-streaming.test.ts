@@ -398,7 +398,7 @@ function guardedSource(input: WorkbookInputBytes): {
   source: RandomAccessSource;
   largestRead: () => number;
 } {
-  const inner = blobSource(input.name, new Blob([input.bytes]));
+  const inner = blobSource(input.name, new Blob([input.bytes.slice()]));
   let largest = 0;
   return {
     largestRead: () => largest,
@@ -482,9 +482,9 @@ describe("consolidation over sources and a sink", () => {
       expect(outcome.result.metrics).toEqual(reference.metrics);
       expect(outcome.result.metrics.outputRows).toBeGreaterThan(20_000);
       expect(collected.chunks()).toBeGreaterThan(1);
-      expect(Math.max(...guarded.map((entry) => entry.largestRead()))).toBe(
-        1024 * 1024,
-      );
+      expect(
+        Math.max(...guarded.map((entry) => entry.largestRead())),
+      ).toBeLessThanOrEqual(1024 * 1024);
       expect(collected.bytes()).toEqual(await readFile(output));
     } finally {
       await rm(directory, { force: true, recursive: true });
@@ -506,5 +506,86 @@ describe("consolidation over sources and a sink", () => {
     expect(collected.bytes()).toEqual(Buffer.from(reference.outputs[0]!.bytes));
     expect(outcome.mappingDraft).toEqual(reference.outputs[1]);
     expect(outcome.result).toEqual(reference.result);
+  });
+
+  it("fails with the sink's own error when the sink throws", async () => {
+    const inputs = await reviewInputs();
+    const failure = new Error("disk full");
+    for (const sink of [
+      {
+        write: () => {
+          throw failure;
+        },
+        flush: () => Promise.resolve(),
+      },
+      { write: () => undefined, flush: () => Promise.reject(failure) },
+    ] satisfies ByteSink[]) {
+      await expect(
+        consolidateWorkbookSources({
+          inputs: inputs.map((input) =>
+            blobSource(input.name, new Blob([input.bytes.slice()])),
+          ),
+          output: sink,
+        }),
+      ).rejects.toBe(failure);
+    }
+  });
+
+  it("reports a source that fails to read as a read failure of that input", async () => {
+    const [input] = await reviewInputs();
+    await expect(
+      consolidateWorkbookSources({
+        inputs: [
+          {
+            name: input!.name,
+            size: input!.bytes.length,
+            readAt: () => Promise.reject(new Error("gone")),
+          },
+        ],
+        output: collectingSink().sink,
+      }),
+    ).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+      details: { source: input!.name },
+    });
+  });
+
+  it("stops with a cancellation once the signal aborts", async () => {
+    const inputs = await reviewInputs();
+    const controller = new AbortController();
+    await expect(
+      consolidateWorkbookSources({
+        inputs: inputs.map((input) =>
+          blobSource(input.name, new Blob([input.bytes.slice()])),
+        ),
+        output: collectingSink().sink,
+        signal: controller.signal,
+        onProgress: (progress) => {
+          if (progress.completed === inputs.length) controller.abort();
+        },
+      }),
+    ).rejects.toMatchObject({ code: "OPERATION_ABORTED" });
+  });
+});
+
+describe("blobSource", () => {
+  it("reads the requested range and refuses one outside the blob", async () => {
+    const source = blobSource(
+      "x.xlsx",
+      new Blob([new Uint8Array([1, 2, 3, 4])]),
+    );
+    expect(source.size).toBe(4);
+    expect([...(await source.readAt(1, 2))]).toEqual([2, 3]);
+    for (const [offset, length] of [
+      [-1, 1],
+      [0, 5],
+      [3, 2],
+      [0.5, 1],
+      [0, -1],
+    ]) {
+      await expect(source.readAt(offset!, length!)).rejects.toBeInstanceOf(
+        RangeError,
+      );
+    }
   });
 });

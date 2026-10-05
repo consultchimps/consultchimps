@@ -1123,8 +1123,8 @@ const populated = await populatePresentationBytes({
 
 `consolidateWorkbookSources` takes the same options but holds neither the inputs
 nor the output whole. Each input is a random-access source, such as `blobSource`
-over a browser `File`, read in pieces of at most 1 MB, and the workbook goes to
-your `output` sink chunk by chunk. The sink receives the bytes
+over a browser `File`, read in pieces rather than whole, and the workbook goes
+to your `output` sink chunk by chunk. The sink receives the bytes
 `consolidateWorkbooksBytes` would return. In a Web Worker, an Origin Private
 File System sync access handle makes a sink that keeps the output on disk.
 
@@ -1145,6 +1145,8 @@ const { outputName } = await consolidateWorkbookSources({
     flush: () => Promise.resolve(),
   },
 });
+access.flush();
+access.close();
 ```
 
 A template inspection reads a slide and writes nothing, so
