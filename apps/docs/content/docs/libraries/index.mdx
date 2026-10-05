@@ -826,6 +826,11 @@ not the cell carries a time, so a date column reads the same way down its whole
 length. `@consultchimps/db` accepts that spelling and the bare `2024-01-01` in a
 `date` column, so either travels.
 
+Every workbook writer writes a value in that spelling back as an Excel date: a
+serial in the 1900 date system, formatted `yyyy-mm-dd`, or `yyyy-mm-dd hh:mm:ss`
+when it carries a time. A date before 1900 has no serial in that system and
+stays text.
+
 A moment carries a millisecond, and a declared date written finer than that is
 carried as its text rather than shortened to fit: `18:00:00.1234` and
 `18:00:00.1239` are not the same instant, and reading both as `18:00:00.123`

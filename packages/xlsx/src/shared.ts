@@ -18,6 +18,7 @@ import {
 } from "@consultchimps/tabular";
 
 import type { ExcelTableDefinition } from "./excel-tables.js";
+import { CALENDAR_ISO_TEXT } from "./model/calendar.js";
 import {
   decodeRange,
   type CellRectangle,
@@ -39,6 +40,7 @@ import {
   type RowValueCount,
 } from "./region/header-detection.js";
 import type { AllWorksheetSplitMetric } from "./split/all-worksheet.js";
+import { writableCellValue } from "./operations/workbook-dates.js";
 import { splitOutputFilenames } from "./split/names.js";
 import { stripPivotParts } from "./tier1/pivot.js";
 import { CellError } from "./package/cell-error.js";
@@ -168,14 +170,14 @@ function tableSourceRowNumber(table: Table, index: number): number {
 
 /**
  * The exact shape the table readers write for a cell the workbook stores as a
- * real date, and nothing a person types into a cell: `workbookDateText` writes
+ * real date, and nothing a person types into a cell: `calendarIsoText` writes
  * the full ISO 8601 timestamp for every such cell, whether or not it carries a
  * time. Matching it is how a date coercion can tell "the workbook already holds
- * this as a date" from ordinary text it should try to parse, which is also why
- * the shape stays one shape.
+ * this as a date" from ordinary text it should try to parse, and how the table
+ * writers know to write it back as a date, which is also why the shape stays
+ * one shape.
  */
-export const WORKBOOK_DATE_TEXT: RegExp =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
+export const WORKBOOK_DATE_TEXT: RegExp = CALENDAR_ISO_TEXT;
 
 /**
  * Refuse a declared date coercion the worksheet cannot honestly satisfy.
@@ -1174,7 +1176,9 @@ export function buildTableWorkbookBytes(
     },
   });
   for (const row of table.rows) {
-    writer.writeRow(table.columns.map((column) => row[column] ?? null));
+    writer.writeRow(
+      table.columns.map((column) => writableCellValue(row[column] ?? null)),
+    );
   }
   writer.finish();
 

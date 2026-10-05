@@ -28,7 +28,10 @@ operations also run in your browser: [merge](/tools/excel-merge) and
 
 Because consolidation reads stored cell values and writes a new table, nothing
 else from the source workbooks travels with the rows: no cell formatting, no
-formulas, no Excel Tables, no pivot tables, and no macros.
+formulas, no Excel Tables, no pivot tables, and no macros. A date cell is the
+exception to the formatting rule: it is written as an Excel date, formatted
+`yyyy-mm-dd`, or `yyyy-mm-dd hh:mm:ss` when it carries a time, so the output
+sorts, filters, and calculates on it.
 [What the Excel operations preserve](/docs/tools/excel-preservation) shows that
 beside the structures a split and a merge do keep.
 

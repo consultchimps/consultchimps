@@ -62,6 +62,7 @@ import {
   WORKBOOK_DATE_TEXT,
   yieldToEventLoop,
 } from "../../shared.js";
+import { writableCellValue } from "../workbook-dates.js";
 import {
   StreamedWorkbook,
   type StreamedCell,
@@ -890,7 +891,7 @@ export async function writeConsolidation(
               row[sourceBase + 1] = table.sheet;
               row[sourceBase + 2] = rowNumber;
             }
-            writer.writeRow(row);
+            writer.writeRow(row.map((value) => writableCellValue(value)));
           },
         );
         await workbook.readWorksheet(workbook.sheets[table.sheetIndex]!, rows, {

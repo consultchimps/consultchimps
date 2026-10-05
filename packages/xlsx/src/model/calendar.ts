@@ -564,3 +564,58 @@ export function calendarIsoText(parts: CalendarParts): string {
     3,
   )}Z`;
 }
+
+/** The one spelling `calendarIsoText` writes, as a pattern. */
+export const CALENDAR_ISO_TEXT: RegExp =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})Z$/u;
+
+/**
+ * The components of text in the one spelling, or undefined for any other
+ * text, including that spelling naming a day the calendar does not have.
+ */
+export function calendarIsoParts(text: string): CalendarParts | undefined {
+  const matched = CALENDAR_ISO_TEXT.exec(text);
+  if (!matched) {
+    return undefined;
+  }
+  const [year, month, day, hour, minute, second, millisecond] = matched
+    .slice(1)
+    .map(Number) as [number, number, number, number, number, number, number];
+  const parts: CalendarParts = {
+    year,
+    month,
+    day,
+    hour,
+    minute,
+    second,
+    millisecond,
+  };
+  return isComponentsInRange(parts) && isRealCalendarDay(year, month, day)
+    ? parts
+    : undefined;
+}
+
+/**
+ * The serial these components have in the 1900 date system, the one every
+ * workbook this package writes uses, or undefined for a day before 1 January
+ * 1900, which that system cannot count.
+ *
+ * The inverse of `serialCalendarParts` for that system: days before the
+ * invented 29 February 1900 count from 31 December 1899, and days after it
+ * from 30 December 1899, so serial 60 is never produced.
+ */
+export function serial1900(parts: CalendarParts): number | undefined {
+  const days = daysFromCivil(parts.year, parts.month, parts.day);
+  const before = days - SERIAL_EPOCH_1900_BEFORE_THE_FAKE_DAY;
+  if (before < 1) {
+    return undefined;
+  }
+  const whole =
+    before < FAKE_LEAP_DAY_SERIAL
+      ? before
+      : days - SERIAL_EPOCH_1900_AFTER_THE_FAKE_DAY;
+  const milliseconds =
+    (parts.hour * 3600 + parts.minute * 60 + parts.second) * 1000 +
+    parts.millisecond;
+  return whole + milliseconds / MILLISECONDS_PER_DAY;
+}
