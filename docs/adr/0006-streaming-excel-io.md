@@ -126,4 +126,6 @@ that rounds to zero shows `0` rather than `-0`, the `A/P` marker shows `AM` or
 2. The two-pass consolidation on the streaming reader, which also ends the
    double parse for this path (#225, #169).
 3. The remaining readers (inspection, tables, split input), one at a time.
-4. Number-format display text, after which SheetJS can be removed.
+   Done.
+4. Number-format display text, after which SheetJS can be removed (#241).
+   Done, and SheetJS is removed from the repository.

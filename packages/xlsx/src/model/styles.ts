@@ -36,7 +36,7 @@ export function isDateFormatCode(formatCode: string): boolean {
  * The codes of the built-in number formats a workbook may point at without
  * declaring, as Excel shows them in an English (United States) locale. Ids
  * 5 to 8, 23 to 36 and 41 to 44 are locale-dependent and the file format
- * leaves them unwritten; these are the defaults Excel and SheetJS apply. Ids
+ * leaves them unwritten; these are the defaults Excel applies, as SheetJS did. Ids
  * 50 to 81 are East Asian built-ins, read as their Western counterparts.
  */
 const BUILTIN_FORMAT_CODES: Readonly<Record<number, string>> = {
