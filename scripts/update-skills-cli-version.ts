@@ -1,5 +1,6 @@
-// Moves every skill pin to a newly published CLI release and lists the lines
-// that still name the old version, for a human to re-verify.
+// Moves every skill pin, and the version on the agent skills docs page, to a
+// newly published CLI release and lists the lines that still name the old
+// version, for a human to re-verify.
 //
 // Run by the post-release job in publish.yml once the release exists, then
 // followed by `pnpm skills:reference`, which regenerates the references from
@@ -18,6 +19,8 @@ import { parseArgs } from "node:util";
 import { format, getFileInfo, resolveConfig } from "prettier";
 
 import {
+  DOCS_PAGE,
+  DOCS_PIN,
   isGeneratedReference,
   METADATA_PIN,
   pinnedCliVersion,
@@ -73,6 +76,30 @@ const mentionsPrevious = new RegExp(`(?<![\\d.])${escaped}(?!\\.?\\d)`);
 const claims: string[] = [];
 let moved = 0;
 
+// A longer version can push a wrapped Markdown line past the print width, and
+// the formatting check would then fail the pull request.
+async function formatAndWrite(file: string, text: string): Promise<void> {
+  const info = await getFileInfo(file, {
+    ignorePath: path.join(workspaceRoot, ".prettierignore"),
+  });
+  let output = text;
+  if (!info.ignored && info.inferredParser !== null) {
+    const config = (await resolveConfig(file)) ?? {};
+    output = await format(text, { ...config, filepath: file });
+  }
+  writeFileSync(file, output, "utf8");
+}
+
+function listClaims(label: string, file: string): void {
+  readFileSync(file, "utf8")
+    .split(/\r?\n/)
+    .forEach((line, index) => {
+      if (mentionsPrevious.test(line)) {
+        claims.push(`- [ ] \`${label}:${String(index + 1)}\`: ${line.trim()}`);
+      }
+    });
+}
+
 for (const directory of skillDirectories(workspaceRoot)) {
   for (const file of skillTextFiles(directory)) {
     const label = workspaceLabel(workspaceRoot, file);
@@ -100,24 +127,25 @@ for (const directory of skillDirectories(workspaceRoot)) {
           ) + text.slice(frontmatterEnd);
     }
     if (text !== original) {
-      // A longer version can push a wrapped Markdown line past the print
-      // width, and the formatting check would then fail the pull request.
-      const info = await getFileInfo(file, {
-        ignorePath: path.join(workspaceRoot, ".prettierignore"),
-      });
-      if (!info.ignored && info.inferredParser !== null) {
-        const config = (await resolveConfig(file)) ?? {};
-        text = await format(text, { ...config, filepath: file });
-      }
-      writeFileSync(file, text, "utf8");
+      await formatAndWrite(file, text);
     }
-    text.split(/\r?\n/).forEach((line, index) => {
-      if (mentionsPrevious.test(line)) {
-        claims.push(`- [ ] \`${label}:${String(index + 1)}\`: ${line.trim()}`);
-      }
-    });
+    listClaims(label, file);
   }
 }
+
+// The docs page names the checked-against version once, and check-skills.ts
+// holds it to the pins. Any other mention there is a claim to re-verify.
+const docsFile = path.join(workspaceRoot, ...DOCS_PAGE.split("/"));
+const docsOriginal = readFileSync(docsFile, "utf8");
+const docsText = docsOriginal.replace(
+  DOCS_PIN,
+  (_match, before: string) => `${before}${next}`,
+);
+if (docsText !== docsOriginal) {
+  moved += 1;
+  await formatAndWrite(docsFile, docsText);
+}
+listClaims(DOCS_PAGE, docsFile);
 
 const body = [
   `Moves every skill pin from consultchimps ${previous} to ${next} and regenerates both CLI references from the ${next} release.`,
@@ -125,7 +153,7 @@ const body = [
   "## Claims to re-verify",
   "",
   claims.length === 0
-    ? `No line in \`skills/\` names ${previous} outside the pins.`
+    ? `No line in \`skills/\` or \`${DOCS_PAGE}\` names ${previous} outside the pins.`
     : `These lines still name ${previous}. Check each against ${next}, then move it to ${next} or rewrite it, in this pull request.\n\n${claims.join("\n")}`,
   "",
 ].join("\n");

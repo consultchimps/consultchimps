@@ -2,9 +2,10 @@ name: Update the skills
 
 # The skills pin a published CLI release, so the release pull request never
 # touches them. Once publish.yml has created the GitHub release for a new CLI
-# version, this moves every pin to it, regenerates both CLI references from
-# it, and opens a pull request listing each line that still names the old
-# version, for a person to re-verify against the new release.
+# version, this moves every pin and the docs page's checked-against version to
+# it, regenerates both CLI references from it, and opens a pull request listing
+# each line in skills/ or that docs page that still names the old version, for
+# a person to re-verify against the new release.
 #
 # publish.yml calls this directly: a release created with GITHUB_TOKEN
 # raises no release event for another workflow to listen for. Run it by hand

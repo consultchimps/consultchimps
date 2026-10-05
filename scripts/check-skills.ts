@@ -3,6 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  DOCS_PAGE,
+  DOCS_PIN,
   GENERATED_REFERENCE,
   pinnedCliVersion,
   RELEASE_VERSION,
@@ -374,6 +376,14 @@ if (pinnedVersion !== null) {
         `${workspaceLabel(workspaceRoot, reference)}: documents consultchimps ${recorded ?? "(no version)"}, but the skills pin ${pinnedVersion}. Run \`pnpm skills:reference\`.`,
       );
     }
+  }
+  const docsVersion = DOCS_PIN.exec(
+    readFileSync(path.join(workspaceRoot, ...DOCS_PAGE.split("/")), "utf8"),
+  )?.[2];
+  if (docsVersion !== pinnedVersion) {
+    problems.push(
+      `${DOCS_PAGE}: says the skills were checked against ${docsVersion ?? "(no version)"}, but they pin ${pinnedVersion}.`,
+    );
   }
 }
 
