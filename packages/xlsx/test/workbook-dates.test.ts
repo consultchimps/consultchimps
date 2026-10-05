@@ -227,6 +227,26 @@ describe("a date read from a workbook is written back as a date", () => {
   });
 });
 
+describe("text in the workbook date spelling", () => {
+  it("is written as a date, the accepted conflation", async () => {
+    const bytes = await buildWorkbookFixture({
+      sheets: [
+        {
+          name: "Data",
+          rows: [["Opened"], ["2024-01-16T00:00:00.000Z"]],
+        },
+      ],
+    });
+    const { outputs } = await consolidateWorkbooksBytes({
+      inputs: [{ name: "text.xlsx", bytes }],
+      addSourceColumns: false,
+    });
+    const zip = await JSZip.loadAsync(outputs[0]!.bytes);
+    const sheet = await zip.file("xl/worksheets/sheet1.xml")!.async("string");
+    expect(sheet).toContain(`<c r="A2" s="1"><v>45307</v></c>`);
+  });
+});
+
 describe("the 1900 serial of a calendar date", () => {
   it("skips the invented 29 February 1900 and stops before 1900", () => {
     const serial = (text: string): number | undefined =>
@@ -238,6 +258,11 @@ describe("the 1900 serial of a calendar date", () => {
     expect(serial("9999-12-31T00:00:00.000Z")).toBe(2_958_465);
     expect(calendarIsoParts("2023-02-29T00:00:00.000Z")).toBeUndefined();
     expect(calendarIsoParts("2024-01-16")).toBeUndefined();
+    const last = serial("9999-12-31T23:59:59.999Z")!;
+    expect(last).toBeLessThan(2_958_466);
+    expect(serialCalendarParts(last, false)).toEqual(
+      calendarIsoParts("9999-12-31T23:59:59.999Z"),
+    );
   });
 
   it("is the inverse of reading a serial, to the millisecond", () => {

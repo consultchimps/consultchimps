@@ -188,7 +188,8 @@ What the run does with it:
 
 A `date` coercion reads a column's **text**, written in the format the mapping
 declares, and writes an ISO 8601 date such as `2024-03-09`. Declare it only for
-columns whose cells Excel holds as text.
+columns whose cells Excel holds as text. The coerced date is written as that
+text, not as an Excel date.
 
 If such a column holds a number, or a value Excel already stores as a date, the
 run stops with `XLSX_MAPPING_DATE_NOT_TEXT` naming the file, worksheet, column,
