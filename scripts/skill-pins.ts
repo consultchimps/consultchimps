@@ -14,6 +14,11 @@ export const METADATA_PIN: RegExp =
   /^( {2}cli-version:\s*["']?)(\d+\.\d+\.\d+)(["']?\s*)$/m;
 export const RELEASE_VERSION: RegExp = /^\d+\.\d+\.\d+$/;
 
+/** The docs page that names the version the skills were checked against. */
+export const DOCS_PAGE = "apps/docs/content/docs/agent-skills.mdx";
+/** That version on the docs page; it may wrap onto the next line. */
+export const DOCS_PIN: RegExp = /(checked against,\s+)(\d+\.\d+\.\d+)/;
+
 /** Generated files carry the version they were generated from, not a pin. */
 export const GENERATED_REFERENCE = "references/cli-reference.md";
 
