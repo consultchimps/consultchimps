@@ -17,7 +17,6 @@ import {
 } from "@consultchimps/tabular";
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
 import {
   consolidateWorkbooksBytes,
@@ -26,10 +25,19 @@ import {
 } from "../src/bytes.js";
 import { consolidateWorkbooks } from "../src/index.js";
 import { buildTableWorkbookBytes } from "../src/shared.js";
+import {
+  buildWorkbookFixture,
+  type FixtureValue,
+} from "./support/workbook-fixture.js";
 
 type Rows = unknown[][];
 
-function sheetJsInput(
+/** A date as a declared date cell (`t="d"`), as SheetJS wrote one. */
+function dateCell(date: Date): FixtureValue {
+  return { date: date.toISOString() };
+}
+
+async function fixtureInput(
   name: string,
   sheets: Array<{
     name: string;
@@ -37,31 +45,24 @@ function sheetJsInput(
     merges?: string[];
     hidden?: boolean;
   }>,
-  options: { bookSST?: boolean } = {},
-): WorkbookInputBytes {
-  const workbook = XLSX.utils.book_new();
-  for (const sheet of sheets) {
-    const worksheet = XLSX.utils.aoa_to_sheet(sheet.rows, { cellDates: true });
-    if (sheet.merges) {
-      worksheet["!merges"] = sheet.merges.map((merge) =>
-        XLSX.utils.decode_range(merge),
-      );
-    }
-    XLSX.utils.book_append_sheet(workbook, worksheet, sheet.name);
-  }
-  workbook.Workbook = {
-    Sheets: sheets.map((sheet) => ({ Hidden: sheet.hidden ? 1 : 0 })),
-  };
+  options: { sharedStrings?: boolean } = {},
+): Promise<WorkbookInputBytes> {
   return {
     name,
-    bytes: new Uint8Array(
-      XLSX.write(workbook, {
-        type: "array",
-        bookType: "xlsx",
-        bookSST: options.bookSST ?? false,
-        cellDates: true,
-      }) as ArrayBuffer,
-    ),
+    bytes: await buildWorkbookFixture({
+      // Inline strings unless asked, so both string stores stay covered.
+      inlineStrings: options.sharedStrings !== true,
+      sheets: sheets.map((sheet) => ({
+        name: sheet.name,
+        rows: sheet.rows.map((row) =>
+          row.map((value) =>
+            value instanceof Date ? dateCell(value) : (value as FixtureValue),
+          ),
+        ),
+        ...(sheet.merges ? { merges: sheet.merges } : {}),
+        ...(sheet.hidden ? { state: "hidden" as const } : {}),
+      })),
+    }),
   };
 }
 
@@ -128,53 +129,61 @@ async function inMemoryConsolidation(
   );
 }
 
-const reviewInputs = (): WorkbookInputBytes[] => [
-  sheetJsInput("north.xlsx", [
-    {
-      name: "Review Log",
-      rows: [
-        ["Quarterly review"],
-        [],
-        ["Case ID", "Failed Checks", null, "Opened", "Flag", "Note"],
-        ["R-1", 5, null, new Date(Date.UTC(2024, 0, 31)), true, "a & b"],
-        ["R-2", 1e21, null, null, false, "  padded  "],
-        [null, -0.000001, null, new Date(Date.UTC(1999, 11, 31, 12)), null, ""],
-      ],
-    },
-    { name: "Empty", rows: [] },
-    {
-      name: "Hidden",
-      rows: [
-        ["Case ID", "Secret"],
-        ["H-1", 1],
-      ],
-      hidden: true,
-    },
-  ]),
-  sheetJsInput(
-    "south.xlsx",
-    [
+const reviewInputs = (): Promise<WorkbookInputBytes[]> =>
+  Promise.all([
+    fixtureInput("north.xlsx", [
       {
-        name: "vF",
+        name: "Review Log",
         rows: [
-          ["Report title", null, null, null],
-          ["case_id", "Failed_Checks", null, "Region"],
-          ["S-1", 7, "unnamed", "South"],
-          ["S-2", 8, null, "South"],
-        ],
-        merges: ["A1:D1"],
-      },
-      {
-        name: "Dupes",
-        rows: [
-          ["A", "A", "A_2", null],
-          [1, 2, 3, 4],
+          ["Quarterly review"],
+          [],
+          ["Case ID", "Failed Checks", null, "Opened", "Flag", "Note"],
+          ["R-1", 5, null, new Date(Date.UTC(2024, 0, 31)), true, "a & b"],
+          ["R-2", 1e21, null, null, false, "  padded  "],
+          [
+            null,
+            -0.000001,
+            null,
+            new Date(Date.UTC(1999, 11, 31, 12)),
+            null,
+            "",
+          ],
         ],
       },
-    ],
-    { bookSST: true },
-  ),
-];
+      { name: "Empty", rows: [] },
+      {
+        name: "Hidden",
+        rows: [
+          ["Case ID", "Secret"],
+          ["H-1", 1],
+        ],
+        hidden: true,
+      },
+    ]),
+    fixtureInput(
+      "south.xlsx",
+      [
+        {
+          name: "vF",
+          rows: [
+            ["Report title", null, null, null],
+            ["case_id", "Failed_Checks", null, "Region"],
+            ["S-1", 7, "unnamed", "South"],
+            ["S-2", 8, null, "South"],
+          ],
+          merges: ["A1:D1"],
+        },
+        {
+          name: "Dupes",
+          rows: [
+            ["A", "A", "A_2", null],
+            [1, 2, 3, 4],
+          ],
+        },
+      ],
+      { sharedStrings: true },
+    ),
+  ]);
 
 describe("two-pass consolidation gives the in-memory pipeline's bytes", () => {
   it.each<[string, RunOptions]>([
@@ -189,7 +198,7 @@ describe("two-pass consolidation gives the in-memory pipeline's bytes", () => {
     ],
     ["from a declared header row", { headerRow: 2 }],
   ])("%s", async (_, options) => {
-    const inputs = reviewInputs();
+    const inputs = await reviewInputs();
     const { outputs } = await consolidateWorkbooksBytes({ inputs, ...options });
     expect(Buffer.from(outputs[0]!.bytes)).toEqual(
       Buffer.from(await inMemoryConsolidation(inputs, options)),
@@ -197,8 +206,8 @@ describe("two-pass consolidation gives the in-memory pipeline's bytes", () => {
   });
 
   it("with a mapping that folds, coerces and adds constants", async () => {
-    const inputs = [
-      sheetJsInput("north.xlsx", [
+    const inputs = await Promise.all([
+      fixtureInput("north.xlsx", [
         {
           name: "Cases",
           rows: [
@@ -208,7 +217,7 @@ describe("two-pass consolidation gives the in-memory pipeline's bytes", () => {
           ],
         },
       ]),
-      sheetJsInput("south.xlsx", [
+      fixtureInput("south.xlsx", [
         {
           name: "Cases",
           rows: [
@@ -217,7 +226,7 @@ describe("two-pass consolidation gives the in-memory pipeline's bytes", () => {
           ],
         },
       ]),
-    ];
+    ]);
     const mapping: ColumnMapping = {
       version: 1,
       columns: [
@@ -290,7 +299,7 @@ describe("two-pass consolidation: what a failed run leaves behind", () => {
   it("writes nothing, not even a staging file, when an input changes between the passes", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
     try {
-      const [first, second] = reviewInputs();
+      const [first, second] = await reviewInputs();
       const firstPath = path.join(directory, first!.name);
       const secondPath = path.join(directory, second!.name);
       await writeFile(firstPath, first!.bytes);
@@ -353,7 +362,7 @@ describe("two-pass consolidation: what a failed run leaves behind", () => {
   it("writes nothing when cancelled after the inputs were read", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
     try {
-      const inputs = reviewInputs();
+      const inputs = await reviewInputs();
       const paths = [];
       for (const input of inputs) {
         const target = path.join(directory, input.name);

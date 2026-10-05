@@ -1,12 +1,14 @@
 /**
  * The streaming reader consolidation reads through (ADR 0006): what it makes
- * of each cell, and a cell-by-cell comparison with the SheetJS-backed reader it
- * replaces, whose answers it must give except where it deliberately differs.
+ * of each cell. The expected grids were recorded from the SheetJS-backed reader
+ * it replaced, whose answers it gives except where it deliberately differs.
  */
+import { readFile } from "node:fs/promises";
+
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
+import { encodeRange } from "../src/model/references.js";
 import {
   StreamedWorkbook,
   type StreamedCell,
@@ -15,11 +17,6 @@ import {
 import { CellError } from "../src/package/cell-error.js";
 import { bytesSource } from "../src/package/index.js";
 import { TableWorkbookWriter } from "../src/package/table-writer.js";
-import {
-  cellToPrimitive,
-  parseWorkbookBytes,
-  readWorkbookDates,
-} from "./sheetjs-oracle.js";
 import { buildCorpusWorkbook } from "./corpus/fixtures.js";
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -116,18 +113,6 @@ interface SheetGrid {
   cells: Map<string, StreamedValue>;
 }
 
-function rangeText(range: {
-  startRow: number;
-  startColumn: number;
-  endRow: number;
-  endColumn: number;
-}): string {
-  return XLSX.utils.encode_range({
-    s: { r: range.startRow, c: range.startColumn },
-    e: { r: range.endRow, c: range.endColumn },
-  });
-}
-
 async function streamedGrids(bytes: Uint8Array): Promise<SheetGrid[]> {
   const workbook = await StreamedWorkbook.open(
     bytesSource("book.xlsx", bytes),
@@ -152,53 +137,11 @@ async function streamedGrids(bytes: Uint8Array): Promise<SheetGrid[]> {
     });
     grids.push({
       name: sheet.name,
-      range: read.range === undefined ? undefined : rangeText(read.range),
+      range: read.range === undefined ? undefined : encodeRange(read.range),
       cells,
     });
   }
   return grids;
-}
-
-const ERROR_TEXT: Record<number, string> = {
-  0: "#NULL!",
-  7: "#DIV/0!",
-  15: "#VALUE!",
-  23: "#REF!",
-  29: "#NAME?",
-  36: "#NUM!",
-  42: "#N/A",
-  43: "#GETTING_DATA",
-  255: "#WTF?",
-};
-
-/** The SheetJS-backed reader's answer, with error cells spelled as text. */
-async function engineGrids(bytes: Uint8Array): Promise<SheetGrid[]> {
-  const workbook = parseWorkbookBytes(bytes, "book.xlsx");
-  const dates = await readWorkbookDates(bytes, "book.xlsx", {});
-  return workbook.SheetNames.map((name) => {
-    const sheet = workbook.Sheets[name]!;
-    const reference = sheet["!ref"];
-    const cells = new Map<string, StreamedValue>();
-    if (reference !== undefined) {
-      const range = XLSX.utils.decode_range(reference);
-      const sheetDates = dates.forSheet(name);
-      for (let row = range.s.r; row <= range.e.r; row += 1) {
-        for (let column = range.s.c; column <= range.e.c; column += 1) {
-          const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })] as
-            XLSX.CellObject | undefined;
-          const value = cellToPrimitive(cell, sheetDates(row, column));
-          if (value === null) continue;
-          cells.set(
-            `${row},${column}`,
-            cell?.t === "e" && typeof value === "number"
-              ? new CellError(ERROR_TEXT[value] ?? String(value))
-              : value,
-          );
-        }
-      }
-    }
-    return { name, range: reference, cells };
-  });
 }
 
 function plain(grids: SheetGrid[]): unknown {
@@ -212,57 +155,324 @@ function plain(grids: SheetGrid[]): unknown {
   }));
 }
 
-async function expectSameAsEngine(bytes: Uint8Array): Promise<void> {
-  expect(plain(await streamedGrids(bytes))).toEqual(
-    plain(await engineGrids(bytes)),
-  );
+type Expected = {
+  name: string;
+  range: string | undefined;
+  cells: [string, string | number | boolean | { error: string }][];
+}[];
+
+async function expectGrids(
+  bytes: Uint8Array,
+  expected: Expected,
+): Promise<void> {
+  expect(plain(await streamedGrids(bytes))).toEqual(expected);
 }
 
-function sheetJsWorkbook(
-  rows: unknown[][],
-  options: { bookSST: boolean; cellDates: boolean },
-): Uint8Array {
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(
-    workbook,
-    XLSX.utils.aoa_to_sheet(rows, { cellDates: options.cellDates }),
-    "Data",
-  );
-  return new Uint8Array(
-    XLSX.write(workbook, {
-      type: "array",
-      bookType: "xlsx",
-      bookSST: options.bookSST,
-      cellDates: options.cellDates,
-    }) as ArrayBuffer,
-  );
+const MIXED_GRID: Expected = [
+  {
+    name: "Data",
+    range: "A1:E5",
+    cells: [
+      ["0,0", "Name"],
+      ["0,1", "Amount"],
+      ["0,2", "Flag"],
+      ["0,3", "When"],
+      ["0,4", "Note"],
+      ["1,0", "Ada"],
+      ["1,1", 1.5],
+      ["1,2", true],
+      ["1,3", "2024-01-31T00:00:00.000Z"],
+      ["1,4", "a & b < c"],
+      ["2,0", "Bo"],
+      ["2,1", -0.000001],
+      ["2,2", false],
+      ["2,4", "  padded  "],
+      ["3,1", 1e21],
+      ["3,3", "1999-12-31T12:30:00.000Z"],
+      ["3,4", "emoji 😀"],
+      ["4,0", ""],
+      ["4,1", 0],
+      ["4,2", true],
+      ["4,4", "x"],
+    ],
+  },
+];
+
+/** A date cell: its serial, and the ISO text a declared date cell holds. */
+interface MixedDate {
+  serial: number;
+  iso: string;
 }
+
+const MIXED_ROWS: (string | number | boolean | MixedDate | null)[][] = [
+  ["Name", "Amount", "Flag", "When", "Note"],
+  [
+    "Ada",
+    1.5,
+    true,
+    { serial: 45322, iso: "2024-01-31T00:00:00.000Z" },
+    "a & b < c",
+  ],
+  ["Bo", -0.000001, false, null, "  padded  "],
+  [
+    null,
+    1e21,
+    null,
+    { serial: 36525.520833333336, iso: "1999-12-31T12:30:00.000Z" },
+    "emoji 😀",
+  ],
+  ["", 0, true, null, "x"],
+];
+
+function escapeText(text: string): string {
+  return text.replace(/&/gu, "&amp;").replace(/</gu, "&lt;");
+}
+
+/**
+ * The mixed rows as a spreadsheet library writes them: text as formula
+ * strings or shared strings, dates as styled serials or declared ISO text.
+ */
+function mixedWorkbook(options: {
+  sharedStrings: boolean;
+  declaredDates: boolean;
+}): Promise<Uint8Array> {
+  const strings: string[] = [];
+  const data = MIXED_ROWS.map((row, rowIndex) => {
+    const cells = row.map((value, column) => {
+      const ref = `${"ABCDE"[column]}${rowIndex + 1}`;
+      if (value === null) return "";
+      if (typeof value === "string") {
+        if (options.sharedStrings) {
+          strings.push(value);
+          return `<c r="${ref}" t="s"><v>${strings.length - 1}</v></c>`;
+        }
+        const space = value.trim() === value ? "" : ' xml:space="preserve"';
+        return `<c r="${ref}" t="str"><v${space}>${escapeText(value)}</v></c>`;
+      }
+      if (typeof value === "boolean") {
+        return `<c r="${ref}" t="b"><v>${value ? 1 : 0}</v></c>`;
+      }
+      if (typeof value === "number") {
+        return `<c r="${ref}"><v>${value}</v></c>`;
+      }
+      return options.declaredDates
+        ? `<c r="${ref}" s="1" t="d"><v>${value.iso}</v></c>`
+        : `<c r="${ref}" s="1"><v>${value.serial}</v></c>`;
+    });
+    return `<row r="${rowIndex + 1}">${cells.join("")}</row>`;
+  });
+  return handWorkbook({
+    styles: `<cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs>`,
+    ...(options.sharedStrings
+      ? {
+          strings: strings
+            .map((text) =>
+              text.trim() === text
+                ? `<si><t>${escapeText(text)}</t></si>`
+                : `<si><t xml:space="preserve">${escapeText(text)}</t></si>`,
+            )
+            .join(""),
+        }
+      : {}),
+    sheets: [
+      { name: "Data", data: data.join(""), before: `<dimension ref="A1:E5"/>` },
+    ],
+  });
+}
+
+const PLAIN_RANGE_GRID: Expected = [
+  {
+    name: "Data",
+    range: "A1:I12",
+    cells: [
+      ["0,0", "Corpus allocation report"],
+      ["2,0", "Record"],
+      ["2,1", "Client"],
+      ["2,2", "Group"],
+      ["2,3", "Amount"],
+      ["2,4", "Doubled"],
+      ["2,5", "Ratio"],
+      ["3,0", 1],
+      ["3,1", "Client A"],
+      ["3,2", "Alpha"],
+      ["3,3", 10],
+      ["3,4", 20],
+      ["3,5", 5],
+      ["4,0", 2],
+      ["4,1", "Client B"],
+      ["4,2", "Beta"],
+      ["4,3", 20],
+      ["4,4", 40],
+      ["4,5", 10],
+      ["5,0", 3],
+      ["5,1", "Client C"],
+      ["5,2", "Alpha"],
+      ["5,3", 30],
+      ["5,4", 60],
+      ["5,5", 15],
+      ["5,7", "Alpha side note"],
+      ["6,0", 4],
+      ["6,1", "Client D"],
+      ["6,2", "Beta"],
+      ["6,3", 40],
+      ["6,4", 80],
+      ["6,5", 20],
+      ["7,0", 5],
+      ["7,1", "Client E"],
+      ["7,2", "Gamma"],
+      ["7,3", 50],
+      ["7,4", 100],
+      ["7,5", 25],
+      ["8,0", 6],
+      ["8,1", "Client F"],
+      ["8,2", "Alpha"],
+      ["8,3", 60],
+      ["8,4", 120],
+      ["8,5", 30],
+      ["11,0", "Footer note"],
+      ["11,1", 210],
+    ],
+  },
+  {
+    name: "Summary",
+    range: "A1:B3",
+    cells: [
+      ["0,0", "Portfolio summary"],
+      ["1,0", "Total across every record"],
+      ["1,1", 210],
+      ["2,0", "First amount"],
+      ["2,1", 10],
+    ],
+  },
+  {
+    name: "Hidden",
+    range: "A1:B4",
+    cells: [
+      ["0,0", "Record"],
+      ["0,1", "Group"],
+      ["1,0", 7],
+      ["1,1", "Alpha"],
+      ["2,0", 8],
+      ["2,1", "Beta"],
+      ["3,0", 9],
+      ["3,1", "Alpha"],
+    ],
+  },
+  {
+    name: "VeryHidden",
+    range: "A1:A2",
+    cells: [
+      ["0,0", "Archive note"],
+      ["1,0", "Retained without filtering"],
+    ],
+  },
+];
+
+const TABLE_GRID: Expected = [
+  {
+    name: "Data",
+    range: "A1:I12",
+    cells: [
+      ["0,0", "Corpus allocation report"],
+      ["2,0", "Record"],
+      ["2,1", "Client"],
+      ["2,2", "Group"],
+      ["2,3", "Amount"],
+      ["2,4", "Doubled"],
+      ["2,5", "Ratio"],
+      ["3,0", 1],
+      ["3,1", "Client A"],
+      ["3,2", "Alpha"],
+      ["3,3", 10],
+      ["3,4", 20],
+      ["3,5", 5],
+      ["3,6", 210],
+      ["4,0", 2],
+      ["4,1", "Client B"],
+      ["4,2", "Beta"],
+      ["4,3", 20],
+      ["4,4", 40],
+      ["4,5", 10],
+      ["5,0", 3],
+      ["5,1", "Client C"],
+      ["5,2", "Alpha"],
+      ["5,3", 30],
+      ["5,4", 60],
+      ["5,5", 15],
+      ["5,7", "Alpha side note"],
+      ["6,0", 4],
+      ["6,1", "Client D"],
+      ["6,2", "Beta"],
+      ["6,3", 40],
+      ["6,4", 80],
+      ["6,5", 20],
+      ["7,0", 5],
+      ["7,1", "Client E"],
+      ["7,2", "Gamma"],
+      ["7,3", 50],
+      ["7,4", 100],
+      ["7,5", 25],
+      ["8,0", 6],
+      ["8,1", "Client F"],
+      ["8,2", "Alpha"],
+      ["8,3", 60],
+      ["8,4", 120],
+      ["8,5", 30],
+      ["9,0", "Total"],
+      ["9,3", 210],
+      ["10,0", "Implicit note"],
+      ["10,1", 1],
+      ["11,0", "Footer note"],
+      ["11,1", 210],
+    ],
+  },
+  {
+    name: "Summary",
+    range: "A1:B4",
+    cells: [
+      ["0,0", "Portfolio summary"],
+      ["1,0", "Total across every record"],
+      ["1,1", 210],
+      ["2,0", "First amount"],
+      ["2,1", 10],
+      ["3,0", "Never recalculated"],
+    ],
+  },
+  {
+    name: "Hidden",
+    range: "A1:B4",
+    cells: [
+      ["0,0", "Record"],
+      ["0,1", "Group"],
+      ["1,0", 7],
+      ["1,1", "Alpha"],
+      ["2,0", 8],
+      ["2,1", "Beta"],
+      ["3,0", 9],
+      ["3,1", "Alpha"],
+    ],
+  },
+  {
+    name: "VeryHidden",
+    range: "A1:A2",
+    cells: [
+      ["0,0", "Archive note"],
+      ["1,0", "Retained without filtering"],
+    ],
+  },
+];
 
 describe("streamed reader: values match the engine's", () => {
-  const mixedRows = [
-    ["Name", "Amount", "Flag", "When", "Note"],
-    ["Ada", 1.5, true, new Date(Date.UTC(2024, 0, 31)), "a & b < c"],
-    ["Bo", -0.000001, false, null, "  padded  "],
-    [
-      null,
-      1e21,
-      null,
-      new Date(Date.UTC(1999, 11, 31, 12, 30)),
-      "emoji \u{1F600}",
-    ],
-    ["", 0, true, null, "x"],
-  ];
-
   it.each([
-    ["inline strings", { bookSST: false, cellDates: false }],
-    ["shared strings", { bookSST: true, cellDates: false }],
-    ["dates as dates", { bookSST: true, cellDates: true }],
-  ])("reads a SheetJS workbook with %s", async (_, options) => {
-    await expectSameAsEngine(sheetJsWorkbook(mixedRows, options));
+    ["inline strings", { sharedStrings: false, declaredDates: false }],
+    ["shared strings", { sharedStrings: true, declaredDates: false }],
+    ["dates as dates", { sharedStrings: true, declaredDates: true }],
+  ])("reads a workbook with %s", async (_, options) => {
+    await expectGrids(await mixedWorkbook(options), MIXED_GRID);
   });
 
   it.each([
-    ["a plain range", { shape: "range" as const }],
+    ["a plain range", { shape: "range" as const }, PLAIN_RANGE_GRID],
     [
       "a table with formulas, totals and dependents",
       {
@@ -278,13 +488,14 @@ describe("streamed reader: values match the engine's", () => {
         sharedFormula: true,
         arrayFormula: true,
       },
+      TABLE_GRID,
     ],
-  ])("reads the corpus workbook as %s", async (_, options) => {
-    await expectSameAsEngine(await buildCorpusWorkbook(options));
+  ])("reads the corpus workbook as %s", async (_, options, expected) => {
+    await expectGrids(await buildCorpusWorkbook(options), expected);
   });
 
   it("reads hand-written markup the way the engine does", async () => {
-    await expectSameAsEngine(
+    await expectGrids(
       await handWorkbook({
         styles: DATE_STYLES,
         strings: `<si><t>plain</t></si><si><r><t>ri</t></r><r><rPr><b/></rPr><t>ch</t></r><rPh><t>skip</t></rPh></si><si><t xml:space="preserve"> sp </t></si><si><t>a</t><rPh><t>b</t></rPh></si><si></si><si> </si>`,
@@ -333,11 +544,92 @@ describe("streamed reader: values match the engine's", () => {
           },
         ],
       }),
+      [
+        {
+          name: "NoDimension",
+          range: "A2:H14",
+          cells: [
+            ["1,1", "plain"],
+            ["1,2", "rich"],
+            ["1,3", " sp "],
+            ["1,4", "a"],
+            ["1,5", ""],
+            ["2,1", "2024-01-31T12:00:00.000Z"],
+            ["2,2", 60],
+            ["2,3", "2024-02-29T10:00:00.000Z"],
+            ["2,4", "not a date"],
+            ["3,1", false],
+            ["3,2", true],
+            ["3,3", { error: "#N/A" }],
+            ["3,5", ""],
+            ["4,4", "inline"],
+            ["4,5", ""],
+            ["6,0", 1],
+            ["6,1", 2],
+            ["6,5", 12],
+            ["6,6", 3],
+          ],
+        },
+        {
+          name: "Formulas",
+          range: "A1:E3",
+          cells: [
+            ["0,0", 1],
+            ["1,0", 2],
+            ["1,2", 3],
+          ],
+        },
+        {
+          name: "EmptyItems",
+          range: "A1:E1",
+          cells: [
+            ["0,0", ""],
+            ["0,1", ""],
+            ["0,2", ""],
+            ["0,4", 1],
+          ],
+        },
+        {
+          name: "Dimension",
+          range: "B2:C3",
+          cells: [
+            ["1,1", 2],
+            ["2,2", 4],
+          ],
+        },
+        {
+          name: "Shuffled",
+          range: "A1:B3",
+          cells: [
+            ["0,0", 0],
+            ["0,1", 1],
+            ["1,1", 2],
+            ["2,0", 3],
+          ],
+        },
+        {
+          name: "SingleCellDimension",
+          range: "A1:C1",
+          cells: [
+            ["0,0", 1],
+            ["0,2", 3],
+          ],
+        },
+        {
+          name: "Merged",
+          range: "A1:A3",
+          cells: [
+            ["0,0", "Title"],
+            ["2,0", 1],
+          ],
+        },
+        { name: "Hidden", range: "A1", cells: [["0,0", 1]] },
+      ],
     );
   });
 
   it("reads the 1904 date system by the workbook's own count", async () => {
-    await expectSameAsEngine(
+    await expectGrids(
       await handWorkbook({
         styles: DATE_STYLES,
         workbookProperties: `<workbookPr date1904="1"/>`,
@@ -348,6 +640,17 @@ describe("streamed reader: values match the engine's", () => {
           },
         ],
       }),
+      [
+        {
+          name: "Dates",
+          range: "A1:C1",
+          cells: [
+            ["0,0", "1904-01-01T00:00:00.000Z"],
+            ["0,1", "1908-01-02T06:00:00.000Z"],
+            ["0,2", -1],
+          ],
+        },
+      ],
     );
   });
 });
@@ -422,6 +725,13 @@ describe("streamed reader: where it deliberately differs", () => {
   });
 });
 
+/** A password-protected placeholder: a compound file, no zip package. */
+async function encryptedPlaceholder(): Promise<Uint8Array> {
+  return readFile(
+    new URL("./fixtures/encrypted-placeholder.xlsx", import.meta.url),
+  );
+}
+
 describe("streamed reader: what it refuses", () => {
   const open = (bytes: Uint8Array) =>
     StreamedWorkbook.open(bytesSource("book.xlsx", bytes), {
@@ -441,16 +751,9 @@ describe("streamed reader: what it refuses", () => {
   });
 
   it("refuses a password-protected workbook, which is no zip package", async () => {
-    const container = XLSX.CFB.utils.cfb_new();
-    XLSX.CFB.utils.cfb_add(container, "/EncryptionInfo", new Uint8Array(8));
-    XLSX.CFB.utils.cfb_add(container, "/EncryptedPackage", new Uint8Array(64));
-    await expect(
-      open(
-        new Uint8Array(
-          XLSX.CFB.write(container, { type: "array" }) as number[],
-        ),
-      ),
-    ).rejects.toMatchObject({ code: "XLSX_READ_FAILED" });
+    await expect(open(await encryptedPlaceholder())).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+    });
   });
 
   it("refuses an entry whose bytes fail its CRC, though its length holds", async () => {

@@ -4,8 +4,8 @@
  * Every discovery heuristic in the package lands here: NFKC/trim/case-folded
  * header search, the `headerRow` override, the rule that associates a
  * detected header with an Excel Table when the header sits on that table's
- * header row, and - through `header-detection.ts`, which the SheetJS table
- * reader shares - which row is the header when nothing names it and which
+ * header row, and - through `header-detection.ts`, which the table readers
+ * share - which row is the header when nothing names it and which
  * columns of a region hold anything. The heuristics are ports of `findSplitHeader` and
  * `findMatchingTable` from `src/workbook-column-split.ts`, re-expressed over
  * `WorkbookModel` / `WorksheetModel` instead of SheetJS objects, with row

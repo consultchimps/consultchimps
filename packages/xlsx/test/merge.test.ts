@@ -8,9 +8,40 @@ import {
   type OperationProgress,
 } from "@consultchimps/core";
 import { describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
 import { mergeWorkbooks, XLSX_ERRORS } from "../src/index.js";
+import {
+  readPackagePart,
+  styleNumberFormatCode,
+  worksheetCellFormula,
+  worksheetCellStyle,
+  worksheetCellValue,
+} from "./corpus/fixtures.js";
+import {
+  sheetNamesOf,
+  sheetRows,
+  sheetVisibilities,
+  sheetXml,
+} from "./support/read-workbook.js";
+import { buildWorkbookFixture } from "./support/workbook-fixture.js";
+
+const VISIBILITY = [undefined, "hidden", "veryHidden"] as const;
+
+/** One cell's formula, cached value and number format, from the raw parts. */
+async function cellFacts(
+  bytes: Uint8Array,
+  sheetName: string,
+  reference: string,
+): Promise<Record<string, string | undefined>> {
+  const xml = await sheetXml(bytes, sheetName);
+  const styles = await readPackagePart(bytes, "xl/styles.xml");
+  return {
+    formula: worksheetCellFormula(xml, reference),
+    value: worksheetCellValue(xml, reference),
+    format: styleNumberFormatCode(styles, worksheetCellStyle(xml, reference)),
+    cols: /<cols>[\s\S]*?<\/cols>/u.exec(xml)?.[0],
+  };
+}
 
 async function createWorkbook(
   filePath: string,
@@ -20,26 +51,17 @@ async function createWorkbook(
     visibility?: 0 | 1 | 2;
   }>,
 ): Promise<void> {
-  const workbook = XLSX.utils.book_new();
-  for (const sheet of sheets) {
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.aoa_to_sheet(sheet.rows),
-      sheet.name,
-    );
-  }
-  workbook.Workbook = {
-    Sheets: sheets.map((sheet) => ({
-      Hidden: sheet.visibility ?? 0,
-      name: sheet.name,
-    })),
-  };
   await writeFile(
     filePath,
-    XLSX.write(workbook, {
-      bookType: "xlsx",
-      cellStyles: true,
-      type: "buffer",
+    await buildWorkbookFixture({
+      sheets: sheets.map((sheet) => {
+        const state = VISIBILITY[sheet.visibility ?? 0];
+        return {
+          name: sheet.name,
+          rows: sheet.rows,
+          ...(state ? { state } : {}),
+        };
+      }),
     }),
   );
 }
@@ -54,46 +76,44 @@ describe("mergeWorkbooks", () => {
       const input = path.join(directory, "source.xlsx");
       const formulaOutput = path.join(directory, "formulas.xlsx");
       const valuesOutput = path.join(directory, "values.xlsx");
-      const workbook = XLSX.utils.book_new();
-      const worksheet = XLSX.utils.aoa_to_sheet([
-        ["Amount", "Tax", "Total"],
-        [100, 5, { f: "A2+B2", t: "n", v: 105, z: "$#,##0.00" }],
-      ]);
-      worksheet["!cols"] = [{ wch: 16 }, { wch: 12 }, { wch: 22 }];
-      XLSX.utils.book_append_sheet(workbook, worksheet, "Summary");
       await writeFile(
         input,
-        XLSX.write(workbook, {
-          bookType: "xlsx",
-          cellStyles: true,
-          type: "buffer",
+        await buildWorkbookFixture({
+          sheets: [
+            {
+              name: "Summary",
+              rows: [
+                ["Amount", "Tax", "Total"],
+                [100, 5, { formula: "A2+B2", value: 105, format: "$#,##0.00" }],
+              ],
+              widths: [16, 12, 22],
+            },
+          ],
         }),
       );
 
       await mergeWorkbooks([input], formulaOutput);
       await mergeWorkbooks([input], valuesOutput, { values: true });
 
-      const formulaWorkbook = XLSX.read(await readFile(formulaOutput), {
-        cellStyles: true,
-        type: "buffer",
-      });
-      const valuesWorkbook = XLSX.read(await readFile(valuesOutput), {
-        cellStyles: true,
-        type: "buffer",
-      });
-      expect(formulaWorkbook.Sheets.Summary?.C2).toMatchObject({
-        f: "A2+B2",
-        v: 105,
-        z: "$#,##0.00",
-      });
-      expect(valuesWorkbook.Sheets.Summary?.C2).toMatchObject({
-        v: 105,
-        z: "$#,##0.00",
-      });
-      expect(valuesWorkbook.Sheets.Summary?.C2?.f).toBeUndefined();
-      expect(valuesWorkbook.Sheets.Summary?.["!cols"]).toEqual(
-        formulaWorkbook.Sheets.Summary?.["!cols"],
+      const formulaCell = await cellFacts(
+        await readFile(formulaOutput),
+        "Summary",
+        "C2",
       );
+      const valuesCell = await cellFacts(
+        await readFile(valuesOutput),
+        "Summary",
+        "C2",
+      );
+      expect(formulaCell).toMatchObject({
+        formula: "A2+B2",
+        value: "105",
+        format: "$#,##0.00",
+      });
+      expect(valuesCell).toMatchObject({ value: "105", format: "$#,##0.00" });
+      expect(valuesCell.formula).toBeUndefined();
+      expect(formulaCell.cols).toContain('width="16"');
+      expect(valuesCell.cols).toEqual(formulaCell.cols);
     } finally {
       await rm(directory, { force: true, recursive: true });
     }
@@ -132,24 +152,16 @@ describe("mergeWorkbooks", () => {
         '1 source worksheet was hidden; see the visible "Sheet Index" worksheet.',
       ]);
 
-      const workbook = XLSX.read(await readFile(output), { type: "buffer" });
-      expect(workbook.SheetNames).toEqual([
+      const bytes = await readFile(output);
+      expect(await sheetNamesOf(bytes)).toEqual([
         "Summary",
         "Private",
         "Summary (2)",
         "Sheet Index (2)",
         "Sheet Index",
       ]);
-      expect(
-        workbook.Workbook?.Sheets?.find((sheet) => sheet.name === "Private")
-          ?.Hidden,
-      ).toBe(2);
-      expect(
-        XLSX.utils.sheet_to_json(workbook.Sheets["Sheet Index"]!, {
-          header: 1,
-          raw: true,
-        }),
-      ).toEqual([
+      expect((await sheetVisibilities(bytes)).Private).toBe("veryHidden");
+      expect(await sheetRows(bytes, "Sheet Index")).toEqual([
         [
           "Source file",
           "Original worksheet",
@@ -251,8 +263,7 @@ describe("mergeWorkbooks", () => {
       expect(result.warnings).toEqual([
         "1 source worksheet was hidden in the merged workbook.",
       ]);
-      const workbook = XLSX.read(await readFile(output), { type: "buffer" });
-      expect(workbook.SheetNames).toEqual(["Private"]);
+      expect(await sheetNamesOf(await readFile(output))).toEqual(["Private"]);
     } finally {
       await rm(directory, { force: true, recursive: true });
     }

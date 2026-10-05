@@ -7,25 +7,17 @@ import { promisify } from "node:util";
 
 import JSZip from "jszip";
 import { afterEach, describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
+
+import { buildSheetFixture } from "../../xlsx/test/support/workbook-fixture.js";
 
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../dist/index.js", import.meta.url));
 const temporaryDirectories: string[] = [];
 
 async function protectedWorkbook(): Promise<Uint8Array> {
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(
-    workbook,
-    XLSX.utils.aoa_to_sheet([["Value"], [42]]),
-    "Summary",
+  const archive = await JSZip.loadAsync(
+    await buildSheetFixture("Summary", [["Value"], [42]]),
   );
-  const bytes = XLSX.write(workbook, {
-    bookType: "xlsx",
-    compression: true,
-    type: "array",
-  }) as ArrayBuffer;
-  const archive = await JSZip.loadAsync(bytes);
   const workbookXml = await archive.file("xl/workbook.xml")!.async("text");
   archive.file(
     "xl/workbook.xml",

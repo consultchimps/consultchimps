@@ -7,11 +7,14 @@ import { isConsultChimpsError, OPERATION_ABORTED } from "@consultchimps/core";
 import type { OperationProgress } from "@consultchimps/core";
 import JSZip from "jszip";
 import { afterEach, describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
 import { XLSX_ERRORS } from "../src/errors.js";
 import { WorkbookModel } from "../src/model/index.js";
 import { normalizeSplitValue } from "../src/region/values.js";
+import {
+  buildWorkbookFixture,
+  type FixtureSheet,
+} from "./support/workbook-fixture.js";
 import { forEachZone, ZONES } from "./zones.js";
 import {
   consolidateWorkbooksBytes,
@@ -54,28 +57,40 @@ interface SheetSpec {
  * A neutral synthetic workbook in the house fixture vocabulary: review-log
  * columns and compass-point regions, never a real organization's data.
  */
-function workbookBytes(
+async function workbookBytes(
   sheets: SheetSpec[],
   names?: Array<{ Name: string; Ref: string }>,
-): Uint8Array {
-  const workbook = XLSX.utils.book_new();
-  for (const sheet of sheets) {
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.aoa_to_sheet(sheet.rows),
-      sheet.name,
-    );
-  }
-  workbook.Workbook = {
-    Sheets: sheets.map((sheet) => ({
-      name: sheet.name,
-      Hidden: sheet.hidden ?? 0,
-    })),
-    ...(names ? { Names: names } : {}),
-  };
-  return new Uint8Array(
-    XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }) as Buffer,
-  );
+): Promise<Uint8Array> {
+  const states = [undefined, "hidden", "veryHidden"] as const;
+  return buildWorkbookFixture({
+    sheets: sheets.map((sheet) => {
+      const state = states[sheet.hidden ?? 0];
+      return {
+        name: sheet.name,
+        rows: sheet.rows,
+        ...(state === undefined ? {} : { state }),
+      };
+    }),
+    ...(names
+      ? {
+          names: names.map((name) => ({
+            name: name.Name,
+            reference: name.Ref,
+          })),
+        }
+      : {}),
+  });
+}
+
+/** Rewrite one part of a fixture, for markup the builder does not write. */
+async function withPart(
+  bytes: Uint8Array,
+  part: string,
+  edit: (xml: string) => string,
+): Promise<Uint8Array> {
+  const archive = await JSZip.loadAsync(bytes);
+  archive.file(part, edit(await archive.file(part)!.async("string")));
+  return archive.generateAsync({ type: "uint8array" });
 }
 
 async function writeWorkbook(
@@ -83,7 +98,7 @@ async function writeWorkbook(
   sheets: SheetSpec[],
   names?: Array<{ Name: string; Ref: string }>,
 ): Promise<Uint8Array> {
-  const bytes = workbookBytes(sheets, names);
+  const bytes = await workbookBytes(sheets, names);
   await writeFile(filePath, bytes);
   return bytes;
 }
@@ -93,13 +108,7 @@ async function writeWorkbook(
  * row is present, which is the shape that made per-coordinate cell lookup
  * quadratic. The first sheet exists so a test can act once it is described.
  */
-function denseWorkbookBytes(rows: number): Uint8Array {
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(
-    workbook,
-    XLSX.utils.aoa_to_sheet([["Case_ID"], ["R-0"]]),
-    "Review Log",
-  );
+function denseWorkbookBytes(rows: number): Promise<Uint8Array> {
   const dense: Array<Array<number | string>> = [
     ["Case_ID", "Region", "Failed Checks", "Total Checks", "Owner"],
   ];
@@ -112,14 +121,12 @@ function denseWorkbookBytes(rows: number): Uint8Array {
       `Reviewer ${row % 5}`,
     ]);
   }
-  XLSX.utils.book_append_sheet(
-    workbook,
-    XLSX.utils.aoa_to_sheet(dense),
-    "Dense",
-  );
-  return new Uint8Array(
-    XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }) as Buffer,
-  );
+  return buildWorkbookFixture({
+    sheets: [
+      { name: "Review Log", rows: [["Case_ID"], ["R-0"]] },
+      { name: "Dense", rows: dense },
+    ],
+  });
 }
 
 const REVIEW_LOG: SheetSpec = {
@@ -498,21 +505,28 @@ describe("describeWorkbook", () => {
     // A styled template: 30,000 stored `<row>` elements carrying no cells at
     // all. Nothing here is content, so the sheet must describe as empty, and
     // materializing those rows is the synchronous burst the scan yields around.
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.aoa_to_sheet([["Case_ID"], ["R-1"]]),
-      "Review Log",
-    );
-    const template: XLSX.WorkSheet = { "!ref": "A1:B30000" };
-    for (let row = 1; row <= 30000; row += 1) {
-      template[`A${row}`] = { t: "z", s: 1 } as XLSX.CellObject;
-      template[`B${row}`] = { t: "z", s: 1 } as XLSX.CellObject;
-    }
-    XLSX.utils.book_append_sheet(workbook, template, "Template");
+    const emptyRows = Array.from(
+      { length: 30000 },
+      (_, index) => `<row r="${index + 1}"></row>`,
+    ).join("");
     await writeFile(
       input,
-      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+      await withPart(
+        await buildWorkbookFixture({
+          sheets: [
+            { name: "Review Log", rows: [["Case_ID"], ["R-1"]] },
+            { name: "Template", rows: [] },
+          ],
+        }),
+        "xl/worksheets/sheet2.xml",
+        (xml) =>
+          xml
+            .replace('<dimension ref="A1"/>', '<dimension ref="A1:B30000"/>')
+            .replace(
+              "<sheetData></sheetData>",
+              `<sheetData>${emptyRows}</sheetData>`,
+            ),
+      ),
     );
 
     const { description, result } = await describeWorkbook(input);
@@ -553,7 +567,7 @@ describe("describeWorkbook", () => {
   it("collects a cancellation while scanning a densely populated sheet", async () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "dense.xlsx");
-    await writeFile(input, denseWorkbookBytes(12000));
+    await writeFile(input, await denseWorkbookBytes(12000));
 
     // The abort is queued once the first worksheet is described, on a delay
     // long enough to clear the between-worksheet yield but well short of the
@@ -588,7 +602,7 @@ describe("describeWorkbook", () => {
   it("describes a densely populated sheet in time proportional to its contents", async () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "dense.xlsx");
-    await writeFile(input, denseWorkbookBytes(12000));
+    await writeFile(input, await denseWorkbookBytes(12000));
 
     const started = Date.now();
     const { description, result } = await describeWorkbook(input);
@@ -669,20 +683,22 @@ describe("describeWorkbook stored values", () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "north.xlsx");
 
-    const workbook = XLSX.utils.book_new();
-    const worksheet = XLSX.utils.aoa_to_sheet([
-      ["Case_ID", "Started"],
-      ["R-1", null],
-      ["R-2", null],
-    ]);
     // A numeric cell carrying a date number format. Excel stores the serial;
     // the date is a presentation choice made by the style.
-    worksheet.B2 = { t: "n", v: 45000, z: "yyyy-mm-dd" };
-    worksheet.B3 = { t: "n", v: 45001, z: "yyyy-mm-dd" };
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Review Log");
     await writeFile(
       input,
-      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+      await buildWorkbookFixture({
+        sheets: [
+          {
+            name: "Review Log",
+            rows: [
+              ["Case_ID", "Started"],
+              ["R-1", { value: 45000, format: "yyyy-mm-dd" }],
+              ["R-2", { value: 45001, format: "yyyy-mm-dd" }],
+            ],
+          },
+        ],
+      }),
     );
 
     const { description } = await describeWorkbook(input);
@@ -706,22 +722,22 @@ describe("describeWorkbook row occupancy", () => {
    * what a workbook saved by a tool that does not calculate looks like.
    */
   async function writeUncachedFormulaWorkbook(filePath: string): Promise<void> {
-    const workbook = XLSX.utils.book_new();
-    const worksheet = XLSX.utils.aoa_to_sheet([
-      ["Case_ID", "Doubled"],
-      [null, null],
-      [null, null],
-    ]);
     // Formula cells with no cached result: the cell exists, the row is not
     // blank, but there is no stored value to report.
-    worksheet.A2 = { t: "n", f: "1+0" };
-    worksheet.B2 = { t: "n", f: "A2*2" };
-    worksheet.A3 = { t: "n", f: "2+0" };
-    worksheet.B3 = { t: "n", f: "A3*2" };
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Review Log");
     await writeFile(
       filePath,
-      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+      await buildWorkbookFixture({
+        sheets: [
+          {
+            name: "Review Log",
+            rows: [
+              ["Case_ID", "Doubled"],
+              [{ formula: "1+0" }, { formula: "A2*2" }],
+              [{ formula: "2+0" }, { formula: "A3*2" }],
+            ],
+          },
+        ],
+      }),
     );
   }
 
@@ -750,14 +766,16 @@ describe("describeWorkbook row occupancy", () => {
   it("describes a sheet of only uncached formulas as populated", async () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "formulas.xlsx");
-    const workbook = XLSX.utils.book_new();
-    const worksheet = XLSX.utils.aoa_to_sheet([[null], [null]]);
-    worksheet.A1 = { t: "n", f: "1+1" };
-    worksheet.A2 = { t: "n", f: "2+2" };
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Formulas");
     await writeFile(
       input,
-      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+      await buildWorkbookFixture({
+        sheets: [
+          {
+            name: "Formulas",
+            rows: [[{ formula: "1+1" }], [{ formula: "2+2" }]],
+          },
+        ],
+      }),
     );
 
     const { description, result } = await describeWorkbook(input);
@@ -771,14 +789,17 @@ describe("describeWorkbook row occupancy", () => {
   it("still treats a formatting-only cell as no content", async () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "styled.xlsx");
-    const workbook = XLSX.utils.book_new();
-    const worksheet: XLSX.WorkSheet = { "!ref": "A1:A2" };
     // A cell carrying a style and nothing else is formatting, not content.
-    worksheet.A1 = { t: "z", s: 1 } as XLSX.CellObject;
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Styled");
     await writeFile(
       input,
-      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+      await withPart(
+        await buildWorkbookFixture({
+          sheets: [{ name: "Styled", rows: [[{ format: 14 }]] }],
+        }),
+        "xl/worksheets/sheet1.xml",
+        (xml) =>
+          xml.replace('<dimension ref="A1:A1"/>', '<dimension ref="A1:A2"/>'),
+      ),
     );
 
     const { description } = await describeWorkbook(input);
@@ -792,7 +813,7 @@ describe("describeWorkbook expected failures", () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "empty.xlsx");
     const archive = await JSZip.loadAsync(
-      Buffer.from(workbookBytes([REVIEW_LOG])),
+      Buffer.from(await workbookBytes([REVIEW_LOG])),
     );
     const workbookPart = archive.file("xl/workbook.xml");
     const workbookXml = await workbookPart!.async("text");
@@ -919,13 +940,21 @@ describe("describeWorkbook named ranges", () => {
   });
 });
 
+/** One "Data" sheet, optionally in the 1904 date system. */
+function dataSheet(
+  rows: FixtureSheet["rows"],
+  date1904 = false,
+): Promise<Uint8Array> {
+  return buildWorkbookFixture({ sheets: [{ name: "Data", rows }], date1904 });
+}
+
 /**
  * A worksheet part whose totals column holds formulas nothing has calculated:
  * each cell carries `<f>` and no `<v>`, which is what a generator writes when
- * it has no calculation engine. It is assembled by hand because a spreadsheet
- * engine will not produce it: SheetJS drops a numeric formula cell with no
- * cached value while parsing, which is the whole reason this condition has to
- * be read from the package's own model.
+ * it has no calculation engine. It is assembled by hand. SheetJS, the previous
+ * engine, dropped a numeric formula cell with no cached value while parsing,
+ * which is the whole reason this condition has to be read from the package's
+ * own model.
  */
 async function uncalculatedWorkbookBytes(
   rows: string,
@@ -972,40 +1001,29 @@ describe("dates a workbook stores as numbers", () => {
    * serials lower, so the two workbooks below hold different numbers and mean
    * the same days.
    */
-  function datedWorkbook(date1904 = false): Uint8Array {
+  function datedWorkbook(date1904 = false): Promise<Uint8Array> {
     const shift = date1904 ? 1462 : 0;
-    const sheet: XLSX.WorkSheet = {
-      "!ref": "A1:E2",
-      A1: { t: "s", v: "Customer" },
-      B1: { t: "s", v: "Opened" },
-      C1: { t: "s", v: "Stamped" },
-      D1: { t: "s", v: "Closed" },
-      E1: { t: "s", v: "Reference" },
-      A2: { t: "s", v: "Acme" },
-      // 1 January 2024, and the same day at 18:00.
-      B2: { t: "n", v: 45292 - shift, z: "yyyy-mm-dd" },
-      C2: { t: "n", v: 45292.75 - shift, z: "yyyy-mm-dd hh:mm:ss" },
-      // The last fraction of that day, which rounds into the next one. The
-      // carry is arithmetic, so it has to land on the same day in every zone
-      // just as the plain serials do.
-      D2: {
-        t: "n",
-        v: 45292 - shift + 86_399_999.6 / 86_400_000,
-        z: "yyyy-mm-dd hh:mm:ss",
-      },
-      // A plain number wearing no date format stays a number, whatever it
-      // would decode to if it were read as a serial.
-      E2: { t: "n", v: 45292 - shift },
-    };
-    return new Uint8Array(
-      XLSX.write(
-        {
-          SheetNames: ["Data"],
-          Sheets: { Data: sheet },
-          Workbook: { WBProps: { date1904 } },
-        },
-        { bookType: "xlsx", type: "array" },
-      ) as ArrayBuffer,
+    return dataSheet(
+      [
+        ["Customer", "Opened", "Stamped", "Closed", "Reference"],
+        [
+          "Acme",
+          // 1 January 2024, and the same day at 18:00.
+          { value: 45292 - shift, format: "yyyy-mm-dd" },
+          { value: 45292.75 - shift, format: "yyyy-mm-dd hh:mm:ss" },
+          // The last fraction of that day, which rounds into the next one. The
+          // carry is arithmetic, so it has to land on the same day in every
+          // zone just as the plain serials do.
+          {
+            value: 45292 - shift + 86_399_999.6 / 86_400_000,
+            format: "yyyy-mm-dd hh:mm:ss",
+          },
+          // A plain number wearing no date format stays a number, whatever it
+          // would decode to if it were read as a serial.
+          45292 - shift,
+        ],
+      ],
+      date1904,
     );
   }
 
@@ -1030,7 +1048,7 @@ describe("dates a workbook stores as numbers", () => {
     // with no `Date` in the middle: a `Date` has a local face as well as a UTC
     // one, and text built from the local face made the same workbook read as a
     // different calendar day in every zone.
-    expect(await firstRowPerZone(datedWorkbook())).toEqual(
+    expect(await firstRowPerZone(await datedWorkbook())).toEqual(
       ZONES.map(() => ({
         Customer: "Acme",
         Opened: "2024-01-01T00:00:00.000Z",
@@ -1047,31 +1065,22 @@ describe("dates a workbook stores as numbers", () => {
     // were already decided had nowhere to carry, so the value read as the
     // second before, on the day before.
     const almost = 45292 + 86_399_999.6 / 86_400_000;
-    const sheet: XLSX.WorkSheet = {
-      "!ref": "A1:B4",
-      A1: { t: "s", v: "Case" },
-      B1: { t: "s", v: "Stamped" },
-      A2: { t: "s", v: "R-1" },
-      B2: { t: "n", v: almost, z: "yyyy-mm-dd hh:mm:ss" },
-      A3: { t: "s", v: "R-2" },
-      // Midnight itself, which has nothing to carry.
-      B3: { t: "n", v: 45293, z: "yyyy-mm-dd hh:mm:ss" },
-      A4: { t: "s", v: "R-3" },
-      // Half a millisecond short of a second, which rounds within the day.
-      B4: {
-        t: "n",
-        v: 45292 + 86_399_998.6 / 86_400_000,
-        z: "yyyy-mm-dd hh:mm:ss",
-      },
-    };
     const [table] = await readWorkbookTablesBytes({
       name: "carry.xlsx",
-      bytes: new Uint8Array(
-        XLSX.write(
-          { SheetNames: ["Data"], Sheets: { Data: sheet } },
-          { bookType: "xlsx", type: "array" },
-        ) as ArrayBuffer,
-      ),
+      bytes: await dataSheet([
+        ["Case", "Stamped"],
+        ["R-1", { value: almost, format: "yyyy-mm-dd hh:mm:ss" }],
+        // Midnight itself, which has nothing to carry.
+        ["R-2", { value: 45293, format: "yyyy-mm-dd hh:mm:ss" }],
+        // Half a millisecond short of a second, which rounds within the day.
+        [
+          "R-3",
+          {
+            value: 45292 + 86_399_998.6 / 86_400_000,
+            format: "yyyy-mm-dd hh:mm:ss",
+          },
+        ],
+      ]),
     });
 
     expect(table?.rows).toEqual([
@@ -1082,28 +1091,20 @@ describe("dates a workbook stores as numbers", () => {
   });
 
   it("carries the same way in the 1904 date system", async () => {
-    const sheet: XLSX.WorkSheet = {
-      "!ref": "A1:B2",
-      A1: { t: "s", v: "Case" },
-      B1: { t: "s", v: "Stamped" },
-      A2: { t: "s", v: "R-1" },
-      B2: {
-        t: "n",
-        v: 45292 - 1462 + 86_399_999.6 / 86_400_000,
-        z: "yyyy-mm-dd hh:mm:ss",
-      },
-    };
     const [table] = await readWorkbookTablesBytes({
       name: "carry-1904.xlsx",
-      bytes: new Uint8Array(
-        XLSX.write(
-          {
-            SheetNames: ["Data"],
-            Sheets: { Data: sheet },
-            Workbook: { WBProps: { date1904: true } },
-          },
-          { bookType: "xlsx", type: "array" },
-        ) as ArrayBuffer,
+      bytes: await dataSheet(
+        [
+          ["Case", "Stamped"],
+          [
+            "R-1",
+            {
+              value: 45292 - 1462 + 86_399_999.6 / 86_400_000,
+              format: "yyyy-mm-dd hh:mm:ss",
+            },
+          ],
+        ],
+        true,
       ),
     });
 
@@ -1113,27 +1114,18 @@ describe("dates a workbook stores as numbers", () => {
   });
 
   /** A worksheet holding one date-formatted serial per row, under one header. */
-  function serialWorkbook(serials: number[], date1904 = false): Uint8Array {
-    const sheet: XLSX.WorkSheet = {
-      "!ref": `A1:A${serials.length + 1}`,
-      A1: { t: "s", v: "Stamped" },
-    };
-    serials.forEach((serial, index) => {
-      sheet[`A${index + 2}`] = {
-        t: "n",
-        v: serial,
-        z: "yyyy-mm-dd hh:mm:ss",
-      } as XLSX.CellObject;
-    });
-    return new Uint8Array(
-      XLSX.write(
-        {
-          SheetNames: ["Data"],
-          Sheets: { Data: sheet },
-          Workbook: { WBProps: { date1904 } },
-        },
-        { bookType: "xlsx", type: "array" },
-      ) as ArrayBuffer,
+  function serialWorkbook(
+    serials: number[],
+    date1904 = false,
+  ): Promise<Uint8Array> {
+    return dataSheet(
+      [
+        ["Stamped"],
+        ...serials.map((serial) => [
+          { value: serial, format: "yyyy-mm-dd hh:mm:ss" },
+        ]),
+      ],
+      date1904,
     );
   }
 
@@ -1145,7 +1137,7 @@ describe("dates a workbook stores as numbers", () => {
     // would be filed under a day the other never reported.
     const serials = [1, 59, 60, 61, 45292, 45292.75, 2_958_465];
     for (const date1904 of [false, true]) {
-      const bytes = serialWorkbook(serials, date1904);
+      const bytes = await serialWorkbook(serials, date1904);
       const [table] = await readWorkbookTablesBytes({
         name: "serials.xlsx",
         bytes,
@@ -1193,7 +1185,7 @@ describe("dates a workbook stores as numbers", () => {
       45_292.999_999_995_37,
     ];
     for (const date1904 of [false, true]) {
-      const bytes = serialWorkbook(serials, date1904);
+      const bytes = await serialWorkbook(serials, date1904);
       const [table] = await readWorkbookTablesBytes({
         name: "extremes.xlsx",
         bytes,
@@ -1220,7 +1212,7 @@ describe("dates a workbook stores as numbers", () => {
   });
 
   it("carries a serial with no moment as its number, and keys them apart", async () => {
-    const bytes = serialWorkbook([1e100, -1e100]);
+    const bytes = await serialWorkbook([1e100, -1e100]);
     const [table] = await readWorkbookTablesBytes({
       name: "untrusted.xlsx",
       bytes,
@@ -1242,7 +1234,7 @@ describe("dates a workbook stores as numbers", () => {
     // there is no spelling for, so it stays the number it is.
     const [table] = await readWorkbookTablesBytes({
       name: "ends.xlsx",
-      bytes: serialWorkbook([1, 2_958_465, 2_958_466]),
+      bytes: await serialWorkbook([1, 2_958_465, 2_958_466]),
     });
 
     expect(table?.rows).toEqual([
@@ -1259,23 +1251,13 @@ describe("dates a workbook stores as numbers", () => {
     // Gregorian calendar does not have and no `Date` can hold. Writing it made
     // the reader and the split key disagree about which day it was, so it too
     // is carried as the number it is.
-    const sheet: XLSX.WorkSheet = {
-      "!ref": "A1:B3",
-      A1: { t: "s", v: "Case" },
-      B1: { t: "s", v: "Opened" },
-      A2: { t: "s", v: "R-1" },
-      B2: { t: "n", v: 0, z: "yyyy-mm-dd" },
-      A3: { t: "s", v: "R-2" },
-      B3: { t: "n", v: 60, z: "yyyy-mm-dd" },
-    };
     const [table] = await readWorkbookTablesBytes({
       name: "edges.xlsx",
-      bytes: new Uint8Array(
-        XLSX.write(
-          { SheetNames: ["Data"], Sheets: { Data: sheet } },
-          { bookType: "xlsx", type: "array" },
-        ) as ArrayBuffer,
-      ),
+      bytes: await dataSheet([
+        ["Case", "Opened"],
+        ["R-1", { value: 0, format: "yyyy-mm-dd" }],
+        ["R-2", { value: 60, format: "yyyy-mm-dd" }],
+      ]),
     });
 
     expect(table?.rows).toEqual([
@@ -1287,7 +1269,7 @@ describe("dates a workbook stores as numbers", () => {
   it("reads the 1904 date system by the workbook's own count", async () => {
     // The same days, written in the system that starts 1462 days later. Which
     // day a serial names belongs to the workbook, so the reader asks it.
-    expect(await firstRowPerZone(datedWorkbook(true))).toEqual(
+    expect(await firstRowPerZone(await datedWorkbook(true))).toEqual(
       ZONES.map(() => ({
         Customer: "Acme",
         Opened: "2024-01-01T00:00:00.000Z",
@@ -2056,7 +2038,7 @@ describe("worksheets with title rows and spacer columns", () => {
   it("reads a titled worksheet from its real header and leaves the spacer out", async () => {
     const [report] = await readWorkbookWorksheetsBytes({
       name: "titled.xlsx",
-      bytes: workbookBytes([TITLED]),
+      bytes: await workbookBytes([TITLED]),
     });
 
     expect(report?.region?.headerRow).toBe(5);
@@ -2098,7 +2080,7 @@ describe("worksheets with title rows and spacer columns", () => {
   it("keeps a column with values under a blank header, numbered by its place among the kept columns", async () => {
     const [table] = await readWorkbookTablesBytes({
       name: "unnamed.xlsx",
-      bytes: workbookBytes([UNNAMED_COLUMN]),
+      bytes: await workbookBytes([UNNAMED_COLUMN]),
     });
 
     expect(table?.columns).toEqual([
@@ -2116,7 +2098,7 @@ describe("worksheets with title rows and spacer columns", () => {
 
     const [sideNote] = await readWorkbookTablesBytes({
       name: "side-note.xlsx",
-      bytes: workbookBytes([SIDE_NOTE]),
+      bytes: await workbookBytes([SIDE_NOTE]),
     });
     // The spacer in the third column is gone, so the unnamed side-note column
     // is the third column of the table and is named for that.
@@ -2129,7 +2111,7 @@ describe("worksheets with title rows and spacer columns", () => {
 
   it("counts title rows above a declared header row too", async () => {
     const [report] = await readWorkbookWorksheetsBytes(
-      { name: "titled.xlsx", bytes: workbookBytes([TITLED]) },
+      { name: "titled.xlsx", bytes: await workbookBytes([TITLED]) },
       { headerRow: 5 },
     );
     expect(report?.skippedTitleRows).toBe(2);
@@ -2137,7 +2119,7 @@ describe("worksheets with title rows and spacer columns", () => {
     // Declaring the title row as the header is honoured, not second-guessed:
     // the title becomes a header cell and nothing above it was skipped.
     const [declared] = await readWorkbookWorksheetsBytes(
-      { name: "titled.xlsx", bytes: workbookBytes([TITLED]) },
+      { name: "titled.xlsx", bytes: await workbookBytes([TITLED]) },
       { headerRow: 1 },
     );
     expect(declared?.region?.headerRow).toBe(1);
@@ -2151,7 +2133,7 @@ describe("worksheets with title rows and spacer columns", () => {
     // it always did, rather than the data row under it.
     const [table] = await readWorkbookTablesBytes({
       name: "narrow.xlsx",
-      bytes: workbookBytes([
+      bytes: await workbookBytes([
         {
           name: "Narrow",
           rows: [
@@ -2168,7 +2150,7 @@ describe("worksheets with title rows and spacer columns", () => {
   it("reads a one-column sheet from its first row, as it always did", async () => {
     const [report] = await readWorkbookWorksheetsBytes({
       name: "cover.xlsx",
-      bytes: workbookBytes([
+      bytes: await workbookBytes([
         { name: "Cover", rows: [["Quarterly review log"], ["Prepared by"]] },
       ]),
     });
@@ -2188,7 +2170,7 @@ describe("worksheets with title rows and spacer columns", () => {
     // rows survive and the unnamed columns are numbered.
     const [table] = await readWorkbookTablesBytes({
       name: "sparse.xlsx",
-      bytes: workbookBytes([
+      bytes: await workbookBytes([
         {
           name: "Sparse",
           rows: [
@@ -2211,7 +2193,7 @@ describe("worksheets with title rows and spacer columns", () => {
     // years name their columns as numbers.
     const [years] = await readWorkbookTablesBytes({
       name: "years.xlsx",
-      bytes: workbookBytes([
+      bytes: await workbookBytes([
         {
           name: "Years",
           rows: [
@@ -2228,25 +2210,19 @@ describe("worksheets with title rows and spacer columns", () => {
   });
 
   it("skips a banner merged across the columns directly above the header, on both readers", async () => {
-    const banner: XLSX.WorkSheet = {
-      "!merges": [{ e: { c: 3, r: 0 }, s: { c: 0, r: 0 } }],
-      "!ref": "A1:D3",
-      A1: { t: "s", v: "Quarterly review log" },
-      A2: { t: "s", v: "Case_ID" },
-      B2: { t: "s", v: "Region" },
-      C2: { t: "s", v: "Owner" },
-      D2: { t: "s", v: "Status" },
-      A3: { t: "s", v: "R-1" },
-      B3: { t: "s", v: "north" },
-      C3: { t: "s", v: "Reviewer 1" },
-      D3: { t: "s", v: "open" },
-    };
-    const bytes = new Uint8Array(
-      XLSX.write(
-        { SheetNames: ["Data"], Sheets: { Data: banner } },
-        { bookType: "xlsx", type: "array" },
-      ) as ArrayBuffer,
-    );
+    const bytes = await buildWorkbookFixture({
+      sheets: [
+        {
+          name: "Data",
+          rows: [
+            ["Quarterly review log"],
+            ["Case_ID", "Region", "Owner", "Status"],
+            ["R-1", "north", "Reviewer 1", "open"],
+          ],
+          merges: ["A1:D1"],
+        },
+      ],
+    });
 
     const [report] = await readWorkbookWorksheetsBytes({
       name: "banner.xlsx",
@@ -2276,7 +2252,7 @@ describe("worksheets with title rows and spacer columns", () => {
     // yields; the detail rows under it read as data, as they did before.
     const [table] = await readWorkbookTablesBytes({
       name: "two-blocks.xlsx",
-      bytes: workbookBytes([
+      bytes: await workbookBytes([
         {
           name: "Summary",
           rows: [
@@ -2336,19 +2312,10 @@ describe("worksheets with title rows and spacer columns", () => {
 
     // A date-formatted serial names its column by the ISO timestamp every
     // reader here writes dates as, on both sides.
-    const dated: XLSX.WorkSheet = {
-      "!ref": "A1:B2",
-      A1: { t: "n", v: 45292, z: "yyyy-mm-dd" },
-      B1: { t: "s", v: "Amount" },
-      A2: { t: "s", v: "Acme" },
-      B2: { t: "n", v: 10 },
-    };
-    const datedBytes = new Uint8Array(
-      XLSX.write(
-        { SheetNames: ["Data"], Sheets: { Data: dated } },
-        { bookType: "xlsx", type: "array" },
-      ) as ArrayBuffer,
-    );
+    const datedBytes = await dataSheet([
+      [{ value: 45292, format: "yyyy-mm-dd" }, "Amount"],
+      ["Acme", 10],
+    ]);
     const [datedTable] = await readWorkbookTablesBytes({
       name: "dated.xlsx",
       bytes: datedBytes,
@@ -2370,20 +2337,17 @@ describe("worksheets with title rows and spacer columns", () => {
     // the table reader yields no table, the records reader refuses, and the
     // inspection reports no header row and no columns, so a picker built
     // from it offers nothing the read will not return.
-    const sheet: XLSX.WorkSheet = {
-      "!ref": "A3:B5",
-      A3: { t: "s", v: "Case_ID" },
-      B3: { t: "s", v: "Region" },
-      A4: { t: "s", v: "R-1" },
-      B4: { t: "s", v: "north" },
-      A5: { t: "s", v: "R-2" },
-      B5: { t: "s", v: "south" },
-    };
-    const bytes = new Uint8Array(
-      XLSX.write(
-        { SheetNames: ["Data"], Sheets: { Data: sheet } },
-        { bookType: "xlsx", type: "array" },
-      ) as ArrayBuffer,
+    const bytes = await withPart(
+      await dataSheet([
+        [],
+        [],
+        ["Case_ID", "Region"],
+        ["R-1", "north"],
+        ["R-2", "south"],
+      ]),
+      "xl/worksheets/sheet1.xml",
+      (xml) =>
+        xml.replace('<dimension ref="A1:B5"/>', '<dimension ref="A3:B5"/>'),
     );
     const input = { name: "offset.xlsx", bytes };
 
@@ -2410,7 +2374,7 @@ describe("worksheets with title rows and spacer columns", () => {
     // Decided before the sheet is profiled, so the answer is the same as it
     // always was: no table from the table reader, a refusal from the records
     // reader, and no scan of a padded used range to get there.
-    const bytes = workbookBytes([TITLED]);
+    const bytes = await workbookBytes([TITLED]);
     const [report] = await readWorkbookWorksheetsBytes(
       { name: "titled.xlsx", bytes },
       { headerRow: 40 },
@@ -2432,7 +2396,7 @@ describe("worksheets with title rows and spacer columns", () => {
     // counts describe a read that produced nothing.
     const [empty] = await readWorkbookWorksheetsBytes({
       name: "header-only.xlsx",
-      bytes: workbookBytes([
+      bytes: await workbookBytes([
         {
           name: "Empty",
           rows: [
@@ -2452,7 +2416,7 @@ describe("worksheets with title rows and spacer columns", () => {
     // The invariant this rule exists for: whichever reader answers, a
     // worksheet has one header row and one set of columns.
     for (const sheet of [TITLED, UNNAMED_COLUMN, SIDE_NOTE, REVIEW_LOG]) {
-      const bytes = workbookBytes([sheet]);
+      const bytes = await workbookBytes([sheet]);
       const [table] = await readWorkbookTablesBytes({ name: "a.xlsx", bytes });
       const [report] = await readWorkbookWorksheetsBytes({
         name: "a.xlsx",
@@ -2474,7 +2438,7 @@ describe("worksheets with title rows and spacer columns", () => {
 
   it("reads records from the real header and refuses only a blank header over values", async () => {
     const records = await readWorksheetRecordsBytes(
-      { name: "titled.xlsx", bytes: workbookBytes([TITLED]) },
+      { name: "titled.xlsx", bytes: await workbookBytes([TITLED]) },
       {},
     );
     expect(records.columns).toEqual([
@@ -2502,7 +2466,7 @@ describe("worksheets with title rows and spacer columns", () => {
     // A spacer is not a blank header; a blank header over values still is.
     await expect(
       readWorksheetRecordsBytes(
-        { name: "unnamed.xlsx", bytes: workbookBytes([UNNAMED_COLUMN]) },
+        { name: "unnamed.xlsx", bytes: await workbookBytes([UNNAMED_COLUMN]) },
         {},
       ),
     ).rejects.toMatchObject({

@@ -85,12 +85,12 @@ output for another group's data.
 
 ## Why the packages are hand-authored
 
-SheetJS cannot round-trip shared formulas, array formulas, conditional
+SheetJS could not round-trip shared formulas, array formulas, conditional
 formatting, data validation, comments, sheet-scoped defined names, very-hidden
 sheets, pivot caches or a macro project. Writing the parts directly also keeps
 the byte layout stable, so a corpus test fails when the library changes rather
-than when SheetJS does. JSZip assembles the package; every entry carries a fixed
-date so identical options produce identical bytes.
+than when a spreadsheet writer does. JSZip assembles the package; every entry
+carries a fixed date so identical options produce identical bytes.
 
 ## Adding a fixture
 

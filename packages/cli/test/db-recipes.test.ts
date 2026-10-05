@@ -88,7 +88,7 @@ test("one recipe can select several distinct regions in the same workbook", asyn
   const plan = path.join(root, "regions.ccplan");
   await writeFile(
     source,
-    workbook([
+    await workbook([
       ["Left", "Right"],
       ["North", "South"],
     ]),
@@ -177,7 +177,7 @@ test("a replacement recipe excludes routes it omits", async () => {
   };
   await writeFile(
     source,
-    workbook([
+    await workbook([
       ["Left", "Right"],
       ["North", "South"],
     ]),
@@ -227,7 +227,7 @@ test("an empty replacement recipe excludes every captured route", async () => {
   const initialRecipe = path.join(root, "initial.json");
   const replacementRecipe = path.join(root, "empty.json");
   const plan = path.join(root, "empty.ccplan");
-  await writeFile(source, workbook([["Name"], ["North"]]));
+  await writeFile(source, await workbook([["Name"], ["North"]]));
   const selection = JSON.stringify({ sheet: "Inventory", headerRow: 1 });
   const destination = (name: string) => ({
     kind: "new-table-infer",
@@ -290,7 +290,7 @@ test("forced plan replacement preserves the old plan until capture succeeds", as
   const database = path.join(root, "safe.sqlite");
   const source = path.join(root, "safe.xlsx");
   const plan = path.join(root, "safe.ccplan");
-  await writeFile(source, workbook([["Name"], ["North"]]));
+  await writeFile(source, await workbook([["Name"], ["North"]]));
   await run(["create", "-o", database]);
   await run([
     "import",
@@ -350,7 +350,7 @@ test("forced plan replacement preserves the old plan until capture succeeds", as
   });
   expect(await readFile(source)).toEqual(originalSource);
 
-  await writeFile(source, workbook([["Name"], ["North"], ["South"]]));
+  await writeFile(source, await workbook([["Name"], ["North"], ["South"]]));
   await run([
     "import",
     "prepare",
@@ -369,7 +369,7 @@ test("a recipe naming an unavailable source fails instead of accepting an empty 
   const database = path.join(root, "inventory.sqlite");
   const source = path.join(root, "inventory.xlsx");
   const recipe = path.join(root, "recipe.json");
-  await writeFile(source, workbook([["Name"], ["North"]]));
+  await writeFile(source, await workbook([["Name"], ["North"]]));
   await writeFile(
     recipe,
     JSON.stringify({
@@ -423,7 +423,7 @@ test("db inspect explains conflicting mappings for aliases of one capture", asyn
   };
   await writeFile(
     source,
-    workbook([
+    await workbook([
       ["First", "Second"],
       ["A", "B"],
     ]),

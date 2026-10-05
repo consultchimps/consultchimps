@@ -53,6 +53,61 @@ export function encodeCell(column: number, row: number): string {
   return `${encodeColumn(column)}${row}`;
 }
 
+/** A zero-based rectangle of cells. */
+export interface CellRectangle {
+  readonly startRow: number;
+  readonly startColumn: number;
+  readonly endRow: number;
+  readonly endColumn: number;
+}
+
+/**
+ * A range reference read leniently: leading capital letters as a column and
+ * the digits after them as a row, the way the previous engine read
+ * `<dimension>` and every other range a workbook declares.
+ */
+export function decodeRange(range: string): CellRectangle {
+  let index: number;
+  let code = 0;
+  let position = 0;
+  const length = range.length;
+  for (index = 0; position < length; position += 1) {
+    code = range.charCodeAt(position) - 64;
+    if (code < 1 || code > 26) break;
+    index = 26 * index + code;
+  }
+  const startColumn = index - 1;
+  for (index = 0; position < length; position += 1) {
+    code = range.charCodeAt(position) - 48;
+    if (code < 0 || code > 9) break;
+    index = 10 * index + code;
+  }
+  const startRow = index - 1;
+  if (position === length || code !== 10) {
+    return { startRow, startColumn, endRow: startRow, endColumn: startColumn };
+  }
+  position += 1;
+  for (index = 0; position !== length; position += 1) {
+    code = range.charCodeAt(position) - 64;
+    if (code < 1 || code > 26) break;
+    index = 26 * index + code;
+  }
+  const endColumn = index - 1;
+  for (index = 0; position !== length; position += 1) {
+    code = range.charCodeAt(position) - 48;
+    if (code < 0 || code > 9) break;
+    index = 10 * index + code;
+  }
+  return { startRow, startColumn, endRow: index - 1, endColumn };
+}
+
+/** Encode a zero-based rectangle as "A1:C9", or "A1" for a single cell. */
+export function encodeRange(range: CellRectangle): string {
+  const start = encodeCell(range.startColumn, range.startRow + 1);
+  const end = encodeCell(range.endColumn, range.endRow + 1);
+  return start === end ? start : `${start}:${end}`;
+}
+
 /**
  * A plan mapping every old row of one worksheet to its destination.
  *

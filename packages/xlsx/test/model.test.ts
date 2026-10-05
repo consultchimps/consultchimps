@@ -8,7 +8,6 @@
 import { describe, expect, it } from "vitest";
 
 import { WorkbookModel, RowRelocation } from "../src/model/index.js";
-import { WorkbookPackage } from "../src/package/index.js";
 import {
   buildCorpusWorkbook,
   calcChainReferences,
@@ -492,24 +491,6 @@ describe("model: reading structure", () => {
     expect(() =>
       model.deleteRows("Missing", [1], { renumber: true }),
     ).toThrowError(/not in this workbook/u);
-  });
-
-  it("reads a value view lazily when none was supplied", async () => {
-    const model = await WorkbookModel.load(
-      await buildCorpusWorkbook({ shape: "range" }),
-    );
-
-    expect(model.values().SheetNames).toContain(CORPUS_SHEET);
-  });
-
-  it("has no value view when it was built from a package alone", async () => {
-    const workbookPackage = await WorkbookPackage.load(
-      await buildCorpusWorkbook({ shape: "range" }),
-    );
-
-    expect(() =>
-      WorkbookModel.fromPackage(workbookPackage).values(),
-    ).toThrowError(/no value view/u);
   });
 });
 

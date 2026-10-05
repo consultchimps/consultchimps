@@ -344,7 +344,7 @@ export function regionColumns(
 
 /**
  * The name a header cell gives its column, spelled the way the SheetJS table
- * reader spells it, so the columns an inspection reports are the columns a
+ * reader spelled it, so the columns an inspection reports are the columns a
  * consolidation produces whatever the cell's type: a number by its value
  * rather than its stored token (`1E3` is `1000`), a boolean as `true` or
  * `false`, a date as the ISO timestamp every reader here writes dates as, an

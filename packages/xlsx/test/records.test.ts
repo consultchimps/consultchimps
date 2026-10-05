@@ -4,10 +4,10 @@ import path from "node:path";
 
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
 import { readWorksheetRecordsBytes } from "../src/bytes.js";
 import { readWorksheetRecords } from "../src/index.js";
+import { buildSheetFixture } from "./support/workbook-fixture.js";
 
 describe("readWorksheetRecords", () => {
   it("returns deterministic displayed text and skips only completely empty rows", async () => {
@@ -17,33 +17,29 @@ describe("readWorksheetRecords", () => {
 
     try {
       const workbookPath = path.join(directory, "records.xlsx");
-      const worksheet = XLSX.utils.aoa_to_sheet([
-        ["name", "percentage", "date", "active", "empty", "formula"],
-        [
-          "Company A",
-          0.125,
-          new Date("2024-01-02T00:00:00.000Z"),
-          true,
-          null,
-          null,
-        ],
-        [null, null, null, null, null, null],
-        ["Company B", -0.021, null, false, null, null],
-      ]);
-      worksheet.B2!.z = "0.0%";
-      worksheet.B4!.z = "0.0%";
-      worksheet.C2!.z = "yyyy-mm-dd";
-      worksheet.F2 = {
-        f: "B2*2",
-        t: "n",
-        v: 0.25,
-        z: "0.0%",
-      };
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, "Companies");
       await writeFile(
         workbookPath,
-        XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+        await buildSheetFixture("Companies", [
+          ["name", "percentage", "date", "active", "empty", "formula"],
+          [
+            "Company A",
+            { value: 0.125, format: "0.0%" },
+            // 2024-01-02 as a serial.
+            { value: 45293, format: "yyyy-mm-dd" },
+            true,
+            null,
+            { formula: "B2*2", value: 0.25, format: "0.0%" },
+          ],
+          [null, null, null, null, null, null],
+          [
+            "Company B",
+            { value: -0.021, format: "0.0%" },
+            null,
+            false,
+            null,
+            null,
+          ],
+        ]),
       );
 
       await expect(

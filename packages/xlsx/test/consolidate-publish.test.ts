@@ -11,7 +11,6 @@ import path from "node:path";
 import type * as FsPromises from "node:fs/promises";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as XLSX from "xlsx";
 
 const linkBehaviour = vi.hoisted(() => ({
   /** Called with the destination before the link fails. */
@@ -34,21 +33,16 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 const { consolidateWorkbooks } = await import("../src/index.js");
+const { buildSheetFixture } = await import("./support/workbook-fixture.js");
 
 async function inputFile(directory: string): Promise<string> {
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(
-    workbook,
-    XLSX.utils.aoa_to_sheet([
-      ["Client", "Amount"],
-      ["A", 10],
-    ]),
-    "North",
-  );
   const input = path.join(directory, "north.xlsx");
   await writeFile(
     input,
-    XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+    await buildSheetFixture("North", [
+      ["Client", "Amount"],
+      ["A", 10],
+    ]),
   );
   return input;
 }

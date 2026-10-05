@@ -7,9 +7,10 @@ import { promisify } from "node:util";
 
 import { expect } from "vitest";
 import { DuckDBInstance } from "@duckdb/node-api";
-import * as XLSX from "xlsx";
 import Sqlite from "better-sqlite3";
 import JSZip from "jszip";
+
+import { buildWorkbookFixture } from "../../xlsx/test/support/workbook-fixture.js";
 
 export const execute: typeof execFile.__promisify__ = promisify(execFile);
 export const cli: string = fileURLToPath(
@@ -137,26 +138,21 @@ export async function resolve(specifier, context, nextResolve) {
 export function workbook(
   rows: readonly (readonly (string | number | boolean)[])[],
   hidden = false,
-): Uint8Array {
-  const book = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(
-    book,
-    XLSX.utils.aoa_to_sheet(rows.map((row) => [...row])),
-    "Inventory",
-  );
-  if (hidden) {
-    book.Workbook = { Sheets: [{ Hidden: 1, name: "Inventory" }] };
-  }
-  return XLSX.write(book, { type: "buffer", bookType: "xlsx" }) as Uint8Array;
+): Promise<Uint8Array> {
+  return buildWorkbookFixture({
+    sheets: [
+      { name: "Inventory", rows, ...(hidden ? { state: "hidden" } : {}) },
+    ],
+  });
 }
 
 export async function workbookWithInvalidNumericCell(): Promise<Uint8Array> {
-  const archive = await JSZip.loadAsync(workbook([["Name"], ["North"]]));
+  const archive = await JSZip.loadAsync(await workbook([["Name"], ["North"]]));
   const worksheet = archive.file("xl/worksheets/sheet1.xml");
   if (!worksheet) throw new Error("The generated workbook has no worksheet.");
   const xml = await worksheet.async("string");
   const invalid = xml.replace(
-    '<c r="A2" t="str"><v>North</v></c>',
+    /<c r="A2" t="s"><v>\d+<\/v><\/c>/u,
     '<c r="A2"><v>not-a-number</v></c>',
   );
   if (invalid === xml)

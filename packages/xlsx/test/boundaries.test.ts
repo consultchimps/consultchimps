@@ -233,3 +233,83 @@ describe("boundaries: src/package/ is the only owner of ZIP concerns", () => {
     }
   });
 });
+
+const REPOSITORY_DIRECTORY = fileURLToPath(
+  new URL("../../../", import.meta.url),
+);
+
+/** Every .ts file under each package's src/ and test/, relative to the repository. */
+async function repositorySourceFiles(): Promise<string[]> {
+  const files: string[] = [];
+  for (const workspace of await readdir(
+    path.join(REPOSITORY_DIRECTORY, "packages"),
+  )) {
+    for (const folder of ["src", "test"]) {
+      const root = path.join(
+        REPOSITORY_DIRECTORY,
+        "packages",
+        workspace,
+        folder,
+      );
+      const entries = await readdir(root, {
+        recursive: true,
+        withFileTypes: true,
+      }).catch(() => []);
+      for (const entry of entries) {
+        if (entry.isFile() && /\.[cm]?[jt]sx?$/u.test(entry.name)) {
+          files.push(path.join(entry.parentPath, entry.name));
+        }
+      }
+    }
+  }
+  return files;
+}
+
+describe("boundaries: SheetJS stays out of the repository", () => {
+  it("no package's src or test imports xlsx", async () => {
+    const files = await repositorySourceFiles();
+    expect(files.length).toBeGreaterThan(0);
+    const offenders: string[] = [];
+    for (const file of files) {
+      const imports = moduleSpecifiers(await readFile(file, "utf8"));
+      if (imports.some((name) => name === "xlsx" || name.startsWith("xlsx/"))) {
+        offenders.push(
+          path.relative(REPOSITORY_DIRECTORY, file).split(path.sep).join("/"),
+        );
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("no package.json declares xlsx", async () => {
+    const manifests = ["package.json"];
+    for (const group of ["packages", "apps"]) {
+      for (const workspace of await readdir(
+        path.join(REPOSITORY_DIRECTORY, group),
+      )) {
+        manifests.push(path.join(group, workspace, "package.json"));
+      }
+    }
+    const offenders: string[] = [];
+    for (const manifest of manifests) {
+      const text = await readFile(
+        path.join(REPOSITORY_DIRECTORY, manifest),
+        "utf8",
+      ).catch(() => undefined);
+      if (text === undefined) continue;
+      const json = JSON.parse(text) as Record<string, unknown>;
+      for (const field of [
+        "dependencies",
+        "devDependencies",
+        "peerDependencies",
+        "optionalDependencies",
+      ]) {
+        const declared = json[field] as Record<string, string> | undefined;
+        if (declared !== undefined && "xlsx" in declared) {
+          offenders.push(`${manifest.split(path.sep).join("/")}: ${field}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});

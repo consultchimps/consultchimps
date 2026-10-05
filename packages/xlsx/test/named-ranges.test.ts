@@ -3,12 +3,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
 import {
   readWorkbookNamedRanges,
   splitWorkbookByColumn,
 } from "../src/index.js";
+import { sheetRecords } from "./support/read-workbook.js";
+import { buildWorkbookFixture } from "./support/workbook-fixture.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -25,18 +26,12 @@ async function createWorkbookWithNames(
   sheets: Array<[string, Array<Array<null | number | string>>]>,
   names: Array<{ Name: string; Ref: string }>,
 ): Promise<void> {
-  const workbook = XLSX.utils.book_new();
-  for (const [sheetName, rows] of sheets) {
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.aoa_to_sheet(rows),
-      sheetName,
-    );
-  }
-  workbook.Workbook = { Names: names };
   await writeFile(
     filePath,
-    XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+    await buildWorkbookFixture({
+      sheets: sheets.map(([name, rows]) => ({ name, rows })),
+      names: names.map((name) => ({ name: name.Name, reference: name.Ref })),
+    }),
   );
 }
 
@@ -150,13 +145,8 @@ describe("splitWorkbookByColumn with a named range", () => {
       skippedRows: 0,
     });
 
-    const north = XLSX.read(
-      await readFile(path.join(output, "clients-North.xlsx")),
-      { type: "buffer" },
-    );
-    expect(
-      XLSX.utils.sheet_to_json(north.Sheets.Clients!, { raw: true }),
-    ).toEqual([
+    const north = await readFile(path.join(output, "clients-North.xlsx"));
+    expect(await sheetRecords(north, "Clients")).toEqual([
       { Amount: 10, Client: "A", Region: "North" },
       { Amount: 30, Client: "C", Region: "North" },
     ]);

@@ -14,12 +14,12 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
 import type { TaskLogRecord } from "@consultchimps/core";
 
 import { formatDuration } from "../src/commands/logs.js";
 import { pruneRunRecords } from "../src/task-log.js";
+import { buildSheetFixture } from "../../xlsx/test/support/workbook-fixture.js";
 
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../dist/index.js", import.meta.url));
@@ -77,12 +77,7 @@ async function writeClientWorkbook(
 ): Promise<void> {
   const data: Array<Array<string | number>> = [["Client", "Amount"]];
   for (let row = 0; row < rows; row += 1) data.push([`Client ${row}`, row]);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(data), "Data");
-  await writeFile(
-    filePath,
-    XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }),
-  );
+  await writeFile(filePath, await buildSheetFixture("Data", data));
 }
 
 async function records(logs: string): Promise<TaskLogRecord[][]> {

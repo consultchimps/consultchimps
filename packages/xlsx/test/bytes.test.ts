@@ -10,7 +10,6 @@ import {
 } from "@consultchimps/core";
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
 import {
   consolidateWorkbooksBytes,
@@ -22,6 +21,22 @@ import {
 // The path surface, imported so one test can prove the two surfaces agree
 // byte for byte rather than merely agreeing in shape.
 import { consolidateWorkbooks } from "../src/index.js";
+import {
+  styleNumberFormatCode,
+  worksheetCellFormula,
+  worksheetCellStyle,
+  worksheetCellValue,
+} from "./corpus/fixtures.js";
+import {
+  sheetNamesOf,
+  sheetRecords,
+  sheetRows,
+  sheetXml,
+} from "./support/read-workbook.js";
+import {
+  buildSheetFixture,
+  buildWorkbookFixture,
+} from "./support/workbook-fixture.js";
 
 type CellInput = boolean | null | number | string;
 
@@ -35,38 +50,17 @@ const CLOCK_TICK = 2_100;
 function workbookBytes(
   sheets: Array<[string, CellInput[][]]>,
   options: {
-    names?: Array<{ Name: string; Ref: string }>;
-    visibility?: Record<string, 0 | 1 | 2>;
+    names?: Array<{ name: string; reference: string }>;
+    visibility?: Record<string, "hidden" | "veryHidden">;
   } = {},
-): Uint8Array {
-  const workbook = XLSX.utils.book_new();
-  for (const [sheetName, rows] of sheets) {
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.aoa_to_sheet(rows),
-      sheetName,
-    );
-  }
-  if (options.names) {
-    workbook.Workbook = { ...workbook.Workbook, Names: options.names };
-  }
-  if (options.visibility) {
-    workbook.Workbook = {
-      ...workbook.Workbook,
-      Sheets: sheets.map(([sheetName]) => ({
-        Hidden: options.visibility?.[sheetName] ?? 0,
-        name: sheetName,
-      })),
-    };
-  }
-  return new Uint8Array(
-    XLSX.write(workbook, {
-      bookType: "xlsx",
-      cellStyles: true,
-      compression: true,
-      type: "array",
-    }) as ArrayBuffer,
-  );
+): Promise<Uint8Array> {
+  return buildWorkbookFixture({
+    sheets: sheets.map(([name, rows]) => {
+      const state = options.visibility?.[name];
+      return state === undefined ? { name, rows } : { name, rows, state };
+    }),
+    ...(options.names === undefined ? {} : { names: options.names }),
+  });
 }
 
 /**
@@ -93,19 +87,16 @@ function clientRows(): Array<[string, CellInput[][]]> {
   ];
 }
 
-function sheetNames(bytes: Uint8Array): string[] {
-  return XLSX.read(bytes, { type: "array" }).SheetNames;
+function sheetNames(bytes: Uint8Array): Promise<string[]> {
+  return sheetNamesOf(bytes);
 }
 
+/** Records keyed by the first row, empty cells as null, blank rows skipped. */
 function readSheet(
   bytes: Uint8Array,
   sheetName: string,
-): Array<Record<string, unknown>> {
-  const workbook = XLSX.read(bytes, { type: "array" });
-  return XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]!, {
-    defval: null,
-    raw: true,
-  });
+): Promise<Array<Record<string, unknown>>> {
+  return sheetRecords(bytes, sheetName, { keepEmpty: true });
 }
 
 const WORKBOOK_MAIN_CONTENT_TYPE =
@@ -149,7 +140,7 @@ async function macroPackage(bytes: Uint8Array): Promise<Uint8Array> {
 async function macroWorkbookBytes(
   options: { declareMacroContentType?: boolean } = {},
 ): Promise<Uint8Array> {
-  const archive = await JSZip.loadAsync(workbookBytes(clientRows()));
+  const archive = await JSZip.loadAsync(await workbookBytes(clientRows()));
   archive.file("xl/vbaProject.bin", Buffer.from([0xd0, 0xcf, 0x11, 0xe0]));
   const contentTypes = await archive.file("[Content_Types].xml")!.async("text");
   const withDefault = contentTypes.replace(
@@ -169,13 +160,11 @@ async function macroWorkbookBytes(
 }
 
 /** One worksheet as a header-first grid, which is how a consolidation reads. */
-function readSheetGrid(bytes: Uint8Array, sheetName: string): unknown[][] {
-  const workbook = XLSX.read(bytes, { type: "array" });
-  return XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]!, {
-    defval: null,
-    header: 1,
-    raw: true,
-  });
+function readSheetGrid(
+  bytes: Uint8Array,
+  sheetName: string,
+): Promise<unknown[][]> {
+  return sheetRows(bytes, sheetName);
 }
 
 async function structuredTableBytes(hidden = false): Promise<Uint8Array> {
@@ -199,7 +188,10 @@ describe("byte-level workbook splitting", () => {
   it("splits worksheet rows in memory and reports names instead of paths", async () => {
     const events: OperationProgress[] = [];
     const { result, outputs } = await splitWorkbookBytes({
-      input: { name: "client list.xlsx", bytes: workbookBytes(clientRows()) },
+      input: {
+        name: "client list.xlsx",
+        bytes: await workbookBytes(clientRows()),
+      },
       column: " region ",
       onProgress: (progress) => events.push(progress),
     });
@@ -241,11 +233,11 @@ describe("byte-level workbook splitting", () => {
       ["building-workbooks", 2],
     ]);
 
-    expect(readSheet(outputs[0]!.bytes, "Clients")).toEqual([
+    expect(await readSheet(outputs[0]!.bytes, "Clients")).toEqual([
       { Amount: 10, Client: "A", Region: "North" },
       { Amount: 30, Client: "C", Region: "North" },
     ]);
-    expect(readSheet(outputs[1]!.bytes, "Clients")).toEqual([
+    expect(await readSheet(outputs[1]!.bytes, "Clients")).toEqual([
       { Amount: 20, Client: "B", Region: "South" },
     ]);
 
@@ -279,7 +271,7 @@ describe("byte-level workbook splitting", () => {
   it("keeps every worksheet, filtered or not, in each output", async () => {
     const input = {
       name: "regions.xlsx",
-      bytes: workbookBytes([
+      bytes: await workbookBytes([
         [
           "Current",
           [
@@ -319,16 +311,20 @@ describe("byte-level workbook splitting", () => {
       "regions-South.xlsx",
     ]);
     for (const output of outputs) {
-      expect(sheetNames(output.bytes)).toEqual(["Current", "Archive", "Notes"]);
-      expect(readSheet(output.bytes, "Notes")).toEqual([
+      expect(await sheetNames(output.bytes)).toEqual([
+        "Current",
+        "Archive",
+        "Notes",
+      ]);
+      expect(await readSheet(output.bytes, "Notes")).toEqual([
         { Measure: "Total", Value: 99 },
       ]);
     }
-    expect(readSheet(outputs[0]!.bytes, "Current")).toEqual([
+    expect(await readSheet(outputs[0]!.bytes, "Current")).toEqual([
       { Client: "A", Region: "North" },
     ]);
-    expect(readSheet(outputs[0]!.bytes, "Archive")).toEqual([]);
-    expect(readSheet(outputs[1]!.bytes, "Archive")).toEqual([
+    expect(await readSheet(outputs[0]!.bytes, "Archive")).toEqual([]);
+    expect(await readSheet(outputs[1]!.bytes, "Archive")).toEqual([
       { Client: "C", Region: "South" },
     ]);
     expect(result.summary).toMatchObject({
@@ -346,7 +342,7 @@ describe("byte-level workbook splitting", () => {
   it("still rebuilds one compact worksheet when asked not to preserve", async () => {
     const input = {
       name: "regions.xlsx",
-      bytes: workbookBytes([
+      bytes: await workbookBytes([
         [
           "Clients",
           [
@@ -372,7 +368,7 @@ describe("byte-level workbook splitting", () => {
       sheet: "Clients",
     });
 
-    expect(sheetNames(outputs[0]!.bytes)).toEqual(["Clients"]);
+    expect(await sheetNames(outputs[0]!.bytes)).toEqual(["Clients"]);
     expect(result.metrics).toMatchObject({
       groups: 2,
       sheetsCopiedUnchanged: 0,
@@ -387,7 +383,7 @@ describe("byte-level workbook splitting", () => {
   it("compares values strictly on request", async () => {
     const input = {
       name: "regions.xlsx",
-      bytes: workbookBytes([
+      bytes: await workbookBytes([
         [
           "Clients",
           [
@@ -428,7 +424,7 @@ describe("byte-level workbook splitting", () => {
   it("plans a split, including skipped rows, without producing any bytes", async () => {
     const input = {
       name: "clients.xlsx",
-      bytes: workbookBytes([
+      bytes: await workbookBytes([
         [
           "Clients",
           [
@@ -530,7 +526,7 @@ describe("byte-level workbook splitting", () => {
       preserveWorkbook: false,
       table: "clientdata",
     });
-    expect(readSheet(compact.outputs[0]!.bytes, "Clients")).toEqual([
+    expect(await readSheet(compact.outputs[0]!.bytes, "Clients")).toEqual([
       { Amount: 10, Client: "A", Region: "North" },
       { Amount: 30, Client: "C", Region: "North" },
     ]);
@@ -570,7 +566,7 @@ describe("byte-level workbook splitting", () => {
   });
 
   it("splits a named range and requires the matching source selection", async () => {
-    const bytes = workbookBytes(
+    const bytes = await workbookBytes(
       [
         [
           "Clients",
@@ -583,7 +579,7 @@ describe("byte-level workbook splitting", () => {
           ],
         ],
       ],
-      { names: [{ Name: "ClientRange", Ref: "Clients!$A$2:$C$4" }] },
+      { names: [{ name: "ClientRange", reference: "Clients!$A$2:$C$4" }] },
     );
     const input = { name: "clients.xlsx", bytes };
 
@@ -597,7 +593,7 @@ describe("byte-level workbook splitting", () => {
       "clients-North.xlsx",
       "clients-South.xlsx",
     ]);
-    expect(readSheet(outputs[0]!.bytes, "Clients")).toEqual([
+    expect(await readSheet(outputs[0]!.bytes, "Clients")).toEqual([
       { Amount: 10, Client: "A", Region: "North" },
     ]);
 
@@ -636,7 +632,7 @@ describe("byte-level workbook splitting", () => {
   it("honours worksheet, header row, and hidden sheet selection", async () => {
     const input = {
       name: "regions.xlsx",
-      bytes: workbookBytes([
+      bytes: await workbookBytes([
         [
           "Current",
           [
@@ -673,7 +669,7 @@ describe("byte-level workbook splitting", () => {
       headerRow: 2,
       sheet: "current",
     });
-    expect(readSheet(selected.outputs[0]!.bytes, "Current")).toEqual([
+    expect(await readSheet(selected.outputs[0]!.bytes, "Current")).toEqual([
       { Client: "A", Region: "North" },
     ]);
     await expect(
@@ -701,7 +697,7 @@ describe("byte-level workbook splitting", () => {
   });
 
   it("sanitizes output names and disambiguates repeated group values", async () => {
-    const bytes = workbookBytes([
+    const bytes = await workbookBytes([
       [
         "Data",
         [
@@ -754,7 +750,7 @@ describe("byte-level workbook splitting", () => {
     const bounded = await splitWorkbookBytes({
       input: {
         name: `${"a".repeat(300)}.xlsx`,
-        bytes: workbookBytes([
+        bytes: await workbookBytes([
           [
             "Data",
             [
@@ -773,7 +769,10 @@ describe("byte-level workbook splitting", () => {
   });
 
   it("produces byte-identical workbooks for identical inputs", async () => {
-    const plain = { name: "clients.xlsx", bytes: workbookBytes(clientRows()) };
+    const plain = {
+      name: "clients.xlsx",
+      bytes: await workbookBytes(clientRows()),
+    };
     const preserved = {
       name: "clients.xlsx",
       bytes: await structuredTableBytes(),
@@ -829,7 +828,10 @@ describe("byte-level workbook splitting", () => {
   });
 
   it("cancels a split without producing partial output", async () => {
-    const input = { name: "clients.xlsx", bytes: workbookBytes(clientRows()) };
+    const input = {
+      name: "clients.xlsx",
+      bytes: await workbookBytes(clientRows()),
+    };
 
     const beforeStart = new AbortController();
     beforeStart.abort();
@@ -872,7 +874,7 @@ describe("byte-level workbook splitting", () => {
       splitWorkbookBytes({
         input: {
           name: "single.xlsx",
-          bytes: workbookBytes([
+          bytes: await workbookBytes([
             [
               "Data",
               [
@@ -901,7 +903,7 @@ describe("byte-level workbook splitting", () => {
       splitWorkbookBytes({
         input: {
           name: "clients.xlsx",
-          bytes: workbookBytes([
+          bytes: await workbookBytes([
             [
               "Clients",
               [
@@ -921,13 +923,19 @@ describe("byte-level workbook splitting", () => {
     // for one source in particular.
     await expect(
       splitWorkbookBytes({
-        input: { name: "empty.xlsx", bytes: workbookBytes([["Data", []]]) },
+        input: {
+          name: "empty.xlsx",
+          bytes: await workbookBytes([["Data", []]]),
+        },
         column: "Region",
       }),
     ).rejects.toMatchObject({ code: "XLSX_SPLIT_COLUMN_NOT_FOUND" });
     await expect(
       splitWorkbookBytes({
-        input: { name: "empty.xlsx", bytes: workbookBytes([["Data", []]]) },
+        input: {
+          name: "empty.xlsx",
+          bytes: await workbookBytes([["Data", []]]),
+        },
         column: "Region",
         preserveWorkbook: false,
       }),
@@ -939,13 +947,16 @@ describe("byte-level workbook splitting", () => {
     // open the input at all, so it is checked before the bytes are parsed.
     await expect(
       splitWorkbookBytes({
-        input: { name: "clients.csv", bytes: workbookBytes(clientRows()) },
+        input: {
+          name: "clients.csv",
+          bytes: await workbookBytes(clientRows()),
+        },
         column: "Region",
       }),
     ).rejects.toMatchObject({ code: "XLSX_SPLIT_UNSUPPORTED_FILE" });
     await expect(
       planSplitWorkbookBytes({
-        input: { name: "clients", bytes: workbookBytes(clientRows()) },
+        input: { name: "clients", bytes: await workbookBytes(clientRows()) },
         column: "Region",
       }),
     ).rejects.toMatchObject({ code: "XLSX_SPLIT_UNSUPPORTED_FILE" });
@@ -956,7 +967,7 @@ describe("byte-level workbook splitting", () => {
     // would advertise every output as macro-enabled while its package still
     // declared an ordinary workbook, which is what Excel warns about.
     const plainUnderMacroName = splitWorkbookBytes({
-      input: { name: "clients.xlsm", bytes: workbookBytes(clientRows()) },
+      input: { name: "clients.xlsm", bytes: await workbookBytes(clientRows()) },
       column: "Region",
     });
     await expect(plainUnderMacroName).rejects.toMatchObject({
@@ -996,7 +1007,10 @@ describe("byte-level workbook splitting", () => {
     // that the run would then refuse.
     await expect(
       planSplitWorkbookBytes({
-        input: { name: "clients.xlsm", bytes: workbookBytes(clientRows()) },
+        input: {
+          name: "clients.xlsm",
+          bytes: await workbookBytes(clientRows()),
+        },
         column: "Region",
       }),
     ).rejects.toMatchObject({ code: "XLSX_SPLIT_PACKAGE_TYPE_MISMATCH" });
@@ -1161,17 +1175,17 @@ describe("byte-level workbook merging", () => {
       inputs: [
         {
           name: "north.xlsx",
-          bytes: workbookBytes(
+          bytes: await workbookBytes(
             [
               ["Summary", [["Region"], ["North"]]],
               ["Private", [["Amount"], [100]]],
             ],
-            { visibility: { Private: 2 } },
+            { visibility: { Private: "veryHidden" } },
           ),
         },
         {
           name: "south.xlsx",
-          bytes: workbookBytes([["Summary", [["Region"], ["South"]]]]),
+          bytes: await workbookBytes([["Summary", [["Region"], ["South"]]]]),
         },
       ],
       outputName: "client pack.xlsx",
@@ -1193,19 +1207,13 @@ describe("byte-level workbook merging", () => {
     ]);
     expect(outputs[0]?.name).toBe("client pack.xlsx");
 
-    const merged = XLSX.read(outputs[0]!.bytes, { type: "array" });
-    expect(merged.SheetNames).toEqual([
+    expect(await sheetNamesOf(outputs[0]!.bytes)).toEqual([
       "Summary",
       "Private",
       "Summary (2)",
       "Sheet Index",
     ]);
-    expect(
-      XLSX.utils.sheet_to_json(merged.Sheets["Sheet Index"]!, {
-        header: 1,
-        raw: true,
-      }),
-    ).toEqual([
+    expect(await sheetRows(outputs[0]!.bytes, "Sheet Index")).toEqual([
       [
         "Source file",
         "Original worksheet",
@@ -1221,8 +1229,8 @@ describe("byte-level workbook merging", () => {
   it("omits the index on request and derives a safe default name", async () => {
     const input = {
       name: "source.xlsx",
-      bytes: workbookBytes([["Private", [["Value"], [1]]]], {
-        visibility: { Private: 1 },
+      bytes: await workbookBytes([["Private", [["Value"], [1]]]], {
+        visibility: { Private: "hidden" },
       }),
     };
 
@@ -1234,9 +1242,9 @@ describe("byte-level workbook merging", () => {
       "1 source worksheet was hidden in the merged workbook.",
     ]);
     expect(withoutIndex.outputs[0]?.name).toBe("merged.xlsx");
-    expect(
-      XLSX.read(withoutIndex.outputs[0]!.bytes, { type: "array" }).SheetNames,
-    ).toEqual(["Private"]);
+    expect(await sheetNamesOf(withoutIndex.outputs[0]!.bytes)).toEqual([
+      "Private",
+    ]);
 
     const reserved = await mergeWorkbooksBytes({
       inputs: [input],
@@ -1246,22 +1254,12 @@ describe("byte-level workbook merging", () => {
   });
 
   it("replaces formulas with cached values when asked", async () => {
-    const worksheet = XLSX.utils.aoa_to_sheet([
-      ["Amount", "Tax", "Total"],
-      [100, 5, { f: "A2+B2", t: "n", v: 105, z: "$#,##0.00" }],
-    ]);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Summary");
     const input = {
       name: "source.xlsx",
-      bytes: new Uint8Array(
-        XLSX.write(workbook, {
-          bookType: "xlsx",
-          cellStyles: true,
-          compression: true,
-          type: "array",
-        }) as ArrayBuffer,
-      ),
+      bytes: await buildSheetFixture("Summary", [
+        ["Amount", "Tax", "Total"],
+        [100, 5, { formula: "A2+B2", value: 105, format: "$#,##0.00" }],
+      ]),
     };
 
     const formulas = await mergeWorkbooksBytes({ inputs: [input] });
@@ -1269,24 +1267,28 @@ describe("byte-level workbook merging", () => {
       inputs: [input],
       values: true,
     });
-    const formulaCell = XLSX.read(formulas.outputs[0]!.bytes, {
-      cellStyles: true,
-      type: "array",
-    }).Sheets.Summary?.C2;
-    const valueCell = XLSX.read(values.outputs[0]!.bytes, {
-      cellStyles: true,
-      type: "array",
-    }).Sheets.Summary?.C2;
-    expect(formulaCell).toMatchObject({ f: "A2+B2", v: 105 });
-    expect(valueCell).toMatchObject({ v: 105, z: "$#,##0.00" });
-    expect(valueCell?.f).toBeUndefined();
+    const formulaSheet = await sheetXml(formulas.outputs[0]!.bytes, "Summary");
+    const valueBytes = values.outputs[0]!.bytes;
+    const valueSheet = await sheetXml(valueBytes, "Summary");
+    const styles = await (
+      await JSZip.loadAsync(valueBytes)
+    )
+      .file("xl/styles.xml")!
+      .async("text");
+    expect(worksheetCellFormula(formulaSheet, "C2")).toBe("A2+B2");
+    expect(worksheetCellValue(formulaSheet, "C2")).toBe("105");
+    expect(worksheetCellValue(valueSheet, "C2")).toBe("105");
+    expect(
+      styleNumberFormatCode(styles, worksheetCellStyle(valueSheet, "C2")),
+    ).toBe("$#,##0.00");
+    expect(worksheetCellFormula(valueSheet, "C2")).toBeUndefined();
   });
 
   it("produces byte-identical merges and cancels without output", async () => {
     const inputs = [
       {
         name: "north.xlsx",
-        bytes: workbookBytes([["Summary", [["Region"], ["North"]]]]),
+        bytes: await workbookBytes([["Summary", [["Region"], ["North"]]]]),
       },
     ];
 
@@ -1330,11 +1332,13 @@ describe("byte-level workbook merging", () => {
  * columns arrive in a different order and the second workbook carries one the
  * first does not. Consolidation is the operation that reconciles them.
  */
-function reviewLogInputs(): Array<{ name: string; bytes: Uint8Array }> {
+async function reviewLogInputs(): Promise<
+  Array<{ name: string; bytes: Uint8Array }>
+> {
   return [
     {
       name: "north.xlsx",
-      bytes: workbookBytes([
+      bytes: await workbookBytes([
         [
           "Review Log",
           [
@@ -1346,7 +1350,7 @@ function reviewLogInputs(): Array<{ name: string; bytes: Uint8Array }> {
     },
     {
       name: "south.xlsx",
-      bytes: workbookBytes([
+      bytes: await workbookBytes([
         [
           "vF",
           [
@@ -1360,11 +1364,13 @@ function reviewLogInputs(): Array<{ name: string; bytes: Uint8Array }> {
 }
 
 /** The header-drift corpus the path surface's consolidate tests also use. */
-function driftedInputs(): Array<{ name: string; bytes: Uint8Array }> {
+async function driftedInputs(): Promise<
+  Array<{ name: string; bytes: Uint8Array }>
+> {
   return [
     {
       name: "north.xlsx",
-      bytes: workbookBytes(
+      bytes: await workbookBytes(
         [
           [
             "Review Log",
@@ -1386,12 +1392,12 @@ function driftedInputs(): Array<{ name: string; bytes: Uint8Array }> {
             ],
           ],
         ],
-        { visibility: { Summary: 1 } },
+        { visibility: { Summary: "hidden" } },
       ),
     },
     {
       name: "south.xlsx",
-      bytes: workbookBytes([
+      bytes: await workbookBytes([
         [
           "vF",
           [
@@ -1409,7 +1415,7 @@ function driftedInputs(): Array<{ name: string; bytes: Uint8Array }> {
     },
     {
       name: "east.xlsx",
-      bytes: workbookBytes([
+      bytes: await workbookBytes([
         [
           "Sheet1",
           [
@@ -1432,7 +1438,7 @@ describe("byte-level workbook consolidation", () => {
   it("stacks worksheet rows into one table and records provenance", async () => {
     const events: OperationProgress[] = [];
     const { result, outputs } = await consolidateWorkbooksBytes({
-      inputs: reviewLogInputs(),
+      inputs: await reviewLogInputs(),
       onProgress: (progress) => events.push(progress),
     });
 
@@ -1476,7 +1482,7 @@ describe("byte-level workbook consolidation", () => {
     // The first spelling seen names each column, later workbooks fill in the
     // ones they carry, and every row keeps the workbook, worksheet, and row it
     // came from.
-    expect(readSheetGrid(outputs[0]!.bytes, "Consolidated")).toEqual([
+    expect(await readSheetGrid(outputs[0]!.bytes, "Consolidated")).toEqual([
       [
         "Case_ID",
         "Failed Checks",
@@ -1494,7 +1500,7 @@ describe("byte-level workbook consolidation", () => {
     // Both surfaces read the same worksheet tables, hand them to the same
     // consolidation core, and serialize with the same deterministic writer, so
     // a browser and the command line must agree exactly - not merely in shape.
-    const inputs = reviewLogInputs();
+    const inputs = await reviewLogInputs();
     const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
 
     try {
@@ -1517,7 +1523,7 @@ describe("byte-level workbook consolidation", () => {
   });
 
   it("matches drifted headers only when asked, and can reach hidden sheets", async () => {
-    const inputs = driftedInputs();
+    const inputs = await driftedInputs();
 
     const normalized = await consolidateWorkbooksBytes({
       inputs,
@@ -1533,24 +1539,24 @@ describe("byte-level workbook consolidation", () => {
       suggestedColumns: 0,
       unmappedColumns: 0,
     });
-    expect(readSheetGrid(normalized.outputs[0]!.bytes, "Consolidated")).toEqual(
+    expect(
+      await readSheetGrid(normalized.outputs[0]!.bytes, "Consolidated"),
+    ).toEqual([
       [
-        [
-          "Case_ID",
-          "Failed Checks",
-          "Total Checks",
-          "Reviewer: Lead Contact",
-          "S.No.",
-          "_source_file",
-          "_source_sheet",
-          "_source_row",
-        ],
-        ["R-1", 5, 100, "Reviewer A", null, "north.xlsx", "Review Log", 2],
-        ["R-2", 7, 200, "Reviewer B", 1, "south.xlsx", "vF", 2],
-        ["R-3", 9, 300, "Reviewer C", null, "east.xlsx", "Sheet1", 2],
-        ["R-4", null, null, null, null, "east.xlsx", "Lookup", 2],
+        "Case_ID",
+        "Failed Checks",
+        "Total Checks",
+        "Reviewer: Lead Contact",
+        "S.No.",
+        "_source_file",
+        "_source_sheet",
+        "_source_row",
       ],
-    );
+      ["R-1", 5, 100, "Reviewer A", null, "north.xlsx", "Review Log", 2],
+      ["R-2", 7, 200, "Reviewer B", 1, "south.xlsx", "vF", 2],
+      ["R-3", 9, 300, "Reviewer C", null, "east.xlsx", "Sheet1", 2],
+      ["R-4", null, null, null, null, "east.xlsx", "Lookup", 2],
+    ]);
 
     // Without the option the variants stay separate - the behaviour that turns
     // one shared schema into a doubled-up column list.
@@ -1570,7 +1576,7 @@ describe("byte-level workbook consolidation", () => {
   });
 
   it("names the output and its worksheet and can drop the source columns", async () => {
-    const inputs = reviewLogInputs();
+    const inputs = await reviewLogInputs();
 
     const named = await consolidateWorkbooksBytes({
       inputs,
@@ -1579,7 +1585,7 @@ describe("byte-level workbook consolidation", () => {
       outputSheetName: "Combined",
     });
     expect(named.outputs[0]?.name).toBe("review pack.xlsx");
-    expect(readSheetGrid(named.outputs[0]!.bytes, "Combined")).toEqual([
+    expect(await readSheetGrid(named.outputs[0]!.bytes, "Combined")).toEqual([
       ["Case_ID", "Failed Checks", "Region"],
       ["R-1", 5, null],
       ["R-2", 7, "South"],
@@ -1595,7 +1601,7 @@ describe("byte-level workbook consolidation", () => {
   });
 
   it("produces byte-identical output and cancels without producing bytes", async () => {
-    const inputs = reviewLogInputs();
+    const inputs = await reviewLogInputs();
 
     const first = await consolidateWorkbooksBytes({ inputs });
     await new Promise((resolve) => setTimeout(resolve, CLOCK_TICK));
@@ -1635,7 +1641,7 @@ describe("byte-level workbook consolidation", () => {
     // from a timer models that delivery, where aborting inline inside
     // `onProgress` - which runs on the operation's own stack - does not, and
     // so cannot tell a cancellable operation from an uninterruptible one.
-    const inputs = reviewLogInputs();
+    const inputs = await reviewLogInputs();
     const events: OperationProgress[] = [];
     const controller = new AbortController();
 
@@ -1676,7 +1682,7 @@ describe("byte-level workbook consolidation", () => {
 
     await expect(
       consolidateWorkbooksBytes({
-        inputs: reviewLogInputs(),
+        inputs: await reviewLogInputs(),
         sheets: ["Missing"],
       }),
     ).rejects.toMatchObject({ code: "XLSX_NO_TABLES" });
@@ -1686,7 +1692,7 @@ describe("byte-level workbook consolidation", () => {
     const inputs = [
       {
         name: "north.xlsx",
-        bytes: workbookBytes([
+        bytes: await workbookBytes([
           [
             "Cases",
             [
@@ -1698,7 +1704,7 @@ describe("byte-level workbook consolidation", () => {
       },
       {
         name: "south.xlsx",
-        bytes: workbookBytes([
+        bytes: await workbookBytes([
           [
             "Cases",
             [
@@ -1739,7 +1745,7 @@ describe("byte-level workbook consolidation", () => {
     expect(result.warnings).toEqual([
       '1 column did not match the column mapping and kept its own name: "Region". Add it to the mapping if it belongs in a canonical column.',
     ]);
-    expect(readSheetGrid(outputs[0]!.bytes, "Consolidated")).toEqual([
+    expect(await readSheetGrid(outputs[0]!.bytes, "Consolidated")).toEqual([
       ["Case_ID", "Amount", "Region"],
       ["R-1", 1234.5, "north"],
       ["R-2", 7.25, "south"],
@@ -1768,7 +1774,7 @@ describe("byte-level workbook consolidation", () => {
     const inputs = [
       {
         name: "north.xlsx",
-        bytes: workbookBytes([
+        bytes: await workbookBytes([
           [
             "Cases",
             [
@@ -1780,7 +1786,7 @@ describe("byte-level workbook consolidation", () => {
       },
       {
         name: "south.xlsx",
-        bytes: workbookBytes([
+        bytes: await workbookBytes([
           [
             "Cases",
             [
@@ -1832,7 +1838,7 @@ describe("byte-level workbook consolidation", () => {
         inputs: [
           {
             name: "north.xlsx",
-            bytes: workbookBytes([["Cases", [["Run Date"], [45360]]]]),
+            bytes: await workbookBytes([["Cases", [["Run Date"], [45360]]]]),
           },
         ],
         mapping: {
@@ -1855,7 +1861,7 @@ describe("byte-level workbook consolidation", () => {
 
 describe("byte-level worksheet records", () => {
   it("reads display text, skips empty rows, and validates the worksheet", async () => {
-    const bytes = workbookBytes([
+    const bytes = await workbookBytes([
       [
         "Companies",
         [

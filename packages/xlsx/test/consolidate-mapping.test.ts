@@ -4,28 +4,23 @@ import path from "node:path";
 
 import { isConsultChimpsError } from "@consultchimps/core";
 import { describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
 import {
   consolidateWorkbooks,
   planConsolidateWorkbooks,
 } from "../src/index.js";
+import { sheetRows } from "./support/read-workbook.js";
+import {
+  buildSheetFixture,
+  type FixtureValue,
+} from "./support/workbook-fixture.js";
 
 async function createWorkbook(
   filePath: string,
   sheetName: string,
-  rows: Array<Array<XLSX.CellObject | Date | string | number>>,
+  rows: FixtureValue[][],
 ): Promise<void> {
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(
-    workbook,
-    XLSX.utils.aoa_to_sheet(rows),
-    sheetName,
-  );
-  await writeFile(
-    filePath,
-    XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
-  );
+  await writeFile(filePath, await buildSheetFixture(sheetName, rows));
 }
 
 async function writeMapping(
@@ -36,15 +31,8 @@ async function writeMapping(
   return filePath;
 }
 
-function readGrid(bytes: Buffer, sheetName: string): unknown[][] {
-  const workbook = XLSX.read(bytes, { type: "buffer" });
-  const worksheet = workbook.Sheets[sheetName];
-  expect(worksheet).toBeDefined();
-  return XLSX.utils.sheet_to_json(worksheet!, {
-    defval: null,
-    header: 1,
-    raw: true,
-  });
+function readGrid(bytes: Buffer, sheetName: string): Promise<unknown[][]> {
+  return sheetRows(bytes, sheetName);
 }
 
 describe("consolidateWorkbooks with a column mapping", () => {
@@ -109,7 +97,7 @@ describe("consolidateWorkbooks with a column mapping", () => {
       ]);
       expect(result.suggestion).toBeUndefined();
 
-      expect(readGrid(await readFile(output), "Consolidated")).toEqual([
+      expect(await readGrid(await readFile(output), "Consolidated")).toEqual([
         ["Case_ID", "Amount", "Opened_On", "Region", "Dataset"],
         ["R-1", 1234.5, "2024-03-09", "north", "quarterly"],
         ["R-2", 7.25, null, "south", "quarterly"],
@@ -149,9 +137,11 @@ describe("consolidateWorkbooks with a column mapping", () => {
       expect(exact.metrics.outputColumns).toBe(3);
       expect(exact.metrics.unmappedColumns).toBe(2);
       expect(
-        readGrid(
-          await readFile(path.join(directory, "exact.xlsx")),
-          "Consolidated",
+        (
+          await readGrid(
+            await readFile(path.join(directory, "exact.xlsx")),
+            "Consolidated",
+          )
         )[0],
       ).toEqual(["Case_ID", "Failed Checks", "Failed_Checks"]);
 
@@ -165,9 +155,11 @@ describe("consolidateWorkbooks with a column mapping", () => {
       expect(normalized.metrics.outputColumns).toBe(2);
       expect(normalized.metrics.unmappedColumns).toBe(2);
       expect(
-        readGrid(
-          await readFile(path.join(directory, "normalized.xlsx")),
-          "Consolidated",
+        (
+          await readGrid(
+            await readFile(path.join(directory, "normalized.xlsx")),
+            "Consolidated",
+          )
         )[0],
       ).toEqual(["Case_ID", "Failed Checks"]);
     } finally {
@@ -260,7 +252,8 @@ describe("consolidateWorkbooks with a column mapping", () => {
       const output = path.join(directory, "combined.xlsx");
       await createWorkbook(input, "Cases", [
         ["Run Date"],
-        [new Date(Date.UTC(2024, 2, 9, 12))],
+        // 2024-03-09 12:00 as a serial in a date format.
+        [{ value: 45360.5, format: 14 }],
       ]);
       const mappingFile = await writeMapping(path.join(directory, "map.json"), {
         version: 1,
@@ -293,8 +286,8 @@ describe("consolidateWorkbooks with a column mapping", () => {
       const output = path.join(directory, "combined.xlsx");
       await createWorkbook(input, "Cases", [
         ["Run Date", "Case ID"],
-        [{ t: "s", v: "09/03/2024" }, "R-1"],
-        [{ t: "s", v: "" }, "R-2"],
+        ["09/03/2024", "R-1"],
+        ["", "R-2"],
       ]);
       const mappingFile = await writeMapping(path.join(directory, "map.json"), {
         version: 1,
@@ -315,7 +308,7 @@ describe("consolidateWorkbooks with a column mapping", () => {
       });
       expect(result.metrics.outputRows).toBe(2);
       // A blank cell stays blank; text in the declared format becomes ISO.
-      expect(readGrid(await readFile(output), "Consolidated")).toEqual([
+      expect(await readGrid(await readFile(output), "Consolidated")).toEqual([
         ["Opened_On", "Case ID"],
         ["2024-03-09", "R-1"],
         [null, "R-2"],

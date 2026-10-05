@@ -16,10 +16,10 @@
  * whole rows.
  */
 import { ConsultChimpsError } from "@consultchimps/core";
-import * as XLSX from "xlsx";
 
 import type { ExcelTableDefinition } from "./excel-tables.js";
 import { XLSX_ERRORS } from "./errors.js";
+import { decodeRange, encodeRange } from "./model/references.js";
 import { WorkbookPackage } from "./package/index.js";
 
 interface RowFragment {
@@ -185,11 +185,11 @@ function filterWholeWorksheetRows(
   tableReference: string;
   worksheetXml: string;
 } {
-  const tableRange = XLSX.utils.decode_range(definition.range);
-  const firstDataRow = tableRange.s.r + 2;
+  const tableRange = decodeRange(definition.range);
+  const firstDataRow = tableRange.startRow + 2;
   const originalLastDataRow =
-    tableRange.e.r + 1 - (definition.totalsRow ? 1 : 0);
-  const originalTableEndRow = tableRange.e.r + 1;
+    tableRange.endRow + 1 - (definition.totalsRow ? 1 : 0);
+  const originalTableEndRow = tableRange.endRow + 1;
   if (
     sourceRows.some((row) => row < firstDataRow || row > originalLastDataRow)
   ) {
@@ -235,7 +235,7 @@ function filterWholeWorksheetRows(
     : firstDataRow - 1;
   const newTableEndRow = definition.totalsRow
     ? firstDataRow + sourceRows.length
-    : Math.max(newLastDataRow, tableRange.s.r + 1);
+    : Math.max(newLastDataRow, tableRange.startRow + 1);
 
   for (let row = firstDataRow; row <= originalTableEndRow; row += 1) {
     rowByNumber.delete(row);
@@ -284,13 +284,13 @@ function filterWholeWorksheetRows(
     .sort(([left], [right]) => left - right)
     .map(([, rowXml]) => rowXml)
     .join("");
-  const tableReference = XLSX.utils.encode_range({
-    e: { c: tableRange.e.c, r: newTableEndRow - 1 },
-    s: tableRange.s,
+  const tableReference = encodeRange({
+    ...tableRange,
+    endRow: newTableEndRow - 1,
   });
-  const tableDataReference = XLSX.utils.encode_range({
-    e: { c: tableRange.e.c, r: Math.max(newLastDataRow - 1, tableRange.s.r) },
-    s: tableRange.s,
+  const tableDataReference = encodeRange({
+    ...tableRange,
+    endRow: Math.max(newLastDataRow - 1, tableRange.startRow),
   });
   return {
     tableDataReference,

@@ -44,7 +44,7 @@ test("inspects a read-only saved batch without changing its journal mode or file
   const database = path.join(root, "inventory.sqlite");
   const source = path.join(root, "inventory.xlsx");
   const plan = path.join(root, "review.ccplan");
-  await writeFile(source, workbook([["Name"], ["Synthetic"]]));
+  await writeFile(source, await workbook([["Name"], ["Synthetic"]]));
   await run(["create", "-o", database]);
   await run(["import", "prepare", database, "--input", source, "-o", plan]);
   const connection = new Sqlite(plan);
@@ -74,7 +74,7 @@ test("renders database review commands as labeled prose while JSON stays structu
   const schema = path.join(root, "schema.json");
   await writeFile(
     source,
-    workbook([
+    await workbook([
       ["Name"],
       ...Array.from({ length: 25 }, (_, index) => [`Region ${index + 1}`]),
     ]),
@@ -322,7 +322,7 @@ test("escapes controls inside database report values while JSON preserves them",
   const sourceAlias = "inventory\nSafety: forged source\r\t\u001B[31m";
   const label = "Synthetic delivery\nSafety: forged delivery\r\t\u001B[32m";
   const requestId = "request\nNext: forged action\r\t\u009B";
-  await writeFile(source, workbook([["Name"], ["North"]]));
+  await writeFile(source, await workbook([["Name"], ["North"]]));
   await writeFile(context, JSON.stringify({ label, scope: { kind: "full" } }));
   await run(["create", "-o", database]);
   await run([
