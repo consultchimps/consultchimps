@@ -13,7 +13,6 @@ import { fileURLToPath } from "node:url";
 
 import JSZip from "jszip";
 import { afterEach, describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
 import {
   planSplitWorkbookByColumn,
@@ -32,6 +31,8 @@ import {
   worksheetCellValue,
   worksheetRowNumbers,
 } from "./corpus/fixtures.js";
+import { sheetRecords } from "./support/read-workbook.js";
+import { buildWorkbookFixture } from "./support/workbook-fixture.js";
 
 const temporaryDirectories: string[] = [];
 const structuredTableFixture = fileURLToPath(
@@ -50,17 +51,11 @@ async function createWorkbook(
   filePath: string,
   sheets: Array<[string, Array<Array<boolean | null | number | string>>]>,
 ): Promise<void> {
-  const workbook = XLSX.utils.book_new();
-  for (const [sheetName, rows] of sheets) {
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.aoa_to_sheet(rows),
-      sheetName,
-    );
-  }
   await writeFile(
     filePath,
-    XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+    await buildWorkbookFixture({
+      sheets: sheets.map(([name, rows]) => ({ name, rows })),
+    }),
   );
 }
 
@@ -68,10 +63,8 @@ async function readRows(
   filePath: string,
   sheetName: string,
 ): Promise<Array<Record<string, unknown>>> {
-  const workbook = XLSX.read(await readFile(filePath), { type: "buffer" });
-  return XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]!, {
-    defval: null,
-    raw: true,
+  return sheetRecords(await readFile(filePath), sheetName, {
+    keepEmpty: true,
   });
 }
 

@@ -25,6 +25,8 @@ export interface FixtureSheet {
   /** Merged ranges such as "A1:C1". */
   readonly merges?: readonly string[];
   readonly state?: "hidden" | "veryHidden";
+  /** Column widths in characters, from column A. */
+  readonly widths?: readonly number[];
 }
 
 export interface FixtureDefinedName {
@@ -197,7 +199,16 @@ function worksheetXml(
       : `<mergeCells count="${sheet.merges.length}">${sheet.merges
           .map((ref) => `<mergeCell ref="${ref}"/>`)
           .join("")}</mergeCells>`;
-  return `${HEADER}<worksheet xmlns="${MAIN}" xmlns:r="${REL}"><dimension ref="${dimension}"/><sheetData>${rows.join("")}</sheetData>${merges}</worksheet>`;
+  const cols =
+    sheet.widths === undefined || sheet.widths.length === 0
+      ? ""
+      : `<cols>${sheet.widths
+          .map(
+            (width, index) =>
+              `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`,
+          )
+          .join("")}</cols>`;
+  return `${HEADER}<worksheet xmlns="${MAIN}" xmlns:r="${REL}"><dimension ref="${dimension}"/>${cols}<sheetData>${rows.join("")}</sheetData>${merges}</worksheet>`;
 }
 
 /** Write the workbook a spec describes, as .xlsx bytes. */

@@ -1,27 +1,45 @@
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
 import {
   convertWorkbookToValues,
   convertWorkbookToValuesWithReport,
 } from "../src/values-only.js";
+import {
+  buildSheetFixture,
+  buildWorkbookFixture,
+} from "./support/workbook-fixture.js";
 
 describe("convertWorkbookToValues", () => {
   it("removes formulas and calculation metadata without changing cell formatting", async () => {
-    const workbook = XLSX.utils.book_new();
-    const worksheet = XLSX.utils.aoa_to_sheet([
-      ["Amount", "Tax", "Total"],
-      [100, 5, { f: "A2+B2", t: "n", v: 105, z: "$#,##0.00" }],
-    ]);
-    worksheet["!cols"] = [{ wch: 18 }, { wch: 12 }, { wch: 22 }];
-    worksheet["!rows"] = [{ hpt: 28 }, { hpt: 20 }];
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Summary");
-    const sourceBytes = XLSX.write(workbook, {
-      bookType: "xlsx",
-      cellStyles: true,
-      type: "buffer",
-    });
+    // Column widths and row heights are added to the worksheet by hand.
+    const built = await JSZip.loadAsync(
+      await buildWorkbookFixture({
+        sheets: [
+          {
+            name: "Summary",
+            rows: [
+              ["Amount", "Tax", "Total"],
+              [100, 5, { formula: "A2+B2", value: 105, format: "$#,##0.00" }],
+            ],
+          },
+        ],
+      }),
+    );
+    const builtSheet = await built
+      .file("xl/worksheets/sheet1.xml")!
+      .async("text");
+    built.file(
+      "xl/worksheets/sheet1.xml",
+      builtSheet
+        .replace(
+          "<sheetData>",
+          '<cols><col min="1" max="1" width="18.7109375" customWidth="1"/><col min="2" max="2" width="12.7109375" customWidth="1"/><col min="3" max="3" width="22.7109375" customWidth="1"/></cols><sheetData>',
+        )
+        .replace('<row r="1">', '<row r="1" ht="28" customHeight="1">')
+        .replace('<row r="2">', '<row r="2" ht="20" customHeight="1">'),
+    );
+    const sourceBytes = await built.generateAsync({ type: "uint8array" });
 
     const sourceArchive = await JSZip.loadAsync(sourceBytes);
     const sourceSheetXml = await sourceArchive
@@ -58,14 +76,8 @@ describe("convertWorkbookToValues", () => {
   });
 
   it("removes table formulas and stale calculation-chain references", async () => {
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.aoa_to_sheet([["Value"], [1]]),
-      "Data",
-    );
     const sourceArchive = await JSZip.loadAsync(
-      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+      await buildSheetFixture("Data", [["Value"], [1]]),
     );
     sourceArchive.file(
       "xl/tables/table1.xml",
@@ -116,21 +128,11 @@ describe("convertWorkbookToValues", () => {
   });
 
   it("reports formulas whose cached values are unavailable", async () => {
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.aoa_to_sheet([
-        ["Cached", "Missing"],
-        [
-          { f: "1+1", t: "n", v: 2 },
-          { f: "2+2", t: "n" },
-        ],
-      ]),
-      "Formulas",
-    );
-
     const conversion = await convertWorkbookToValuesWithReport(
-      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+      await buildSheetFixture("Formulas", [
+        ["Cached", "Missing"],
+        [{ formula: "1+1", value: 2 }, { formula: "2+2" }],
+      ]),
     );
     expect(conversion.formulasConverted).toBe(2);
     expect(conversion.formulasWithoutCachedValues).toEqual([

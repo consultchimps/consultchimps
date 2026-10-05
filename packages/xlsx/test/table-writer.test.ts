@@ -1,6 +1,5 @@
 import JSZip from "jszip";
 import { afterEach, describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
 import type { Table } from "@consultchimps/tabular";
 
@@ -10,6 +9,7 @@ import {
   escapeCellText,
   TableWorkbookWriter,
 } from "../src/package/table-writer.js";
+import { sheetNamesOf, sheetRows } from "./support/read-workbook.js";
 
 const originalTimeZone = process.env.TZ;
 afterEach(() => {
@@ -33,25 +33,22 @@ const TRICKY: Table = {
   ],
 };
 
-function sheetRows(bytes: Uint8Array): unknown[][] {
-  const workbook = XLSX.read(bytes, { type: "array" });
-  const sheet = workbook.Sheets[workbook.SheetNames[0]!]!;
-  return XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
-}
-
 async function part(bytes: Uint8Array, name: string): Promise<string | null> {
   const zip = await JSZip.loadAsync(bytes);
   return (await zip.file(name)?.async("string")) ?? null;
 }
 
 describe("table workbook writer", () => {
-  it("round-trips every value through SheetJS and the package's own reader", async () => {
+  it("round-trips every value through the cell reader and the table reader", async () => {
     const bytes = buildTableWorkbookBytes(TRICKY, "Data");
     const expected = TRICKY.rows.map((row) =>
       TRICKY.columns.map((column) => row[column] ?? null),
     );
 
-    expect(sheetRows(bytes)).toEqual([TRICKY.columns, ...expected]);
+    expect(await sheetRows(bytes, "Data")).toEqual([
+      TRICKY.columns,
+      ...expected,
+    ]);
 
     const [table] = await readWorkbookTablesBytes({
       name: "out.xlsx",
@@ -93,9 +90,7 @@ describe("table workbook writer", () => {
 
   it("names a sheet with spaces and apostrophes, and refuses names Excel rejects", async () => {
     const bytes = buildTableWorkbookBytes(TRICKY, "Q3 client's data");
-    expect(XLSX.read(bytes, { type: "array" }).SheetNames).toEqual([
-      "Q3 client's data",
-    ]);
+    expect(await sheetNamesOf(bytes)).toEqual(["Q3 client's data"]);
     expect(await part(bytes, "xl/workbook.xml")).toContain(
       "'Q3 client''s data'!$A$1:$C$9",
     );
@@ -116,12 +111,12 @@ describe("table workbook writer", () => {
     }
   });
 
-  it("writes a header-only table", () => {
+  it("writes a header-only table", async () => {
     const bytes = buildTableWorkbookBytes(
       { columns: ["Only"], rows: [] },
       "Data",
     );
-    expect(sheetRows(bytes)).toEqual([["Only"]]);
+    expect(await sheetRows(bytes, "Data")).toEqual([["Only"]]);
   });
 
   it("refuses a row count that does not match the rows written", () => {
@@ -149,9 +144,11 @@ describe("table workbook writer", () => {
     expect(sheet).toContain("windows_x000D_\nline");
     expect(sheet).toContain("lone_x000D_return");
     expect(escapeCellText("a\r\nb")).toBe("a_x000D_\nb");
-    // A lone return reads back. SheetJS's reader, which the table readers still
-    // use until ADR 0006 replaces them, folds CRLF to LF on its own side.
-    expect(sheetRows(bytes)[2]).toEqual(["lone\rreturn"]);
+    // Both read back: a lone return, and one before a line feed.
+    expect((await sheetRows(bytes, "Data")).slice(1)).toEqual([
+      ["windows\r\nline"],
+      ["lone\rreturn"],
+    ]);
   });
 
   it("escapes OOXML's own escape sequence so it reads back literally", () => {

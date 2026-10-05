@@ -8,7 +8,6 @@
 import { describe, expect, it } from "vitest";
 
 import { WorkbookModel, RowRelocation } from "../src/model/index.js";
-import { WorkbookPackage } from "../src/package/index.js";
 import {
   buildCorpusWorkbook,
   calcChainReferences,

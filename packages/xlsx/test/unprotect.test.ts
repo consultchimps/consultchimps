@@ -1,41 +1,31 @@
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
 import {
   isConsultChimpsError,
   type OperationProgress,
 } from "@consultchimps/core";
 import { unprotectWorkbookBytes } from "../src/bytes.js";
+import { sheetNamesOf } from "./support/read-workbook.js";
+import { buildWorkbookFixture } from "./support/workbook-fixture.js";
 
-function workbookBytes(): Uint8Array {
-  const workbook = XLSX.utils.book_new();
-  const visible = XLSX.utils.aoa_to_sheet([
-    ["Amount", "Formula"],
-    [10, { f: "A2*2" }],
-  ]);
-  const hidden = XLSX.utils.aoa_to_sheet([["Confidential", 42]]);
-  XLSX.utils.book_append_sheet(workbook, visible, "Summary");
-  XLSX.utils.book_append_sheet(workbook, hidden, "Hidden");
-  workbook.Workbook = {
-    ...workbook.Workbook,
-    Sheets: [
-      { name: "Summary", Hidden: 0 },
-      { name: "Hidden", Hidden: 1 },
+function workbookBytes(): Promise<Uint8Array> {
+  return buildWorkbookFixture({
+    sheets: [
+      {
+        name: "Summary",
+        rows: [
+          ["Amount", "Formula"],
+          [10, { formula: "A2*2" }],
+        ],
+      },
+      { name: "Hidden", rows: [["Confidential", 42]], state: "hidden" },
     ],
-  };
-  return new Uint8Array(
-    XLSX.write(workbook, {
-      bookType: "xlsx",
-      cellStyles: true,
-      compression: true,
-      type: "array",
-    }) as ArrayBuffer,
-  );
+  });
 }
 
 async function protectedWorkbook(): Promise<Uint8Array> {
-  const archive = await JSZip.loadAsync(workbookBytes());
+  const archive = await JSZip.loadAsync(await workbookBytes());
   const workbookXml = await archive.file("xl/workbook.xml")!.async("text");
   archive.file(
     "xl/workbook.xml",
@@ -100,17 +90,14 @@ describe("Excel workbook unprotection", () => {
     expect(await packageText(output, "xl/styles.xml")).toBe(
       await packageText(input, "xl/styles.xml"),
     );
-    expect(XLSX.read(output, { type: "array" }).SheetNames).toEqual([
-      "Summary",
-      "Hidden",
-    ]);
+    expect(await sheetNamesOf(output)).toEqual(["Summary", "Hidden"]);
   });
 
   it("removes protection written in the expanded empty form", async () => {
     // A producer may serialize an empty protection node as
     // <sheetProtection ...></sheetProtection> rather than self-closing. Both
     // spellings must be stripped.
-    const archive = await JSZip.loadAsync(workbookBytes());
+    const archive = await JSZip.loadAsync(await workbookBytes());
     const workbookXml = await archive.file("xl/workbook.xml")!.async("text");
     archive.file(
       "xl/workbook.xml",
@@ -154,7 +141,7 @@ describe("Excel workbook unprotection", () => {
   it("strips an expanded protection element that holds only a comment", async () => {
     // Whitespace, comments, and processing instructions are not content, so an
     // otherwise empty protection element serialized with one inside is removed.
-    const archive = await JSZip.loadAsync(workbookBytes());
+    const archive = await JSZip.loadAsync(await workbookBytes());
     const workbookXml = await archive.file("xl/workbook.xml")!.async("text");
     archive.file(
       "xl/workbook.xml",
@@ -197,7 +184,7 @@ describe("Excel workbook unprotection", () => {
   it("strips only the protection element, not a longer custom name", async () => {
     // A hyphenated or dotted custom element that merely starts with the same
     // letters is not sheetProtection and must survive.
-    const archive = await JSZip.loadAsync(workbookBytes());
+    const archive = await JSZip.loadAsync(await workbookBytes());
     const sheetXml = await archive
       .file("xl/worksheets/sheet1.xml")!
       .async("text");
@@ -227,7 +214,7 @@ describe("Excel workbook unprotection", () => {
   });
 
   it("reports an already-unprotected workbook without changing its contents", async () => {
-    const input = workbookBytes();
+    const input = await workbookBytes();
     const outcome = await unprotectWorkbookBytes({
       input: { name: "plain.xlsx", bytes: input },
     });
@@ -236,9 +223,10 @@ describe("Excel workbook unprotection", () => {
       sheetProtectionsRemoved: 0,
       workbookProtectionsRemoved: 0,
     });
-    expect(
-      XLSX.read(outcome.outputs[0]!.bytes, { type: "array" }).SheetNames,
-    ).toEqual(["Summary", "Hidden"]);
+    expect(await sheetNamesOf(outcome.outputs[0]!.bytes)).toEqual([
+      "Summary",
+      "Hidden",
+    ]);
   });
 
   it("preserves a macro-enabled package and removes its protection", async () => {

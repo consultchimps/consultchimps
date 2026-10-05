@@ -11,11 +11,10 @@
  * travel - is pinned here as removal WITH its warning, and declared in
  * `src/contract.ts` under `merge`.
  */
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
 import { mergeWorkbooksBytes } from "../../src/bytes.js";
 import {
@@ -47,6 +46,14 @@ import {
   worksheetCellValue,
   writeCorpusWorkbook,
 } from "./fixtures.js";
+import {
+  sheetCell,
+  sheetNamesOf,
+  sheetRecords,
+  sheetVisibilities,
+  sheetXml,
+} from "../support/read-workbook.js";
+import { buildSheetFixture } from "../support/workbook-fixture.js";
 import { SHAPES } from "./symmetry.js";
 
 /** The first input's Data worksheet keeps its part path: it seeds the output. */
@@ -97,8 +104,8 @@ describe("corpus: merge", () => {
     expect(result.warnings.join("\n")).toMatch(
       /see the visible "Sheet Index"/u,
     );
-    const workbook = XLSX.read(await readFile(output), { type: "buffer" });
-    expect(workbook.SheetNames).toEqual([
+    const outputBytes = await readWorkbookBytes(output);
+    expect(await sheetNamesOf(outputBytes)).toEqual([
       "Data",
       "Summary",
       "Hidden",
@@ -109,8 +116,16 @@ describe("corpus: merge", () => {
       "VeryHidden (2)",
       "Sheet Index",
     ]);
-    expect(workbook.Workbook?.Sheets?.map((sheet) => sheet.Hidden)).toEqual([
-      0, 0, 1, 2, 0, 0, 1, 2, 0,
+    expect(Object.values(await sheetVisibilities(outputBytes))).toEqual([
+      "visible",
+      "visible",
+      "hidden",
+      "veryHidden",
+      "visible",
+      "visible",
+      "hidden",
+      "veryHidden",
+      "visible",
     ]);
     const index = await readPackagePart(
       await readWorkbookBytes(output),
@@ -122,23 +137,19 @@ describe("corpus: merge", () => {
 
   it("invariant: merge reserves the sheet-index name so a source sheet cannot take it", async () => {
     const directory = await createCorpusDirectory();
-    const collidingWorkbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(
-      collidingWorkbook,
-      XLSX.utils.aoa_to_sheet([["Value"], [1]]),
-      "Sheet Index",
-    );
     const colliding = path.join(directory, "colliding.xlsx");
     await writeFile(
       colliding,
-      XLSX.write(collidingWorkbook, { bookType: "xlsx", type: "buffer" }),
+      await buildSheetFixture("Sheet Index", [["Value"], [1]]),
     );
     const output = path.join(directory, "merged.xlsx");
 
     await mergeWorkbooks([colliding], output);
 
-    const workbook = XLSX.read(await readFile(output), { type: "buffer" });
-    expect(workbook.SheetNames).toEqual(["Sheet Index (2)", "Sheet Index"]);
+    expect(await sheetNamesOf(await readWorkbookBytes(output))).toEqual([
+      "Sheet Index (2)",
+      "Sheet Index",
+    ]);
   });
 
   it("invariant: merge keeps merged ranges, hyperlinks, comments and formulas", async () => {
@@ -362,11 +373,10 @@ describe("corpus: merge", () => {
 
     await mergeWorkbooks([first, second], output);
     const bytes = await readWorkbookBytes(output);
-    const workbook = XLSX.read(await readFile(output), { type: "buffer" });
 
-    expect(workbook.Sheets["Data (2)"]?.B4?.v).toBe("Client A");
-    expect(workbook.Sheets["Data (2)"]?.A12?.v).toBe("Footer note");
-    expect(workbook.Sheets["VeryHidden"]?.A1?.v).toBe("Archive note");
+    expect(await sheetCell(bytes, "Data (2)", "B4")).toBe("Client A");
+    expect(await sheetCell(bytes, "Data (2)", "A12")).toBe("Footer note");
+    expect(await sheetCell(bytes, "VeryHidden", "A1")).toBe("Archive note");
     // "Archive note" is only in the second workbook, so its index had to move.
     const seedTable = await readPackagePart(
       await buildCorpusWorkbook({
@@ -421,14 +431,11 @@ describe("corpus: merge", () => {
       const seed = await readPackagePart(bytes, MERGED_DATA_PART);
       expect(worksheetCellStyle(seed, "A3")).toBe(1);
       expect(worksheetCellStyle(seed, "D4")).toBe(0);
-      // Reading through a spreadsheet library agrees with the parts.
-      const workbook = XLSX.read(await readFile(output), {
-        cellStyles: true,
-        type: "buffer",
-      });
-      expect(workbook.Sheets["Data (2)"]?.D4?.z).toBe(
-        CORPUS_NUMBER_FORMAT_CODE,
-      );
+      // Resolving the worksheet by name agrees with the parts.
+      const byName = await sheetXml(bytes, "Data (2)");
+      expect(
+        styleNumberFormatCode(styles, worksheetCellStyle(byName, "D4")),
+      ).toBe(CORPUS_NUMBER_FORMAT_CODE);
     },
   );
 
@@ -712,12 +719,11 @@ describe("corpus: consolidate", () => {
       suggestedColumns: 0,
       unmappedColumns: 0,
     });
-    const consolidated = XLSX.read(await readFile(output), { type: "buffer" });
-    expect(consolidated.SheetNames).toEqual(["Consolidated"]);
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
-      consolidated.Sheets.Consolidated!,
-      { defval: null },
-    );
+    const consolidated = await readWorkbookBytes(output);
+    expect(await sheetNamesOf(consolidated)).toEqual(["Consolidated"]);
+    const rows = await sheetRecords(consolidated, "Consolidated", {
+      keepEmpty: true,
+    });
     expect(rows[0]).toMatchObject({
       Amount: 10,
       Client: "Client A",

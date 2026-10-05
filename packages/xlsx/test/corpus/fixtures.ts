@@ -2,11 +2,11 @@
  * Conformance corpus fixture generators (ARCHITECTURE.md, Phase 0).
  *
  * Every fixture is built as a complete OOXML package by hand so the corpus can
- * express structures SheetJS cannot round-trip: shared and array formulas,
+ * express structures SheetJS could not round-trip: shared and array formulas,
  * conditional formatting, data validation, cell comments, sheet-scoped defined
  * names, very-hidden sheets, pivot tables with their caches, and a macro
  * project. Building the package directly also keeps the byte layout stable, so
- * a behaviour pin fails when the library changes rather than when SheetJS does.
+ * a behaviour pin fails when the library changes rather than when a spreadsheet writer does.
  *
  * The corpus is authored in PAIRS: `shape: "table"` and `shape: "range"` place
  * the same logical rows in the same cells, differing only in whether an Excel

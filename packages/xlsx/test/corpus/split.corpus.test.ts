@@ -8,7 +8,6 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
 import {
   splitWorkbookBytes,
@@ -43,6 +42,7 @@ import {
   writeCorpusWorkbook,
   type CorpusShape,
 } from "./fixtures.js";
+import { sheetNamesOf, sheetVisibilities } from "../support/read-workbook.js";
 
 const SHAPES: readonly CorpusShape[] = ["table", "range"];
 /** The media type a macro-enabled output declares on both surfaces. */
@@ -171,15 +171,17 @@ describe("corpus: all-worksheet split", () => {
       });
 
       const alpha = await readFile(path.join(directory, "out", "Alpha.xlsx"));
-      const workbook = XLSX.read(alpha, { type: "buffer" });
-      expect(workbook.SheetNames).toEqual([
+      expect(await sheetVisibilities(alpha)).toEqual({
+        Data: "visible",
+        Summary: "visible",
+        Hidden: "hidden",
+        VeryHidden: "veryHidden",
+      });
+      expect(await sheetNamesOf(alpha)).toEqual([
         "Data",
         "Summary",
         "Hidden",
         "VeryHidden",
-      ]);
-      expect(workbook.Workbook?.Sheets?.map((sheet) => sheet.Hidden)).toEqual([
-        0, 0, 1, 2,
       ]);
       // A hidden worksheet carrying the split column is filtered like any
       // other; visibility does not exclude it from an all-worksheet split.
@@ -520,10 +522,9 @@ describe("corpus: table-selection split", () => {
     expect(parts).not.toContain(CORPUS_PARTS.pivotCacheRecords);
     expect(parts).not.toContain(CORPUS_PARTS.comments);
     expect(parts).not.toContain(CORPUS_PARTS.calcChain);
-    const workbook = XLSX.read(await readFile(result.artifacts[0]!.path), {
-      type: "buffer",
-    });
-    expect(workbook.SheetNames).toEqual([CORPUS_SHEET]);
+    expect(
+      await sheetNamesOf(await readFile(result.artifacts[0]!.path)),
+    ).toEqual([CORPUS_SHEET]);
     const rebuilt = await readPackagePart(alpha, "xl/worksheets/sheet1.xml");
     expect(rebuilt).not.toContain("conditionalFormatting");
     expect(rebuilt).not.toContain("dataValidation");

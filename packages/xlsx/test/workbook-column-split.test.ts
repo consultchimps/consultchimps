@@ -12,7 +12,6 @@ import { fileURLToPath } from "node:url";
 
 import JSZip from "jszip";
 import { afterEach, describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
 import {
   readWorkbookExcelTables,
@@ -20,6 +19,16 @@ import {
 } from "../src/index.js";
 import { readExcelTableDefinitions } from "../src/excel-tables.js";
 import { preserveWorkbookWithFilteredExcelTable } from "../src/preserve-table-split.js";
+import {
+  mergedCellReferences,
+  worksheetCellFormula,
+  worksheetCellValue,
+} from "./corpus/fixtures.js";
+import { sheetNamesOf, sheetRows } from "./support/read-workbook.js";
+import {
+  buildSheetFixture,
+  buildWorkbookFixture,
+} from "./support/workbook-fixture.js";
 
 const temporaryDirectories: string[] = [];
 const structuredTableFixture = fileURLToPath(
@@ -34,63 +43,84 @@ async function temporaryDirectory(): Promise<string> {
   return directory;
 }
 
+const COMMENTS_CONTENT_TYPE =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml";
+
 async function createPreservationWorkbook(filePath: string): Promise<void> {
-  const workbook = XLSX.utils.book_new();
-  const first = XLSX.utils.aoa_to_sheet([
-    ["Entity allocation report"],
-    [],
-    ["Record", "Entity Name", "Calculated"],
-    [1, "DGE", { f: "A4*10", t: "n", v: 10, z: "#,##0.00" }],
-    [2, "dge ", { f: "A5*10", t: "n", v: 20, z: "#,##0.00" }],
-    [3, "Other", { f: "A6*10", t: "n", v: 30, z: "#,##0.00" }],
-    [4, null, 40],
-  ]);
-  first["!cols"] = [{ wch: 14 }, { wch: 28 }, { wch: 20 }];
-  first["!rows"] = [{ hpt: 30 }, {}, { hpt: 22 }];
-  first["!merges"] = [XLSX.utils.decode_range("A1:C1")];
-  first.A4!.l = { Target: "https://example.com/record/1" };
-  first.B4!.c = [{ a: "User", t: "Synthetic test note" }];
-  XLSX.utils.book_append_sheet(workbook, first, "Operations");
-
-  const second = XLSX.utils.aoa_to_sheet([
-    ["Code", "Amount", "Entity Name"],
-    ["A", 5, " DGE"],
-    ["B", 6, "Third"],
-    ["C", 7, null],
-  ]);
-  second["!cols"] = [{ wch: 12 }, { wch: 18 }, { wch: 30 }];
-  XLSX.utils.book_append_sheet(workbook, second, "Finance");
-
-  const cover = XLSX.utils.aoa_to_sheet([
-    ["Cover sheet", { f: "1+1", t: "n" }],
-    ["Copied without filtering"],
-  ]);
-  cover["!merges"] = [XLSX.utils.decode_range("A2:C2")];
-  cover["!cols"] = [{ wch: 36 }, { wch: 16 }];
-  XLSX.utils.book_append_sheet(workbook, cover, "Cover");
-  workbook.Workbook = {
-    Sheets: [
-      { Hidden: 0, name: "Operations" },
-      { Hidden: 0, name: "Finance" },
-      { Hidden: 2, name: "Cover" },
-    ],
-  };
-
+  const money = (formula: string, value: number) => ({
+    formula,
+    value,
+    format: "#,##0.00",
+  });
   const archive = await JSZip.loadAsync(
-    XLSX.write(workbook, {
-      bookType: "xlsx",
-      cellStyles: true,
-      type: "buffer",
+    await buildWorkbookFixture({
+      sheets: [
+        {
+          name: "Operations",
+          rows: [
+            ["Entity allocation report"],
+            [],
+            ["Record", "Entity Name", "Calculated"],
+            [1, "DGE", money("A4*10", 10)],
+            [2, "dge ", money("A5*10", 20)],
+            [3, "Other", money("A6*10", 30)],
+            [4, null, 40],
+          ],
+          merges: ["A1:C1"],
+          widths: [14, 28, 20],
+        },
+        {
+          name: "Finance",
+          rows: [
+            ["Code", "Amount", "Entity Name"],
+            ["A", 5, " DGE"],
+            ["B", 6, "Third"],
+            ["C", 7, null],
+          ],
+          widths: [12, 18, 30],
+        },
+        {
+          name: "Cover",
+          rows: [
+            ["Cover sheet", { formula: "1+1" }],
+            ["Copied without filtering"],
+          ],
+          merges: ["A2:C2"],
+          widths: [36, 16],
+          state: "veryHidden",
+        },
+      ],
     }),
   );
+  // Row heights, a hyperlink, a comment, conditional formatting and data
+  // validation, which the builder does not write, are added by hand.
   const worksheet = await archive
     .file("xl/worksheets/sheet1.xml")!
     .async("text");
   archive.file(
     "xl/worksheets/sheet1.xml",
-    worksheet.replace(
-      "</worksheet>",
-      '<conditionalFormatting sqref="C4:C7"><cfRule type="cellIs" dxfId="0" priority="1" operator="greaterThan"><formula>0</formula></cfRule></conditionalFormatting><dataValidations count="1"><dataValidation type="whole" sqref="A4:A7"><formula1>1</formula1><formula2>99</formula2></dataValidation></dataValidations></worksheet>',
+    worksheet
+      .replace('<row r="1">', '<row r="1" ht="30" customHeight="1">')
+      .replace('<row r="3">', '<row r="3" ht="22" customHeight="1">')
+      .replace(
+        "</worksheet>",
+        '<conditionalFormatting sqref="C4:C7"><cfRule type="cellIs" dxfId="0" priority="1" operator="greaterThan"><formula>0</formula></cfRule></conditionalFormatting><dataValidations count="1"><dataValidation type="whole" sqref="A4:A7"><formula1>1</formula1><formula2>99</formula2></dataValidation></dataValidations><hyperlinks><hyperlink ref="A4" r:id="rId1"/></hyperlinks></worksheet>',
+      ),
+  );
+  archive.file(
+    "xl/worksheets/_rels/sheet1.xml.rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/record/1" TargetMode="External"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments1.xml"/></Relationships>`,
+  );
+  archive.file(
+    "xl/comments1.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><authors><author>User</author></authors><commentList><comment ref="B4" authorId="0"><text><t>Synthetic test note</t></text></comment></commentList></comments>`,
+  );
+  const contentTypes = await archive.file("[Content_Types].xml")!.async("text");
+  archive.file(
+    "[Content_Types].xml",
+    contentTypes.replace(
+      "</Types>",
+      `<Override PartName="/xl/comments1.xml" ContentType="${COMMENTS_CONTENT_TYPE}"/></Types>`,
     ),
   );
   await writeFile(
@@ -99,21 +129,27 @@ async function createPreservationWorkbook(filePath: string): Promise<void> {
   );
 }
 
-function readWorkbook(filePath: string): Promise<XLSX.WorkBook> {
-  return readFile(filePath).then((bytes) =>
-    XLSX.read(bytes, { cellStyles: true, type: "buffer" }),
-  );
+async function packagePart(filePath: string, part: string): Promise<string> {
+  const archive = await JSZip.loadAsync(await readFile(filePath));
+  return archive.file(part)!.async("text");
 }
 
-function records(
-  workbook: XLSX.WorkBook,
+/** Records under a header row, empty cells as null, blank rows skipped. */
+async function records(
+  filePath: string,
   sheet: string,
   headerRow: number,
-): Array<Record<string, unknown>> {
-  return XLSX.utils.sheet_to_json(workbook.Sheets[sheet]!, {
-    defval: null,
-    range: headerRow - 1,
-  });
+): Promise<Array<Record<string, unknown>>> {
+  const [header = [], ...body] = (
+    await sheetRows(await readFile(filePath), sheet)
+  ).slice(headerRow - 1);
+  return body
+    .filter((row) => row.some((value) => value !== null))
+    .map((row) =>
+      Object.fromEntries(
+        header.map((key, index) => [String(key), row[index] ?? null]),
+      ),
+    );
 }
 
 afterEach(async () => {
@@ -169,22 +205,38 @@ describe("all-worksheet workbook splitting", () => {
       value: "DGE",
     });
 
-    const dge = await readWorkbook(path.join(output, "DGE.xlsx"));
-    expect(dge.SheetNames).toEqual(["Operations", "Finance", "Cover"]);
-    expect(records(dge, "Operations", 3)).toEqual([
+    const dgePath = path.join(output, "DGE.xlsx");
+    expect(await sheetNamesOf(await readFile(dgePath))).toEqual([
+      "Operations",
+      "Finance",
+      "Cover",
+    ]);
+    expect(await records(dgePath, "Operations", 3)).toEqual([
       { Calculated: 10, "Entity Name": "DGE", Record: 1 },
       { Calculated: 20, "Entity Name": "dge ", Record: 2 },
     ]);
-    expect(records(dge, "Finance", 1)).toEqual([
+    expect(await records(dgePath, "Finance", 1)).toEqual([
       { Amount: 5, Code: "A", "Entity Name": " DGE" },
     ]);
-    expect(dge.Sheets.Operations!.C4?.f).toBe("A4*10");
-    expect(dge.Workbook?.Sheets?.[2]?.Hidden).toBe(2);
-    expect(dge.Sheets.Cover?.["!merges"]).toEqual([
-      XLSX.utils.decode_range("A2:C2"),
-    ]);
-    expect(dge.Sheets.Operations?.["!cols"]?.[1]?.wch).toBeCloseTo(28, 0);
-    expect(dge.Sheets.Operations?.["!rows"]?.[0]?.hpt).toBe(30);
+    const dgeOperations = await packagePart(
+      dgePath,
+      "xl/worksheets/sheet1.xml",
+    );
+    expect(worksheetCellFormula(dgeOperations, "C4")).toBe("A4*10");
+    expect(await packagePart(dgePath, "xl/workbook.xml")).toMatch(
+      /<sheet\b[^>]*\bname="Cover"[^>]*\bstate="veryHidden"/u,
+    );
+    expect(
+      mergedCellReferences(
+        await packagePart(dgePath, "xl/worksheets/sheet3.xml"),
+      ),
+    ).toEqual(["A2:C2"]);
+    expect(
+      Number(
+        /<col\b[^>]*\bmin="2"[^>]*\bwidth="([\d.]+)"/u.exec(dgeOperations)?.[1],
+      ),
+    ).toBeCloseTo(28, 0);
+    expect(dgeOperations).toMatch(/<row\b[^>]*\br="1"[^>]*\bht="30"/u);
 
     const otherArchive = await JSZip.loadAsync(
       await readFile(path.join(output, "Other.xlsx")),
@@ -213,10 +265,9 @@ describe("all-worksheet workbook splitting", () => {
   it("creates safe stable filenames, unifies numeric text, and supports strict matching", async () => {
     const directory = await temporaryDirectory();
     const input = path.join(directory, "names.xlsx");
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.aoa_to_sheet([
+    await writeFile(
+      input,
+      await buildSheetFixture("Data", [
         ["Entity Name"],
         ["A/B"],
         ["A:B"],
@@ -226,11 +277,6 @@ describe("all-worksheet workbook splitting", () => {
         ["Arabic العربية"],
         ["Trailing. "],
       ]),
-      "Data",
-    );
-    await writeFile(
-      input,
-      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
     );
 
     const normalized = await splitWorkbookByColumn({
@@ -297,11 +343,13 @@ describe("all-worksheet workbook splitting", () => {
       outputDirectory: path.join(directory, "values"),
       values: true,
     });
-    const dge = await readWorkbook(path.join(directory, "values", "DGE.xlsx"));
-    expect(dge.Sheets.Operations!.C4?.f).toBeUndefined();
-    expect(dge.Sheets.Operations!.C4?.v).toBe(10);
-    expect(dge.Sheets.Cover!.B1?.f).toBeUndefined();
-    expect(dge.Sheets.Cover!.B1?.v).toBeUndefined();
+    const dgePath = path.join(directory, "values", "DGE.xlsx");
+    const operations = await packagePart(dgePath, "xl/worksheets/sheet1.xml");
+    expect(worksheetCellFormula(operations, "C4")).toBeUndefined();
+    expect(worksheetCellValue(operations, "C4")).toBe("10");
+    const cover = await packagePart(dgePath, "xl/worksheets/sheet3.xml");
+    expect(worksheetCellFormula(cover, "B1")).toBeUndefined();
+    expect(worksheetCellValue(cover, "B1")).toBeUndefined();
     expect(result.metrics.formulaCellsConverted).toBeGreaterThan(0);
     expect(result.metrics.formulaCellsWithoutCachedValues).toBe(3);
     expect(result.warnings.join("\n")).toMatch(/Cover!B1/);
@@ -332,10 +380,9 @@ describe("all-worksheet workbook splitting", () => {
         { Amount: 30, Client: "C", Region: "North" },
       ],
     });
-    expect((await readWorkbook(result.artifacts[0]!.path)).SheetNames).toEqual([
-      "Cover",
-      "Clients",
-    ]);
+    expect(
+      await sheetNamesOf(await readFile(result.artifacts[0]!.path)),
+    ).toEqual(["Cover", "Clients"]);
   });
 
   it("removes complete unmatched table rows, including cells outside the table", async () => {
@@ -499,18 +546,12 @@ describe("all-worksheet workbook splitting", () => {
   it("reports missing columns, blank columns, and unsupported input types", async () => {
     const directory = await temporaryDirectory();
     const input = path.join(directory, "blank.xlsx");
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.aoa_to_sheet([
+    await writeFile(
+      input,
+      await buildSheetFixture("Data", [
         ["Entity Name", "Value"],
         [null, 1],
       ]),
-      "Data",
-    );
-    await writeFile(
-      input,
-      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
     );
 
     await expect(

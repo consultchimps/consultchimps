@@ -8,29 +8,25 @@ import {
   type OperationProgress,
 } from "@consultchimps/core";
 import { describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
 import { consolidateWorkbooksBytes } from "../src/bytes.js";
 import {
   consolidateWorkbooks,
   planConsolidateWorkbooks,
 } from "../src/index.js";
+import { sheetRows } from "./support/read-workbook.js";
+import {
+  buildSheetFixture,
+  buildWorkbookFixture,
+  type FixtureValue,
+} from "./support/workbook-fixture.js";
 
 async function createWorkbook(
   filePath: string,
   sheetName: string,
-  rows: Array<Array<XLSX.CellObject | string | number>>,
+  rows: FixtureValue[][],
 ): Promise<void> {
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(
-    workbook,
-    XLSX.utils.aoa_to_sheet(rows),
-    sheetName,
-  );
-  await writeFile(
-    filePath,
-    XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
-  );
+  await writeFile(filePath, await buildSheetFixture(sheetName, rows));
 }
 
 describe("consolidateWorkbooks", () => {
@@ -43,7 +39,7 @@ describe("consolidateWorkbooks", () => {
       const output = path.join(directory, "consolidated.xlsx");
       await createWorkbook(first, "North", [
         ["Client", "Amount"],
-        ["A", { f: "5+5", t: "n", v: 10 }],
+        ["A", { formula: "5+5", value: 10 }],
       ]);
       await createWorkbook(second, "South", [
         ["Amount", "Status", "client"],
@@ -61,16 +57,7 @@ describe("consolidateWorkbooks", () => {
         outputRows: 2,
       });
 
-      const workbook = XLSX.read(await readFile(output), { type: "buffer" });
-      const worksheet = workbook.Sheets.Consolidated;
-      expect(worksheet).toBeDefined();
-      expect(
-        XLSX.utils.sheet_to_json(worksheet!, {
-          defval: null,
-          header: 1,
-          raw: true,
-        }),
-      ).toEqual([
+      expect(await sheetRows(await readFile(output), "Consolidated")).toEqual([
         [
           "Client",
           "Amount",
@@ -201,23 +188,15 @@ describe("consolidateWorkbooks", () => {
         rows: Array<Array<string | number>>;
       }>,
     ): Promise<void> => {
-      const workbook = XLSX.utils.book_new();
-      for (const sheet of sheets) {
-        XLSX.utils.book_append_sheet(
-          workbook,
-          XLSX.utils.aoa_to_sheet(sheet.rows),
-          sheet.name,
-        );
-      }
-      workbook.Workbook = {
-        Sheets: sheets.map((sheet) => ({
-          name: sheet.name,
-          Hidden: sheet.hidden === true ? 1 : 0,
-        })),
-      };
       await writeFile(
         filePath,
-        XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+        await buildWorkbookFixture({
+          sheets: sheets.map((sheet) => ({
+            name: sheet.name,
+            rows: sheet.rows,
+            ...(sheet.hidden === true ? { state: "hidden" as const } : {}),
+          })),
+        }),
       );
     };
 
@@ -295,14 +274,7 @@ describe("consolidateWorkbooks", () => {
         outputRows: 4,
       });
 
-      const workbook = XLSX.read(await readFile(output), { type: "buffer" });
-      expect(
-        XLSX.utils.sheet_to_json(workbook.Sheets.Consolidated!, {
-          defval: null,
-          header: 1,
-          raw: true,
-        }),
-      ).toEqual([
+      expect(await sheetRows(await readFile(output), "Consolidated")).toEqual([
         [
           "Case_ID",
           "Failed Checks",
@@ -395,14 +367,7 @@ describe("consolidateWorkbooks title rows and spacer columns", () => {
         unmappedColumns: 0,
       });
 
-      const workbook = XLSX.read(await readFile(output), { type: "buffer" });
-      expect(
-        XLSX.utils.sheet_to_json(workbook.Sheets.Consolidated!, {
-          defval: null,
-          header: 1,
-          raw: true,
-        }),
-      ).toEqual([
+      expect(await sheetRows(await readFile(output), "Consolidated")).toEqual([
         ["Client", "Amount", "Status", "Region"],
         ["A", 10, "Open", "North"],
         ["B", 20, "Closed", "South"],
@@ -418,16 +383,9 @@ describe("consolidateWorkbooks title rows and spacer columns", () => {
  * compound file holding the encryption header and the encrypted package. The
  * bytes inside are placeholders; no reader gets as far as decrypting them.
  */
-function encryptedWorkbookBytes(): Uint8Array {
-  const container = XLSX.CFB.utils.cfb_new();
-  XLSX.CFB.utils.cfb_add(
-    container,
-    "/EncryptionInfo",
-    new Uint8Array([4, 0, 4, 0, 0x40, 0, 0, 0]),
-  );
-  XLSX.CFB.utils.cfb_add(container, "/EncryptedPackage", new Uint8Array(64));
-  return new Uint8Array(
-    XLSX.CFB.write(container, { type: "array" }) as number[],
+function encryptedWorkbookBytes(): Promise<Uint8Array> {
+  return readFile(
+    new URL("./fixtures/encrypted-placeholder.xlsx", import.meta.url),
   );
 }
 
@@ -439,7 +397,7 @@ describe("consolidateWorkbooks password-protected inputs", () => {
       const encrypted = path.join(directory, "locked.xlsx");
       const plain = path.join(directory, "north.xlsx");
       const output = path.join(directory, "consolidated.xlsx");
-      await writeFile(encrypted, encryptedWorkbookBytes());
+      await writeFile(encrypted, await encryptedWorkbookBytes());
       await createWorkbook(plain, "North", [
         ["Client", "Amount"],
         ["A", 10],
@@ -456,7 +414,9 @@ describe("consolidateWorkbooks password-protected inputs", () => {
 
       await expect(
         consolidateWorkbooksBytes({
-          inputs: [{ name: "locked.xlsx", bytes: encryptedWorkbookBytes() }],
+          inputs: [
+            { name: "locked.xlsx", bytes: await encryptedWorkbookBytes() },
+          ],
         }),
       ).rejects.toMatchObject({
         code: "XLSX_READ_FAILED",
