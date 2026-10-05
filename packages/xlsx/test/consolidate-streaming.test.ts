@@ -10,6 +10,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import type { RandomAccessSource } from "@consultchimps/core";
 import {
   applyColumnMappingToTables,
   unionTables,
@@ -19,8 +20,11 @@ import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
 import {
+  blobSource,
+  consolidateWorkbookSources,
   consolidateWorkbooksBytes,
   readWorkbookTablesBytes,
+  type ByteSink,
   type WorkbookInputBytes,
 } from "../src/bytes.js";
 import { consolidateWorkbooks } from "../src/index.js";
@@ -386,5 +390,121 @@ describe("two-pass consolidation: what a failed run leaves behind", () => {
     } finally {
       await rm(directory, { force: true, recursive: true });
     }
+  });
+});
+
+/** A source that fails a read larger than the zip reader's chunk. */
+function guardedSource(input: WorkbookInputBytes): {
+  source: RandomAccessSource;
+  largestRead: () => number;
+} {
+  const inner = blobSource(input.name, new Blob([input.bytes]));
+  let largest = 0;
+  return {
+    largestRead: () => largest,
+    source: {
+      name: inner.name,
+      size: inner.size,
+      readAt: (offset, length, signal) => {
+        largest = Math.max(largest, length);
+        if (length > 1024 * 1024) {
+          throw new Error(`Read ${length} bytes of ${inner.size} at once`);
+        }
+        return inner.readAt(offset, length, signal);
+      },
+    },
+  };
+}
+
+/** A sink that keeps each chunk and counts the flushes between them. */
+function collectingSink(): {
+  sink: ByteSink;
+  bytes: () => Buffer;
+  chunks: () => number;
+} {
+  const chunks: Uint8Array[] = [];
+  return {
+    sink: {
+      write: (chunk) => {
+        chunks.push(chunk);
+      },
+      flush: () => Promise.resolve(),
+    },
+    bytes: () => Buffer.concat(chunks),
+    chunks: () => chunks.length,
+  };
+}
+
+/** A worksheet of `rows` rows stored uncompressed, so the file is large. */
+function largeSheetXml(rows: number): string {
+  const cells = (row: number, values: string[]) =>
+    values
+      .map(
+        (value, column) =>
+          `<c r="${String.fromCharCode(65 + column)}${row}" t="inlineStr"><is><t>${value}</t></is></c>`,
+      )
+      .join("");
+  const body = [`<row r="1">${cells(1, ["Case_ID", "Region", "Note"])}</row>`];
+  for (let row = 2; row <= rows; row += 1) {
+    body.push(
+      `<row r="${row}">${cells(row, [`R-${row}`, row % 2 ? "North" : "South", `Note for row ${row}`])}</row>`,
+    );
+  }
+  return `<sheetData>${body.join("")}</sheetData>`;
+}
+
+describe("consolidation over sources and a sink", () => {
+  it("reads in pieces, writes in chunks, and gives the command line's bytes", async () => {
+    const large = await handInput("large.xlsx", largeSheetXml(20_000));
+    expect(large.bytes.length).toBeGreaterThan(2 * 1024 * 1024);
+    const inputs = [...(await reviewInputs()), large];
+    const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
+    try {
+      const paths = [];
+      for (const input of inputs) {
+        const target = path.join(directory, input.name);
+        await writeFile(target, input.bytes);
+        paths.push(target);
+      }
+      const output = path.join(directory, "out.xlsx");
+      const reference = await consolidateWorkbooks({ inputs: paths, output });
+
+      const guarded = inputs.map(guardedSource);
+      const collected = collectingSink();
+      const outcome = await consolidateWorkbookSources({
+        inputs: guarded.map((entry) => entry.source),
+        output: collected.sink,
+        outputName: "out",
+      });
+
+      expect(outcome.outputName).toBe("out.xlsx");
+      expect(outcome.mappingDraft).toBeUndefined();
+      expect(outcome.result.metrics).toEqual(reference.metrics);
+      expect(outcome.result.metrics.outputRows).toBeGreaterThan(20_000);
+      expect(collected.chunks()).toBeGreaterThan(1);
+      expect(Math.max(...guarded.map((entry) => entry.largestRead()))).toBe(
+        1024 * 1024,
+      );
+      expect(collected.bytes()).toEqual(await readFile(output));
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("returns the mapping draft beside the streamed workbook", async () => {
+    const inputs = await reviewInputs();
+    const collected = collectingSink();
+    const outcome = await consolidateWorkbookSources({
+      inputs: inputs.map((input) => guardedSource(input).source),
+      output: collected.sink,
+      suggestMapping: true,
+    });
+    const reference = await consolidateWorkbooksBytes({
+      inputs,
+      suggestMapping: true,
+    });
+    expect(collected.bytes()).toEqual(Buffer.from(reference.outputs[0]!.bytes));
+    expect(outcome.mappingDraft).toEqual(reference.outputs[1]);
+    expect(outcome.result).toEqual(reference.result);
   });
 });
