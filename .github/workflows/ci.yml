@@ -129,6 +129,8 @@ jobs:
           name: build-output
 
       - name: Run the test suites with coverage
+        # About 3 minutes normally; a hung test fails here, not at the job limit.
+        timeout-minutes: 10
         if: runner.os == 'Linux'
         run: pnpm test:coverage
 
@@ -141,6 +143,8 @@ jobs:
         run: pnpm package:check && pnpm docs:check
 
       - name: Run the test suites
+        # About 3 minutes normally; a hung test fails here, not at the job limit.
+        timeout-minutes: 10
         if: runner.os == 'Windows'
         run: pnpm test:run
 
@@ -186,6 +190,8 @@ jobs:
           name: build-output
 
       - name: Run the test suites on this Node line
+        # About 3 minutes normally; a hung test fails here, not at the job limit.
+        timeout-minutes: 10
         run: pnpm test:run
 
   # Browser smoke tests for the in-browser tool pages. They run against the

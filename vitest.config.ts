@@ -2,6 +2,12 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    // On CI, also name whatever keeps a worker alive after the run, so a hang
+    // points at the code holding it instead of only running into the limit.
+    reporters:
+      process.env["GITHUB_ACTIONS"] === "true"
+        ? ["default", "github-actions", "hanging-process"]
+        : ["default"],
     projects: [
       {
         test: {
