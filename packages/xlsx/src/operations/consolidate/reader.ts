@@ -40,10 +40,7 @@ import {
   utcCalendarParts,
   worksheetDateValue,
 } from "../../model/calendar.js";
-import {
-  decodeRange,
-  type CellRectangle,
-} from "../../model/references.js";
+import { decodeRange, type CellRectangle } from "../../model/references.js";
 import { StyleTable } from "../../model/styles.js";
 import { findElement, getAttribute } from "../../model/xml.js";
 import {
