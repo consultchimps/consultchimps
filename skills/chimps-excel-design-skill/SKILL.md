@@ -34,9 +34,10 @@ Where the library's habits differ, follow the rule on the right.
 
 - Write to a new file and keep the original, unless the user asks for an
   in-place edit.
-- Apply the Formatting and Document properties rules below, and change no value,
-  formula or sheet the user did not ask about.
-- Add no Assumptions sheet or named ranges unless asked.
+- Apply every rule below except Formula-driven structure: add no Assumptions
+  sheet or named ranges unless asked.
+- Change no value, formula or sheet the user did not ask about, except turning
+  dates stored as text into real dates, which you list as a change.
 - A library save can drop charts, pivot tables, slicers and images: check for
   them first and warn the user before saving.
 - Hand over a list of what changed, under the headings in Handover.
@@ -114,7 +115,8 @@ Before delivery, give the user three things, under these three headings.
 1. **Directly audited**: what you opened, recalculated or reconciled yourself,
    and against what, naming the sheets and the totals
 2. **Needs a decision**: every assumption or choice that is the user's to make,
-   each with the option you defaulted to and where it lives on Assumptions
+   each with the option you defaulted to and where it lives on Assumptions, or
+   the cell it lives in
 3. **Gaps**: every `Needs Input` cell, every figure that could not be sourced,
    and anything the workbook models more simply than reality
 

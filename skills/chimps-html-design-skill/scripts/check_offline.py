@@ -8,9 +8,8 @@ Prints one line per hit, with its line number: a host, a protocol-relative
 `@import`, `fetch(`, `XMLHttpRequest`, and relative files set from JavaScript,
 such as an ECharts `image://images/icon.png` symbol or `img.src = "logo.png"`.
 The `w3.org` namespace URLs inline SVG carries are not reported, nor is the
-ECharts bundle in the `<script>` right after an `<!-- echarts ... -->` comment,
-which is what inline_echarts.py writes. Inline every
-hit, or confirm it is a link the reader chooses to follow. The exit code is 1
+bundle inline_echarts.py writes after its `<!-- echarts X, inlined -->` comment.
+Inline every hit, or confirm it is a link the reader chooses to follow. The exit code is 1
 when anything is printed. Needs only Python 3.8+.
 """
 
@@ -25,7 +24,7 @@ def main(path):
     # Blank out the inlined ECharts bundle, keeping its newlines so line
     # numbers still match: its own code is full of src= and data= text.
     html = re.sub(
-        r"(<!--\s*echarts[^>]*-->\s*<script>)(.*?)(</script>)",
+        r"(<!-- echarts [\w.]+, inlined -->\s*<script>)(.*?)(</script>)",
         lambda m: m.group(1) + re.sub(r"[^\n]", " ", m.group(2)) + m.group(3),
         html,
         flags=re.IGNORECASE | re.DOTALL,
