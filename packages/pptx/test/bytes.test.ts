@@ -8,7 +8,6 @@ import {
 } from "@consultchimps/core";
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
 import {
   inspectPresentationBytes,
@@ -16,6 +15,10 @@ import {
   planPopulatePresentationBytes,
   populatePresentationBytes,
 } from "../src/bytes.js";
+import {
+  buildSheetFixture,
+  type FixtureValue,
+} from "../../xlsx/test/support/workbook-fixture.js";
 
 // A DOS timestamp has two-second resolution, so a shorter pause could hide a
 // clock-dependent byte difference inside one tick.
@@ -88,22 +91,10 @@ async function templateBytes(slides: string[]): Promise<Uint8Array> {
 }
 
 function workbookBytes(
-  rows: Array<Array<null | number | string>>,
+  rows: FixtureValue[][],
   worksheetName = "Companies",
-): Uint8Array {
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(
-    workbook,
-    XLSX.utils.aoa_to_sheet(rows),
-    worksheetName,
-  );
-  return new Uint8Array(
-    XLSX.write(workbook, {
-      bookType: "xlsx",
-      compression: true,
-      type: "array",
-    }) as ArrayBuffer,
-  );
+): Promise<Uint8Array> {
+  return buildSheetFixture(worksheetName, rows);
 }
 
 async function outputSlides(bytes: Uint8Array): Promise<string[]> {
@@ -189,7 +180,7 @@ describe("byte-level presentation population", () => {
       },
       workbook: {
         name: "companies.xlsx",
-        bytes: workbookBytes([
+        bytes: await workbookBytes([
           ["client", "amount"],
           ["North", 10],
           [null, null],
@@ -220,10 +211,11 @@ describe("byte-level presentation population", () => {
     };
     const workbook = {
       name: "companies.xlsx",
-      bytes: workbookBytes([
+      bytes: await workbookBytes([
         ["client", "amount"],
         ["North", 10],
-        [null, null],
+        // Formatted blanks keep the empty row inside the used range.
+        [{ format: 0 }, { format: 0 }],
       ]),
     };
 
@@ -376,7 +368,7 @@ describe("byte-level presentation population", () => {
     };
     const workbook = {
       name: "companies.xlsx",
-      bytes: workbookBytes([
+      bytes: await workbookBytes([
         ["client", "amount"],
         ["North", 10],
       ]),

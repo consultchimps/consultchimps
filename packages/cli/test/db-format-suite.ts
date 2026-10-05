@@ -28,7 +28,7 @@ export function defineFormatTests(format: "sqlite" | "duckdb"): void {
     const readySource = path.join(root, "ready.xlsx");
     const readyRecipe = path.join(root, "ready.json");
     const readyPlan = path.join(root, "ready.ccplan");
-    await writeFile(readySource, workbook([["Name"], ["North"]]));
+    await writeFile(readySource, await workbook([["Name"], ["North"]]));
     await writeFile(
       readyRecipe,
       JSON.stringify({
@@ -95,7 +95,7 @@ export function defineFormatTests(format: "sqlite" | "duckdb"): void {
 
     const unresolvedSource = path.join(root, "unresolved.xlsx");
     const unresolvedPlan = path.join(root, "unresolved.ccplan");
-    await writeFile(unresolvedSource, workbook([["Name"], ["South"]]));
+    await writeFile(unresolvedSource, await workbook([["Name"], ["South"]]));
     await run([
       "import",
       "prepare",
@@ -247,7 +247,7 @@ export function defineFormatTests(format: "sqlite" | "duckdb"): void {
     const database = path.join(root, `inventory.${format}`);
     const source = path.join(root, "inventory.xlsx");
     const plan = path.join(root, "duplicate.ccplan");
-    await writeFile(source, workbook([["Name"], ["North"], ["South"]]));
+    await writeFile(source, await workbook([["Name"], ["North"], ["South"]]));
     await run(["create", "-o", database]);
     await run(["import", "run", database, "--input", source]);
     await run(["import", "prepare", database, "--input", source, "-o", plan]);
@@ -284,7 +284,7 @@ export function defineFormatTests(format: "sqlite" | "duckdb"): void {
     const firstPlan = path.join(root, "first.ccplan");
     const secondPlan = path.join(root, "second.ccplan");
     await run(["create", "-o", database]);
-    await writeFile(source, workbook([["Name"], ["North"]]));
+    await writeFile(source, await workbook([["Name"], ["North"]]));
     await run([
       "import",
       "prepare",
@@ -294,7 +294,7 @@ export function defineFormatTests(format: "sqlite" | "duckdb"): void {
       "-o",
       firstPlan,
     ]);
-    await writeFile(source, workbook([["Name"], ["South"]]));
+    await writeFile(source, await workbook([["Name"], ["South"]]));
     await run([
       "import",
       "prepare",
@@ -355,7 +355,7 @@ export function defineFormatTests(format: "sqlite" | "duckdb"): void {
     const prepared = path.join(root, "review.ccplan");
     await writeFile(
       source,
-      workbook([
+      await workbook([
         ["Dataset", "Attributes", "CDE"],
         ["North", 12, true],
         ["South", 9, false],
@@ -408,7 +408,7 @@ export function defineFormatTests(format: "sqlite" | "duckdb"): void {
     const database = path.join(root, `inventory.${format}`);
     const source = path.join(root, "first.xlsx");
     const renamed = path.join(root, "renamed.xlsx");
-    await writeFile(source, workbook([["Name"], ["Synthetic dataset"]]));
+    await writeFile(source, await workbook([["Name"], ["Synthetic dataset"]]));
     await copyFile(source, renamed);
     const original = await readFile(source);
     await run(["create", "-o", database]);
@@ -473,7 +473,7 @@ export function defineFormatTests(format: "sqlite" | "duckdb"): void {
         attributes: { reportedCount: 9 },
       }),
     );
-    await writeFile(source, workbook([["Name"], ["North"]]));
+    await writeFile(source, await workbook([["Name"], ["North"]]));
     await run(["create", "-o", database, "--schema", schema]);
     const first = await run([
       "import",
@@ -488,7 +488,10 @@ export function defineFormatTests(format: "sqlite" | "duckdb"): void {
       "--request-id",
       "submission-a",
     ]);
-    await writeFile(source, workbook([["Name"], ["North revised"], ["South"]]));
+    await writeFile(
+      source,
+      await workbook([["Name"], ["North revised"], ["South"]]),
+    );
     const second = await run([
       "import",
       "run",

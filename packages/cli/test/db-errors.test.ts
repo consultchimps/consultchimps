@@ -199,7 +199,10 @@ test("an existing workbook path containing an equals sign remains a plain path",
   const root = await directory();
   const database = path.join(root, "inventory.sqlite");
   const source = "current=final.xlsx";
-  await writeFile(path.join(root, source), workbook([["Name"], ["North"]]));
+  await writeFile(
+    path.join(root, source),
+    await workbook([["Name"], ["North"]]),
+  );
   await run(["create", "-o", database]);
 
   const imported = await run(
@@ -217,7 +220,7 @@ test("a hidden-only workbook requires explicit hidden-sheet selection", async ()
   const root = await directory();
   const database = path.join(root, "inventory.sqlite");
   const source = path.join(root, "hidden.xlsx");
-  await writeFile(source, workbook([["Name"], ["North"]], true));
+  await writeFile(source, await workbook([["Name"], ["North"]], true));
   const sourceBefore = await readFile(source);
   await run(["create", "-o", database]);
   const databaseBefore = await run(["inspect", database]);

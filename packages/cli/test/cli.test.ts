@@ -16,9 +16,18 @@ import { promisify } from "node:util";
 import JSZip from "jszip";
 import { PDFDocument } from "pdf-lib";
 import { afterEach, describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
-import { readWorkbookExcelTables } from "@consultchimps/xlsx";
+import {
+  describeWorkbook,
+  readWorkbookExcelTables,
+  readWorkbookTables,
+  readWorksheetRecords,
+} from "@consultchimps/xlsx";
+
+import {
+  buildWorkbookFixture,
+  type FixtureValue,
+} from "../../xlsx/test/support/workbook-fixture.js";
 
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../dist/index.js", import.meta.url));
@@ -110,33 +119,101 @@ async function runCli(
 
 async function writeWorkbook(
   filePath: string,
-  sheets: Array<
-    [string, Array<Array<XLSX.CellObject | boolean | null | number | string>>]
-  >,
+  sheets: Array<[string, FixtureValue[][]]>,
   hiddenSheets: string[] = [],
 ): Promise<void> {
-  const workbook = XLSX.utils.book_new();
-  for (const [sheetName, rows] of sheets) {
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.aoa_to_sheet(rows),
-      sheetName,
-    );
-  }
-  workbook.Workbook = {
-    Sheets: workbook.SheetNames.map((sheetName) => ({
-      Hidden: hiddenSheets.includes(sheetName) ? 1 : 0,
-      name: sheetName,
-    })),
-  };
   await writeFile(
     filePath,
-    XLSX.write(workbook, {
-      bookType: "xlsx",
-      cellStyles: true,
-      type: "buffer",
+    await buildWorkbookFixture({
+      sheets: sheets.map(([name, rows]) => ({
+        name,
+        rows,
+        ...(hiddenSheets.includes(name) ? { state: "hidden" as const } : {}),
+      })),
     }),
   );
+}
+
+/** Every worksheet name in workbook order, hidden ones included. */
+async function sheetNames(filePath: string): Promise<string[]> {
+  const outcome = await describeWorkbook(filePath, {
+    includeHiddenSheets: true,
+  });
+  return outcome.description.sheets.map((sheet) => sheet.name);
+}
+
+/** One worksheet as rows, its header row first, empty cells as null. */
+async function sheetGrid(
+  filePath: string,
+  sheet: string,
+): Promise<unknown[][]> {
+  const [table] = await readWorkbookTables(filePath, {
+    includeHiddenSheets: true,
+    sheets: [sheet],
+  });
+  return [
+    table!.columns,
+    ...table!.rows.map((row) =>
+      table!.columns.map((column) => row[column] ?? null),
+    ),
+  ];
+}
+
+/** One worksheet as records keyed by its header row, empty cells as null. */
+async function sheetRecords(
+  filePath: string,
+  sheet: string,
+): Promise<Array<Record<string, unknown>>> {
+  const [header, ...rows] = await sheetGrid(filePath, sheet);
+  return rows.map((row) =>
+    Object.fromEntries(header!.map((column, index) => [column, row[index]])),
+  );
+}
+
+/** An element name with any namespace prefix, as a pattern. */
+function tag(name: string): string {
+  return String.raw`(?:\w+:)?` + name;
+}
+
+/**
+ * One cell's raw markup, and its stored text with a shared string resolved,
+ * read from the worksheet part the sheet name points at.
+ */
+async function cellMarkup(
+  filePath: string,
+  sheet: string,
+  ref: string,
+): Promise<{ xml: string; text: string | undefined }> {
+  const zip = await JSZip.loadAsync(await readFile(filePath));
+  const read = (name: string) => zip.file(name)!.async("string");
+  const id = new RegExp(
+    `<${tag("sheet")} [^>]*name="${sheet}"[^>]*r:id="([^"]+)"`,
+    "u",
+  ).exec(await read("xl/workbook.xml"))![1];
+  const relationship = new RegExp(
+    `<${tag("Relationship")} [^>]*Id="${id}"[^>]*>`,
+    "u",
+  ).exec(await read("xl/_rels/workbook.xml.rels"))![0];
+  const target = /Target="([^"]+)"/u.exec(relationship)![1]!;
+  const part = target.startsWith("/") ? target.slice(1) : `xl/${target}`;
+  const xml =
+    new RegExp(
+      `<${tag("c")} r="${ref}"[^>]*?(?:/>|>[\\s\\S]*?</${tag("c")}>)`,
+      "u",
+    ).exec(await read(part))?.[0] ?? "";
+  const value = new RegExp(`<${tag("v")}>([^<]*)</${tag("v")}>`, "u").exec(
+    xml,
+  )?.[1];
+  if (!/ t="s"/u.test(xml) || value === undefined) return { xml, text: value };
+  const items = new RegExp(`<${tag("si")}>([\\s\\S]*?)</${tag("si")}>`, "gu");
+  const runs = new RegExp(
+    `<${tag("t")}(?: [^>]*)?>([^<]*)</${tag("t")}>`,
+    "gu",
+  );
+  const strings = [...(await read("xl/sharedStrings.xml")).matchAll(items)].map(
+    (item) => [...item[1]!.matchAll(runs)].map((run) => run[1]).join(""),
+  );
+  return { xml, text: strings[Number(value)] };
 }
 
 async function writePowerPointTemplate(filePath: string): Promise<void> {
@@ -660,17 +737,15 @@ describe("consultchimps CLI", () => {
     // Excel's own writer stores a control character as the literal text
     // `_x001b_`, so the reachable path is a hand-built package. Patching the
     // markers into one produces exactly that workbook without committing a
-    // binary: the worksheet part carries the header and the values, and the
-    // workbook part the worksheet name, which the CLI also narrates as
+    // binary: the shared strings part carries the header and the values, and
+    // the workbook part the worksheet name, which the CLI also narrates as
     // progress on stderr.
     const zip = await JSZip.loadAsync(await readFile(input));
-    const sheetXml = await zip
-      .file("xl/worksheets/sheet1.xml")!
-      .async("string");
-    expect(sheetXml).toContain("MARKER");
+    const stringsXml = await zip.file("xl/sharedStrings.xml")!.async("string");
+    expect(stringsXml).toContain("MARKER");
     zip.file(
-      "xl/worksheets/sheet1.xml",
-      sheetXml.replaceAll("MARKER", "&#27;[31m"),
+      "xl/sharedStrings.xml",
+      stringsXml.replaceAll("MARKER", "&#27;[31m"),
     );
     const workbookXml = await zip.file("xl/workbook.xml")!.async("string");
     expect(workbookXml).toContain("NAMEMARK");
@@ -903,11 +978,7 @@ describe("consultchimps CLI", () => {
     // reach stderr on success.
     expect(command.stderr).toBe("");
 
-    const workbook = XLSX.read(await readFile(output), { type: "buffer" });
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
-      workbook.Sheets.Consolidated!,
-      { defval: null },
-    );
+    const rows = await sheetRecords(output, "Consolidated");
     expect(rows.map((row) => row.Client)).toEqual(["A", "B", "C", "D"]);
     expect(rows.some((row) => row.Client === "SHOULD_NOT_APPEAR")).toBe(false);
     expect(rows[2]).toMatchObject({
@@ -1039,14 +1110,7 @@ describe("consultchimps CLI", () => {
     );
     expect(mapped.stdout).toContain('"Region"');
 
-    const workbook = XLSX.read(await readFile(output), { type: "buffer" });
-    expect(
-      XLSX.utils.sheet_to_json(workbook.Sheets.Consolidated!, {
-        defval: null,
-        header: 1,
-        raw: true,
-      }),
-    ).toEqual([
+    expect(await sheetGrid(output, "Consolidated")).toEqual([
       ["Case_ID", "Failed Checks", "Region"],
       ["R-1", 5, "north"],
       ["R-2", 7, "south"],
@@ -1104,7 +1168,7 @@ describe("consultchimps CLI", () => {
           "Summary",
           [
             ["Amount", "Tax", "Total"],
-            [100, 5, { f: "A2+B2", t: "n", v: 105, z: "$#,##0.00" }],
+            [100, 5, { formula: "A2+B2", value: 105, format: "$#,##0.00" }],
           ],
         ],
         ["Private", [["Amount"], [100]]],
@@ -1131,14 +1195,15 @@ describe("consultchimps CLI", () => {
     });
     // --json suppresses the stderr progress narration entirely on success.
     expect(command.stderr).toBe("");
-    const workbook = XLSX.read(await readFile(output), { type: "buffer" });
-    expect(workbook.SheetNames).toEqual([
+    expect(await sheetNames(output)).toEqual([
       "Summary",
       "Private",
       "Summary (2)",
       "Sheet Index",
     ]);
-    expect(workbook.Sheets.Summary?.C2?.f).toBe("A2+B2");
+    expect((await cellMarkup(output, "Summary", "C2")).xml).toContain(
+      "<f>A2+B2</f>",
+    );
 
     const humanOutput = path.join(directory, "outputs", "human.xlsx");
     const human = await runCli([
@@ -1160,15 +1225,14 @@ describe("consultchimps CLI", () => {
       "1 source worksheet was hidden in the merged workbook.",
     );
     expect(human.stdout).not.toContain('see the visible "Sheet Index"');
-    const valuesWorkbook = XLSX.read(await readFile(humanOutput), {
-      cellStyles: true,
-      type: "buffer",
-    });
-    expect(valuesWorkbook.Sheets.Summary?.C2).toMatchObject({
-      v: 105,
-      z: "$#,##0.00",
-    });
-    expect(valuesWorkbook.Sheets.Summary?.C2?.f).toBeUndefined();
+    // The cached value stays, and still shows through its number format.
+    const valueCell = await cellMarkup(humanOutput, "Summary", "C2");
+    expect(valueCell.text).toBe("105");
+    expect(valueCell.xml).not.toMatch(/<(?:\w+:)?f[ >]/u);
+    expect(
+      (await readWorksheetRecords(humanOutput, { worksheet: "Summary" }))
+        .rows[0],
+    ).toMatchObject({ Total: "$105.00" });
   });
 
   it("splits one workbook into files grouped by a column", async () => {
@@ -1214,15 +1278,11 @@ describe("consultchimps CLI", () => {
       "client-region-South.xlsx",
     ]);
 
-    const north = XLSX.read(
-      await readFile(path.join(output, "client-region-North.xlsx")),
-      { type: "buffer" },
-    );
     expect(
-      XLSX.utils.sheet_to_json(north.Sheets.Clients!, {
-        defval: null,
-        raw: true,
-      }),
+      await sheetRecords(
+        path.join(output, "client-region-North.xlsx"),
+        "Clients",
+      ),
     ).toEqual([
       { Amount: 10, Client: "A", Region: "North" },
       { Amount: 30, Client: "C", Region: "North" },
@@ -1294,15 +1354,8 @@ describe("consultchimps CLI", () => {
       "clients-South.xlsx",
     ]);
 
-    const north = XLSX.read(
-      await readFile(path.join(output, "clients-North.xlsx")),
-      { type: "buffer" },
-    );
     expect(
-      XLSX.utils.sheet_to_json(north.Sheets.Clients!, {
-        defval: null,
-        raw: true,
-      }),
+      await sheetRecords(path.join(output, "clients-North.xlsx"), "Clients"),
     ).toEqual([
       { Amount: 10, Client: "A", Region: "North" },
       { Amount: 30, Client: "C", Region: "North" },
@@ -1343,11 +1396,8 @@ describe("consultchimps CLI", () => {
         ],
       },
     ]);
-    const northWorkbook = XLSX.read(await readFile(northPath), {
-      type: "buffer",
-    });
-    expect(northWorkbook.SheetNames).toEqual(["Cover", "Clients"]);
-    expect(northWorkbook.Sheets.Clients?.G4?.v).toBe(
+    expect(await sheetNames(northPath)).toEqual(["Cover", "Clients"]);
+    expect((await cellMarkup(northPath, "Clients", "G4")).text).toBe(
       "Cells outside ClientData",
     );
   });
@@ -1356,23 +1406,22 @@ describe("consultchimps CLI", () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "inputs", "clients.xlsx");
     const output = path.join(directory, "outputs", "range-regions");
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.aoa_to_sheet([
-        ["Quarterly report", null],
-        ["Client", "Region"],
-        ["A", "North"],
-        ["B", "South"],
-      ]),
-      "Clients",
-    );
-    workbook.Workbook = {
-      Names: [{ Name: "ClientRange", Ref: "Clients!$A$2:$B$4" }],
-    };
     await writeFile(
       input,
-      XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+      await buildWorkbookFixture({
+        sheets: [
+          {
+            name: "Clients",
+            rows: [
+              ["Quarterly report", null],
+              ["Client", "Region"],
+              ["A", "North"],
+              ["B", "South"],
+            ],
+          },
+        ],
+        names: [{ name: "ClientRange", reference: "Clients!$A$2:$B$4" }],
+      }),
     );
 
     const command = await runCli([

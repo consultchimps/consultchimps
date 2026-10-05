@@ -4,7 +4,6 @@ import path from "node:path";
 
 import JSZip from "jszip";
 import { afterEach, describe, expect, it } from "vitest";
-import * as XLSX from "xlsx";
 
 import { OPERATION_ABORTED, type OperationProgress } from "@consultchimps/core";
 
@@ -13,6 +12,10 @@ import {
   planPopulatePowerPointTemplate,
   populatePowerPointTemplate,
 } from "../src/index.js";
+import {
+  buildSheetFixture,
+  type FixtureValue,
+} from "../../xlsx/test/support/workbook-fixture.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -122,49 +125,27 @@ async function writeWorkbook(
     worksheetName?: string;
   } = {},
 ): Promise<void> {
-  const worksheet = XLSX.utils.aoa_to_sheet(rows);
-  if (options.currencyColumn !== undefined) {
-    for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
-      const address = XLSX.utils.encode_cell({
-        c: options.currencyColumn,
-        r: rowIndex,
-      });
-      if (worksheet[address]) {
-        worksheet[address].z = '$0.0,,"M"';
-      }
-    }
-  }
-  if (options.dateColumn !== undefined) {
-    for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
-      const address = XLSX.utils.encode_cell({
-        c: options.dateColumn,
-        r: rowIndex,
-      });
-      if (worksheet[address]) {
-        worksheet[address].z = "yyyy-mm-dd";
-      }
-    }
-  }
-  if (options.percentColumn !== undefined) {
-    for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
-      const address = XLSX.utils.encode_cell({
-        c: options.percentColumn,
-        r: rowIndex,
-      });
-      if (worksheet[address]) {
-        worksheet[address].z = "0.0%";
-      }
-    }
-  }
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(
-    workbook,
-    worksheet,
-    options.worksheetName ?? "Companies",
+  const formats = new Map<number, string>();
+  if (options.currencyColumn !== undefined)
+    formats.set(options.currencyColumn, '$0.0,,"M"');
+  if (options.dateColumn !== undefined)
+    formats.set(options.dateColumn, "yyyy-mm-dd");
+  if (options.percentColumn !== undefined)
+    formats.set(options.percentColumn, "0.0%");
+  const cells = rows.map((row, rowIndex) =>
+    row.map((value, column): FixtureValue => {
+      // A date is stored as its serial day number, counted in UTC.
+      const stored =
+        value instanceof Date ? value.getTime() / 86_400_000 + 25_569 : value;
+      const format = formats.get(column);
+      return rowIndex === 0 || stored === null || format === undefined
+        ? stored
+        : { value: stored, format };
+    }),
   );
   await writeFile(
     filePath,
-    XLSX.write(workbook, { bookType: "xlsx", type: "buffer" }),
+    await buildSheetFixture(options.worksheetName ?? "Companies", cells),
   );
 }
 
