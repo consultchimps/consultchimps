@@ -62,7 +62,7 @@ import {
   WORKBOOK_DATE_TEXT,
   yieldToEventLoop,
 } from "../../shared.js";
-import { writableCellValue } from "../workbook-dates.js";
+import { writableCellValue } from "../../model/date-cells.js";
 import {
   StreamedWorkbook,
   type StreamedCell,

@@ -1,10 +1,12 @@
 /**
- * L3: a table value as the table writer stores it. A value the readers hand on
+ * L1: a table value as the table writer stores it. A value the readers hand on
  * as a workbook date, the one spelling `calendarIsoText` writes, goes back to
- * Excel as a date serial with a date format rather than as text (#244). Every
- * caller that turns table values into written rows goes through here.
+ * Excel as a date serial with a date format rather than as text (#244). This is
+ * the model's half of that invariant, beside the reading half in
+ * `calendar.ts`; every caller that turns table values into written rows goes
+ * through here, and `test/workbook-dates.test.ts` runs every writer.
  */
-import { calendarIsoParts, serial1900 } from "../model/calendar.js";
+import { calendarIsoParts, serial1900 } from "./calendar.js";
 import { CellDate } from "../package/cell-date.js";
 import type { WritableCellValue } from "../package/table-writer.js";
 

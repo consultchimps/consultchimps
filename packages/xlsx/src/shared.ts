@@ -19,6 +19,7 @@ import {
 
 import type { ExcelTableDefinition } from "./excel-tables.js";
 import { CALENDAR_ISO_TEXT } from "./model/calendar.js";
+import { writableCellValue } from "./model/date-cells.js";
 import {
   decodeRange,
   type CellRectangle,
@@ -40,7 +41,6 @@ import {
   type RowValueCount,
 } from "./region/header-detection.js";
 import type { AllWorksheetSplitMetric } from "./split/all-worksheet.js";
-import { writableCellValue } from "./operations/workbook-dates.js";
 import { splitOutputFilenames } from "./split/names.js";
 import { stripPivotParts } from "./tier1/pivot.js";
 import { CellError } from "./package/cell-error.js";
