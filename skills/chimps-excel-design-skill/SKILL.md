@@ -1,9 +1,9 @@
 ---
 name: chimps-excel-design-skill
 description:
-  Standards for building a new client-facing Excel workbook, with Excel 365
-  formulas, named-range inputs, no invented figures, mandatory formatting and a
-  handover. Not for editing existing files.
+  Standards for a client-facing Excel workbook, built new or formatted before it
+  goes out, with Excel 365 formulas, named-range inputs, no invented figures,
+  mandatory formatting and a handover.
 license: Apache-2.0
 metadata:
   cli-version: "0.13.1"
@@ -14,10 +14,11 @@ metadata:
 
 ## Scope
 
-This skill decides what a new workbook contains. The library skill you write the
-file with (the built-in `xlsx` skill, or your own openpyxl or SheetJS code)
-handles the mechanics, which this skill does not repeat. To change a workbook
-that already exists, use `chimps-xlsx` where it is installed.
+This skill decides what a client workbook contains and how it looks. The library
+skill you write the file with (the built-in `xlsx` skill, or your own openpyxl
+or SheetJS code) handles the mechanics, which this skill does not repeat. To
+stack, tab together, split or inspect existing workbooks, use `chimps-xlsx`
+where it is installed.
 
 Where the library's habits differ, follow the rule on the right.
 
@@ -28,6 +29,17 @@ Where the library's habits differ, follow the rule on the right.
 | Fill an unknown with a plausible placeholder    | leave it blank and flag it                    |
 | Let the library set the document properties     | set `creator` and `lastModifiedBy` explicitly |
 | Treat formatting as taste                       | the formatting rules below are mandatory      |
+
+## Formatting or editing an existing workbook
+
+- Write to a new file and keep the original, unless the user asks for an
+  in-place edit.
+- Apply the Formatting and Document properties rules below, and change no value,
+  formula or sheet the user did not ask about.
+- Add no Assumptions sheet or named ranges unless asked.
+- A library save can drop charts, pivot tables, slicers and images: check for
+  them first and warn the user before saving.
+- Hand over a list of what changed, under the headings in Handover.
 
 ## Formulas
 
@@ -90,6 +102,10 @@ These rules are mandatory in every workbook this skill produces.
 `creator` and `lastModifiedBy` must never read `openpyxl`, `SheetJS`, `xlsx` or
 any other library name. Set both explicitly before saving, along with the title.
 A library name in the properties tells the client who really wrote the file.
+
+Use a name the user gave you. Never take one from git config, an email address
+or the machine; without a name, write `Analyst` and list it under Needs a
+decision.
 
 ## Handover
 

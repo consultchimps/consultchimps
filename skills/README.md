@@ -9,7 +9,7 @@ Claude Code, Codex and ChatGPT alike; nothing here is specific to one client.
 | --------------------------- | ----- | ------------------------------------------------------------------- |
 | `use-consultchimps`         | tool  | invocation, the `--json` envelope, exit codes, refusals, vocabulary |
 | `chimps-xlsx`               | tool  | transforming existing workbooks: consolidate, merge, split, inspect |
-| `chimps-excel-design-skill` | craft | authoring a workbook deliverable: formulas, layout, handover        |
+| `chimps-excel-design-skill` | craft | authoring or formatting a workbook deliverable: formulas, handover  |
 | `chimps-html-design-skill`  | craft | authoring a self-contained HTML deliverable: charts, theme, RTL     |
 
 The two tool skills drive the published CLI, so they belong in an agent with a

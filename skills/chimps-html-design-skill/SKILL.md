@@ -73,8 +73,13 @@ A system font stack with a named preferred font at the front. The shell ships
 
 ## Charts
 
-ECharts, inlined, and no other chart library. The rules that decide whether a
-chart is acceptable are in `references/charts.md`, and the short version is:
+ECharts, inlined, and no other chart library. Write the page with the shell's
+empty `<script></script>` pair, then run
+`python scripts/inline_echarts.py report.html` to paste ECharts in; never search
+the disk for it or paste it by hand. Without network, pass a local
+`echarts.min.js` as a second argument, or ship tables and say why. The rules
+that decide whether a chart is acceptable are in `references/charts.md`, and the
+short version is:
 
 - No 3D, in any form
 - No pie chart beyond two slices: three or more become a sorted bar chart
@@ -116,38 +121,9 @@ The whole procedure, done by hand with an unzip tool and a text editor, is in
 
 ## Before handing it over
 
-1. Search the file for anything it loads from outside itself: a host, a
-   protocol-relative `//host` URL, or a relative file such as `echarts.min.js`
-   or `images/logo.png`, which works on your machine and breaks once the file is
-   sent alone. It also reports any `http://` or `https://` URL and any quoted
-   `//host` string, such as one inside a chart option or a script, but not the
-   `w3.org` namespace URLs inline SVG carries. Relative files set from
-   JavaScript, such as an ECharts `image://images/icon.png` symbol or
-   `img.src = "logo.png"`, are reported too. The pattern ignores case and allows
-   either quote and spaces around `=`. Inline every hit, or confirm it is a link
-   the reader chooses to follow:
-
-   ```python
-   import re
-   html = open("report.html", encoding="utf-8").read()
-   pattern = r"""(?:src|srcset|href|action|poster|data)\s*=\s*["']?\s*(?!data:|#|mailto:)[^\s"'>]+|url\(\s*["']?\s*(?!data:|#)[^\s"')]+|@import|fetch\(|XMLHttpRequest|googleapis|https?://(?!www\.w3\.org/)[^\s"'<>)]+|["']//[^\s"'/][^\s"']*|image://(?!https?:|data:)[^\s"']+|setAttribute\(\s*["'](?:src|srcset|href|poster|data)["']\s*,\s*["'](?!data:|#|https?:|//)[^"']+|\.(?:src|href)\s*=\s*["'](?!data:|#|https?:|//)[^"']+"""
-   for hit in re.finditer(pattern, html, re.IGNORECASE):
-       print(html.count("\n", 0, hit.start()) + 1, hit.group(0))
-   # srcset lists several candidates. As HTML parses it, a URL runs to the
-   # next whitespace, then its descriptors run to the next comma.
-   for attr in re.finditer(r"srcset\s*=\s*([\"'])(.*?)\1", html, re.IGNORECASE):
-       value, pos = attr.group(2), 0
-       while (m := re.compile(r"[,\s]*(\S+)").match(value, pos)):
-           url, pos = m.group(1), m.end()
-           if url.endswith(","):
-               url = url.rstrip(",")
-           else:
-               comma = value.find(",", pos)
-               pos = len(value) if comma < 0 else comma + 1
-           if url and not url.lower().startswith("data:"):
-               print(html.count("\n", 0, attr.start()) + 1, "srcset", url)
-   ```
-
+1. Run `python scripts/check_offline.py report.html`, which lists everything the
+   page loads from outside itself, and inline each hit or confirm it is a link
+   the reader chooses to follow.
 2. Open it with the network disabled and confirm every chart draws.
 3. Confirm the palette slots run in order and none repeats.
 4. Set `dir="rtl"`, reload, confirm the layout mirrors, then set it back.

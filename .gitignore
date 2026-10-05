@@ -24,6 +24,7 @@ out/
 inputs/
 outputs/
 scratch/
+evals/results/
 tmp/
 *.log
 
