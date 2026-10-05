@@ -9,13 +9,14 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, "../..");
 const [outDir, ...filters] = process.argv.slice(2);
 if (!outDir) {
-  console.error("usage: node evals/skills/run.mjs <out-dir> [case ...]");
+  process.stderr.write("usage: node evals/skills/run.mjs <out-dir> [case]\n");
   process.exit(2);
 }
 
