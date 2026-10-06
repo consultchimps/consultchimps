@@ -583,6 +583,7 @@ export async function planSplitWorkbookBytes(
   const uncached = singleSourceUncachedFormulas(
     resolved.table,
     resolved.preserveWorkbook,
+    options.values === true,
   );
   const warnings = [
     ...(resolved.grouped.skippedRows > 0
@@ -655,6 +656,7 @@ export async function splitWorkbookBytes(
   const uncached = singleSourceUncachedFormulas(
     table,
     preserveWorkbook,
+    options.values === true,
     template?.uncachedFormulas,
   );
   const outputs: ByteArtifact[] = [];

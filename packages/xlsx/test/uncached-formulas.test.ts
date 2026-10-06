@@ -409,4 +409,48 @@ describe("formula cells with no cached value", () => {
       `${CORPUS_SHEET}!A3, ${CORPUS_SHEET}!B3`,
     );
   });
+
+  it("are described as blanked by a values-only preserved table split plan", async () => {
+    const directory = await createCorpusDirectory();
+    const input = path.join(directory, "input.xlsx");
+    await writeFile(input, await uncachedWorkbook());
+
+    const plan = await planSplitWorkbookByColumn({
+      column: CORPUS_SPLIT_COLUMN,
+      input,
+      outputDirectory: path.join(directory, "out"),
+      preserveWorkbook: true,
+      table: CORPUS_TABLE_NAME,
+      values: true,
+    });
+
+    expect(plan.warnings.join(" ")).toContain(
+      "values-only outputs hold a blank",
+    );
+  });
+
+  it("are named when the records reader finds a header blank because of one", async () => {
+    await expect(
+      readWorksheetRecordsBytes(
+        {
+          ...named,
+          bytes: await buildWorkbookFixture({
+            sheets: [
+              {
+                name: CORPUS_SHEET,
+                rows: [
+                  ["Record", { formula: '"Group"' }],
+                  [1, "Alpha"],
+                ],
+              },
+            ],
+          }),
+        },
+        { headerRow: 1, worksheet: CORPUS_SHEET },
+      ),
+    ).rejects.toMatchObject({
+      code: "XLSX_EMPTY_HEADER",
+      message: expect.stringContaining(`${CORPUS_SHEET}!B1`),
+    });
+  });
 });

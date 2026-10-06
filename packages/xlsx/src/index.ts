@@ -1131,6 +1131,7 @@ export async function planSplitWorkbookByColumn(
   const uncached = singleSourceUncachedFormulas(
     resolved.table,
     resolved.preserveWorkbook,
+    options.values === true,
   );
   warnings.push(...uncached.warnings);
   const collisions = resolved.existingOutputs.size;
@@ -1220,6 +1221,7 @@ export async function splitWorkbookByColumn(
   const uncached = singleSourceUncachedFormulas(
     table,
     preserveWorkbook,
+    options.values === true,
     template?.uncachedFormulas,
   );
   let pivotTablesRemoved = 0;

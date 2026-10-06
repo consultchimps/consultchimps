@@ -1077,6 +1077,12 @@ export async function workbookWorksheetRecords(
 
   const worksheetName = sheet.name;
   const grid = await readSheetGrid(workbook, sheet, { text: true });
+  // Named by every refusal below whose cause may be such a formula.
+  const sheetUncached = uncachedLocationsWithin(
+    worksheetName,
+    grid.uncachedFormulas,
+    undefined,
+  );
   const range = grid.range;
   if (!range) {
     throw new ConsultChimpsError(
@@ -1108,11 +1114,6 @@ export async function workbookWorksheetRecords(
     headerRowIndex === undefined ||
     headerRowIndex > range.endRow
   ) {
-    const sheetUncached = uncachedLocationsWithin(
-      worksheetName,
-      grid.uncachedFormulas,
-      undefined,
-    );
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_INVALID_HEADER_ROW,
       `Worksheet "${worksheetName}" does not contain the selected header row.${uncachedFormulaHint(sheetUncached)}`,
@@ -1136,9 +1137,10 @@ export async function workbookWorksheetRecords(
     if (!header) {
       throw new ConsultChimpsError(
         XLSX_ERRORS.XLSX_EMPTY_HEADER,
-        `Worksheet "${worksheetName}" contains an empty column header.`,
+        `Worksheet "${worksheetName}" contains an empty column header.${uncachedFormulaHint(sheetUncached)}`,
         {
           details: {
+            uncachedFormulas: sheetUncached,
             column: range.startColumn + offset + 1,
             headerRow: headerRowIndex + 1,
             worksheet: worksheetName,
@@ -1626,6 +1628,7 @@ export async function preservedSplitTemplate(
 export function singleSourceUncachedFormulas(
   table: Table,
   preserveWorkbook: boolean,
+  values: boolean,
   conversionLosses: readonly string[] = [],
 ): { count: number; warnings: string[] } {
   const locations = [
@@ -1633,7 +1636,7 @@ export function singleSourceUncachedFormulas(
   ];
   const effect = !preserveWorkbook
     ? "they came out blank"
-    : conversionLosses.length > 0
+    : values
       ? "they read as blank, and the values-only outputs hold a blank cell"
       : "the split read them as blank; the outputs keep the formulas";
   return {
