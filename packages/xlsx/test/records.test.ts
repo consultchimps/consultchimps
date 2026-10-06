@@ -69,6 +69,7 @@ describe("readWorksheetRecords", () => {
         ],
         skippedEmptyRows: 1,
         sourceRows: [2, 4],
+        uncachedFormulas: [],
         worksheet: "Companies",
       });
 

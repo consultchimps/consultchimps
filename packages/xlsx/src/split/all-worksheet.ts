@@ -31,6 +31,7 @@ import {
   WORKBOOK_MAIN_PART,
   WorkbookPackage,
 } from "../package/index.js";
+import { encodeCell } from "../model/references.js";
 import type { RowNumber } from "../model/types.js";
 import { isTableEditReport } from "../region/table-binding.js";
 import type { DataRegion } from "../region/types.js";
@@ -42,6 +43,10 @@ import {
 } from "../region/values.js";
 import { stripPivotParts } from "../tier1/pivot.js";
 import { blankStaleCachedFormulas } from "../tier1/stale-values.js";
+import {
+  uncachedFormulaHint,
+  uncachedFormulaWarnings,
+} from "../uncached-formulas.js";
 import { convertWorkbookToValuesWithReport } from "../values-only.js";
 
 export const SPLIT_OPERATION = "sheets.split-by-column";
@@ -145,6 +150,11 @@ export interface AllWorksheetSplitAnalysis {
   workbookBytes: Uint8Array;
   /** Sheet name by worksheet part, for every sheet, filtered or not. */
   worksheetNames: ReadonlyMap<string, string>;
+  /**
+   * `Sheet!B4` of every split-column cell holding a formula with no cached
+   * value: the split reads it as blank, so its row joins no group.
+   */
+  uncachedSplitCells: string[];
 }
 
 function isColumnNotFound(error: unknown): boolean {
@@ -411,7 +421,27 @@ export async function analyzeAllWorksheetSplit(
     selection.headerRow,
   );
   if (regions.length === 0) {
-    throw columnNotFound();
+    // A header that is a formula with no cached value reads as blank, which
+    // may be why the column was not found.
+    const uncached: string[] = [];
+    for (const sheet of workbook.sheets) {
+      for (const row of workbook.worksheet(sheet.name)?.rows() ?? []) {
+        for (const cell of row.cells) {
+          if (cell.formula !== undefined && !cell.hasCachedValue) {
+            uncached.push(
+              `${sheet.name}!${encodeCell(cell.ref.column, cell.ref.row)}`,
+            );
+          }
+        }
+      }
+    }
+    const error = columnNotFound();
+    if (uncached.length === 0) throw error;
+    throw new ConsultChimpsError(
+      error.code,
+      `${error.message}${uncachedFormulaHint(uncached)}`,
+      { details: { ...error.details, uncachedFormulas: uncached } },
+    );
   }
 
   const matching = { strict: selection.strict === true };
@@ -419,9 +449,26 @@ export async function analyzeAllWorksheetSplit(
   const sheets: SheetAnalysis[] = [];
   let inputRows = 0;
   let skippedRows = 0;
+  const uncachedSplitCells: string[] = [];
 
   for (const region of regions) {
     const column = splitColumnOf(region, selection.column)!;
+    for (const row of region.worksheet.rows()) {
+      if (
+        row.number < region.body.start.row ||
+        row.number > region.body.end.row
+      ) {
+        continue;
+      }
+      const cell = row.cells.find(
+        (candidate) => candidate.ref.column === column.index,
+      );
+      if (cell?.formula !== undefined && !cell.hasCachedValue) {
+        uncachedSplitCells.push(
+          `${region.sheetName}!${encodeCell(column.index, row.number)}`,
+        );
+      }
+    }
     const rowValues = readRowValues(
       region.worksheet,
       region.body.start.row,
@@ -451,8 +498,14 @@ export async function analyzeAllWorksheetSplit(
   if (groups.length === 0) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_SPLIT_NO_GROUPS,
-      `Column "${selection.column}" does not contain any non-blank values. Add at least one value and try again.`,
-      { details: { column: selection.column, ...identity.details } },
+      `Column "${selection.column}" does not contain any non-blank values. Add at least one value and try again.${uncachedFormulaHint(uncachedSplitCells)}`,
+      {
+        details: {
+          column: selection.column,
+          uncachedFormulas: uncachedSplitCells,
+          ...identity.details,
+        },
+      },
     );
   }
 
@@ -464,6 +517,7 @@ export async function analyzeAllWorksheetSplit(
     sheets,
     skippedRows,
     unchangedSheets,
+    uncachedSplitCells,
     workbookBytes,
     worksheetNames: new Map(
       workbook.sheets.map((sheet) => [sheet.partPath, sheet.name] as const),
@@ -509,7 +563,6 @@ async function buildGroupWorkbook(
     tableFallbackSheets: [],
     uncachedFormulas: [],
   };
-  const worksheetNameByPart = analysis.worksheetNames;
   // A table region compacts its rows, so a values conversion has to run before
   // the filter for the cached results to line up with the rows they describe.
   // A pure worksheet split converts afterwards, over the rows that survive.
@@ -522,9 +575,7 @@ async function buildGroupWorkbook(
     output.formulaCellsWithoutCachedValues =
       conversion.formulasWithoutCachedValues.length;
     for (const missing of conversion.formulasWithoutCachedValues) {
-      output.uncachedFormulas.push(
-        `${worksheetNameByPart.get(missing.worksheetPart) ?? missing.worksheetPart}!${missing.cell}`,
-      );
+      output.uncachedFormulas.push(missing.location);
     }
   };
 
@@ -594,6 +645,16 @@ async function buildGroupWorkbook(
   return output;
 }
 
+/** The warning a plan gives for split-column cells it read as blank. */
+export function plannedAllWorksheetSplitWarnings(
+  analysis: AllWorksheetSplitAnalysis,
+): string[] {
+  return uncachedFormulaWarnings(
+    analysis.uncachedSplitCells,
+    "they read as blank, so a row whose split value is one joins no group",
+  );
+}
+
 /** The metrics a plan reports, before a single output has been built. */
 export function plannedAllWorksheetSplitMetrics(
   analysis: AllWorksheetSplitAnalysis,
@@ -604,7 +665,9 @@ export function plannedAllWorksheetSplitMetrics(
     calcChainEntriesRemoved: 0,
     formulaCellsBlankedForRemovedRows: 0,
     formulaCellsConverted: 0,
-    formulaCellsWithoutCachedValues: 0,
+    // What the plan read: the split-column cells. A values-only run also
+    // counts what its conversion loses, which only the run can see.
+    formulaCellsWithoutCachedValues: analysis.uncachedSplitCells.length,
     groups: analysis.groups.length,
     inputFiles: 1,
     inputRows: analysis.inputRows,
@@ -726,13 +789,23 @@ export async function runAllWorksheetSplit(
       `Skipped ${analysis.skippedRows} row${analysis.skippedRows === 1 ? "" : "s"} with blank values in "${selection.column}"; no blank-value workbook was created.`,
     );
   }
-  if (formulaCellsWithoutCachedValues > 0) {
-    const locations = [...missingFormulaLocations];
-    const shown = locations.slice(0, 20).join(", ");
-    warnings.push(
-      `${formulaCellsWithoutCachedValues} formula cell${formulaCellsWithoutCachedValues === 1 ? " had" : "s had"} no cached value and became formatted blank cells in values-only output. Affected source locations: ${shown}${locations.length > 20 ? `, and ${locations.length - 20} more` : ""}. Open and recalculate the source workbook in Excel, save it, and rerun the split if these values are required.`,
-    );
-  }
+  // Like the other per-output counts, a values-only loss counts once per
+  // output it happens in. A split-column cell read as blank is added once,
+  // unless an output already lost it.
+  const splitCellsOnly = analysis.uncachedSplitCells.filter(
+    (location) => !missingFormulaLocations.has(location),
+  );
+  formulaCellsWithoutCachedValues += splitCellsOnly.length;
+  warnings.push(
+    ...uncachedFormulaWarnings(
+      [...splitCellsOnly, ...missingFormulaLocations],
+      selection.values === true
+        ? "a row whose split value is one joins no group, and any other became a blank cell in the values-only outputs"
+        : "they read as blank, so a row whose split value is one joins no group",
+      formulaCellsWithoutCachedValues,
+    ),
+  );
+
   if (pivotTablesRemoved > 0) {
     warnings.push(
       `Removed ${pivotTablesRemoved} pivot table${pivotTablesRemoved === 1 ? "" : "s"}: their caches contained rows from other groups, and a cache travels inside the workbook whether or not the pivot is opened. Rebuild the pivot in Excel from each output's own rows if it is required.`,

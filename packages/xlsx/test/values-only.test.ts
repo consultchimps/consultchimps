@@ -136,7 +136,11 @@ describe("convertWorkbookToValues", () => {
     );
     expect(conversion.formulasConverted).toBe(2);
     expect(conversion.formulasWithoutCachedValues).toEqual([
-      { cell: "B2", worksheetPart: "xl/worksheets/sheet1.xml" },
+      {
+        cell: "B2",
+        location: "Formulas!B2",
+        worksheetPart: "xl/worksheets/sheet1.xml",
+      },
     ]);
   });
 });

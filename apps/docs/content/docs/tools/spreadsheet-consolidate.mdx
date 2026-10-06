@@ -352,6 +352,9 @@ consultchimps sheets consolidate inputs/ \
 - `--force` replaces an existing output file, including a drafted mapping.
 - `--values` explicitly requests values-only output. Consolidation already reads
   stored cell results and never copies formulas.
+- A formula Excel never calculated has no stored result, so it comes out blank.
+  The result counts such cells in `formulaCellsWithoutCachedValues` and names
+  them in a warning; open and save the workbook in Excel, then run again.
 - The output table receives an autofilter and practical column widths.
 - The command refuses to use any input workbook as its output.
 

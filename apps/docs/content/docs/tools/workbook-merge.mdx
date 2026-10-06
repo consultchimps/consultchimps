@@ -83,8 +83,10 @@ ConsultChimps replaces each formula with the result stored in the source file.
 It edits the workbook cell in place, so number formats, fonts, fills, borders,
 alignment, row heights, column widths, hidden state, and workbook layout are
 preserved. A formula that has never been calculated and therefore has no stored
-result becomes a blank cell with its formatting intact. Excel Table calculated
-column and totals formulas are also removed so Excel does not recreate them.
+result becomes a blank cell with its formatting intact; the result counts such
+cells in `formulaCellsWithoutCachedValues` and names them in a warning. Excel
+Table calculated column and totals formulas are also removed so Excel does not
+recreate them.
 
 ## TypeScript API
 

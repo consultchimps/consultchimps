@@ -1,5 +1,9 @@
 import { hasCachedValueElement } from "./model/xml.js";
-import { WorkbookPackage } from "./package/index.js";
+import {
+  forEachWorkbookSheet,
+  tagAttribute,
+  WorkbookPackage,
+} from "./package/index.js";
 
 const CELL_PATTERN =
   /<(?:[A-Za-z_][\w.-]*:)?c\b[^>]*?(?:\/\s*>|>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?c\s*>)/gu;
@@ -16,6 +20,8 @@ const WORKBOOK_PART = "xl/workbook.xml";
 export interface MissingCachedFormula {
   cell: string;
   worksheetPart: string;
+  /** `Sheet!B4`, or `part!B4` for a part the workbook does not list. */
+  location: string;
 }
 
 export interface ValuesOnlyConversion {
@@ -29,11 +35,12 @@ function removeWorksheetFormulas(
   worksheetPart: string,
 ): {
   formulasConverted: number;
-  formulasWithoutCachedValues: MissingCachedFormula[];
+  formulasWithoutCachedValues: Omit<MissingCachedFormula, "location">[];
   xml: string;
 } {
   let formulasConverted = 0;
-  const formulasWithoutCachedValues: MissingCachedFormula[] = [];
+  const formulasWithoutCachedValues: Omit<MissingCachedFormula, "location">[] =
+    [];
   const xml = worksheetXml.replace(CELL_PATTERN, (cellXml) => {
     if (!CELL_FORMULA_PATTERN.test(cellXml)) {
       return cellXml;
@@ -60,6 +67,32 @@ function removeWorksheetFormulas(
  * formats, row heights, column widths, tables, and the rest of the workbook
  * package byte-for-byte apart from formula and calculation-chain metadata.
  */
+/** Each worksheet part's sheet name, as the workbook part lists them. */
+function worksheetNamesByPart(
+  workbookPackage: WorkbookPackage,
+): Map<string, string> {
+  const targets = new Map(
+    workbookPackage
+      .relationshipsOf(WORKBOOK_PART)
+      .map(
+        (relationship) =>
+          [
+            relationship.id,
+            workbookPackage.resolvePart(WORKBOOK_PART, relationship.target),
+          ] as const,
+      ),
+  );
+  const names = new Map<string, string>();
+  const xml = workbookPackage.readText(WORKBOOK_PART);
+  if (xml === undefined) return names;
+  forEachWorkbookSheet(xml, WORKBOOK_PART, (tag) => {
+    const name = tagAttribute(tag, "name");
+    const part = targets.get(tagAttribute(tag, "id") ?? "");
+    if (name !== undefined && part !== undefined) names.set(part, name);
+  });
+  return names;
+}
+
 export async function convertWorkbookToValues(
   workbookBytes: Uint8Array,
 ): Promise<Uint8Array> {
@@ -70,6 +103,7 @@ export async function convertWorkbookToValuesWithReport(
   workbookBytes: Uint8Array,
 ): Promise<ValuesOnlyConversion> {
   const workbookPackage = await WorkbookPackage.load(workbookBytes);
+  const names = worksheetNamesByPart(workbookPackage);
   let formulasConverted = 0;
   const formulasWithoutCachedValues: MissingCachedFormula[] = [];
 
@@ -82,7 +116,12 @@ export async function convertWorkbookToValuesWithReport(
     );
     workbookPackage.writeText(partName, conversion.xml);
     formulasConverted += conversion.formulasConverted;
-    formulasWithoutCachedValues.push(...conversion.formulasWithoutCachedValues);
+    for (const missing of conversion.formulasWithoutCachedValues) {
+      formulasWithoutCachedValues.push({
+        ...missing,
+        location: `${names.get(partName) ?? partName}!${missing.cell}`,
+      });
+    }
   }
 
   for (const partName of workbookPackage.partsMatching(TABLE_PART_PATTERN)) {

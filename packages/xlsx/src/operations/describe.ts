@@ -45,6 +45,7 @@ import {
   yieldToEventLoop,
   type ReadWorkbookOptions,
 } from "../shared.js";
+import { uncachedFormulaWarnings } from "../uncached-formulas.js";
 import type { WorkbookRead } from "./read-model.js";
 
 /**
@@ -68,6 +69,7 @@ const BUILTIN_DEFINED_NAME_PREFIX = "_xlnm.";
 export type DescribeWorkbookMetric =
   | "dataRows"
   | "excelTables"
+  | "formulaCellsWithoutCachedValues"
   | "headerColumns"
   | "hiddenWorksheets"
   | "namedRanges"
@@ -364,6 +366,7 @@ async function describeWorksheet(
   options: DescribeWorkbookOptions,
   sampleLimit: number,
   outputContext: AbortOutputContext,
+  uncachedFormulas: string[],
 ): Promise<WorkbookSheetDescription> {
   const visibility = publicVisibility(sheet.visibility);
   const used = worksheet.usedRange;
@@ -382,6 +385,15 @@ async function describeWorksheet(
   // per-row occupancy question below.
   const storedRows = worksheet.rows();
   throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
+  // Every one on the sheet: none gives a sample, and one standing alone in
+  // a column is the reason that column shows no values.
+  for (const row of storedRows) {
+    for (const cell of row.cells) {
+      if (cell.formula !== undefined && !cell.hasCachedValue) {
+        uncachedFormulas.push(`${sheet.name}!${formatCellRef(cell.ref)}`);
+      }
+    }
+  }
 
   if (!(await hasAnyContent(storedRows, options, outputContext))) {
     return { ...EMPTY_SHEET, columns: [], name: sheet.name, visibility };
@@ -661,19 +673,27 @@ function descriptionWarnings(
 export function workbookDescriptionResult(
   description: WorkbookDescription,
   hiddenExcluded: number,
+  uncachedFormulas: readonly string[] = [],
 ): OperationResult<DescribeWorkbookMetric> {
   return {
     operation: INSPECT_OPERATION,
     // An inspection creates nothing, so it has no artifacts. The structure
     // itself travels beside this result: metrics are counts, and names are not.
     artifacts: [],
-    warnings: descriptionWarnings(description, hiddenExcluded),
+    warnings: [
+      ...descriptionWarnings(description, hiddenExcluded),
+      ...uncachedFormulaWarnings(
+        uncachedFormulas,
+        "they give no sample values",
+      ),
+    ],
     metrics: {
       dataRows: description.sheets.reduce(
         (total, sheet) => total + sheet.dataRowCount,
         0,
       ),
       excelTables: description.excelTables.length,
+      formulaCellsWithoutCachedValues: uncachedFormulas.length,
       headerColumns: description.sheets.reduce(
         (total, sheet) => total + sheet.columns.length,
         0,
@@ -710,6 +730,7 @@ export async function describeWorkbookModel(
   const { hiddenExcluded, selected } = selectSheets(workbook, options);
 
   const sheets: WorkbookSheetDescription[] = [];
+  const uncachedFormulas: string[] = [];
   for (const [index, sheet] of selected.entries()) {
     if (index > 0) {
       await yieldToEventLoop();
@@ -728,6 +749,7 @@ export async function describeWorkbookModel(
             options,
             sampleLimit,
             outputContext,
+            uncachedFormulas,
           )
         : {
             ...EMPTY_SHEET,
@@ -767,6 +789,10 @@ export async function describeWorkbookModel(
 
   return {
     description,
-    result: workbookDescriptionResult(description, hiddenExcluded),
+    result: workbookDescriptionResult(
+      description,
+      hiddenExcluded,
+      uncachedFormulas,
+    ),
   };
 }

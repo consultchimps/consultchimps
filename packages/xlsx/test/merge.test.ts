@@ -144,6 +144,7 @@ describe("mergeWorkbooks", () => {
       const result = await mergeWorkbooks([first, second], output);
 
       expect(result.metrics).toEqual({
+        formulaCellsWithoutCachedValues: 0,
         hiddenSheets: 1,
         inputFiles: 2,
         outputSheets: 4,

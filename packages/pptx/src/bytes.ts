@@ -29,7 +29,7 @@ import {
   PRESENTATION_EXTENSION,
   PRESENTATION_MEDIA_TYPE,
   safeNameFragment,
-  skippedRowsWarnings,
+  recordsWarnings,
   templateInspectionResult,
   validateRecordsForTemplate,
   validateTemplateInspection,
@@ -118,6 +118,7 @@ async function resolveRecords(
         "The supplied records contain no rows, so there is nothing to populate.",
       rows: options.records.map((record) => ({ ...record })),
       skippedEmptyRows: 0,
+      uncachedFormulas: [],
     };
   }
 
@@ -135,6 +136,7 @@ async function resolveRecords(
     noDataMessage: `Worksheet "${worksheetRecords.worksheet}" does not contain any nonempty data rows below the header.`,
     rows: worksheetRecords.rows,
     skippedEmptyRows: worksheetRecords.skippedEmptyRows,
+    uncachedFormulas: worksheetRecords.uncachedFormulas,
   };
 }
 
@@ -272,8 +274,9 @@ export async function planPopulatePresentationBytes(
         exists: false,
       },
     ],
-    warnings: skippedRowsWarnings(resolved.records),
+    warnings: recordsWarnings(resolved.records),
     metrics: {
+      formulaCellsWithoutCachedValues: resolved.records.uncachedFormulas.length,
       generatedSlides: resolved.records.rows.length,
       inputRows: resolved.records.rows.length,
       outputFiles: 1,
@@ -308,7 +311,7 @@ export async function populatePresentationBytes(
     bytes: generated.bytes,
     mediaType: PRESENTATION_MEDIA_TYPE,
   };
-  const warnings = skippedRowsWarnings(records);
+  const warnings = recordsWarnings(records);
 
   return {
     result: {
@@ -322,6 +325,7 @@ export async function populatePresentationBytes(
       ],
       warnings,
       metrics: {
+        formulaCellsWithoutCachedValues: records.uncachedFormulas.length,
         generatedSlides: records.rows.length,
         inputRows: records.rows.length,
         outputFiles: 1,

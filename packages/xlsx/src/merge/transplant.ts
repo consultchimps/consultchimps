@@ -56,7 +56,8 @@ import {
   WorkbookPackage,
   type PackageRelationship,
 } from "../package/index.js";
-import { convertWorkbookToValues } from "../values-only.js";
+import { uncachedFormulaWarnings } from "../uncached-formulas.js";
+import { convertWorkbookToValuesWithReport } from "../values-only.js";
 import {
   addContentTypeOverride,
   addRelationship,
@@ -128,6 +129,11 @@ export interface MergedWorkbook {
   bytes: Uint8Array;
   hiddenSheets: number;
   outputSheets: number;
+  /**
+   * `Sheet!B4` of every formula with no cached value a values-only merge
+   * replaced with a blank cell; empty for a merge that keeps formulas.
+   */
+  uncachedFormulas: string[];
   warnings: string[];
   /** True when the output kept a macro project and must be named `.xlsm`. */
   macroEnabled: boolean;
@@ -1257,11 +1263,21 @@ export async function finishMergedWorkbook(
   }
 
   let bytes = await output.save();
+  // A merge that keeps formulas reads no values, so only a values-only merge
+  // has formulas without a cached value to lose.
+  const uncachedFormulas: string[] = [];
   if (options.values) {
-    bytes = await convertWorkbookToValues(bytes);
+    const conversion = await convertWorkbookToValuesWithReport(bytes);
+    bytes = conversion.bytes;
+    for (const missing of conversion.formulasWithoutCachedValues) {
+      uncachedFormulas.push(missing.location);
+    }
   }
 
-  const warnings: string[] = [];
+  const warnings: string[] = uncachedFormulaWarnings(
+    uncachedFormulas,
+    "they became blank cells in the values-only output",
+  );
   if (state.hiddenSheets > 0) {
     const plural = pluralize(state.hiddenSheets, " was", "s were");
     warnings.push(
@@ -1318,6 +1334,7 @@ export async function finishMergedWorkbook(
     bytes,
     hiddenSheets: state.hiddenSheets,
     outputSheets: state.outputSheets,
+    uncachedFormulas,
     warnings,
     macroEnabled: macro.enabled,
   };

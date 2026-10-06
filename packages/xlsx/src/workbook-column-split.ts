@@ -34,6 +34,7 @@ import { XLSX_ERRORS } from "./errors.js";
 import {
   analyzeAllWorksheetSplit,
   plannedAllWorksheetSplitMetrics,
+  plannedAllWorksheetSplitWarnings,
   runAllWorksheetSplit,
   SPLIT_OPERATION,
   workbookExtensionOf,
@@ -190,7 +191,7 @@ export async function planFullWorkbookSplit(
   options: FullWorkbookSplitOptions,
 ): Promise<OperationPlan<Exclude<FullWorkbookSplitMetric, "outputRows">>> {
   const resolved = await resolveFullWorkbookSplit(options);
-  const warnings: string[] = [];
+  const warnings = plannedAllWorksheetSplitWarnings(resolved.analysis);
   if (resolved.existingOutputs.size > 0 && options.overwrite !== true) {
     warnings.push(
       `${resolved.existingOutputs.size} planned output file${resolved.existingOutputs.size === 1 ? " already exists" : "s already exist"}; executing without overwrite will fail.`,

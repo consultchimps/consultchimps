@@ -63,6 +63,11 @@ import {
   yieldToEventLoop,
 } from "../../shared.js";
 import { writableCellValue } from "../../model/date-cells.js";
+import type { CellRectangle } from "../../model/references.js";
+import {
+  uncachedFormulaHint,
+  uncachedLocationsWithin,
+} from "../../uncached-formulas.js";
 import {
   StreamedWorkbook,
   type StreamedCell,
@@ -165,6 +170,12 @@ export interface ConsolidationPlan {
   readonly skippedTitleRows: number;
   readonly skippedSpacerColumns: number;
   /**
+   * `Sheet!B4` of every formula cell with no cached value in a table the
+   * output takes rows from, or anywhere on a selected worksheet that yielded
+   * no table. Such a cell comes out blank.
+   */
+  readonly uncachedFormulas: readonly string[];
+  /**
    * Each input's size and zip directory fingerprint in the first pass, which
    * every later read must match.
    */
@@ -197,6 +208,8 @@ interface SheetOutcome {
     Omit<SheetTable, "input" | "sheetIndex" | "sheet" | "gathered"> | undefined;
   readonly skippedTitleRows: number;
   readonly skippedSpacerColumns: number;
+  /** The rectangle the table's cells were read from, header row included. */
+  readonly region?: CellRectangle | undefined;
 }
 
 interface ColumnStats {
@@ -392,6 +405,16 @@ class SheetProfile implements WorksheetConsumer {
       skippedTitleRows: countTitleRows(this.#counts, header),
       skippedSpacerColumns:
         range.endColumn - range.startColumn + 1 - columns.length,
+      // Every column of the range: a column holding only formulas with no
+      // cached value reads as a spacer, and is exactly what must be reported.
+      // To the range's last row, as the table reader's region runs: a
+      // trailing row of only such formulas is dropped, and must be reported.
+      region: {
+        startRow: header,
+        endRow: range.endRow,
+        startColumn: range.startColumn,
+        endColumn: range.endColumn,
+      },
     };
   }
 }
@@ -592,6 +615,7 @@ export async function planConsolidation(
   };
   let skippedTitleRows = 0;
   let skippedSpacerColumns = 0;
+  const uncachedFormulas: string[] = [];
 
   for (const [input, source] of sources.entries()) {
     throwIfAborted(signal, CONSOLIDATE_OPERATION, outputContext);
@@ -607,6 +631,17 @@ export async function planConsolidation(
         const outcome = profile.finish(read, settings.headerRow);
         skippedTitleRows += outcome.skippedTitleRows;
         skippedSpacerColumns += outcome.skippedSpacerColumns;
+        // A worksheet that yielded no table is counted whole: its formulas
+        // may be why it looked empty.
+        uncachedFormulas.push(
+          ...uncachedLocationsWithin(
+            // Excel's own spelling, `[file.xlsx]Sheet!B4`, once two inputs
+            // can share a sheet name.
+            sources.length > 1 ? `[${source.file}]${sheet.name}` : sheet.name,
+            read.uncachedFormulas,
+            outcome.table === undefined ? undefined : outcome.region,
+          ),
+        );
         if (outcome.table !== undefined) {
           tables.push({
             ...outcome.table,
@@ -641,7 +676,8 @@ export async function planConsolidation(
   if (tables.length === 0) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_NO_TABLES,
-      "No visible, non-empty worksheets were found in the input workbooks.",
+      `No visible, non-empty worksheets were found in the input workbooks.${uncachedFormulaHint(uncachedFormulas)}`,
+      { details: { uncachedFormulas } },
     );
   }
 
@@ -835,6 +871,7 @@ export async function planConsolidation(
     inputTables: tables.length,
     skippedTitleRows,
     skippedSpacerColumns,
+    uncachedFormulas,
     inputVersions,
   };
 }

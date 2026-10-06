@@ -10,6 +10,10 @@ import {
   type OperationControlOptions,
   type OperationResult,
 } from "@consultchimps/core";
+import {
+  uncachedFormulaHint,
+  uncachedFormulaWarnings,
+} from "@consultchimps/xlsx/bytes";
 import JSZip from "jszip";
 
 export const PRESENTATION_MEDIA_TYPE =
@@ -64,6 +68,7 @@ export const PPTX_ERRORS = {
 export type PptxErrorCode = (typeof PPTX_ERRORS)[keyof typeof PPTX_ERRORS];
 
 export type PopulatePowerPointTemplateMetric =
+  | "formulaCellsWithoutCachedValues"
   | "generatedSlides"
   | "inputRows"
   | "outputFiles"
@@ -118,6 +123,8 @@ export interface PopulationRecords {
   noDataMessage: string;
   rows: Array<Record<string, string>>;
   skippedEmptyRows: number;
+  /** `Sheet!B4` of each formula cell with no cached value the rows read as empty. */
+  uncachedFormulas: string[];
 }
 
 interface ShapeInspection {
@@ -618,8 +625,8 @@ export function validateRecordsForTemplate(
   if (records.rows.length === 0) {
     throw new ConsultChimpsError(
       PPTX_ERRORS.PPTX_NO_DATA_ROWS,
-      records.noDataMessage,
-      { details },
+      `${records.noDataMessage}${uncachedFormulaHint(records.uncachedFormulas)}`,
+      { details: { ...details, uncachedFormulas: records.uncachedFormulas } },
     );
   }
 
@@ -641,14 +648,20 @@ export function validateRecordsForTemplate(
   }
 }
 
-export function skippedRowsWarnings(records: PopulationRecords): string[] {
-  return records.skippedEmptyRows > 0
-    ? [
-        `Skipped ${records.skippedEmptyRows} empty worksheet row${
-          records.skippedEmptyRows === 1 ? "" : "s"
-        }.`,
-      ]
-    : [];
+export function recordsWarnings(records: PopulationRecords): string[] {
+  return [
+    ...(records.skippedEmptyRows > 0
+      ? [
+          `Skipped ${records.skippedEmptyRows} empty worksheet row${
+            records.skippedEmptyRows === 1 ? "" : "s"
+          }.`,
+        ]
+      : []),
+    ...uncachedFormulaWarnings(
+      records.uncachedFormulas,
+      "they read as empty text, and a row holding nothing else is skipped",
+    ),
+  ];
 }
 
 function replaceSlideText(

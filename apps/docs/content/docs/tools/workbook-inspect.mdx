@@ -42,8 +42,9 @@ nothing, creates no output, and leaves the original untouched.
 - **Excel Tables** and **named ranges** the package declares, with the sheet and
   range each one covers.
 - **Warnings** from the operation itself, naming what a later operation would
-  stumble on: worksheets left out of the description, or a worksheet with no
-  header row to match columns by.
+  stumble on: worksheets left out of the description, a worksheet with no header
+  row to match columns by, or formulas Excel never calculated, which every
+  operation reads as blank (counted in `formulaCellsWithoutCachedValues`).
 
 ## When to use it
 

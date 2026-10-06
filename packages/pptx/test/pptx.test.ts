@@ -283,6 +283,7 @@ describe("PowerPoint template population", () => {
       ],
       warnings: ["Skipped 1 empty worksheet row."],
       metrics: {
+        formulaCellsWithoutCachedValues: 0,
         generatedSlides: 2,
         inputRows: 2,
         outputFiles: 1,

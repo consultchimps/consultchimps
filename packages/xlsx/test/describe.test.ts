@@ -188,6 +188,7 @@ describe("describeWorkbook", () => {
     expect(result.metrics).toEqual({
       dataRows: 3,
       excelTables: 0,
+      formulaCellsWithoutCachedValues: 0,
       headerColumns: 3,
       hiddenWorksheets: 0,
       namedRanges: 0,
@@ -783,7 +784,11 @@ describe("describeWorkbook row occupancy", () => {
     // The sheet is not empty, so it gets a header row rather than the
     // "nothing here" description reserved for a genuinely blank worksheet.
     expect(description.sheets[0]?.headerRow).toBe(1);
-    expect(result.warnings).toEqual([]);
+    // Both formulas are reported, since neither gives a sample (#162).
+    expect(result.metrics.formulaCellsWithoutCachedValues).toBe(2);
+    expect(result.warnings).toEqual([
+      expect.stringContaining("Formulas!A1, Formulas!A2"),
+    ]);
   });
 
   it("still treats a formatting-only cell as no content", async () => {

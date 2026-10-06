@@ -98,6 +98,18 @@ export interface WorksheetRead {
    * row is read whole and delivered in order, as the engine indexed it.
    */
   readonly gathered: boolean;
+  /**
+   * Every formula cell with no cached value, zero-based, in row then column
+   * order. The read delivers nothing for such a cell, because the value it
+   * would produce is not in the file; this is how a caller learns it was there.
+   */
+  readonly uncachedFormulas: readonly CellPosition[];
+}
+
+/** A zero-based cell position. */
+export interface CellPosition {
+  readonly row: number;
+  readonly column: number;
 }
 
 /** A worksheet the workbook lists. */
@@ -441,7 +453,12 @@ export class StreamedWorkbook {
     const file = this.#context.file;
     if (sheet.part === undefined) {
       consumer.begin();
-      return { range: undefined, merges: [], gathered: false };
+      return {
+        range: undefined,
+        merges: [],
+        gathered: false,
+        uncachedFormulas: [],
+      };
     }
     if (sheet.part === "" || !this.#zip.has(sheet.part)) {
       throw unreadableWorksheet(sheet.name, file);
@@ -594,6 +611,9 @@ export class StreamedWorkbook {
     // cell with no value of its own a formula cell, as the engine reads them.
     const sharedFormulas = new Set<number>();
     const arrayRanges: CellRectangle[] = [];
+    // Keyed by position, so a repeated cell's last copy decides, as it does
+    // for the value the engine keeps.
+    const uncached = new Map<string, CellPosition>();
     const hasFormula = (
       raw: RawCell,
       row: number | undefined,
@@ -663,7 +683,22 @@ export class StreamedWorkbook {
           columnTag += 1;
           row = tagValid ? rowTag - 1 : undefined;
         }
-        const engine = this.#engineCell(raw, hasFormula(raw, row, columnTag));
+        const formula = hasFormula(raw, row, columnTag);
+        if (row !== undefined && columnTag >= 0) {
+          const key = `${String(row)}:${String(columnTag)}`;
+          // The `<f>` element itself, as the model and the values conversion
+          // ask, so every operation counts the same cells.
+          if (
+            raw.formula !== undefined &&
+            !raw.hasValue &&
+            raw.type !== "inlineStr"
+          ) {
+            uncached.set(key, { row, column: columnTag });
+          } else {
+            uncached.delete(key);
+          }
+        }
+        const engine = this.#engineCell(raw, formula);
         if (engine.kind === "absent") continue;
         if (columnTag >= 0) {
           guessStartColumn = Math.min(guessStartColumn, columnTag);
@@ -785,6 +820,9 @@ export class StreamedWorkbook {
         if (delivered.length > 0) consumer.row(row, delivered);
       }
     }
-    return { range, merges, gathered: gather };
+    const uncachedFormulas = [...uncached.values()].sort(
+      (left, right) => left.row - right.row || left.column - right.column,
+    );
+    return { range, merges, gathered: gather, uncachedFormulas };
   }
 }

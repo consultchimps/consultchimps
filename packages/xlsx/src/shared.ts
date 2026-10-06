@@ -3,6 +3,11 @@
  * operations. This module must stay free of node:fs and node:path imports so
  * the byte entry point can run in browsers.
  */
+import {
+  uncachedFormulaHint,
+  uncachedFormulaWarnings,
+  uncachedLocationsWithin,
+} from "./uncached-formulas.js";
 import { ConsultChimpsError } from "@consultchimps/core";
 import {
   type CellValue,
@@ -44,7 +49,7 @@ import type { AllWorksheetSplitMetric } from "./split/all-worksheet.js";
 import { splitOutputFilenames } from "./split/names.js";
 import { stripPivotParts } from "./tier1/pivot.js";
 import { CellError } from "./package/cell-error.js";
-import { convertWorkbookToValues } from "./values-only.js";
+import { convertWorkbookToValuesWithReport } from "./values-only.js";
 import {
   cellWidthLength,
   tableColumnWidth,
@@ -79,6 +84,7 @@ export function isMacroWorkbookName(name: string): boolean {
 // carry fixed document timestamps instead of the current time.
 
 export type ConsolidateWorkbooksMetric =
+  | "formulaCellsWithoutCachedValues"
   | "inputFiles"
   | "inputTables"
   | "outputColumns"
@@ -89,7 +95,10 @@ export type ConsolidateWorkbooksMetric =
   | "unmappedColumns";
 export type ConsolidateWorkbooksPlanMetric = "inputFiles" | "outputFiles";
 export type MergeWorkbooksMetric =
-  "hiddenSheets" | "inputFiles" | "outputSheets";
+  | "formulaCellsWithoutCachedValues"
+  | "hiddenSheets"
+  | "inputFiles"
+  | "outputSheets";
 /**
  * One metric vocabulary for every split, whichever engine ran and whichever
  * surface asked. A single-source split reports zero for the work only the
@@ -373,6 +382,11 @@ export interface WorksheetRecords {
   rows: Array<Record<string, string>>;
   skippedEmptyRows: number;
   sourceRows: number[];
+  /**
+   * `Sheet!B4` of every formula cell with no cached value from the header row
+   * down, which the records hold as empty text.
+   */
+  uncachedFormulas: string[];
   worksheet: string;
 }
 
@@ -639,17 +653,49 @@ function worksheetToTable(
     },
     skippedSpacerColumns: width - keptOffsets.length,
     skippedTitleRows: countTitleRows(profile.counts, headerRowIndex),
-    table: {
-      columns,
-      rows,
-      sourceRows,
-      source: {
-        file: sourceFile,
-        firstDataRow: headerRowIndex + 2,
-        sheet: sheetName,
+    // Every column of the range: a column holding only formulas with no
+    // cached value reads as a spacer, and is exactly what must be reported.
+    table: withUncachedFormulas(
+      {
+        columns,
+        rows,
+        sourceRows,
+        source: {
+          file: sourceFile,
+          firstDataRow: headerRowIndex + 2,
+          sheet: sheetName,
+        },
       },
-    },
+      grid,
+      sheetName,
+      { ...range, startRow: headerRowIndex },
+    ),
   };
+}
+
+/**
+ * `Sheet!B4` of the formula cells with no cached value inside the rectangle a
+ * table was read from, kept beside the table rather than on it: `Table` is the
+ * shared tabular shape, and only an operation reporting them asks.
+ */
+const uncachedFormulasByTable = new WeakMap<Table, string[]>();
+
+/** The formula cells with no cached value a table was read over. */
+export function uncachedFormulasOf(table: Table): string[] {
+  return uncachedFormulasByTable.get(table) ?? [];
+}
+
+function withUncachedFormulas<T extends Table>(
+  table: T,
+  grid: SheetGrid,
+  sheet: string,
+  rectangle: CellRectangle,
+): T {
+  uncachedFormulasByTable.set(
+    table,
+    uncachedLocationsWithin(sheet, grid.uncachedFormulas, rectangle),
+  );
+  return table;
 }
 
 function excelTableToTable(
@@ -709,18 +755,23 @@ function excelTableToTable(
     return undefined;
   }
 
-  return {
-    columns,
-    excelTableName: definition.name,
-    excelTableRange: definition.range,
-    rows,
-    sourceRows,
-    source: {
-      file: sourceFile,
-      firstDataRow: firstDataRowIndex + 1,
-      sheet: definition.sheet,
+  return withUncachedFormulas(
+    {
+      columns,
+      excelTableName: definition.name,
+      excelTableRange: definition.range,
+      rows,
+      sourceRows,
+      source: {
+        file: sourceFile,
+        firstDataRow: firstDataRowIndex + 1,
+        sheet: definition.sheet,
+      },
     },
-  };
+    grid,
+    definition.sheet,
+    range,
+  );
 }
 
 const BUILTIN_DEFINED_NAME_PREFIX = "_xlnm.";
@@ -786,18 +837,23 @@ function namedRangeToTable(
     return undefined;
   }
 
-  return {
-    columns,
-    rows,
-    sourceRows,
-    rangeName: name,
-    rangeRef,
-    source: {
-      file: sourceFile,
-      firstDataRow: range.startRow + 2,
-      sheet: sheetName,
+  return withUncachedFormulas(
+    {
+      columns,
+      rows,
+      sourceRows,
+      rangeName: name,
+      rangeRef,
+      source: {
+        file: sourceFile,
+        firstDataRow: range.startRow + 2,
+        sheet: sheetName,
+      },
     },
-  };
+    grid,
+    sheetName,
+    range,
+  );
 }
 
 function lowercaseSet(values: string[] | undefined): Set<string> | undefined {
@@ -1021,6 +1077,12 @@ export async function workbookWorksheetRecords(
 
   const worksheetName = sheet.name;
   const grid = await readSheetGrid(workbook, sheet, { text: true });
+  // Named by every refusal below whose cause may be such a formula.
+  const sheetUncached = uncachedLocationsWithin(
+    worksheetName,
+    grid.uncachedFormulas,
+    undefined,
+  );
   const range = grid.range;
   if (!range) {
     throw new ConsultChimpsError(
@@ -1054,10 +1116,11 @@ export async function workbookWorksheetRecords(
   ) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_INVALID_HEADER_ROW,
-      `Worksheet "${worksheetName}" does not contain the selected header row.`,
+      `Worksheet "${worksheetName}" does not contain the selected header row.${uncachedFormulaHint(sheetUncached)}`,
       {
         details: {
           headerRow: options.headerRow,
+          uncachedFormulas: sheetUncached,
           worksheet: worksheetName,
         },
       },
@@ -1074,9 +1137,10 @@ export async function workbookWorksheetRecords(
     if (!header) {
       throw new ConsultChimpsError(
         XLSX_ERRORS.XLSX_EMPTY_HEADER,
-        `Worksheet "${worksheetName}" contains an empty column header.`,
+        `Worksheet "${worksheetName}" contains an empty column header.${uncachedFormulaHint(sheetUncached)}`,
         {
           details: {
+            uncachedFormulas: sheetUncached,
             column: range.startColumn + offset + 1,
             headerRow: headerRowIndex + 1,
             worksheet: worksheetName,
@@ -1137,6 +1201,11 @@ export async function workbookWorksheetRecords(
     rows,
     skippedEmptyRows,
     sourceRows,
+    uncachedFormulas: uncachedLocationsWithin(
+      worksheetName,
+      grid.uncachedFormulas,
+      { ...range, startRow: headerRowIndex },
+    ),
     worksheet: worksheetName,
   };
 }
@@ -1325,6 +1394,32 @@ export interface ResolvedSplitSource {
 }
 
 /**
+ * Every formula cell with no cached value on the worksheets a refused split
+ * looked at, so a refusal for finding no data can say why that may be.
+ */
+async function uncachedOnSheets(
+  workbook: StreamedWorkbook,
+  sheetName: string | undefined,
+  includeHiddenSheets: boolean | undefined,
+): Promise<string[]> {
+  const locations: string[] = [];
+  for (const sheet of workbook.sheets) {
+    if (
+      sheetName === undefined
+        ? !includeHiddenSheets && !sheet.visible
+        : sheet.name.toLocaleLowerCase() !== sheetName.toLocaleLowerCase()
+    ) {
+      continue;
+    }
+    const grid = await readSheetGrid(workbook, sheet);
+    locations.push(
+      ...uncachedLocationsWithin(sheet.name, grid.uncachedFormulas, undefined),
+    );
+  }
+  return locations;
+}
+
+/**
  * Select the single table a split reads from, group its rows, and locate the
  * package definition a preserved split rewrites.
  */
@@ -1376,6 +1471,11 @@ export async function resolveSplitSource(
   }
 
   if (tables.length === 0) {
+    const uncached = await uncachedOnSheets(
+      workbook,
+      options.sheet,
+      options.includeHiddenSheets,
+    );
     const selectedSource = options.table
       ? `Excel Table "${options.table}"`
       : options.range
@@ -1386,10 +1486,11 @@ export async function resolveSplitSource(
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_SPLIT_NO_TABLE,
       selectedSource
-        ? `${selectedSource} was not found or has no data rows.`
-        : "No visible, non-empty worksheet was found in the input workbook.",
+        ? `${selectedSource} was not found or has no data rows.${uncachedFormulaHint(uncached)}`
+        : `No visible, non-empty worksheet was found in the input workbook.${uncachedFormulaHint(uncached)}`,
       {
         details: {
+          uncachedFormulas: uncached,
           availableRanges: availableNamedRanges.map((namedRange) => ({
             name: namedRange.rangeName,
             sheet: namedRange.source?.sheet,
@@ -1435,15 +1536,38 @@ export async function resolveSplitSource(
     );
   }
 
-  const grouped = groupTableByColumn(table, options.column, {
-    includeBlank: options.includeBlank,
-  });
+  let grouped: ReturnType<typeof groupTableByColumn>;
+  try {
+    grouped = groupTableByColumn(table, options.column, {
+      includeBlank: options.includeBlank,
+    });
+  } catch (error) {
+    // A header that is a formula with no cached value reads as blank, which
+    // is the likely reason the column was not found.
+    const uncached = uncachedFormulasOf(table);
+    if (
+      error instanceof ConsultChimpsError &&
+      error.code === "TABLE_COLUMN_NOT_FOUND" &&
+      uncached.length > 0
+    ) {
+      throw new ConsultChimpsError(
+        error.code,
+        `${error.message}${uncachedFormulaHint(uncached)}`,
+        {
+          cause: error,
+          details: { ...error.details, uncachedFormulas: uncached },
+        },
+      );
+    }
+    throw error;
+  }
   if (grouped.groups.length === 0) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_SPLIT_NO_GROUPS,
-      `No output groups remain for column "${grouped.column}".`,
+      `No output groups remain for column "${grouped.column}".${uncachedFormulaHint(uncachedFormulasOf(table))}`,
       {
         details: {
+          uncachedFormulas: uncachedFormulasOf(table),
           column: grouped.column,
           includeBlank: options.includeBlank ?? true,
           ...context.details,
@@ -1482,11 +1606,43 @@ export async function resolveSplitSource(
  * Prepare the workbook bytes a preserved split rewrites for every group,
  * optionally replacing formulas with their cached values first.
  */
-export async function preservedSplitTemplateBytes(
+export async function preservedSplitTemplate(
   workbookBytes: Uint8Array,
   values: boolean | undefined,
-): Promise<Uint8Array> {
-  return values ? convertWorkbookToValues(workbookBytes) : workbookBytes;
+): Promise<{ bytes: Uint8Array; uncachedFormulas: string[] }> {
+  if (!values) return { bytes: workbookBytes, uncachedFormulas: [] };
+  const conversion = await convertWorkbookToValuesWithReport(workbookBytes);
+  return {
+    bytes: conversion.bytes,
+    uncachedFormulas: conversion.formulasWithoutCachedValues.map(
+      (missing) => missing.location,
+    ),
+  };
+}
+
+/**
+ * The formula cells with no cached value a single-source split met: those in
+ * the table it read, and, for a values-only preserved split, those the
+ * conversion blanked anywhere in the workbook. Counted once each.
+ */
+export function singleSourceUncachedFormulas(
+  table: Table,
+  preserveWorkbook: boolean,
+  values: boolean,
+  conversionLosses: readonly string[] = [],
+): { count: number; warnings: string[] } {
+  const locations = [
+    ...new Set([...uncachedFormulasOf(table), ...conversionLosses]),
+  ];
+  const effect = !preserveWorkbook
+    ? "they came out blank"
+    : values
+      ? "they read as blank, and the values-only outputs hold a blank cell"
+      : "the split read them as blank; the outputs keep the formulas";
+  return {
+    count: locations.length,
+    warnings: uncachedFormulaWarnings(locations, effect),
+  };
 }
 
 /**

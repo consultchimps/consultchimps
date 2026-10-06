@@ -10,6 +10,7 @@ import { CellError } from "../package/cell-error.js";
 import { bytesSource } from "../package/index.js";
 import {
   StreamedWorkbook,
+  type CellPosition,
   type CellRectangle,
   type StreamedCell,
   type StreamedSheet,
@@ -22,6 +23,8 @@ export interface SheetGrid {
   /** The used range, or undefined when the worksheet holds nothing. */
   readonly range: CellRectangle | undefined;
   readonly merges: readonly CellRectangle[];
+  /** Formula cells with no cached value, which `value` reads as empty. */
+  readonly uncachedFormulas: readonly CellPosition[];
   /**
    * The value a cell holds, or null for an empty cell. An error cell holds its
    * text, `#DIV/0!`, which is what the worksheet shows.
@@ -87,6 +90,7 @@ export async function readSheetGrid(
   return {
     range: read.range,
     merges: read.merges,
+    uncachedFormulas: read.uncachedFormulas,
     value: (row, column) => tableValue(rows.get(row)?.get(column)),
     text: (row, column) => texts.get(row)?.get(column) ?? "",
   };
