@@ -1121,6 +1121,39 @@ const populated = await populatePresentationBytes({
 });
 ```
 
+`consolidateWorkbookSources` takes the same options but holds neither the inputs
+nor the output whole. Each input is a random-access source, such as `blobSource`
+over a browser `File`, read in pieces rather than whole, and the workbook goes
+to your `output` sink chunk by chunk. The sink receives the bytes
+`consolidateWorkbooksBytes` would return, and its `abort` runs when the
+consolidation fails or is cancelled, to discard what was written. In a Web
+Worker, an Origin Private File System sync access handle makes a sink that keeps
+the output on disk.
+
+```ts
+import {
+  blobSource,
+  consolidateWorkbookSources,
+} from "@consultchimps/xlsx/bytes";
+
+// Any writable destination works; this one collects Blob parts.
+let parts: Uint8Array[] = [];
+const { outputName } = await consolidateWorkbookSources({
+  inputs: files.map((file) => blobSource(file.name, file)),
+  output: {
+    write: (chunk) => {
+      parts.push(chunk);
+    },
+    flush: () => Promise.resolve(),
+    // Runs when the consolidation fails or is cancelled.
+    abort: async () => {
+      parts = [];
+    },
+  },
+});
+const workbook = new File(parts, outputName);
+```
+
 A template inspection reads a slide and writes nothing, so
 `inspectPresentationOutcomeBytes` returns the structured result beside the
 placeholder report rather than beside output bytes. Its metrics are the slide's

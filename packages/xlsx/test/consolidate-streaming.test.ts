@@ -10,6 +10,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import type { RandomAccessSource } from "@consultchimps/core";
 import {
   applyColumnMappingToTables,
   unionTables,
@@ -19,8 +20,11 @@ import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
 import {
+  blobSource,
+  consolidateWorkbookSources,
   consolidateWorkbooksBytes,
   readWorkbookTablesBytes,
+  type ByteSink,
   type WorkbookInputBytes,
 } from "../src/bytes.js";
 import { consolidateWorkbooks } from "../src/index.js";
@@ -385,6 +389,249 @@ describe("two-pass consolidation: what a failed run leaves behind", () => {
       expect(await readdir(path.dirname(output)).catch(() => [])).toEqual([]);
     } finally {
       await rm(directory, { force: true, recursive: true });
+    }
+  });
+});
+
+/** A source that fails a read larger than the zip reader's chunk. */
+function guardedSource(input: WorkbookInputBytes): {
+  source: RandomAccessSource;
+  largestRead: () => number;
+} {
+  const inner = blobSource(input.name, new Blob([input.bytes.slice()]));
+  let largest = 0;
+  return {
+    largestRead: () => largest,
+    source: {
+      name: inner.name,
+      size: inner.size,
+      readAt: (offset, length, signal) => {
+        largest = Math.max(largest, length);
+        if (length > 1024 * 1024) {
+          throw new Error(`Read ${length} bytes of ${inner.size} at once`);
+        }
+        return inner.readAt(offset, length, signal);
+      },
+    },
+  };
+}
+
+/** A sink that keeps each chunk, and drops them all when aborted. */
+function collectingSink(onWrite?: () => void): {
+  sink: ByteSink;
+  bytes: () => Buffer;
+  chunks: () => number;
+  aborts: () => number;
+} {
+  const chunks: Uint8Array[] = [];
+  let aborts = 0;
+  return {
+    sink: {
+      write: (chunk) => {
+        chunks.push(chunk);
+        onWrite?.();
+      },
+      flush: () => Promise.resolve(),
+      abort: () => {
+        aborts += 1;
+        chunks.length = 0;
+        return Promise.resolve();
+      },
+    },
+    bytes: () => Buffer.concat(chunks),
+    chunks: () => chunks.length,
+    aborts: () => aborts,
+  };
+}
+
+/** A worksheet of `rows` rows stored uncompressed, so the file is large. */
+function largeSheetXml(rows: number): string {
+  const cells = (row: number, values: string[]) =>
+    values
+      .map(
+        (value, column) =>
+          `<c r="${String.fromCharCode(65 + column)}${row}" t="inlineStr"><is><t>${value}</t></is></c>`,
+      )
+      .join("");
+  const body = [`<row r="1">${cells(1, ["Case_ID", "Region", "Note"])}</row>`];
+  for (let row = 2; row <= rows; row += 1) {
+    body.push(
+      `<row r="${row}">${cells(row, [`R-${row}`, row % 2 ? "North" : "South", `Note for row ${row}`])}</row>`,
+    );
+  }
+  return `<sheetData>${body.join("")}</sheetData>`;
+}
+
+describe("consolidation over sources and a sink", () => {
+  it("reads in pieces, writes in chunks, and gives the command line's bytes", async () => {
+    const large = await handInput("large.xlsx", largeSheetXml(8_000));
+    expect(large.bytes.length).toBeGreaterThan(1024 * 1024);
+    const inputs = [...(await reviewInputs()), large];
+    const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
+    try {
+      const paths = [];
+      for (const input of inputs) {
+        const target = path.join(directory, input.name);
+        await writeFile(target, input.bytes);
+        paths.push(target);
+      }
+      const output = path.join(directory, "out.xlsx");
+      const reference = await consolidateWorkbooks({ inputs: paths, output });
+
+      const guarded = inputs.map(guardedSource);
+      const collected = collectingSink();
+      const outcome = await consolidateWorkbookSources({
+        inputs: guarded.map((entry) => entry.source),
+        output: collected.sink,
+        outputName: "out",
+      });
+
+      expect(outcome.outputName).toBe("out.xlsx");
+      expect(outcome.mappingDraft).toBeUndefined();
+      expect(outcome.result.metrics).toEqual(reference.metrics);
+      expect(outcome.result.metrics.outputRows).toBeGreaterThan(8_000);
+      expect(collected.chunks()).toBeGreaterThan(1);
+      expect(
+        Math.max(...guarded.map((entry) => entry.largestRead())),
+      ).toBeLessThanOrEqual(1024 * 1024);
+      expect(collected.bytes()).toEqual(await readFile(output));
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  }, 60_000);
+
+  it("returns the mapping draft beside the streamed workbook", async () => {
+    const inputs = await reviewInputs();
+    const collected = collectingSink();
+    const outcome = await consolidateWorkbookSources({
+      inputs: inputs.map((input) => guardedSource(input).source),
+      output: collected.sink,
+      suggestMapping: true,
+    });
+    const reference = await consolidateWorkbooksBytes({
+      inputs,
+      suggestMapping: true,
+    });
+    expect(collected.bytes()).toEqual(Buffer.from(reference.outputs[0]!.bytes));
+    expect(outcome.mappingDraft).toEqual(reference.outputs[1]);
+    expect(outcome.result).toEqual(reference.result);
+  });
+
+  it("fails with the sink's own error when the sink throws", async () => {
+    const inputs = await reviewInputs();
+    const failure = new Error("disk full");
+    let aborts = 0;
+    const abort = (): Promise<void> => {
+      aborts += 1;
+      return Promise.resolve();
+    };
+    for (const sink of [
+      {
+        write: () => {
+          throw failure;
+        },
+        flush: () => Promise.resolve(),
+        abort,
+      },
+      {
+        write: () => undefined,
+        flush: () => Promise.reject(failure),
+        abort,
+      },
+    ] satisfies ByteSink[]) {
+      await expect(
+        consolidateWorkbookSources({
+          inputs: inputs.map((input) =>
+            blobSource(input.name, new Blob([input.bytes.slice()])),
+          ),
+          output: sink,
+        }),
+      ).rejects.toBe(failure);
+    }
+    expect(aborts).toBe(2);
+  });
+
+  it("reports a source that fails to read as a read failure of that input", async () => {
+    const [input] = await reviewInputs();
+    await expect(
+      consolidateWorkbookSources({
+        inputs: [
+          {
+            name: input!.name,
+            size: input!.bytes.length,
+            readAt: () => Promise.reject(new Error("gone")),
+          },
+        ],
+        output: collectingSink().sink,
+      }),
+    ).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+      details: { source: input!.name },
+    });
+  });
+
+  it("aborts the sink when cancelled after writing began", async () => {
+    const inputs = await reviewInputs();
+    const controller = new AbortController();
+    const collected = collectingSink(() => controller.abort());
+    await expect(
+      consolidateWorkbookSources({
+        inputs: inputs.map((input) =>
+          blobSource(input.name, new Blob([input.bytes.slice()])),
+        ),
+        output: collected.sink,
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ code: "OPERATION_ABORTED" });
+    expect(collected.aborts()).toBe(1);
+    expect(collected.chunks()).toBe(0);
+  });
+});
+
+describe("consolidation cancelled at the very end", () => {
+  it("aborts the sink when cancelled during the last write", async () => {
+    const inputs = await reviewInputs();
+    const controller = new AbortController();
+    // The zip's end-of-directory record is in the last chunk written.
+    const collected = collectingSink();
+    const write = collected.sink.write;
+    collected.sink.write = (chunk) => {
+      write(chunk);
+      if (Buffer.from(chunk).includes(Buffer.from([0x50, 0x4b, 5, 6]))) {
+        controller.abort();
+      }
+    };
+    await expect(
+      consolidateWorkbookSources({
+        inputs: inputs.map((input) =>
+          blobSource(input.name, new Blob([input.bytes.slice()])),
+        ),
+        output: collected.sink,
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ code: "OPERATION_ABORTED" });
+    expect(collected.aborts()).toBe(1);
+  });
+});
+
+describe("blobSource", () => {
+  it("reads the requested range and refuses one outside the blob", async () => {
+    const source = blobSource(
+      "x.xlsx",
+      new Blob([new Uint8Array([1, 2, 3, 4])]),
+    );
+    expect(source.size).toBe(4);
+    expect([...(await source.readAt(1, 2))]).toEqual([2, 3]);
+    for (const [offset, length] of [
+      [-1, 1],
+      [0, 5],
+      [3, 2],
+      [0.5, 1],
+      [0, -1],
+    ]) {
+      await expect(source.readAt(offset!, length!)).rejects.toBeInstanceOf(
+        RangeError,
+      );
     }
   });
 });
