@@ -1,8 +1,8 @@
 /**
  * The wire contract between the tool pages and the operation Web Worker.
  *
- * Only this module is shared by both sides, and it deliberately contains types
- * plus one tiny helper, with no engine imports. The worker resolves a task to
+ * Only this module is shared by both sides, and it deliberately contains only
+ * types, with no engine imports. The worker resolves a task to
  * the matching byte-level operation and loads that engine on demand, so a page
  * that is merely open never downloads a PDF or workbook engine.
  *
@@ -14,10 +14,9 @@
  *   failure travels as its message and code and is rebuilt by the client.
  */
 import type {
-  ByteArtifact,
-  ByteOperationOutcome,
   OperationPlan,
   OperationProgress,
+  OperationResult,
 } from "@consultchimps/core";
 // Type-only imports: the runtime modules are loaded inside the worker.
 import type { MergePdfsMetric, SplitPdfMetric } from "@consultchimps/pdf/bytes";
@@ -39,10 +38,30 @@ import type {
   UnprotectWorkbookMetric,
 } from "@consultchimps/xlsx/bytes";
 
-/** One in-memory input, in the shape every byte-level operation accepts. */
-export interface NamedBytes {
+/**
+ * One input as the visitor chose it. A `File` crosses into the worker as a
+ * reference to the same file, not a copy of its bytes, and the worker reads it.
+ */
+export interface NamedFile {
   readonly name: string;
-  readonly bytes: Uint8Array;
+  readonly file: Blob;
+}
+
+/**
+ * One output as the page receives it. The worker wraps each output in a
+ * `Blob`, which crosses back as a reference the browser manages, so the page
+ * never holds the bytes in a buffer of its own.
+ */
+export interface OutputFile {
+  readonly name: string;
+  readonly blob: Blob;
+  readonly mediaType?: string | undefined;
+}
+
+/** A byte-level operation's outcome with its outputs as `OutputFile`s. */
+export interface FileOperationOutcome<TMetric extends string> {
+  readonly result: OperationResult<TMetric>;
+  readonly outputs: readonly OutputFile[];
 }
 
 /**
@@ -101,32 +120,32 @@ export interface WorkbookInspectOptions {
 export type OperationTask =
   | {
       readonly kind: "pdf.plan-split";
-      readonly input: NamedBytes;
+      readonly input: NamedFile;
       readonly filenamePrefix?: string | undefined;
     }
   | {
       readonly kind: "pdf.split";
-      readonly input: NamedBytes;
+      readonly input: NamedFile;
       readonly filenamePrefix?: string | undefined;
     }
   | {
       readonly kind: "pdf.merge";
-      readonly inputs: readonly NamedBytes[];
+      readonly inputs: readonly NamedFile[];
       readonly outputName?: string | undefined;
     }
   | {
       readonly kind: "xlsx.plan-split";
-      readonly input: NamedBytes;
+      readonly input: NamedFile;
       readonly options: WorkbookSplitOptions;
     }
   | {
       readonly kind: "xlsx.split";
-      readonly input: NamedBytes;
+      readonly input: NamedFile;
       readonly options: WorkbookSplitOptions;
     }
   | {
       readonly kind: "xlsx.merge";
-      readonly inputs: readonly NamedBytes[];
+      readonly inputs: readonly NamedFile[];
       readonly outputName?: string | undefined;
       readonly values?: boolean | undefined;
     }
@@ -134,7 +153,7 @@ export type OperationTask =
       // Rows are stacked in the order the inputs are listed, so the array
       // carries the visitor's arrangement, not an incidental read order.
       readonly kind: "xlsx.consolidate";
-      readonly inputs: readonly NamedBytes[];
+      readonly inputs: readonly NamedFile[];
       readonly addSourceColumns?: boolean | undefined;
       readonly includeHiddenSheets?: boolean | undefined;
       // A parsed and validated version 1 mapping. This surface has no
@@ -151,12 +170,12 @@ export type OperationTask =
       // library's proposal over the same tables, never a second grouping rule
       // living in the page. Nothing it returns is applied to anything.
       readonly kind: "xlsx.suggest-mapping";
-      readonly inputs: readonly NamedBytes[];
+      readonly inputs: readonly NamedFile[];
       readonly includeHiddenSheets?: boolean | undefined;
     }
   | {
       readonly kind: "xlsx.columns";
-      readonly input: NamedBytes;
+      readonly input: NamedFile;
       readonly headerRow?: number | undefined;
       readonly worksheet?: string | undefined;
     }
@@ -165,29 +184,29 @@ export type OperationTask =
       // this sits with the plan and column tasks rather than with the byte
       // operations below.
       readonly kind: "xlsx.inspect";
-      readonly input: NamedBytes;
+      readonly input: NamedFile;
       readonly options: WorkbookInspectOptions;
     }
   | {
       readonly kind: "xlsx.unprotect";
-      readonly input: NamedBytes;
+      readonly input: NamedFile;
       readonly outputName?: string | undefined;
     }
   | {
       readonly kind: "pptx.inspect";
-      readonly template: NamedBytes;
+      readonly template: NamedFile;
       readonly templateSlide?: number | undefined;
     }
   | {
       readonly kind: "pptx.plan-populate";
-      readonly template: NamedBytes;
-      readonly workbook: NamedBytes;
+      readonly template: NamedFile;
+      readonly workbook: NamedFile;
       readonly options: PresentationPopulateOptions;
     }
   | {
       readonly kind: "pptx.populate";
-      readonly template: NamedBytes;
-      readonly workbook: NamedBytes;
+      readonly template: NamedFile;
+      readonly workbook: NamedFile;
       readonly options: PresentationPopulateOptions;
     };
 
@@ -217,15 +236,18 @@ export interface WorksheetColumns {
 
 interface OperationTaskResults {
   "pdf.plan-split": OperationPlan<SplitPdfMetric>;
-  "pdf.split": ByteOperationOutcome<SplitPdfMetric>;
-  "pdf.merge": ByteOperationOutcome<MergePdfsMetric>;
+  "pdf.split": FileOperationOutcome<SplitPdfMetric>;
+  "pdf.merge": FileOperationOutcome<MergePdfsMetric>;
   "xlsx.plan-split": OperationPlan<SplitWorkbookByColumnPlanMetric>;
   // The split reports more than a plain byte outcome: in all-worksheet mode
   // its result also carries per-output and per-worksheet detail, so the
-  // operation's own outcome type is kept rather than flattened.
-  "xlsx.split": SplitWorkbookBytesOutcome;
-  "xlsx.merge": ByteOperationOutcome<MergeWorkbooksMetric>;
-  "xlsx.consolidate": ByteOperationOutcome<ConsolidateWorkbooksMetric>;
+  // operation's own result type is kept rather than flattened.
+  "xlsx.split": {
+    readonly result: SplitWorkbookBytesOutcome["result"];
+    readonly outputs: readonly OutputFile[];
+  };
+  "xlsx.merge": FileOperationOutcome<MergeWorkbooksMetric>;
+  "xlsx.consolidate": FileOperationOutcome<ConsolidateWorkbooksMetric>;
   // The drafted mapping and the evidence behind each of its entries. The
   // consolidated workbook the suggesting run also builds is dropped in the
   // worker: this task exists to answer a question, not to produce a file.
@@ -234,10 +256,10 @@ interface OperationTaskResults {
   // The description travels beside the operation's structured result, so the
   // page can render both the structure and the counts the library derived.
   "xlsx.inspect": WorkbookDescriptionOutcome;
-  "xlsx.unprotect": ByteOperationOutcome<UnprotectWorkbookMetric>;
+  "xlsx.unprotect": FileOperationOutcome<UnprotectWorkbookMetric>;
   "pptx.inspect": PresentationInspectionOutcome;
   "pptx.plan-populate": OperationPlan<PopulatePowerPointTemplatePlanMetric>;
-  "pptx.populate": ByteOperationOutcome<PopulatePowerPointTemplateMetric>;
+  "pptx.populate": FileOperationOutcome<PopulatePowerPointTemplateMetric>;
 }
 
 /** What a given task resolves to once the worker has run it. */
@@ -262,17 +284,6 @@ export interface CancelCommand {
 
 export type WorkerCommand = CancelCommand | RunCommand;
 
-/**
- * An output on its way back to the page. The bytes travel as a standalone
- * ArrayBuffer so they can be transferred instead of copied; the buffer always
- * matches the artifact exactly, never a larger pool the view sat inside.
- */
-export interface TransferableArtifact {
-  readonly name: string;
-  readonly buffer: ArrayBuffer;
-  readonly mediaType?: string | undefined;
-}
-
 export interface ProgressEvent {
   readonly type: "progress";
   readonly id: number;
@@ -287,8 +298,8 @@ export interface DoneEvent {
    * `result` half of a byte-operation outcome.
    */
   readonly value: unknown;
-  /** Present only for tasks that produce bytes; recombined with `value`. */
-  readonly artifacts?: readonly TransferableArtifact[] | undefined;
+  /** Present only for tasks that produce files; recombined with `value`. */
+  readonly artifacts?: readonly OutputFile[] | undefined;
 }
 
 export interface FailedEvent {
@@ -299,14 +310,3 @@ export interface FailedEvent {
 }
 
 export type WorkerEvent = DoneEvent | FailedEvent | ProgressEvent;
-
-/** Rebuild a page-side artifact from the bytes the worker handed over. */
-export function fromTransferable(artifact: TransferableArtifact): ByteArtifact {
-  return {
-    name: artifact.name,
-    bytes: new Uint8Array(artifact.buffer),
-    ...(artifact.mediaType === undefined
-      ? {}
-      : { mediaType: artifact.mediaType }),
-  };
-}

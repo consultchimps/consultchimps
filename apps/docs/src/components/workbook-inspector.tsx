@@ -109,7 +109,7 @@ export function useWorkbookDescription(
           const outcome = await runOperation(
             {
               kind: "xlsx.inspect",
-              input: { bytes: file.bytes, name: file.name },
+              input: { file: file.file, name: file.name },
               options: { headerRow, includeHiddenSheets },
             },
             { signal: controller.signal },
