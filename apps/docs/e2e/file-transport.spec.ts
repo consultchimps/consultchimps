@@ -64,6 +64,16 @@ test.describe("tool pages leave reading files to the worker", () => {
         resultArtifacts(page).first().getByTestId("artifact-download").click(),
       "consolidated.xlsx",
     );
+    // The workbook was written to the origin's private file system, not
+    // assembled in memory.
+    const written = await page.evaluate(async () => {
+      const root = await navigator.storage.getDirectory();
+      const folder = await root.getDirectoryHandle("consultchimps-outputs");
+      let count = 0;
+      for await (const _ of folder.keys()) count += 1;
+      return count;
+    });
+    expect(written).toBe(1);
   });
 
   test("split", async ({ page }) => {

@@ -78,8 +78,9 @@ runs, so CPU time and memory are the measures to trust.
 - **Reading needs random access.** The reader starts from the zip's central
   directory, so the CLI reads through a file handle and the browser through
   `Blob.slice`.
-- **The browser is not yet streaming end to end.** It still holds its inputs and
-  output in memory. Its peak memory was not measured.
+- **The browser consolidates as the command line does**, reading in pieces and
+  writing to disk; see Browser streaming below. Its other operations still read
+  whole inputs, in the worker.
 - **Behaviour must carry over unchanged.** The current suite already tests most
   of what the spike left untested, and those tests gate the change: merged title
   banners, spacer columns, `uniqueHeaders` naming, malformed packages, and
@@ -128,3 +129,58 @@ that rounds to zero shows `0` rather than `-0`, the `A/P` marker shows `AM` or
 3. The remaining readers (inspection, tables, split input), one at a time. Done.
 4. Number-format display text, after which SheetJS can be removed (#241). Done,
    and SheetJS is removed from the repository.
+
+## Browser streaming
+
+Added 2026-10-06. The browser tools held each whole input in the page, copied it
+into the worker, and returned each output as one buffer that the page copied
+again to download. They now follow the command line: inputs are read in pieces
+and outputs are written to disk as they are produced.
+
+- **Inputs.** A page hands the worker each chosen `File`, a reference to the
+  file on disk, and never reads it. Consolidation reads through `blobSource`,
+  which is `Blob.slice` random access. Operations that still need a whole
+  workbook read it once, in the worker.
+- **Outputs.** Consolidation writes into the Origin Private File System through
+  a sync access handle in the worker, and the page downloads the OPFS `File`,
+  which is backed by disk. Where OPFS is missing or refuses (a private window in
+  some browsers), the output is collected as `Blob` parts instead, and the page
+  says so once it passes 50 MB. A run's OPFS file is deleted when the next run
+  that produces files starts, and a sweep removes any older than a day, left by
+  a closed tab. Drafting a mapping no longer builds the workbook at all.
+- **Not chosen.** The File System Access save picker writes straight to a file
+  the visitor names, but only Chromium has it and it must be opened by a click
+  before the run starts. OPFS covers Chromium, Firefox and Safari with no extra
+  step.
+
+A spike measured a worker writing 512 MB, 64 KB at a time, in headless Chromium.
+Peak private memory above the idle tab:
+
+|                                 | Persistent profile | Private context |
+| ------------------------------- | ------------------ | --------------- |
+| OPFS sync access handle         | 5 MB               | 781 MB          |
+| `Blob` parts                    | 518 MB             | 1,163 MB        |
+| One `Uint8Array`, then a `Blob` | not measured       | 1,546 MB        |
+
+OPFS stays on disk in a normal profile and is held in memory in a private one,
+where it is still no worse than `Blob` parts. Firefox wrote and downloaded
+through OPFS correctly. Playwright's WebKit build for Windows refused OPFS in
+both kinds of profile, so Safari was not checked here; that refusal is the case
+the `Blob` fallback covers.
+
+Peak memory of the whole browser above the idle tool page, before this change,
+on neutral generated workbooks of 12 columns:
+
+| Operation, input                       | Peak above idle |
+| -------------------------------------- | --------------- |
+| Consolidate, 10 x 15,000 rows (9.8 MB) | 169 MB          |
+| Consolidate, 150,000 rows (9.7 MB)     | 161 MB          |
+| Consolidate, 600,000 rows (39 MB)      | 351 MB          |
+| Merge, 10 x 15,000 rows                | 263 MB          |
+| Unprotect, 150,000 rows                | 301 MB          |
+| Inspect, 150,000 rows                  | 950 MB          |
+
+Merge, unprotect, split, inspection and PowerPoint population still build or
+read whole packages in the library, on the command line too, so they gain only
+the input and output transport. Moving each onto the streaming reader and writer
+is separate work.

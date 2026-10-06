@@ -19,6 +19,7 @@ import {
   type OperationControlOptions,
 } from "@consultchimps/core";
 
+import { browserOutputStorage, removeOutputs } from "@/lib/output-storage";
 import type {
   NamedFile,
   OperationTask,
@@ -39,6 +40,26 @@ const scope = self as unknown as {
   ): void;
   postMessage(message: WorkerEvent): void;
 };
+
+/**
+ * The OPFS outputs this worker wrote. They are deleted when the next task that
+ * produces files starts, because the page then stops offering them, and a
+ * sweep removes any a closed tab left behind.
+ */
+const createdOutputs = new Set<string>();
+const outputStorage = browserOutputStorage();
+let sweeping = removeOutputs(outputStorage, createdOutputs);
+
+/** The tasks whose outputs replace what the page offers. */
+const PRODUCES_FILES = new Set<OperationTask["kind"]>([
+  "pdf.merge",
+  "pdf.split",
+  "pptx.populate",
+  "xlsx.consolidate",
+  "xlsx.merge",
+  "xlsx.split",
+  "xlsx.unprotect",
+]);
 
 /** One controller per in-flight task, so a `cancel` command can reach it. */
 const controllers = new Map<number, AbortController>();
@@ -198,40 +219,37 @@ async function perform(
       );
     }
     case "xlsx.consolidate": {
-      const { consolidateWorkbooksBytes } =
-        await import("@consultchimps/xlsx/bytes");
-      return answerWithOutputs(
-        await consolidateWorkbooksBytes({
-          ...controls,
-          inputs: await Promise.all(
-            task.inputs.map((input) => whole(input, controls.signal)),
-          ),
+      // Read in pieces and written to disk as it goes (ADR 0006).
+      const { consolidateFiles } = await import("@/lib/streamed-consolidation");
+      const { result, outputs } = await consolidateFiles(
+        task.inputs,
+        {
           addSourceColumns: task.addSourceColumns,
           includeHiddenSheets: task.includeHiddenSheets,
           mapping: task.mapping,
           normalizeHeaders: task.normalizeHeaders,
           outputName: task.outputName,
-        }),
+        },
+        controls,
+        outputStorage,
+        createdOutputs,
       );
+      return { value: result, artifacts: outputs };
     }
     case "xlsx.suggest-mapping": {
-      const { consolidateWorkbooksBytes } =
-        await import("@consultchimps/xlsx/bytes");
       // The suggestion is drafted from the tables the consolidation read, so
       // the page proposes exactly what the library proposes for these
-      // workbooks and these options. The consolidated workbook it also builds
-      // is not returned: the page asked what the headers look like, not for a
-      // file, and reading the tables through the operation is what keeps the
-      // browser's draft and the command line's draft the same document.
-      const { result } = await consolidateWorkbooksBytes({
-        ...controls,
-        inputs: await Promise.all(
-          task.inputs.map((input) => whole(input, controls.signal)),
+      // workbooks and these options. The workbook that run writes is not
+      // wanted, so it is dropped as it is produced.
+      const { suggestMappingFromFiles } =
+        await import("@/lib/streamed-consolidation");
+      return answerWithValue(
+        await suggestMappingFromFiles(
+          task.inputs,
+          task.includeHiddenSheets,
+          controls,
         ),
-        includeHiddenSheets: task.includeHiddenSheets,
-        suggestMapping: true,
-      });
-      return answerWithValue(result.suggestion);
+      );
     }
     case "xlsx.columns": {
       const { readWorksheetRecordsBytes } =
@@ -316,6 +334,11 @@ async function execute(id: number, task: OperationTask): Promise<void> {
   const controller = new AbortController();
   controllers.set(id, controller);
   try {
+    if (PRODUCES_FILES.has(task.kind)) {
+      await sweeping;
+      sweeping = removeOutputs(outputStorage, createdOutputs);
+      await sweeping;
+    }
     const answer = await perform(task, {
       onProgress: (progress) => {
         scope.postMessage({ type: "progress", id, progress });

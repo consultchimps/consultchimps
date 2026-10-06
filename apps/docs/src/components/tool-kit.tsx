@@ -53,6 +53,12 @@ import {
 export const PREVIEW_DEBOUNCE_MS = 250;
 
 /**
+ * An output held in memory rather than on disk (no private file system) is
+ * flagged once it is this large.
+ */
+const MEMORY_NOTICE_BYTES = 50 * 1024 * 1024;
+
+/**
  * Entries in a combined download carry this timestamp rather than the visitor's
  * clock, so the same outputs always bundle into the same archive bytes. It
  * matches the fixed date the package writers stamp on the parts they write.
@@ -741,6 +747,10 @@ export function ResultsPanel({
 
   const failed = state.status === "failed";
   const bundleName = state.outputs.length > 1 ? archiveName : undefined;
+  const heldInMemory = state.outputs.some(
+    (output) =>
+      output.inMemory === true && output.blob.size >= MEMORY_NOTICE_BYTES,
+  );
 
   return (
     <section
@@ -812,6 +822,14 @@ export function ResultsPanel({
             </div>
           )}
         </>
+      ) : null}
+
+      {heldInMemory ? (
+        <p className={noticeClass} data-testid="memory-notice">
+          This browser gave the page no private storage, so the output is held
+          in memory. Download it soon; a very large output can slow or close the
+          tab
+        </p>
       ) : null}
 
       <pre

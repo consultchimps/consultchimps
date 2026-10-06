@@ -56,6 +56,11 @@ export interface OutputFile {
   readonly name: string;
   readonly blob: Blob;
   readonly mediaType?: string | undefined;
+  /**
+   * Set when the browser gave no private file system, so the output is held
+   * in memory rather than on disk.
+   */
+  readonly inMemory?: boolean | undefined;
 }
 
 /** A byte-level operation's outcome with its outputs as `OutputFile`s. */

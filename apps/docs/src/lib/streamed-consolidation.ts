@@ -1,0 +1,96 @@
+/**
+ * Consolidation as the operation worker runs it: each input read through
+ * `Blob.slice`, never whole, and the workbook written to an output target as it
+ * is produced (see `output-storage.ts`). The bytes are the command line's.
+ */
+import type { OperationControlOptions } from "@consultchimps/core";
+import {
+  blobSource,
+  consolidateWorkbookSources,
+  type ConsolidateWorkbooksBytesOptions,
+  type ConsolidateWorkbooksBytesResult,
+} from "@consultchimps/xlsx/bytes";
+import type { ColumnMappingSuggestion } from "@consultchimps/tabular";
+
+import type { NamedFile, OutputFile } from "./operation-tasks";
+import { openOutputTarget, type OutputStorage } from "./output-storage";
+
+const WORKBOOK_MEDIA_TYPE =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+export type StreamedConsolidationOptions = Omit<
+  ConsolidateWorkbooksBytesOptions,
+  "inputs" | "onProgress" | "signal" | "suggestMapping"
+>;
+
+export interface StreamedConsolidation {
+  readonly result: ConsolidateWorkbooksBytesResult;
+  readonly outputs: readonly OutputFile[];
+}
+
+/** Consolidate into OPFS, or into memory where OPFS is unavailable. */
+export async function consolidateFiles(
+  inputs: readonly NamedFile[],
+  options: StreamedConsolidationOptions,
+  controls: Required<OperationControlOptions>,
+  storage: OutputStorage | undefined,
+  created: Set<string>,
+): Promise<StreamedConsolidation> {
+  const target = await openOutputTarget(storage, WORKBOOK_MEDIA_TYPE, created);
+  const { result, outputName, mappingDraft } = await consolidateWorkbookSources(
+    {
+      ...options,
+      ...controls,
+      inputs: inputs.map((input) => blobSource(input.name, input.file)),
+      output: target.sink,
+    },
+  );
+  let finished: Awaited<ReturnType<typeof target.finish>>;
+  try {
+    finished = await target.finish();
+  } catch (error) {
+    await target.sink.abort().catch(() => undefined);
+    throw error;
+  }
+  const outputs: OutputFile[] = [
+    {
+      name: outputName,
+      blob: finished.blob,
+      mediaType: WORKBOOK_MEDIA_TYPE,
+      ...(finished.inMemory ? { inMemory: true } : {}),
+    },
+  ];
+  if (mappingDraft) {
+    outputs.push({
+      name: mappingDraft.name,
+      blob: new Blob([mappingDraft.bytes as Uint8Array<ArrayBuffer>], {
+        type: mappingDraft.mediaType ?? "",
+      }),
+      mediaType: mappingDraft.mediaType,
+    });
+  }
+  return { result, outputs };
+}
+
+/**
+ * Draft a mapping from the tables a consolidation would read. The workbook the
+ * run writes is not wanted, so its bytes are dropped as they are produced.
+ */
+export async function suggestMappingFromFiles(
+  inputs: readonly NamedFile[],
+  includeHiddenSheets: boolean | undefined,
+  controls: Required<OperationControlOptions>,
+): Promise<ColumnMappingSuggestion | undefined> {
+  const { result } = await consolidateWorkbookSources({
+    ...controls,
+    inputs: inputs.map((input) => blobSource(input.name, input.file)),
+    includeHiddenSheets,
+    suggestMapping: true,
+    output: {
+      write: () => undefined,
+      flush: () => Promise.resolve(),
+      abort: () => Promise.resolve(),
+    },
+  });
+  return result.suggestion;
+}
