@@ -40,18 +40,19 @@ export function uncachedLocationsWithin(
 /**
  * The one warning for formula cells with no cached value, or none when there
  * are none. `effect` says what the operation did with them, such as "they came
- * out blank".
+ * out blank". `count` is the operation's metric when it counts a cell more
+ * than once, as a split does per output.
  */
 export function uncachedFormulaWarnings(
   locations: readonly string[],
   effect: string,
+  count: number = locations.length,
 ): string[] {
-  const count = locations.length;
-  if (count === 0) return [];
+  if (locations.length === 0) return [];
   const shown = locations.slice(0, UNCACHED_LOCATIONS_SHOWN).join(", ");
   const more =
-    count > UNCACHED_LOCATIONS_SHOWN
-      ? `, and ${String(count - UNCACHED_LOCATIONS_SHOWN)} more`
+    locations.length > UNCACHED_LOCATIONS_SHOWN
+      ? `, and ${String(locations.length - UNCACHED_LOCATIONS_SHOWN)} more`
       : "";
   return [
     `${String(count)} formula cell${count === 1 ? " has" : "s have"} no cached value, so ${effect}: ${shown}${more}. Open and recalculate the source workbook in Excel, save it, and run again if these values are required.`,

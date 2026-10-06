@@ -761,6 +761,7 @@ export async function runAllWorksheetSplit(
       selection.values === true
         ? "they read as blank: a row whose split value is one joins no group, and the values-only outputs hold a blank cell"
         : "they read as blank, so a row whose split value is one joins no group",
+      formulaCellsWithoutCachedValues,
     ),
   );
 

@@ -686,7 +686,13 @@ export class StreamedWorkbook {
         const formula = hasFormula(raw, row, columnTag);
         if (row !== undefined && columnTag >= 0) {
           const key = `${String(row)}:${String(columnTag)}`;
-          if (formula && !raw.hasValue && raw.type !== "inlineStr") {
+          // The `<f>` element itself, as the model and the values conversion
+          // ask, so every operation counts the same cells.
+          if (
+            raw.formula !== undefined &&
+            !raw.hasValue &&
+            raw.type !== "inlineStr"
+          ) {
             uncached.set(key, { row, column: columnTag });
           } else {
             uncached.delete(key);

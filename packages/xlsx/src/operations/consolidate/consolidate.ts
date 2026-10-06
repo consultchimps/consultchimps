@@ -630,7 +630,9 @@ export async function planConsolidation(
         // may be why it looked empty.
         uncachedFormulas.push(
           ...uncachedLocationsWithin(
-            sheet.name,
+            // Excel's own spelling, `[file.xlsx]Sheet!B4`, once two inputs
+            // can share a sheet name.
+            sources.length > 1 ? `[${source.file}]${sheet.name}` : sheet.name,
             read.uncachedFormulas,
             outcome.table === undefined ? undefined : outcome.region,
           ),
