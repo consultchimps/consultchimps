@@ -14,6 +14,7 @@ import {
   type CancelCommand,
   type OperationTask,
   type OperationTaskResult,
+  type ReleaseCommand,
   type RunCommand,
   type WorkerEvent,
 } from "./operation-tasks";
@@ -29,6 +30,7 @@ interface PendingTask {
 const pending = new Map<number, PendingTask>();
 let worker: Worker | null = null;
 let lastTaskId = 0;
+let releaseRegistered = false;
 
 function settle(id: number): PendingTask | undefined {
   const task = pending.get(id);
@@ -93,6 +95,17 @@ function operationWorker(): Worker {
     );
   });
   worker = created;
+  if (!releaseRegistered) {
+    releaseRegistered = true;
+    // Leaving the page for good: the worker deletes the outputs it offered,
+    // as far as the time before the tab closes allows. A page kept for the
+    // back button keeps them, since it can still offer them.
+    window.addEventListener("pagehide", (event) => {
+      if (!event.persisted) {
+        worker?.postMessage({ type: "release" } satisfies ReleaseCommand);
+      }
+    });
+  }
   return created;
 }
 

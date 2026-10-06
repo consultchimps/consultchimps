@@ -146,9 +146,12 @@ and outputs are written to disk as they are produced.
   which is backed by disk. Where OPFS is missing or refuses (a private window in
   some browsers), the output is collected as `Blob` parts instead, and the page
   says so once it passes 50 MB. A run's OPFS file is deleted when the run after
-  next starts, so a download still reading it is not cut short, and a sweep
-  removes any older than a day, left by a closed tab. Drafting a mapping no
-  longer builds the workbook at all.
+  next starts, so a download still reading it is not cut short, or when the page
+  is closed. The worker holds a Web Lock for each output it offers, and whenever
+  a tool page starts its worker it deletes every output whose lock no tab holds.
+  An output can stay in the browser's site storage between a tab closing before
+  cleanup and the next visit; clearing the site's data removes it. Drafting a
+  mapping no longer builds the workbook at all.
 - **Not chosen.** The File System Access save picker writes straight to a file
   the visitor names, but only Chromium has it and it must be opened by a click
   before the run starts. OPFS with sync access handles is in Chromium, Firefox

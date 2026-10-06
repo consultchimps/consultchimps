@@ -287,7 +287,12 @@ export interface CancelCommand {
   readonly id: number;
 }
 
-export type WorkerCommand = CancelCommand | RunCommand;
+/** Sent when the page goes away, so the worker deletes the outputs it offered. */
+export interface ReleaseCommand {
+  readonly type: "release";
+}
+
+export type WorkerCommand = CancelCommand | ReleaseCommand | RunCommand;
 
 export interface ProgressEvent {
   readonly type: "progress";

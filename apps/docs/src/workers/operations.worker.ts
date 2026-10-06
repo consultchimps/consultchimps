@@ -19,7 +19,8 @@ import {
   type OperationControlOptions,
 } from "@consultchimps/core";
 
-import { browserOutputStorage, removeOutputs } from "@/lib/output-storage";
+import { browserOutputPlace, removeOutputs } from "@/lib/output-storage";
+import { unreadableFile } from "@/lib/unreadable-file";
 import type {
   NamedFile,
   OperationTask,
@@ -48,8 +49,8 @@ const scope = self as unknown as {
  * that a closed tab left behind.
  */
 const outputRuns: Set<string>[] = [];
-const outputStorage = browserOutputStorage();
-let sweeping = removeOutputs(outputStorage, new Set());
+const outputPlace = browserOutputPlace();
+let sweeping = removeOutputs(outputPlace, new Set());
 
 /** Start a run's set of outputs, deleting those two runs old. */
 async function nextOutputRun(): Promise<Set<string>> {
@@ -59,7 +60,7 @@ async function nextOutputRun(): Promise<Set<string>> {
       .splice(0, Math.max(0, outputRuns.length - 1))
       .flatMap((run) => [...run]),
   );
-  sweeping = removeOutputs(outputStorage, stale);
+  sweeping = removeOutputs(outputPlace, stale);
   await sweeping;
   // Names whose removal failed stay listed, so a later run retries them.
   if (stale.size > 0) outputRuns.unshift(stale);
@@ -75,13 +76,6 @@ interface TaskAnswer {
   readonly value: unknown;
   readonly artifacts?: readonly OutputFile[] | undefined;
 }
-
-/** The code a chosen file that can no longer be read fails with. */
-const FILE_UNREADABLE = "FILE_UNREADABLE";
-
-/** Said when a chosen file can no longer be read, as the pickers once said it. */
-const UNREADABLE_FILE =
-  "could not be read. It may have moved, gone offline, or been removed since it was chosen. Choose it again, or pick another file";
 
 /** A promise that rejects with the usual cancellation once `signal` aborts. */
 function cancelled(signal: AbortSignal | undefined): Promise<never> {
@@ -117,11 +111,7 @@ async function whole(
   const reading = input.file.arrayBuffer().then(
     (buffer) => ({ name: input.name, bytes: new Uint8Array(buffer) }),
     (error: unknown) => {
-      throw new ConsultChimpsError(
-        FILE_UNREADABLE,
-        `"${input.name}" ${UNREADABLE_FILE}`,
-        { cause: error, details: { source: input.name } },
-      );
+      throw unreadableFile(input.name, error);
     },
   );
   return Promise.race([reading, cancelled(signal)]);
@@ -238,7 +228,7 @@ async function perform(
           outputName: task.outputName,
         },
         controls,
-        outputStorage,
+        outputPlace,
         await nextOutputRun(),
       );
       return { value: result, artifacts: outputs };
@@ -370,6 +360,12 @@ async function execute(id: number, task: OperationTask): Promise<void> {
 
 scope.addEventListener("message", (event) => {
   const command = event.data;
+  if (command.type === "release") {
+    // The page is going away: delete what it offered, as far as time allows.
+    const offered = new Set(outputRuns.splice(0).flatMap((run) => [...run]));
+    void sweeping.then(() => removeOutputs(outputPlace, offered));
+    return;
+  }
   if (command.type === "cancel") {
     controllers.get(command.id)?.abort();
     return;

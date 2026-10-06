@@ -13,6 +13,7 @@ import {
   removeOutputs,
   type OutputDirectoryHandle,
   type OutputFileHandle,
+  type OutputLocks,
   type OutputStorage,
 } from "./output-storage";
 import { consolidateFiles } from "./streamed-consolidation";
@@ -145,7 +146,28 @@ function fakeStorage(
         getDirectoryHandle: () => Promise.resolve(directory),
       }),
   };
-  return { storage, files };
+  return { storage, files, place: { storage, locks: fakeLocks() } };
+}
+
+/** Web Locks for one process: a held name refuses an `ifAvailable` request. */
+function fakeLocks(
+  held = new Set<string>(),
+): OutputLocks & { held: Set<string> } {
+  return {
+    held,
+    request: async (name, options, callback) => {
+      if (held.has(name)) {
+        if (options.ifAvailable === true) return callback(null);
+        throw new Error(`${name} is held`);
+      }
+      held.add(name);
+      try {
+        return await callback({ name });
+      } finally {
+        held.delete(name);
+      }
+    },
+  };
 }
 
 const controls = () => ({
@@ -179,14 +201,14 @@ describe("consolidateFiles", () => {
       ["south.xlsx", await workbook("S", 50)],
     ] as const;
     expect(inputs[0][1].length).toBeGreaterThan(1024 * 1024);
-    const { storage, files } = fakeStorage();
+    const { place, files } = fakeStorage();
     const created = new Set<string>();
 
     const { outputs, result } = await consolidateFiles(
       inputs.map(([name, bytes]) => guardedFile(name, bytes)),
       { outputName: "out" },
       controls(),
-      storage,
+      place,
       created,
     );
 
@@ -210,7 +232,7 @@ describe("consolidateFiles", () => {
       [guardedFile("north.xlsx", bytes)],
       { outputName: "out" },
       controls(),
-      storage,
+      { storage, locks: undefined },
       new Set(),
     );
     expect(outputs[0]!.inMemory).toBe(true);
@@ -221,7 +243,7 @@ describe("consolidateFiles", () => {
 
   it("removes the OPFS file when the run is cancelled midway", async () => {
     const controller = new AbortController();
-    const { storage, files } = fakeStorage({
+    const { place, files } = fakeStorage({
       onWrite: () => controller.abort(),
     });
     const created = new Set<string>();
@@ -230,7 +252,7 @@ describe("consolidateFiles", () => {
         [guardedFile("north.xlsx", await workbook("N", 3_000))],
         {},
         { onProgress: () => undefined, signal: controller.signal },
-        storage,
+        place,
         created,
       ),
     ).rejects.toMatchObject({ code: "OPERATION_ABORTED" });
@@ -239,34 +261,75 @@ describe("consolidateFiles", () => {
   });
 
   it("fails rather than spinning when OPFS writes nothing", async () => {
-    const { storage, files } = fakeStorage({ stall: true });
+    const { place, files } = fakeStorage({ stall: true });
     await expect(
       consolidateFiles(
         [guardedFile("north.xlsx", await workbook("N", 20))],
         {},
         controls(),
-        storage,
+        place,
         new Set(),
       ),
-    ).rejects.toThrow("storage is full");
+    ).rejects.toMatchObject({ code: "OUTPUT_STORAGE_FULL" });
     expect(files.size).toBe(0);
   });
 });
 
+describe("unreadable inputs", () => {
+  it("fails as an unreadable file, not a damaged workbook", async () => {
+    const bytes = await workbook("N", 20);
+    const blob = new Blob([bytes.slice()]);
+    const gone = {
+      size: blob.size,
+      slice: () => ({
+        arrayBuffer: () => Promise.reject(new Error("NotReadableError")),
+      }),
+    } as unknown as Blob;
+    const { place } = fakeStorage();
+    await expect(
+      consolidateFiles(
+        [{ name: "north.xlsx", file: gone }],
+        {},
+        controls(),
+        place,
+        new Set(),
+      ),
+    ).rejects.toMatchObject({
+      code: "FILE_UNREADABLE",
+      details: { source: "north.xlsx" },
+    });
+  });
+});
+
 describe("removeOutputs", () => {
-  it("removes this worker's outputs and old ones, and keeps another tab's", async () => {
+  it("removes this worker's outputs and unheld ones, and keeps another tab's", async () => {
     const { storage, files } = fakeStorage();
     const now = 10 * OUTPUT_RETENTION_MS;
     for (const name of [
-      `${now - 1000}-mine.part`,
-      `${now - 2000}-other-tab.part`,
+      "1-mine.part",
+      "2-other-tab.part",
+      `${now}-closed-tab.part`,
+    ]) {
+      files.set(name, { data: new Uint8Array(1), open: false });
+    }
+    // Another tab holds its output's lock however old the file is.
+    const locks = fakeLocks(new Set(["consultchimps-output:2-other-tab.part"]));
+    const created = new Set(["1-mine.part"]);
+    await removeOutputs({ storage, locks }, created, now);
+    expect([...files.keys()]).toEqual(["2-other-tab.part"]);
+    expect(created.size).toBe(0);
+  });
+
+  it("falls back to age where the browser has no locks", async () => {
+    const { storage, files } = fakeStorage();
+    const now = 10 * OUTPUT_RETENTION_MS;
+    for (const name of [
+      `${now - 2000}-recent.part`,
       `${now - OUTPUT_RETENTION_MS - 1}-abandoned.part`,
     ]) {
       files.set(name, { data: new Uint8Array(1), open: false });
     }
-    const created = new Set([`${now - 1000}-mine.part`]);
-    await removeOutputs(storage, created, now);
-    expect([...files.keys()]).toEqual([`${now - 2000}-other-tab.part`]);
-    expect(created.size).toBe(0);
+    await removeOutputs({ storage, locks: undefined }, new Set(), now);
+    expect([...files.keys()]).toEqual([`${now - 2000}-recent.part`]);
   });
 });
