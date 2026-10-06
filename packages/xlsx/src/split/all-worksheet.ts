@@ -800,7 +800,7 @@ export async function runAllWorksheetSplit(
     ...uncachedFormulaWarnings(
       [...splitCellsOnly, ...missingFormulaLocations],
       selection.values === true
-        ? "they read as blank: a row whose split value is one joins no group, and the values-only outputs hold a blank cell"
+        ? "a row whose split value is one joins no group, and any other became a blank cell in the values-only outputs"
         : "they read as blank, so a row whose split value is one joins no group",
       formulaCellsWithoutCachedValues,
     ),

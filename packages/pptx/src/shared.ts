@@ -659,7 +659,7 @@ export function recordsWarnings(records: PopulationRecords): string[] {
       : []),
     ...uncachedFormulaWarnings(
       records.uncachedFormulas,
-      "their placeholders are filled with empty text",
+      "they read as empty text, and a row holding nothing else is skipped",
     ),
   ];
 }

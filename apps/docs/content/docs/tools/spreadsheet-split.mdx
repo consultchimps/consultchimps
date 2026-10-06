@@ -70,9 +70,11 @@ consultchimps sheets split "Sprint 2 Datasets.xlsx" \
 ```
 
 ConsultChimps does not calculate formulas. If Excel did not save a cached
-result, the values-only cell becomes a formatted blank and the completion result
-warns with the affected worksheet and cell. Open and recalculate the source in
-Excel, save it, and run the split again when that value is required.
+result, the values-only cell becomes a formatted blank, and a split value with
+no cached result reads as blank, so its row joins no group. The result counts
+such cells in `formulaCellsWithoutCachedValues` and warns with the affected
+worksheet and cell. Open and recalculate the source in Excel, save it, and run
+the split again when that value is required.
 
 ## Filenames and overwrite safety
 

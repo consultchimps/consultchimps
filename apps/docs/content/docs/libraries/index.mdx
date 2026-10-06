@@ -698,10 +698,11 @@ Columns that hold nothing in the header row or under it are left out as spacers,
 and `readWorkbookWorksheets` reports both counts per worksheet as
 `skippedTitleRows` and `skippedSpacerColumns`. `readWorkbookTablesBytes` is its
 byte-level twin, for a browser that holds the workbook's bytes rather than a
-path. `readWorksheetRecords` selects one `worksheet` and a `headerRow`; the
-Excel Table and named-range readers filter by `sheets` plus `tables` or `names`.
-The `writeTable` counterpart writes one in-memory `Table` to a new formatted
-workbook.
+path. `readWorksheetRecords` selects one `worksheet` and a `headerRow`, and
+returns `uncachedFormulas`, the `Sheet!B4` cells it read as empty because Excel
+never calculated them; the Excel Table and named-range readers filter by
+`sheets` plus `tables` or `names`. The `writeTable` counterpart writes one
+in-memory `Table` to a new formatted workbook.
 
 ## Inspect a workbook before operating on it
 

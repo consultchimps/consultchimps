@@ -48,7 +48,10 @@ ConsultChimps shows each value as Excel displays it, by applying the cell's
 number format with English (United States) conventions. Percentages, currency
 and dates keep their workbook format, and the computer's locale is never
 applied. Strings, numbers, dates, booleans, and the cached values of formulas
-are supported. An empty cell for a valid placeholder becomes empty text.
+are supported. An empty cell for a valid placeholder becomes empty text. A
+formula Excel never calculated has no cached value, so it reads as empty text;
+the result counts such cells in `formulaCellsWithoutCachedValues` and names them
+in a warning. Open and save the workbook in Excel, then run again.
 
 Headers are trimmed. Empty and exactly duplicated headers are rejected. Extra
 worksheet columns are allowed, but every template placeholder must exactly match
