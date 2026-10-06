@@ -10,7 +10,10 @@ import {
   type OperationControlOptions,
   type OperationResult,
 } from "@consultchimps/core";
-import { uncachedFormulaWarnings } from "@consultchimps/xlsx/bytes";
+import {
+  uncachedFormulaHint,
+  uncachedFormulaWarnings,
+} from "@consultchimps/xlsx/bytes";
 import JSZip from "jszip";
 
 export const PRESENTATION_MEDIA_TYPE =
@@ -622,8 +625,8 @@ export function validateRecordsForTemplate(
   if (records.rows.length === 0) {
     throw new ConsultChimpsError(
       PPTX_ERRORS.PPTX_NO_DATA_ROWS,
-      records.noDataMessage,
-      { details },
+      `${records.noDataMessage}${uncachedFormulaHint(records.uncachedFormulas)}`,
+      { details: { ...details, uncachedFormulas: records.uncachedFormulas } },
     );
   }
 

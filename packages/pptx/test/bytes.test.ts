@@ -124,6 +124,24 @@ const singlePlaceholderTemplate = (): Promise<Uint8Array> =>
   templateBytes([slideXml(["{{client}}", " reports ", "{{amount}}"])]);
 
 describe("byte-level presentation population", () => {
+  it("names formulas with no cached value when the workbook has no data rows", async () => {
+    await expect(
+      populatePresentationBytes({
+        template: { name: "t.pptx", bytes: await singlePlaceholderTemplate() },
+        workbook: {
+          name: "w.xlsx",
+          bytes: await workbookBytes([
+            ["client", "amount"],
+            [{ formula: '"North"' }, { formula: "1+1" }],
+          ]),
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "PPTX_NO_DATA_ROWS",
+      message: expect.stringContaining("Companies!B2"),
+    });
+  });
+
   it("reports a workbook formula with no cached value and fills it with empty text", async () => {
     const { result } = await populatePresentationBytes({
       template: { name: "t.pptx", bytes: await singlePlaceholderTemplate() },

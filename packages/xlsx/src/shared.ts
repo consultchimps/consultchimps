@@ -4,6 +4,7 @@
  * the byte entry point can run in browsers.
  */
 import {
+  uncachedFormulaHint,
   uncachedFormulaWarnings,
   uncachedLocationsWithin,
 } from "./uncached-formulas.js";
@@ -1109,7 +1110,7 @@ export async function workbookWorksheetRecords(
   ) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_INVALID_HEADER_ROW,
-      `Worksheet "${worksheetName}" does not contain the selected header row.`,
+      `Worksheet "${worksheetName}" does not contain the selected header row.${uncachedFormulaHint(uncachedLocationsWithin(worksheetName, grid.uncachedFormulas, undefined))}`,
       {
         details: {
           headerRow: options.headerRow,
@@ -1385,6 +1386,32 @@ export interface ResolvedSplitSource {
 }
 
 /**
+ * Every formula cell with no cached value on the worksheets a refused split
+ * looked at, so a refusal for finding no data can say why that may be.
+ */
+async function uncachedOnSheets(
+  workbook: StreamedWorkbook,
+  sheetName: string | undefined,
+  includeHiddenSheets: boolean | undefined,
+): Promise<string[]> {
+  const locations: string[] = [];
+  for (const sheet of workbook.sheets) {
+    if (
+      sheetName === undefined
+        ? !includeHiddenSheets && !sheet.visible
+        : sheet.name.toLocaleLowerCase() !== sheetName.toLocaleLowerCase()
+    ) {
+      continue;
+    }
+    const grid = await readSheetGrid(workbook, sheet);
+    locations.push(
+      ...uncachedLocationsWithin(sheet.name, grid.uncachedFormulas, undefined),
+    );
+  }
+  return locations;
+}
+
+/**
  * Select the single table a split reads from, group its rows, and locate the
  * package definition a preserved split rewrites.
  */
@@ -1436,6 +1463,11 @@ export async function resolveSplitSource(
   }
 
   if (tables.length === 0) {
+    const uncached = await uncachedOnSheets(
+      workbook,
+      options.sheet,
+      options.includeHiddenSheets,
+    );
     const selectedSource = options.table
       ? `Excel Table "${options.table}"`
       : options.range
@@ -1446,10 +1478,11 @@ export async function resolveSplitSource(
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_SPLIT_NO_TABLE,
       selectedSource
-        ? `${selectedSource} was not found or has no data rows.`
-        : "No visible, non-empty worksheet was found in the input workbook.",
+        ? `${selectedSource} was not found or has no data rows.${uncachedFormulaHint(uncached)}`
+        : `No visible, non-empty worksheet was found in the input workbook.${uncachedFormulaHint(uncached)}`,
       {
         details: {
+          uncachedFormulas: uncached,
           availableRanges: availableNamedRanges.map((namedRange) => ({
             name: namedRange.rangeName,
             sheet: namedRange.source?.sheet,
@@ -1501,9 +1534,10 @@ export async function resolveSplitSource(
   if (grouped.groups.length === 0) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_SPLIT_NO_GROUPS,
-      `No output groups remain for column "${grouped.column}".`,
+      `No output groups remain for column "${grouped.column}".${uncachedFormulaHint(uncachedFormulasOf(table))}`,
       {
         details: {
+          uncachedFormulas: uncachedFormulasOf(table),
           column: grouped.column,
           includeBlank: options.includeBlank ?? true,
           ...context.details,
@@ -1563,20 +1597,17 @@ export async function preservedSplitTemplate(
  */
 export function singleSourceUncachedFormulas(
   table: Table,
-  template: { uncachedFormulas: string[] } | undefined,
+  preserveWorkbook: boolean,
+  conversionLosses: readonly string[] = [],
 ): { count: number; warnings: string[] } {
   const locations = [
-    ...new Set([
-      ...uncachedFormulasOf(table),
-      ...(template?.uncachedFormulas ?? []),
-    ]),
+    ...new Set([...uncachedFormulasOf(table), ...conversionLosses]),
   ];
-  const effect =
-    template === undefined
-      ? "they came out blank"
-      : template.uncachedFormulas.length > 0
-        ? "they read as blank, and the values-only outputs hold a blank cell"
-        : "the split read them as blank; the outputs keep the formulas";
+  const effect = !preserveWorkbook
+    ? "they came out blank"
+    : conversionLosses.length > 0
+      ? "they read as blank, and the values-only outputs hold a blank cell"
+      : "the split read them as blank; the outputs keep the formulas";
   return {
     count: locations.length,
     warnings: uncachedFormulaWarnings(locations, effect),

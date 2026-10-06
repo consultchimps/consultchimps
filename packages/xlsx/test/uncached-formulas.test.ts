@@ -15,6 +15,7 @@ import {
   consolidateWorkbooksBytes,
   describeWorkbookBytes,
   mergeWorkbooksBytes,
+  planSplitWorkbookBytes,
   readWorksheetRecordsBytes,
   splitWorkbookBytes,
 } from "../src/bytes.js";
@@ -22,6 +23,7 @@ import {
   consolidateWorkbooks,
   describeWorkbook,
   mergeWorkbooks,
+  planSplitWorkbookByColumn,
   readWorksheetRecords,
   splitWorkbookByColumn,
 } from "../src/index.js";
@@ -266,6 +268,86 @@ describe("formula cells with no cached value", () => {
         );
         expect(result.count).toBe(0);
       }
+    },
+  );
+
+  it.each([
+    ["every worksheet", {}],
+    [
+      "compact worksheet",
+      { headerRow: 3, preserveWorkbook: false, sheet: CORPUS_SHEET },
+    ],
+  ] as const)(
+    "are counted and named by the %s split plan",
+    async (_mode, selection) => {
+      const directory = await createCorpusDirectory();
+      const bytes = await uncachedWorkbook();
+      const input = path.join(directory, "input.xlsx");
+      await writeFile(input, bytes);
+      const common = { column: CORPUS_SPLIT_COLUMN, ...selection };
+
+      for (const plan of [
+        await planSplitWorkbookByColumn({
+          ...common,
+          input,
+          outputDirectory: path.join(directory, "out"),
+        }),
+        await planSplitWorkbookBytes({ ...common, input: { ...named, bytes } }),
+      ]) {
+        expect(plan.metrics.formulaCellsWithoutCachedValues).toBe(1);
+        expect(
+          plan.warnings.some((warning) => warning.includes(UNCACHED)),
+        ).toBe(true);
+      }
+    },
+  );
+
+  // A refusal for finding no data names the cells that may be the reason.
+  const onlyFormulas = (): Promise<Uint8Array> =>
+    buildWorkbookFixture({
+      sheets: [
+        {
+          name: CORPUS_SHEET,
+          rows: [
+            ["Record", "Group"],
+            [{ formula: "1" }, { formula: '"Alpha"' }],
+            [{ formula: "2" }, { formula: '"Beta"' }],
+          ],
+        },
+      ],
+    });
+
+  const REFUSALS: Record<
+    string,
+    (input: string, out: string) => Promise<unknown>
+  > = {
+    consolidate: (input, out) =>
+      consolidateWorkbooks({
+        inputs: [input],
+        output: path.join(out, "all.xlsx"),
+      }),
+    "split, every worksheet": (input, out) =>
+      splitWorkbookByColumn({ column: "Group", input, outputDirectory: out }),
+    "split, compact worksheet": (input, out) =>
+      splitWorkbookByColumn({
+        column: "Group",
+        input,
+        outputDirectory: out,
+        preserveWorkbook: false,
+        sheet: CORPUS_SHEET,
+      }),
+  };
+
+  it.each(Object.keys(REFUSALS))(
+    "are named when %s refuses for finding no data",
+    async (name) => {
+      const directory = await createCorpusDirectory();
+      const input = path.join(directory, "input.xlsx");
+      await writeFile(input, await onlyFormulas());
+
+      await expect(
+        REFUSALS[name]!(input, path.join(directory, "out")),
+      ).rejects.toThrow(`${CORPUS_SHEET}!B2`);
     },
   );
 });

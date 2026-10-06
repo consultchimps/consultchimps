@@ -5,7 +5,10 @@
  * of node:fs and node:path imports.
  */
 import { uncachedFormulaWarnings } from "./uncached-formulas.js";
-export { uncachedFormulaWarnings } from "./uncached-formulas.js";
+export {
+  uncachedFormulaHint,
+  uncachedFormulaWarnings,
+} from "./uncached-formulas.js";
 import {
   ConsultChimpsError,
   throwIfAborted,
@@ -60,6 +63,7 @@ import {
 import {
   analyzeAllWorksheetSplit,
   plannedAllWorksheetSplitMetrics,
+  plannedAllWorksheetSplitWarnings,
   preservedSplitExtension,
   runAllWorksheetSplit,
   splitMediaType,
@@ -497,12 +501,14 @@ export async function planSplitWorkbookBytes(
         path: name,
         exists: false,
       })),
-      warnings:
-        resolved.analysis.skippedRows > 0
+      warnings: [
+        ...(resolved.analysis.skippedRows > 0
           ? [
               `Skipped ${resolved.analysis.skippedRows} row${resolved.analysis.skippedRows === 1 ? "" : "s"} with blank values in "${options.column}"; no blank-value workbook was created.`,
             ]
-          : [],
+          : []),
+        ...plannedAllWorksheetSplitWarnings(resolved.analysis),
+      ],
       metrics: plannedAllWorksheetSplitMetrics(
         resolved.analysis,
         resolved.selection,
@@ -512,10 +518,18 @@ export async function planSplitWorkbookBytes(
   }
 
   const resolved = await resolveSplitWorkbookBytes(options);
-  const warnings =
-    resolved.grouped.skippedRows > 0
+  // What the plan read; a values-only preserved run also counts what its
+  // conversion loses, which only the run can see.
+  const uncached = singleSourceUncachedFormulas(
+    resolved.table,
+    resolved.preserveWorkbook,
+  );
+  const warnings = [
+    ...(resolved.grouped.skippedRows > 0
       ? [skippedRowsWarning(resolved.grouped)]
-      : [];
+      : []),
+    ...uncached.warnings,
+  ];
 
   return {
     operation: SPLIT_OPERATION,
@@ -533,7 +547,7 @@ export async function planSplitWorkbookBytes(
       calcChainEntriesRemoved: 0,
       formulaCellsBlankedForRemovedRows: 0,
       formulaCellsConverted: 0,
-      formulaCellsWithoutCachedValues: 0,
+      formulaCellsWithoutCachedValues: uncached.count,
       groups: resolved.grouped.groups.length,
       inputFiles: 1,
       inputRows: resolved.table.rows.length,
@@ -578,7 +592,11 @@ export async function splitWorkbookBytes(
     ? await preservedSplitTemplate(options.input.bytes, options.values)
     : undefined;
   const templateBytes = template?.bytes;
-  const uncached = singleSourceUncachedFormulas(table, template);
+  const uncached = singleSourceUncachedFormulas(
+    table,
+    preserveWorkbook,
+    template?.uncachedFormulas,
+  );
   const outputs: ByteArtifact[] = [];
   let pivotTablesRemoved = 0;
 

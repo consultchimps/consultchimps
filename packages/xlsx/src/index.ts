@@ -1,5 +1,8 @@
 import { uncachedFormulaWarnings } from "./uncached-formulas.js";
-export { uncachedFormulaWarnings } from "./uncached-formulas.js";
+export {
+  uncachedFormulaHint,
+  uncachedFormulaWarnings,
+} from "./uncached-formulas.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -1123,6 +1126,13 @@ export async function planSplitWorkbookByColumn(
   if (resolved.grouped.skippedRows > 0) {
     warnings.push(skippedRowsWarning(resolved.grouped));
   }
+  // What the plan read; a values-only preserved run also counts what its
+  // conversion loses, which only the run can see.
+  const uncached = singleSourceUncachedFormulas(
+    resolved.table,
+    resolved.preserveWorkbook,
+  );
+  warnings.push(...uncached.warnings);
   const collisions = resolved.existingOutputs.size;
   if (collisions > 0 && options.overwrite !== true) {
     warnings.push(
@@ -1141,7 +1151,7 @@ export async function planSplitWorkbookByColumn(
       calcChainEntriesRemoved: 0,
       formulaCellsBlankedForRemovedRows: 0,
       formulaCellsConverted: 0,
-      formulaCellsWithoutCachedValues: 0,
+      formulaCellsWithoutCachedValues: uncached.count,
       pivotTablesRemoved: 0,
       groups: resolved.grouped.groups.length,
       inputFiles: 1,
@@ -1207,7 +1217,11 @@ export async function splitWorkbookByColumn(
     ? await preservedSplitTemplate(workbookBytes, options.values)
     : undefined;
   const templateBytes = template?.bytes;
-  const uncached = singleSourceUncachedFormulas(table, template);
+  const uncached = singleSourceUncachedFormulas(
+    table,
+    preserveWorkbook,
+    template?.uncachedFormulas,
+  );
   let pivotTablesRemoved = 0;
 
   try {

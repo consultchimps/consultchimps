@@ -64,7 +64,10 @@ import {
 } from "../../shared.js";
 import { writableCellValue } from "../../model/date-cells.js";
 import type { CellRectangle } from "../../model/references.js";
-import { uncachedLocationsWithin } from "../../uncached-formulas.js";
+import {
+  uncachedFormulaHint,
+  uncachedLocationsWithin,
+} from "../../uncached-formulas.js";
 import {
   StreamedWorkbook,
   type StreamedCell,
@@ -671,7 +674,8 @@ export async function planConsolidation(
   if (tables.length === 0) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_NO_TABLES,
-      "No visible, non-empty worksheets were found in the input workbooks.",
+      `No visible, non-empty worksheets were found in the input workbooks.${uncachedFormulaHint(uncachedFormulas)}`,
+      { details: { uncachedFormulas } },
     );
   }
 

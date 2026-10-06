@@ -38,6 +38,15 @@ export function uncachedLocationsWithin(
 }
 
 /**
+ * The same guidance for a refusal whose cause may be those cells, such as
+ * finding no data: a leading space and the sentence, or "" when there are none.
+ */
+export function uncachedFormulaHint(locations: readonly string[]): string {
+  const [warning] = uncachedFormulaWarnings(locations, "they read as blank");
+  return warning === undefined ? "" : ` ${warning}`;
+}
+
+/**
  * The one warning for formula cells with no cached value, or none when there
  * are none. `effect` says what the operation did with them, such as "they came
  * out blank". `count` is the operation's metric when it counts a cell more

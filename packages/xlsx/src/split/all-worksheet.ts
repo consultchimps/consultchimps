@@ -43,7 +43,10 @@ import {
 } from "../region/values.js";
 import { stripPivotParts } from "../tier1/pivot.js";
 import { blankStaleCachedFormulas } from "../tier1/stale-values.js";
-import { uncachedFormulaWarnings } from "../uncached-formulas.js";
+import {
+  uncachedFormulaHint,
+  uncachedFormulaWarnings,
+} from "../uncached-formulas.js";
 import { convertWorkbookToValuesWithReport } from "../values-only.js";
 
 export const SPLIT_OPERATION = "sheets.split-by-column";
@@ -475,8 +478,14 @@ export async function analyzeAllWorksheetSplit(
   if (groups.length === 0) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_SPLIT_NO_GROUPS,
-      `Column "${selection.column}" does not contain any non-blank values. Add at least one value and try again.`,
-      { details: { column: selection.column, ...identity.details } },
+      `Column "${selection.column}" does not contain any non-blank values. Add at least one value and try again.${uncachedFormulaHint(uncachedSplitCells)}`,
+      {
+        details: {
+          column: selection.column,
+          uncachedFormulas: uncachedSplitCells,
+          ...identity.details,
+        },
+      },
     );
   }
 
@@ -616,6 +625,16 @@ async function buildGroupWorkbook(
   return output;
 }
 
+/** The warning a plan gives for split-column cells it read as blank. */
+export function plannedAllWorksheetSplitWarnings(
+  analysis: AllWorksheetSplitAnalysis,
+): string[] {
+  return uncachedFormulaWarnings(
+    analysis.uncachedSplitCells,
+    "they read as blank, so a row whose split value is one joins no group",
+  );
+}
+
 /** The metrics a plan reports, before a single output has been built. */
 export function plannedAllWorksheetSplitMetrics(
   analysis: AllWorksheetSplitAnalysis,
@@ -626,7 +645,9 @@ export function plannedAllWorksheetSplitMetrics(
     calcChainEntriesRemoved: 0,
     formulaCellsBlankedForRemovedRows: 0,
     formulaCellsConverted: 0,
-    formulaCellsWithoutCachedValues: 0,
+    // What the plan read: the split-column cells. A values-only run also
+    // counts what its conversion loses, which only the run can see.
+    formulaCellsWithoutCachedValues: analysis.uncachedSplitCells.length,
     groups: analysis.groups.length,
     inputFiles: 1,
     inputRows: analysis.inputRows,
