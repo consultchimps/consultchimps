@@ -200,7 +200,9 @@ function saveArtifact(artifact: OutputFile, fallbackMediaType: string): void {
  * Bundle several outputs into one archive, written the way the package writers
  * write theirs: deflated so the download is no larger than it needs to be, and
  * deterministic: a fixed timestamp instead of the visitor's clock, no folder
- * entries, and DOS metadata so the file opens the same way everywhere.
+ * entries, and DOS metadata so the file opens the same way everywhere. jszip
+ * reads each output into the page to do it, so this is the one download that
+ * holds the outputs in memory.
  */
 async function saveArchive(
   artifacts: readonly OutputFile[],
@@ -367,10 +369,10 @@ export interface FileSelection {
  *   finish after a small one picked second; without the token the older read
  *   would win.
  *
- * Exactly one file is read, however many arrive. A drag-and-drop carries the
- * whole drop even onto a picker whose input is single-file, and reading the
- * rest would pull documents nobody asked for into memory only to discard them,
- * which on a large batch of workbooks is enough to slow or exhaust the tab.
+ * Exactly one file is taken, however many arrive. A drag-and-drop carries the
+ * whole drop even onto a picker whose input is single-file. Only a picker that
+ * asked for text reads its file here; any other file is read by the worker
+ * when a task runs.
  */
 export function useFileSelection(
   accepts: (file: File) => boolean,
@@ -407,9 +409,10 @@ export function useFileSelection(
           setReading(false);
         })
         .catch(() => {
-          // A cloud-backed or removable file can go unreadable mid-read.
-          // Without this the picker would sit in its reading state forever,
-          // with nothing selected and Run disabled, and say nothing about why.
+          // A text pick can go unreadable mid-read, a cloud-backed or removable
+          // file especially. Without this the picker would sit in its reading
+          // state forever, with nothing selected and Run disabled. Other files
+          // are read by the worker, which reports the same problem on Run.
           if (token !== latest.current) {
             return;
           }

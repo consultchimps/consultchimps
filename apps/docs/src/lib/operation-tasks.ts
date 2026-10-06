@@ -1,8 +1,8 @@
 /**
  * The wire contract between the tool pages and the operation Web Worker.
  *
- * Only this module is shared by both sides, and it deliberately contains types
- * plus one tiny helper, with no engine imports. The worker resolves a task to
+ * Only this module is shared by both sides, and it deliberately contains only
+ * types, with no engine imports. The worker resolves a task to
  * the matching byte-level operation and loads that engine on demand, so a page
  * that is merely open never downloads a PDF or workbook engine.
  *

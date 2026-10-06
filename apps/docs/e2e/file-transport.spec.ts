@@ -2,10 +2,12 @@
  * The pages hand each chosen file to the worker without reading it. A page
  * that read a workbook itself would hold a whole copy in the tab, so every way
  * the page could read file bytes is made to fail here, and the operations must
- * still run and download.
+ * still run and download. "Download all" is left out: jszip reads each output
+ * into the page to build the archive.
  */
 import { expect, test, type Page } from "@playwright/test";
 import {
+  createPdfUpload,
   createWorkbookUpload,
   expectWorkbookDownload,
   fileInput,
@@ -25,6 +27,8 @@ async function forbidPageFileReads(page: Page): Promise<void> {
     Blob.prototype.arrayBuffer = refuse("Blob.arrayBuffer");
     Blob.prototype.bytes = refuse("Blob.bytes");
     Blob.prototype.stream = refuse("Blob.stream");
+    Blob.prototype.text = refuse("Blob.text");
+    Response.prototype.arrayBuffer = refuse("Response.arrayBuffer");
     FileReader.prototype.readAsArrayBuffer = refuse("FileReader");
     FileReader.prototype.readAsBinaryString = refuse("FileReader");
     FileReader.prototype.readAsDataURL = refuse("FileReader");
@@ -81,5 +85,24 @@ test.describe("tool pages leave reading files to the worker", () => {
         resultArtifacts(page).first().getByTestId("artifact-download").click(),
       "log-North.xlsx",
     );
+  });
+
+  test("PDF merge", async ({ page }) => {
+    await forbidPageFileReads(page);
+    await page.goto("/tools/pdf-merge");
+    await fileInput(page).setInputFiles(
+      await Promise.all([
+        createPdfUpload("a.pdf", 1),
+        createPdfUpload("b.pdf", 2),
+      ]),
+    );
+    await page.getByTestId("run-button").click();
+    await expect(resultArtifacts(page)).toHaveCount(1);
+    const download = page.waitForEvent("download");
+    await resultArtifacts(page)
+      .first()
+      .getByTestId("artifact-download")
+      .click();
+    expect((await download).suggestedFilename()).toMatch(/.pdf$/u);
   });
 });
