@@ -1,3 +1,5 @@
+import { uncachedFormulaWarnings } from "./uncached-formulas.js";
+export { uncachedFormulaWarnings } from "./uncached-formulas.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -106,7 +108,8 @@ import {
   MACRO_WORKBOOK_MEDIA_TYPE,
   MAPPING_MEDIA_TYPE,
   MERGE_OPERATION,
-  preservedSplitTemplateBytes,
+  preservedSplitTemplate,
+  singleSourceUncachedFormulas,
   refuseMappingWithSuggestion,
   resolveSplitSource,
   serializeColumnMapping,
@@ -905,11 +908,14 @@ export async function consolidateWorkbooks(
   const result: ConsolidateWorkbooksResult = {
     operation: CONSOLIDATE_OPERATION,
     artifacts,
-    warnings:
-      unmappedColumns.length > 0
+    warnings: [
+      ...(unmappedColumns.length > 0
         ? [unmappedColumnsWarning([...unmappedColumns])]
-        : [],
+        : []),
+      ...uncachedFormulaWarnings(plan.uncachedFormulas, "they came out blank"),
+    ],
     metrics: {
+      formulaCellsWithoutCachedValues: plan.uncachedFormulas.length,
       inputFiles: absoluteInputs.length,
       inputTables: plan.inputTables,
       outputColumns: plan.columns.length,
@@ -994,6 +1000,7 @@ export async function mergeWorkbooks(
       inputFiles: inputPaths.length,
       outputSheets: merged.outputSheets,
       hiddenSheets: merged.hiddenSheets,
+      formulaCellsWithoutCachedValues: merged.uncachedFormulas.length,
     },
   };
 }
@@ -1196,9 +1203,11 @@ export async function splitWorkbookByColumn(
   const stagedOutputs: string[] = [];
   const committedOutputs: string[] = [];
   const backups = new Map<string, string>();
-  const templateBytes = preserveWorkbook
-    ? await preservedSplitTemplateBytes(workbookBytes, options.values)
+  const template = preserveWorkbook
+    ? await preservedSplitTemplate(workbookBytes, options.values)
     : undefined;
+  const templateBytes = template?.bytes;
+  const uncached = singleSourceUncachedFormulas(table, template);
   let pivotTablesRemoved = 0;
 
   try {
@@ -1304,6 +1313,7 @@ export async function splitWorkbookByColumn(
   }
 
   const warnings = grouped.skippedRows > 0 ? [skippedRowsWarning(grouped)] : [];
+  warnings.push(...uncached.warnings);
   if (pivotTablesRemoved > 0) {
     warnings.push(
       `Removed ${pivotTablesRemoved} pivot table${pivotTablesRemoved === 1 ? "" : "s"}: their caches contained rows from other groups, and a cache travels inside the workbook whether or not the pivot is opened. Rebuild the pivot in Excel from each output's own rows if it is required.`,
@@ -1322,7 +1332,7 @@ export async function splitWorkbookByColumn(
       calcChainEntriesRemoved: 0,
       formulaCellsBlankedForRemovedRows: 0,
       formulaCellsConverted: 0,
-      formulaCellsWithoutCachedValues: 0,
+      formulaCellsWithoutCachedValues: uncached.count,
       pivotTablesRemoved,
       groups: grouped.groups.length,
       inputFiles: 1,

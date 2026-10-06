@@ -31,7 +31,7 @@ import {
   POPULATE_OPERATION,
   PPTX_ERRORS,
   PRESENTATION_MEDIA_TYPE,
-  skippedRowsWarnings,
+  recordsWarnings,
   validateRecordsForTemplate,
   validateTemplateInspection,
   type PopulatePowerPointTemplateMetric,
@@ -285,6 +285,7 @@ async function resolvePopulatePowerPointTemplate(
     noDataMessage: `Worksheet "${worksheetRecords.worksheet}" does not contain any nonempty data rows below the header.`,
     rows: worksheetRecords.rows,
     skippedEmptyRows: worksheetRecords.skippedEmptyRows,
+    uncachedFormulas: worksheetRecords.uncachedFormulas,
   };
   validateRecordsForTemplate(records, inspection, {
     headerRow: options.headerRow,
@@ -306,7 +307,7 @@ export async function planPopulatePowerPointTemplate(
   options: PopulatePowerPointTemplateOptions,
 ): Promise<OperationPlan<PopulatePowerPointTemplatePlanMetric>> {
   const resolved = await resolvePopulatePowerPointTemplate(options, false);
-  const warnings = skippedRowsWarnings(resolved.records);
+  const warnings = recordsWarnings(resolved.records);
   if (resolved.outputExists && options.overwrite !== true) {
     warnings.push(
       "The planned output presentation already exists; executing without overwrite will fail.",
@@ -326,6 +327,7 @@ export async function planPopulatePowerPointTemplate(
     ],
     warnings,
     metrics: {
+      formulaCellsWithoutCachedValues: resolved.records.uncachedFormulas.length,
       generatedSlides: resolved.records.rows.length,
       inputRows: resolved.records.rows.length,
       outputFiles: 1,
@@ -360,7 +362,7 @@ export async function populatePowerPointTemplate(
       detail: path.basename(absoluteOutput),
     });
 
-    const warnings = skippedRowsWarnings(records);
+    const warnings = recordsWarnings(records);
     return {
       operation: POPULATE_OPERATION,
       artifacts: [
@@ -372,6 +374,7 @@ export async function populatePowerPointTemplate(
       ],
       warnings,
       metrics: {
+        formulaCellsWithoutCachedValues: records.uncachedFormulas.length,
         generatedSlides: records.rows.length,
         inputRows: records.rows.length,
         outputFiles: 1,

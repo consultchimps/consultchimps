@@ -124,6 +124,22 @@ const singlePlaceholderTemplate = (): Promise<Uint8Array> =>
   templateBytes([slideXml(["{{client}}", " reports ", "{{amount}}"])]);
 
 describe("byte-level presentation population", () => {
+  it("reports a workbook formula with no cached value and fills it with empty text", async () => {
+    const { result } = await populatePresentationBytes({
+      template: { name: "t.pptx", bytes: await singlePlaceholderTemplate() },
+      workbook: {
+        name: "w.xlsx",
+        bytes: await workbookBytes([
+          ["client", "amount"],
+          ["North", { formula: "1+1" }],
+        ]),
+      },
+    });
+
+    expect(result.metrics.formulaCellsWithoutCachedValues).toBe(1);
+    expect(result.warnings).toEqual([expect.stringContaining("Companies!B2")]);
+  });
+
   it("generates one slide per supplied record and keeps run formatting", async () => {
     const events: OperationProgress[] = [];
     const { result, outputs } = await populatePresentationBytes({
@@ -140,6 +156,7 @@ describe("byte-level presentation population", () => {
 
     expect(result.operation).toBe("pptx.populate");
     expect(result.metrics).toEqual({
+      formulaCellsWithoutCachedValues: 0,
       generatedSlides: 2,
       inputRows: 2,
       outputFiles: 1,
@@ -233,6 +250,7 @@ describe("byte-level presentation population", () => {
     ]);
     expect(plan.warnings).toEqual(["Skipped 1 empty worksheet row."]);
     expect(plan.metrics).toEqual({
+      formulaCellsWithoutCachedValues: 0,
       generatedSlides: 1,
       inputRows: 1,
       outputFiles: 1,

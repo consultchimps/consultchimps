@@ -4,6 +4,8 @@
  * structured results carry portable output names. This module must stay free
  * of node:fs and node:path imports.
  */
+import { uncachedFormulaWarnings } from "./uncached-formulas.js";
+export { uncachedFormulaWarnings } from "./uncached-formulas.js";
 import {
   ConsultChimpsError,
   throwIfAborted,
@@ -83,7 +85,8 @@ import {
   MACRO_WORKBOOK_MEDIA_TYPE,
   MAPPING_MEDIA_TYPE,
   MERGE_OPERATION,
-  preservedSplitTemplateBytes,
+  preservedSplitTemplate,
+  singleSourceUncachedFormulas,
   refuseMappingWithSuggestion,
   resolveSplitSource,
   safeNameFragment,
@@ -571,9 +574,11 @@ export async function splitWorkbookBytes(
     preserveWorkbook,
     table,
   } = await resolveSplitWorkbookBytes(options);
-  const templateBytes = preserveWorkbook
-    ? await preservedSplitTemplateBytes(options.input.bytes, options.values)
+  const template = preserveWorkbook
+    ? await preservedSplitTemplate(options.input.bytes, options.values)
     : undefined;
+  const templateBytes = template?.bytes;
+  const uncached = singleSourceUncachedFormulas(table, template);
   const outputs: ByteArtifact[] = [];
   let pivotTablesRemoved = 0;
 
@@ -615,6 +620,7 @@ export async function splitWorkbookBytes(
       })),
       warnings: [
         ...(grouped.skippedRows > 0 ? [skippedRowsWarning(grouped)] : []),
+        ...uncached.warnings,
         ...(pivotTablesRemoved > 0
           ? [
               `Removed ${pivotTablesRemoved} pivot table${pivotTablesRemoved === 1 ? "" : "s"}: their caches contained rows from other groups, and a cache travels inside the workbook whether or not the pivot is opened. Rebuild the pivot in Excel from each output's own rows if it is required.`,
@@ -625,7 +631,7 @@ export async function splitWorkbookBytes(
         calcChainEntriesRemoved: 0,
         formulaCellsBlankedForRemovedRows: 0,
         formulaCellsConverted: 0,
-        formulaCellsWithoutCachedValues: 0,
+        formulaCellsWithoutCachedValues: uncached.count,
         groups: grouped.groups.length,
         inputFiles: 1,
         inputRows: table.rows.length,
@@ -825,11 +831,14 @@ export async function consolidateWorkbooksBytes(
   const result: ConsolidateWorkbooksBytesResult = {
     operation: CONSOLIDATE_OPERATION,
     artifacts,
-    warnings:
-      unmappedColumns.length > 0
+    warnings: [
+      ...(unmappedColumns.length > 0
         ? [unmappedColumnsWarning([...unmappedColumns])]
-        : [],
+        : []),
+      ...uncachedFormulaWarnings(plan.uncachedFormulas, "they came out blank"),
+    ],
     metrics: {
+      formulaCellsWithoutCachedValues: plan.uncachedFormulas.length,
       inputFiles: options.inputs.length,
       inputTables: plan.inputTables,
       outputColumns: plan.columns.length,
@@ -914,6 +923,7 @@ export async function mergeWorkbooksBytes(
         inputFiles: options.inputs.length,
         outputSheets: merged.outputSheets,
         hiddenSheets: merged.hiddenSheets,
+        formulaCellsWithoutCachedValues: merged.uncachedFormulas.length,
       },
     },
     outputs: [output],

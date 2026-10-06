@@ -1194,6 +1194,7 @@ describe("byte-level workbook merging", () => {
 
     expect(result.operation).toBe("sheets.merge");
     expect(result.metrics).toEqual({
+      formulaCellsWithoutCachedValues: 0,
       hiddenSheets: 1,
       inputFiles: 2,
       outputSheets: 3,
@@ -1444,6 +1445,7 @@ describe("byte-level workbook consolidation", () => {
 
     expect(result.operation).toBe("sheets.consolidate");
     expect(result.metrics).toEqual({
+      formulaCellsWithoutCachedValues: 0,
       inputFiles: 2,
       inputTables: 2,
       outputColumns: 6,
@@ -1530,6 +1532,7 @@ describe("byte-level workbook consolidation", () => {
       normalizeHeaders: true,
     });
     expect(normalized.result.metrics).toEqual({
+      formulaCellsWithoutCachedValues: 0,
       inputFiles: 3,
       inputTables: 4,
       outputColumns: 8,

@@ -31,6 +31,7 @@ import {
   WORKBOOK_MAIN_PART,
   WorkbookPackage,
 } from "../package/index.js";
+import { encodeCell } from "../model/references.js";
 import type { RowNumber } from "../model/types.js";
 import { isTableEditReport } from "../region/table-binding.js";
 import type { DataRegion } from "../region/types.js";
@@ -42,6 +43,7 @@ import {
 } from "../region/values.js";
 import { stripPivotParts } from "../tier1/pivot.js";
 import { blankStaleCachedFormulas } from "../tier1/stale-values.js";
+import { uncachedFormulaWarnings } from "../uncached-formulas.js";
 import { convertWorkbookToValuesWithReport } from "../values-only.js";
 
 export const SPLIT_OPERATION = "sheets.split-by-column";
@@ -145,6 +147,11 @@ export interface AllWorksheetSplitAnalysis {
   workbookBytes: Uint8Array;
   /** Sheet name by worksheet part, for every sheet, filtered or not. */
   worksheetNames: ReadonlyMap<string, string>;
+  /**
+   * `Sheet!B4` of every split-column cell holding a formula with no cached
+   * value: the split reads it as blank, so its row joins no group.
+   */
+  uncachedSplitCells: string[];
 }
 
 function isColumnNotFound(error: unknown): boolean {
@@ -419,9 +426,26 @@ export async function analyzeAllWorksheetSplit(
   const sheets: SheetAnalysis[] = [];
   let inputRows = 0;
   let skippedRows = 0;
+  const uncachedSplitCells: string[] = [];
 
   for (const region of regions) {
     const column = splitColumnOf(region, selection.column)!;
+    for (const row of region.worksheet.rows()) {
+      if (
+        row.number < region.body.start.row ||
+        row.number > region.body.end.row
+      ) {
+        continue;
+      }
+      const cell = row.cells.find(
+        (candidate) => candidate.ref.column === column.index,
+      );
+      if (cell?.formula !== undefined && !cell.hasCachedValue) {
+        uncachedSplitCells.push(
+          `${region.sheetName}!${encodeCell(column.index, row.number)}`,
+        );
+      }
+    }
     const rowValues = readRowValues(
       region.worksheet,
       region.body.start.row,
@@ -464,6 +488,7 @@ export async function analyzeAllWorksheetSplit(
     sheets,
     skippedRows,
     unchangedSheets,
+    uncachedSplitCells,
     workbookBytes,
     worksheetNames: new Map(
       workbook.sheets.map((sheet) => [sheet.partPath, sheet.name] as const),
@@ -509,7 +534,6 @@ async function buildGroupWorkbook(
     tableFallbackSheets: [],
     uncachedFormulas: [],
   };
-  const worksheetNameByPart = analysis.worksheetNames;
   // A table region compacts its rows, so a values conversion has to run before
   // the filter for the cached results to line up with the rows they describe.
   // A pure worksheet split converts afterwards, over the rows that survive.
@@ -522,9 +546,7 @@ async function buildGroupWorkbook(
     output.formulaCellsWithoutCachedValues =
       conversion.formulasWithoutCachedValues.length;
     for (const missing of conversion.formulasWithoutCachedValues) {
-      output.uncachedFormulas.push(
-        `${worksheetNameByPart.get(missing.worksheetPart) ?? missing.worksheetPart}!${missing.cell}`,
-      );
+      output.uncachedFormulas.push(missing.location);
     }
   };
 
@@ -726,13 +748,22 @@ export async function runAllWorksheetSplit(
       `Skipped ${analysis.skippedRows} row${analysis.skippedRows === 1 ? "" : "s"} with blank values in "${selection.column}"; no blank-value workbook was created.`,
     );
   }
-  if (formulaCellsWithoutCachedValues > 0) {
-    const locations = [...missingFormulaLocations];
-    const shown = locations.slice(0, 20).join(", ");
-    warnings.push(
-      `${formulaCellsWithoutCachedValues} formula cell${formulaCellsWithoutCachedValues === 1 ? " had" : "s had"} no cached value and became formatted blank cells in values-only output. Affected source locations: ${shown}${locations.length > 20 ? `, and ${locations.length - 20} more` : ""}. Open and recalculate the source workbook in Excel, save it, and rerun the split if these values are required.`,
-    );
-  }
+  // Like the other per-output counts, a values-only loss counts once per
+  // output it happens in. A split-column cell read as blank is added once,
+  // unless an output already lost it.
+  const splitCellsOnly = analysis.uncachedSplitCells.filter(
+    (location) => !missingFormulaLocations.has(location),
+  );
+  formulaCellsWithoutCachedValues += splitCellsOnly.length;
+  warnings.push(
+    ...uncachedFormulaWarnings(
+      [...splitCellsOnly, ...missingFormulaLocations],
+      selection.values === true
+        ? "they read as blank: a row whose split value is one joins no group, and the values-only outputs hold a blank cell"
+        : "they read as blank, so a row whose split value is one joins no group",
+    ),
+  );
+
   if (pivotTablesRemoved > 0) {
     warnings.push(
       `Removed ${pivotTablesRemoved} pivot table${pivotTablesRemoved === 1 ? "" : "s"}: their caches contained rows from other groups, and a cache travels inside the workbook whether or not the pivot is opened. Rebuild the pivot in Excel from each output's own rows if it is required.`,

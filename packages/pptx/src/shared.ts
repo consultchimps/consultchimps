@@ -10,6 +10,7 @@ import {
   type OperationControlOptions,
   type OperationResult,
 } from "@consultchimps/core";
+import { uncachedFormulaWarnings } from "@consultchimps/xlsx/bytes";
 import JSZip from "jszip";
 
 export const PRESENTATION_MEDIA_TYPE =
@@ -64,6 +65,7 @@ export const PPTX_ERRORS = {
 export type PptxErrorCode = (typeof PPTX_ERRORS)[keyof typeof PPTX_ERRORS];
 
 export type PopulatePowerPointTemplateMetric =
+  | "formulaCellsWithoutCachedValues"
   | "generatedSlides"
   | "inputRows"
   | "outputFiles"
@@ -118,6 +120,8 @@ export interface PopulationRecords {
   noDataMessage: string;
   rows: Array<Record<string, string>>;
   skippedEmptyRows: number;
+  /** `Sheet!B4` of each formula cell with no cached value the rows read as empty. */
+  uncachedFormulas: string[];
 }
 
 interface ShapeInspection {
@@ -641,14 +645,20 @@ export function validateRecordsForTemplate(
   }
 }
 
-export function skippedRowsWarnings(records: PopulationRecords): string[] {
-  return records.skippedEmptyRows > 0
-    ? [
-        `Skipped ${records.skippedEmptyRows} empty worksheet row${
-          records.skippedEmptyRows === 1 ? "" : "s"
-        }.`,
-      ]
-    : [];
+export function recordsWarnings(records: PopulationRecords): string[] {
+  return [
+    ...(records.skippedEmptyRows > 0
+      ? [
+          `Skipped ${records.skippedEmptyRows} empty worksheet row${
+            records.skippedEmptyRows === 1 ? "" : "s"
+          }.`,
+        ]
+      : []),
+    ...uncachedFormulaWarnings(
+      records.uncachedFormulas,
+      "their placeholders are filled with empty text",
+    ),
+  ];
 }
 
 function replaceSlideText(

@@ -97,6 +97,7 @@ describe("corpus: merge", () => {
     const result = await mergeWorkbooks([first, second], output);
 
     expect(result.metrics).toEqual({
+      formulaCellsWithoutCachedValues: 0,
       hiddenSheets: 4,
       inputFiles: 2,
       outputSheets: 8,
@@ -608,6 +609,7 @@ describe("corpus: merge", () => {
 
     expect(outcome.outputs[0]!.name).toBe("merged.xlsx");
     expect(outcome.result.metrics).toEqual({
+      formulaCellsWithoutCachedValues: 0,
       hiddenSheets: 4,
       inputFiles: 2,
       outputSheets: 8,
@@ -698,6 +700,7 @@ describe("corpus: consolidate", () => {
     // Both Data worksheets contribute; the Summary worksheets have no rows
     // below row 3, so they produce no table at all.
     expect(result.metrics).toEqual({
+      formulaCellsWithoutCachedValues: 0,
       inputFiles: 2,
       inputTables: 2,
       // Six region columns, one unnamed column for the side note beside the
