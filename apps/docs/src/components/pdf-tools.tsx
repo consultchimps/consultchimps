@@ -56,7 +56,7 @@ export function PdfSplitTool() {
         try {
           const nextPlan = await runOperation({
             kind: "pdf.plan-split",
-            input: { bytes: input.bytes, name: input.name },
+            input: { file: input.file, name: input.name },
             filenamePrefix: prefix.trim() || undefined,
           });
           if (active) {
@@ -84,7 +84,7 @@ export function PdfSplitTool() {
     }
     void runState.run({
       kind: "pdf.split",
-      input: { bytes: input.bytes, name: input.name },
+      input: { file: input.file, name: input.name },
       filenamePrefix: prefix.trim() || undefined,
     });
   }, [input, prefix, runState]);
@@ -130,9 +130,7 @@ export function PdfSplitTool() {
           >
             <FileText aria-hidden="true" className="size-4 shrink-0" />
             <span className="truncate font-mono">{input.name}</span>
-            <span className="shrink-0">
-              {formatBytes(input.bytes.byteLength)}
-            </span>
+            <span className="shrink-0">{formatBytes(input.size)}</span>
           </p>
         ) : null}
 
@@ -273,7 +271,7 @@ export function PdfMergeTool() {
     }
     void runState.run({
       kind: "pdf.merge",
-      inputs: inputs.map((file) => ({ bytes: file.bytes, name: file.name })),
+      inputs: inputs.map((file) => ({ file: file.file, name: file.name })),
       outputName: outputName.trim() || undefined,
     });
   }, [inputs, outputName, runState]);
@@ -326,7 +324,7 @@ export function PdfMergeTool() {
                     {file.name}
                   </span>
                   <span className="shrink-0 text-xs text-fd-muted-foreground">
-                    {formatBytes(file.bytes.byteLength)}
+                    {formatBytes(file.size)}
                   </span>
                 </span>
                 <span className="flex shrink-0 items-center gap-2">

@@ -5,8 +5,9 @@
  * the file picker, progress reporting, the results list, and the hook that
  * drives one byte-level operation.
  *
- * Everything here runs in the visitor's tab. Files are read with the File API,
- * processed in a Web Worker, and offered back as downloads. There is no upload,
+ * Everything here runs in the visitor's tab. A chosen `File` is handed to a Web
+ * Worker as a reference, never copied into the page, and outputs come back as
+ * `Blob`s offered as downloads. There is no upload,
  * no API route, and no server component work, which keeps the pages compatible
  * with the site's static export.
  *
@@ -18,7 +19,6 @@
 
 import {
   isConsultChimpsError,
-  type ByteArtifact,
   type OperationProgress,
   type OperationResult,
 } from "@consultchimps/core";
@@ -29,7 +29,7 @@ import {
   type MessageVocabulary,
 } from "@consultchimps/messages";
 import { runOperation } from "@/lib/operation-worker";
-import type { ByteOperationTask } from "@/lib/operation-tasks";
+import type { ByteOperationTask, OutputFile } from "@/lib/operation-tasks";
 import {
   ArrowRight,
   Ban,
@@ -84,19 +84,28 @@ export const WEB_VOCABULARY: MessageVocabulary = {
 export interface UploadedFile {
   readonly id: string;
   readonly name: string;
-  readonly bytes: Uint8Array;
+  readonly size: number;
+  /** The chosen file itself, which the worker reads; the page never does. */
+  readonly file: File;
+  /** The file's text, read up front only for a picker that asked for it. */
+  readonly text?: string | undefined;
 }
 
 let fileCounter = 0;
 
 /**
- * Read the files a visitor picked, dropping anything the tool cannot process.
+ * Take the files a visitor picked, dropping anything the tool cannot process.
  * Rejection is silent by design: the page simply stays in the state it was in,
  * which is what the "wrong file" test asserts.
+ *
+ * Workbooks, presentations and PDFs are not read here: the worker reads each
+ * `File` itself, so a large input is never copied into the page. `readText`
+ * reads a small document, such as a column mapping, that the page checks.
  */
 export async function readUploads(
   files: readonly File[],
   accepts: (file: File) => boolean,
+  options: { readonly readText?: boolean | undefined } = {},
 ): Promise<UploadedFile[]> {
   return Promise.all(
     files.filter(accepts).map(async (file) => {
@@ -104,7 +113,9 @@ export async function readUploads(
       return {
         id: `upload-${fileCounter}`,
         name: file.name,
-        bytes: new Uint8Array(await file.arrayBuffer()),
+        size: file.size,
+        file,
+        ...(options.readText === true ? { text: await file.text() } : {}),
       };
     }),
   );
@@ -174,12 +185,13 @@ export function saveBinaryFile(
   saveBlob(new Blob([copy.buffer], { type: mediaType }), name);
 }
 
-function saveArtifact(artifact: ByteArtifact, fallbackMediaType: string): void {
-  // Copy into a fresh buffer so the blob never aliases the operation's memory.
-  const copy = new Uint8Array(artifact.bytes.byteLength);
-  copy.set(artifact.bytes);
+function saveArtifact(artifact: OutputFile, fallbackMediaType: string): void {
+  const type = artifact.mediaType ?? fallbackMediaType;
+  // Relabelling a blob slices it, which copies nothing.
   saveBlob(
-    new Blob([copy.buffer], { type: artifact.mediaType ?? fallbackMediaType }),
+    artifact.blob.type === type
+      ? artifact.blob
+      : artifact.blob.slice(0, artifact.blob.size, type),
     artifact.name,
   );
 }
@@ -191,13 +203,13 @@ function saveArtifact(artifact: ByteArtifact, fallbackMediaType: string): void {
  * entries, and DOS metadata so the file opens the same way everywhere.
  */
 async function saveArchive(
-  artifacts: readonly ByteArtifact[],
+  artifacts: readonly OutputFile[],
   archiveName: string,
 ): Promise<void> {
   const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   for (const artifact of artifacts) {
-    zip.file(artifact.name, artifact.bytes, {
+    zip.file(artifact.name, artifact.blob, {
       createFolders: false,
       date: FIXED_ARCHIVE_DATE,
     });
@@ -218,7 +230,7 @@ type RunStatus = "complete" | "failed" | "idle" | "running";
 export interface RunState {
   readonly status: RunStatus;
   readonly progress: OperationProgress | null;
-  readonly outputs: readonly ByteArtifact[];
+  readonly outputs: readonly OutputFile[];
   readonly message: string;
 }
 
@@ -363,7 +375,9 @@ export interface FileSelection {
 export function useFileSelection(
   accepts: (file: File) => boolean,
   expected: string,
+  options: { readonly readText?: boolean | undefined } = {},
 ): FileSelection {
+  const { readText } = options;
   const [file, setFile] = useState<UploadedFile | null>(null);
   const [rejected, setRejected] = useState<string | null>(null);
   const [reading, setReading] = useState(false);
@@ -382,7 +396,7 @@ export function useFileSelection(
       // one file alone.
       const chosen = files.filter(accepts).slice(0, 1);
 
-      void readUploads(chosen, accepts)
+      void readUploads(chosen, accepts, { readText })
         .then((read) => {
           if (token !== latest.current) {
             return;
@@ -406,7 +420,7 @@ export function useFileSelection(
           setReading(false);
         });
     },
-    [accepts, expected],
+    [accepts, expected, readText],
   );
 
   // The token moves so a read still in flight cannot land after the clear and
@@ -468,7 +482,7 @@ export function ChosenFile({
     >
       <FileText aria-hidden="true" className="size-4 shrink-0" />
       <span className="truncate font-mono">{file.name}</span>
-      <span className="shrink-0">{formatBytes(file.bytes.byteLength)}</span>
+      <span className="shrink-0">{formatBytes(file.size)}</span>
     </p>
   );
 }
@@ -757,7 +771,7 @@ export function ResultsPanel({
                     {output.name}
                   </span>
                   <span className="shrink-0 text-xs text-fd-muted-foreground">
-                    {formatBytes(output.bytes.byteLength)}
+                    {formatBytes(output.blob.size)}
                   </span>
                 </span>
                 <button
