@@ -1136,32 +1136,22 @@ import {
   consolidateWorkbookSources,
 } from "@consultchimps/xlsx/bytes";
 
-// `access` is a FileSystemSyncAccessHandle opened in a worker.
-access.truncate(0);
-let at = 0;
-try {
-  await consolidateWorkbookSources({
-    inputs: files.map((file) => blobSource(file.name, file)),
-    output: {
-      write: (chunk) => {
-        // A sync access handle may write less than it was given.
-        for (let rest = chunk; rest.length > 0;) {
-          const written = access.write(rest, { at });
-          at += written;
-          rest = rest.subarray(written);
-        }
-      },
-      flush: () => Promise.resolve(),
-      // Runs when the consolidation fails or is cancelled.
-      abort: async () => {
-        access.truncate(0);
-      },
+// Any writable destination works; this one collects Blob parts.
+let parts: Uint8Array[] = [];
+const { outputName } = await consolidateWorkbookSources({
+  inputs: files.map((file) => blobSource(file.name, file)),
+  output: {
+    write: (chunk) => {
+      parts.push(chunk);
     },
-  });
-  access.flush();
-} finally {
-  access.close();
-}
+    flush: () => Promise.resolve(),
+    // Runs when the consolidation fails or is cancelled.
+    abort: async () => {
+      parts = [];
+    },
+  },
+});
+const workbook = new File(parts, outputName);
 ```
 
 A template inspection reads a slide and writes nothing, so
