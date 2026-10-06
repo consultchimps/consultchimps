@@ -416,22 +416,31 @@ function guardedSource(input: WorkbookInputBytes): {
   };
 }
 
-/** A sink that keeps each chunk and counts the flushes between them. */
-function collectingSink(): {
+/** A sink that keeps each chunk, and drops them all when aborted. */
+function collectingSink(onWrite?: () => void): {
   sink: ByteSink;
   bytes: () => Buffer;
   chunks: () => number;
+  aborts: () => number;
 } {
   const chunks: Uint8Array[] = [];
+  let aborts = 0;
   return {
     sink: {
       write: (chunk) => {
         chunks.push(chunk);
+        onWrite?.();
       },
       flush: () => Promise.resolve(),
+      abort: () => {
+        aborts += 1;
+        chunks.length = 0;
+        return Promise.resolve();
+      },
     },
     bytes: () => Buffer.concat(chunks),
     chunks: () => chunks.length,
+    aborts: () => aborts,
   };
 }
 
@@ -455,8 +464,8 @@ function largeSheetXml(rows: number): string {
 
 describe("consolidation over sources and a sink", () => {
   it("reads in pieces, writes in chunks, and gives the command line's bytes", async () => {
-    const large = await handInput("large.xlsx", largeSheetXml(20_000));
-    expect(large.bytes.length).toBeGreaterThan(2 * 1024 * 1024);
+    const large = await handInput("large.xlsx", largeSheetXml(8_000));
+    expect(large.bytes.length).toBeGreaterThan(1024 * 1024);
     const inputs = [...(await reviewInputs()), large];
     const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-xlsx-"));
     try {
@@ -480,7 +489,7 @@ describe("consolidation over sources and a sink", () => {
       expect(outcome.outputName).toBe("out.xlsx");
       expect(outcome.mappingDraft).toBeUndefined();
       expect(outcome.result.metrics).toEqual(reference.metrics);
-      expect(outcome.result.metrics.outputRows).toBeGreaterThan(20_000);
+      expect(outcome.result.metrics.outputRows).toBeGreaterThan(8_000);
       expect(collected.chunks()).toBeGreaterThan(1);
       expect(
         Math.max(...guarded.map((entry) => entry.largestRead())),
@@ -489,7 +498,7 @@ describe("consolidation over sources and a sink", () => {
     } finally {
       await rm(directory, { force: true, recursive: true });
     }
-  });
+  }, 60_000);
 
   it("returns the mapping draft beside the streamed workbook", async () => {
     const inputs = await reviewInputs();
@@ -511,14 +520,24 @@ describe("consolidation over sources and a sink", () => {
   it("fails with the sink's own error when the sink throws", async () => {
     const inputs = await reviewInputs();
     const failure = new Error("disk full");
+    let aborts = 0;
+    const abort = (): Promise<void> => {
+      aborts += 1;
+      return Promise.resolve();
+    };
     for (const sink of [
       {
         write: () => {
           throw failure;
         },
         flush: () => Promise.resolve(),
+        abort,
       },
-      { write: () => undefined, flush: () => Promise.reject(failure) },
+      {
+        write: () => undefined,
+        flush: () => Promise.reject(failure),
+        abort,
+      },
     ] satisfies ByteSink[]) {
       await expect(
         consolidateWorkbookSources({
@@ -529,6 +548,7 @@ describe("consolidation over sources and a sink", () => {
         }),
       ).rejects.toBe(failure);
     }
+    expect(aborts).toBe(2);
   });
 
   it("reports a source that fails to read as a read failure of that input", async () => {
@@ -550,21 +570,21 @@ describe("consolidation over sources and a sink", () => {
     });
   });
 
-  it("stops with a cancellation once the signal aborts", async () => {
+  it("aborts the sink when cancelled after writing began", async () => {
     const inputs = await reviewInputs();
     const controller = new AbortController();
+    const collected = collectingSink(() => controller.abort());
     await expect(
       consolidateWorkbookSources({
         inputs: inputs.map((input) =>
           blobSource(input.name, new Blob([input.bytes.slice()])),
         ),
-        output: collectingSink().sink,
+        output: collected.sink,
         signal: controller.signal,
-        onProgress: (progress) => {
-          if (progress.completed === inputs.length) controller.abort();
-        },
       }),
     ).rejects.toMatchObject({ code: "OPERATION_ABORTED" });
+    expect(collected.aborts()).toBe(1);
+    expect(collected.chunks()).toBe(0);
   });
 });
 

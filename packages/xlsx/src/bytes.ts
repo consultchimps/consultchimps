@@ -381,6 +381,11 @@ export interface ByteSink {
   write(chunk: Uint8Array): void;
   /** Called between reads; a sink that buffers writes out what it holds. */
   flush(): Promise<void>;
+  /**
+   * Called once when the operation fails or is cancelled after it may have
+   * written: discard everything written, so no partial output is left.
+   */
+  abort(): Promise<void>;
 }
 
 export interface ConsolidateWorkbookSourcesOptions extends Omit<
@@ -781,6 +786,10 @@ export async function consolidateWorkbooksBytes(
           size += chunk.length;
         },
         flush: () => Promise.resolve(),
+        abort: () => {
+          chunks.length = 0;
+          return Promise.resolve();
+        },
       },
     },
   );
@@ -801,9 +810,23 @@ export async function consolidateWorkbooksBytes(
  * `consolidateWorkbooksBytes` over workbooks read in pieces and an output
  * written as it is produced, so neither is held whole: a browser reads each
  * `File` through `Blob.slice` and writes to a file of its own. `output`
- * receives exactly the bytes `consolidateWorkbooksBytes` returns.
+ * receives exactly the bytes `consolidateWorkbooksBytes` returns. On failure
+ * or cancellation `output.abort()` runs before the operation rejects.
  */
 export async function consolidateWorkbookSources(
+  options: ConsolidateWorkbookSourcesOptions,
+): Promise<ConsolidateWorkbookSourcesOutcome> {
+  try {
+    return await consolidateIntoSink(options);
+  } catch (error) {
+    // The original failure is what the caller needs; a sink that also fails
+    // to discard cannot make that answer more useful.
+    await options.output.abort().catch(() => undefined);
+    throw error;
+  }
+}
+
+async function consolidateIntoSink(
   options: ConsolidateWorkbookSourcesOptions,
 ): Promise<ConsolidateWorkbookSourcesOutcome> {
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
