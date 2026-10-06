@@ -42,24 +42,31 @@ const scope = self as unknown as {
 };
 
 /**
- * The OPFS outputs this worker wrote. They are deleted when the next task that
- * produces files starts, because the page then stops offering them, and a
- * sweep removes any a closed tab left behind.
+ * The OPFS outputs this worker wrote, one set per file-producing run. A run's
+ * outputs are deleted when the run after next starts, not the next one, so a
+ * download of them still in progress is not cut short. A sweep removes any
+ * that a closed tab left behind.
  */
-const createdOutputs = new Set<string>();
+const outputRuns: Set<string>[] = [];
 const outputStorage = browserOutputStorage();
-let sweeping = removeOutputs(outputStorage, createdOutputs);
+let sweeping = removeOutputs(outputStorage, new Set());
 
-/** The tasks whose outputs replace what the page offers. */
-const PRODUCES_FILES = new Set<OperationTask["kind"]>([
-  "pdf.merge",
-  "pdf.split",
-  "pptx.populate",
-  "xlsx.consolidate",
-  "xlsx.merge",
-  "xlsx.split",
-  "xlsx.unprotect",
-]);
+/** Start a run's set of outputs, deleting those two runs old. */
+async function nextOutputRun(): Promise<Set<string>> {
+  await sweeping;
+  const stale = new Set(
+    outputRuns
+      .splice(0, Math.max(0, outputRuns.length - 1))
+      .flatMap((run) => [...run]),
+  );
+  sweeping = removeOutputs(outputStorage, stale);
+  await sweeping;
+  // Names whose removal failed stay listed, so a later run retries them.
+  if (stale.size > 0) outputRuns.unshift(stale);
+  const run = new Set<string>();
+  outputRuns.push(run);
+  return run;
+}
 
 /** One controller per in-flight task, so a `cancel` command can reach it. */
 const controllers = new Map<number, AbortController>();
@@ -232,7 +239,7 @@ async function perform(
         },
         controls,
         outputStorage,
-        createdOutputs,
+        await nextOutputRun(),
       );
       return { value: result, artifacts: outputs };
     }
@@ -334,11 +341,6 @@ async function execute(id: number, task: OperationTask): Promise<void> {
   const controller = new AbortController();
   controllers.set(id, controller);
   try {
-    if (PRODUCES_FILES.has(task.kind)) {
-      await sweeping;
-      sweeping = removeOutputs(outputStorage, createdOutputs);
-      await sweeping;
-    }
     const answer = await perform(task, {
       onProgress: (progress) => {
         scope.postMessage({ type: "progress", id, progress });

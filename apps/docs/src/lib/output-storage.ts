@@ -13,8 +13,9 @@ import type { ByteSink } from "@consultchimps/xlsx/bytes";
 export interface OutputSyncAccessHandle {
   write(buffer: Uint8Array, options: { readonly at: number }): number;
   truncate(size: number): void;
-  flush(): void;
-  close(): void;
+  // Safari 15.2 to 16 return promises from these two.
+  flush(): void | Promise<void>;
+  close(): void | Promise<void>;
 }
 
 export interface OutputFileHandle {
@@ -139,10 +140,10 @@ export async function openOutputTarget(
 
   let at = 0;
   let open = true;
-  const close = (): void => {
+  const close = async (): Promise<void> => {
     if (open) {
       open = false;
-      access.close();
+      await access.close();
     }
   };
   return {
@@ -165,7 +166,7 @@ export async function openOutputTarget(
       flush: () => Promise.resolve(),
       abort: async () => {
         try {
-          close();
+          await close();
         } finally {
           await removeOutput(directory, name, created);
         }
@@ -173,9 +174,9 @@ export async function openOutputTarget(
     },
     finish: async () => {
       try {
-        access.flush();
+        await access.flush();
       } finally {
-        close();
+        await close();
       }
       // The OPFS file has no type; the page relabels it when it downloads.
       return { blob: await handle.getFile(), inMemory: false };
@@ -188,12 +189,15 @@ async function removeOutput(
   name: string,
   created: Set<string>,
 ): Promise<void> {
-  created.delete(name);
   try {
     await directory.removeEntry(name);
-  } catch {
-    // Already gone, or still open somewhere; a later sweep retries.
+  } catch (error) {
+    // Still open somewhere: keep the name so the next removal retries.
+    if (!(error instanceof DOMException && error.name === "NotFoundError")) {
+      return;
+    }
   }
+  created.delete(name);
 }
 
 /**

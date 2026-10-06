@@ -145,40 +145,48 @@ and outputs are written to disk as they are produced.
   a sync access handle in the worker, and the page downloads the OPFS `File`,
   which is backed by disk. Where OPFS is missing or refuses (a private window in
   some browsers), the output is collected as `Blob` parts instead, and the page
-  says so once it passes 50 MB. A run's OPFS file is deleted when the next run
-  that produces files starts, and a sweep removes any older than a day, left by
-  a closed tab. Drafting a mapping no longer builds the workbook at all.
+  says so once it passes 50 MB. A run's OPFS file is deleted when the run after
+  next starts, so a download still reading it is not cut short, and a sweep
+  removes any older than a day, left by a closed tab. Drafting a mapping no
+  longer builds the workbook at all.
 - **Not chosen.** The File System Access save picker writes straight to a file
   the visitor names, but only Chromium has it and it must be opened by a click
-  before the run starts. OPFS covers Chromium, Firefox and Safari with no extra
-  step.
+  before the run starts. OPFS with sync access handles is in Chromium, Firefox
+  and Safari by their documentation, with no extra step.
 
-A spike measured a worker writing 512 MB, 64 KB at a time, in headless Chromium.
-Peak private memory above the idle tab:
+Peak private memory of the whole headless Chromium process tree, above the idle
+page, on neutral generated workbooks of 12 columns. A spike first wrote 512 MB
+from a worker, 64 KB at a time:
 
-|                                 | Persistent profile | Private context |
-| ------------------------------- | ------------------ | --------------- |
-| OPFS sync access handle         | 5 MB               | 781 MB          |
-| `Blob` parts                    | 518 MB             | 1,163 MB        |
-| One `Uint8Array`, then a `Blob` | not measured       | 1,546 MB        |
+|                                 | Normal profile | Private context |
+| ------------------------------- | -------------- | --------------- |
+| OPFS sync access handle         | 13 MB          | 781 MB          |
+| `Blob` parts                    | 1,164 MB       | 1,163 MB        |
+| One `Uint8Array`, then a `Blob` | not measured   | 1,546 MB        |
 
 OPFS stays on disk in a normal profile and is held in memory in a private one,
-where it is still no worse than `Blob` parts. Firefox wrote and downloaded
-through OPFS correctly. Playwright's WebKit build for Windows refused OPFS in
-both kinds of profile, so Safari was not checked here; that refusal is the case
-the `Blob` fallback covers.
+where it is still no worse than `Blob` parts; the page cannot tell the two
+apart, so a private window shows no notice. Firefox wrote and downloaded through
+OPFS correctly. Playwright's WebKit build for Windows refused OPFS in both kinds
+of profile, so Safari was not checked here; that refusal is the case the `Blob`
+fallback covers.
 
-Peak memory of the whole browser above the idle tool page, before this change,
-on neutral generated workbooks of 12 columns:
+Consolidation in a normal profile, before and after:
 
-| Operation, input                       | Peak above idle |
-| -------------------------------------- | --------------- |
-| Consolidate, 10 x 15,000 rows (9.8 MB) | 169 MB          |
-| Consolidate, 150,000 rows (9.7 MB)     | 161 MB          |
-| Consolidate, 600,000 rows (39 MB)      | 351 MB          |
-| Merge, 10 x 15,000 rows                | 263 MB          |
-| Unprotect, 150,000 rows                | 301 MB          |
-| Inspect, 150,000 rows                  | 950 MB          |
+| Input                           | Before | After  |
+| ------------------------------- | ------ | ------ |
+| 10 x 15,000 rows (9.8 MB)       | 158 MB | 123 MB |
+| 150,000 rows (9.7 MB)           | 178 MB | 139 MB |
+| 600,000 rows (39 MB, 47 MB out) | 345 MB | 182 MB |
+
+What remains is the reader's working set and the engine, which do not grow with
+the file. The other operations, before, in a private context:
+
+| Operation, input        | Peak above idle |
+| ----------------------- | --------------- |
+| Merge, 10 x 15,000 rows | 263 MB          |
+| Unprotect, 150,000 rows | 301 MB          |
+| Inspect, 150,000 rows   | 950 MB          |
 
 Merge, unprotect, split, inspection and PowerPoint population still build or
 read whole packages in the library, on the command line too, so they gain only
