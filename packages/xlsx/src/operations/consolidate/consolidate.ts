@@ -407,9 +407,11 @@ class SheetProfile implements WorksheetConsumer {
         range.endColumn - range.startColumn + 1 - columns.length,
       // Every column of the range: a column holding only formulas with no
       // cached value reads as a spacer, and is exactly what must be reported.
+      // To the range's last row, as the table reader's region runs: a
+      // trailing row of only such formulas is dropped, and must be reported.
       region: {
         startRow: header,
-        endRow: lastRow,
+        endRow: range.endRow,
         startColumn: range.startColumn,
         endColumn: range.endColumn,
       },

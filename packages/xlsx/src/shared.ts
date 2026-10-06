@@ -1108,12 +1108,18 @@ export async function workbookWorksheetRecords(
     headerRowIndex === undefined ||
     headerRowIndex > range.endRow
   ) {
+    const sheetUncached = uncachedLocationsWithin(
+      worksheetName,
+      grid.uncachedFormulas,
+      undefined,
+    );
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_INVALID_HEADER_ROW,
-      `Worksheet "${worksheetName}" does not contain the selected header row.${uncachedFormulaHint(uncachedLocationsWithin(worksheetName, grid.uncachedFormulas, undefined))}`,
+      `Worksheet "${worksheetName}" does not contain the selected header row.${uncachedFormulaHint(sheetUncached)}`,
       {
         details: {
           headerRow: options.headerRow,
+          uncachedFormulas: sheetUncached,
           worksheet: worksheetName,
         },
       },
@@ -1528,9 +1534,31 @@ export async function resolveSplitSource(
     );
   }
 
-  const grouped = groupTableByColumn(table, options.column, {
-    includeBlank: options.includeBlank,
-  });
+  let grouped: ReturnType<typeof groupTableByColumn>;
+  try {
+    grouped = groupTableByColumn(table, options.column, {
+      includeBlank: options.includeBlank,
+    });
+  } catch (error) {
+    // A header that is a formula with no cached value reads as blank, which
+    // is the likely reason the column was not found.
+    const uncached = uncachedFormulasOf(table);
+    if (
+      error instanceof ConsultChimpsError &&
+      error.code === "TABLE_COLUMN_NOT_FOUND" &&
+      uncached.length > 0
+    ) {
+      throw new ConsultChimpsError(
+        error.code,
+        `${error.message}${uncachedFormulaHint(uncached)}`,
+        {
+          cause: error,
+          details: { ...error.details, uncachedFormulas: uncached },
+        },
+      );
+    }
+    throw error;
+  }
   if (grouped.groups.length === 0) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_SPLIT_NO_GROUPS,

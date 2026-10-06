@@ -421,7 +421,27 @@ export async function analyzeAllWorksheetSplit(
     selection.headerRow,
   );
   if (regions.length === 0) {
-    throw columnNotFound();
+    // A header that is a formula with no cached value reads as blank, which
+    // may be why the column was not found.
+    const uncached: string[] = [];
+    for (const sheet of workbook.sheets) {
+      for (const row of workbook.worksheet(sheet.name)?.rows() ?? []) {
+        for (const cell of row.cells) {
+          if (cell.formula !== undefined && !cell.hasCachedValue) {
+            uncached.push(
+              `${sheet.name}!${encodeCell(cell.ref.column, cell.ref.row)}`,
+            );
+          }
+        }
+      }
+    }
+    const error = columnNotFound();
+    if (uncached.length === 0) throw error;
+    throw new ConsultChimpsError(
+      error.code,
+      `${error.message}${uncachedFormulaHint(uncached)}`,
+      { details: { ...error.details, uncachedFormulas: uncached } },
+    );
   }
 
   const matching = { strict: selection.strict === true };

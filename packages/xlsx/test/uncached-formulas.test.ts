@@ -350,4 +350,63 @@ describe("formula cells with no cached value", () => {
       ).rejects.toThrow(`${CORPUS_SHEET}!B2`);
     },
   );
+
+  // The split column's header is a formula never calculated, so it reads as
+  // blank and the column is not found.
+  const headerFormula = (): Promise<Uint8Array> =>
+    buildWorkbookFixture({
+      sheets: [
+        {
+          name: CORPUS_SHEET,
+          rows: [
+            ["Record", { formula: '"Group"' }],
+            [1, "Alpha"],
+            [2, "Beta"],
+          ],
+        },
+      ],
+    });
+
+  it.each(Object.keys(REFUSALS).filter((name) => name !== "consolidate"))(
+    "are named when %s cannot find a column whose header is one",
+    async (name) => {
+      const directory = await createCorpusDirectory();
+      const input = path.join(directory, "input.xlsx");
+      await writeFile(input, await headerFormula());
+
+      await expect(
+        REFUSALS[name]!(input, path.join(directory, "out")),
+      ).rejects.toThrow(`${CORPUS_SHEET}!B1`);
+    },
+  );
+
+  it("are counted by consolidate in a trailing row of only such formulas", async () => {
+    const directory = await createCorpusDirectory();
+    const input = path.join(directory, "input.xlsx");
+    await writeFile(
+      input,
+      await buildWorkbookFixture({
+        sheets: [
+          {
+            name: CORPUS_SHEET,
+            rows: [
+              ["Record", "Group"],
+              [1, "Alpha"],
+              [{ formula: "2" }, { formula: '"Beta"' }],
+            ],
+          },
+        ],
+      }),
+    );
+
+    const result = await consolidateWorkbooks({
+      inputs: [input],
+      output: path.join(directory, "out", "all.xlsx"),
+    });
+
+    expect(result.metrics.formulaCellsWithoutCachedValues).toBe(2);
+    expect(result.warnings.join(" ")).toContain(
+      `${CORPUS_SHEET}!A3, ${CORPUS_SHEET}!B3`,
+    );
+  });
 });
