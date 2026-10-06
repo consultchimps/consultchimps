@@ -445,14 +445,20 @@ export function ExcelSplitTool() {
     }
 
     let active = true;
+    // The worker reads the whole workbook for this, so a superseded read is
+    // cancelled rather than merely ignored.
+    const controller = new AbortController();
     void (async () => {
       try {
-        const columns = await runOperation({
-          kind: "xlsx.columns",
-          input: { file: input.file, name: input.name },
-          headerRow: options.headerRow,
-          worksheet: options.sheet,
-        });
+        const columns = await runOperation(
+          {
+            kind: "xlsx.columns",
+            input: { file: input.file, name: input.name },
+            headerRow: options.headerRow,
+            worksheet: options.sheet,
+          },
+          { signal: controller.signal },
+        );
         if (active) {
           setDetected(columns);
         }
@@ -465,6 +471,7 @@ export function ExcelSplitTool() {
 
     return () => {
       active = false;
+      controller.abort();
     };
   }, [input, options.headerRow, options.sheet]);
 
@@ -473,6 +480,7 @@ export function ExcelSplitTool() {
   // state change in this effect asynchronous.
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     const timer = window.setTimeout(() => {
       if (!input || !options.column) {
         setPlan(null);
@@ -481,11 +489,14 @@ export function ExcelSplitTool() {
       }
       void (async () => {
         try {
-          const nextPlan = await runOperation({
-            kind: "xlsx.plan-split",
-            input: { file: input.file, name: input.name },
-            options,
-          });
+          const nextPlan = await runOperation(
+            {
+              kind: "xlsx.plan-split",
+              input: { file: input.file, name: input.name },
+              options,
+            },
+            { signal: controller.signal },
+          );
           if (active) {
             setPlan(nextPlan);
             setPlanError(null);
@@ -502,6 +513,7 @@ export function ExcelSplitTool() {
     return () => {
       active = false;
       window.clearTimeout(timer);
+      controller.abort();
     };
   }, [input, options]);
 

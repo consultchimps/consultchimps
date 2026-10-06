@@ -51,14 +51,18 @@ export function PdfSplitTool() {
     }
 
     let active = true;
+    const controller = new AbortController();
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
-          const nextPlan = await runOperation({
-            kind: "pdf.plan-split",
-            input: { file: input.file, name: input.name },
-            filenamePrefix: prefix.trim() || undefined,
-          });
+          const nextPlan = await runOperation(
+            {
+              kind: "pdf.plan-split",
+              input: { file: input.file, name: input.name },
+              filenamePrefix: prefix.trim() || undefined,
+            },
+            { signal: controller.signal },
+          );
           if (active) {
             setPlan(nextPlan);
             setPlanError(null);
@@ -75,6 +79,7 @@ export function PdfSplitTool() {
     return () => {
       active = false;
       window.clearTimeout(timer);
+      controller.abort();
     };
   }, [input, prefix]);
 
