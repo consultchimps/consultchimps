@@ -2,6 +2,12 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    // A hung test fails at its testTimeout. On CI, hanging-process also prints
+    // what keeps the process alive once the run is over; any other hang hits
+    // the 10 minute step limit in ci.yml. Elsewhere vitest picks its reporter.
+    ...(process.env["GITHUB_ACTIONS"] === "true"
+      ? { reporters: ["default", "github-actions", "hanging-process"] }
+      : {}),
     projects: [
       {
         test: {
