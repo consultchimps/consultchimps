@@ -11,7 +11,6 @@
 import { ConsultChimpsError, type ProgressReporter } from "@consultchimps/core";
 
 import {
-  fromTransferable,
   type CancelCommand,
   type OperationTask,
   type OperationTaskResult,
@@ -62,7 +61,7 @@ function handleEvent(event: MessageEvent<WorkerEvent>): void {
       ? message.value
       : {
           result: message.value,
-          outputs: message.artifacts.map(fromTransferable),
+          outputs: message.artifacts,
         },
   );
 }

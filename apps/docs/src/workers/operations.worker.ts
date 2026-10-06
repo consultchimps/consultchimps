@@ -3,22 +3,26 @@
  *
  * Splitting a large PDF or rewriting a workbook package is seconds of tight,
  * synchronous work. Running it here keeps the tab responsive: the page only
- * ships inputs in, renders progress events, and receives output buffers.
+ * hands over the chosen `File`s, renders progress events, and receives the
+ * outputs as `Blob`s. Reading each input happens here, never in the page.
  *
  * One worker serves every format, and each engine is still pulled in with a
  * dynamic `import()` on the first task that needs it, so opening a tool page
  * downloads no engine until someone asks for a preview or a run.
  */
 import {
+  ConsultChimpsError,
   isConsultChimpsError,
+  OPERATION_ABORTED,
   type ByteArtifact,
   type ByteOperationOutcome,
   type OperationControlOptions,
 } from "@consultchimps/core";
 
 import type {
+  NamedFile,
   OperationTask,
-  TransferableArtifact,
+  OutputFile,
   WorkerCommand,
   WorkerEvent,
 } from "@/lib/operation-tasks";
@@ -33,7 +37,7 @@ const scope = self as unknown as {
     type: "message",
     listener: (event: MessageEvent<WorkerCommand>) => void,
   ): void;
-  postMessage(message: WorkerEvent, transfer?: Transferable[]): void;
+  postMessage(message: WorkerEvent): void;
 };
 
 /** One controller per in-flight task, so a `cancel` command can reach it. */
@@ -41,22 +45,70 @@ const controllers = new Map<number, AbortController>();
 
 interface TaskAnswer {
   readonly value: unknown;
-  readonly artifacts?: readonly TransferableArtifact[] | undefined;
-  readonly transfer: Transferable[];
+  readonly artifacts?: readonly OutputFile[] | undefined;
+}
+
+/** The code a chosen file that can no longer be read fails with. */
+const FILE_UNREADABLE = "FILE_UNREADABLE";
+
+/** Said when a chosen file can no longer be read, as the pickers once said it. */
+const UNREADABLE_FILE =
+  "could not be read. It may have moved, gone offline, or been removed since it was chosen. Choose it again, or pick another file";
+
+/** A promise that rejects with the usual cancellation once `signal` aborts. */
+function cancelled(signal: AbortSignal | undefined): Promise<never> {
+  return new Promise((_, reject) => {
+    if (signal === undefined) return;
+    const fail = (): void => {
+      reject(
+        new ConsultChimpsError(
+          OPERATION_ABORTED,
+          "The task was cancelled before it finished. No source data was changed and no partial output was produced.",
+        ),
+      );
+    };
+    if (signal.aborted) fail();
+    else signal.addEventListener("abort", fail, { once: true });
+  });
 }
 
 /**
- * Hand an output's bytes over as a buffer that matches it exactly. A view into
- * a larger pool is copied first, because transferring its buffer would move
- * unrelated bytes and detach whatever else pointed at them.
+ * Read one input whole, for the operations that need every byte at once. The
+ * copy lives here in the worker only; the page never held one.
  */
-function toTransferable(artifact: ByteArtifact): TransferableArtifact {
-  const { bytes } = artifact;
-  const exact =
-    bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength;
+async function whole(
+  input: NamedFile,
+  signal: AbortSignal | undefined,
+): Promise<{
+  readonly name: string;
+  readonly bytes: Uint8Array;
+}> {
+  // A task cancelled before it got here starts no read at all.
+  if (signal?.aborted) return cancelled(signal);
+  // A large or cloud-backed file can take a while; Cancel must not wait for it.
+  const reading = input.file.arrayBuffer().then(
+    (buffer) => ({ name: input.name, bytes: new Uint8Array(buffer) }),
+    (error: unknown) => {
+      throw new ConsultChimpsError(
+        FILE_UNREADABLE,
+        `"${input.name}" ${UNREADABLE_FILE}`,
+        { cause: error, details: { source: input.name } },
+      );
+    },
+  );
+  return Promise.race([reading, cancelled(signal)]);
+}
+
+/**
+ * Hand an output over as a `Blob`. The page receives a reference to it, and
+ * the buffer here is dropped once the task answers.
+ */
+function toOutputFile(artifact: ByteArtifact): OutputFile {
   return {
     name: artifact.name,
-    buffer: (exact ? bytes.buffer : bytes.slice().buffer) as ArrayBuffer,
+    blob: new Blob([artifact.bytes as Uint8Array<ArrayBuffer>], {
+      type: artifact.mediaType ?? "",
+    }),
     ...(artifact.mediaType === undefined
       ? {}
       : { mediaType: artifact.mediaType }),
@@ -66,15 +118,14 @@ function toTransferable(artifact: ByteArtifact): TransferableArtifact {
 function answerWithOutputs<TMetric extends string>(
   outcome: ByteOperationOutcome<TMetric>,
 ): TaskAnswer {
-  const artifacts = outcome.outputs.map(toTransferable);
-  // A duplicate entry in the transfer list is a DataCloneError, so the buffers
-  // are deduplicated even though distinct outputs normally own distinct ones.
-  const transfer = [...new Set(artifacts.map((artifact) => artifact.buffer))];
-  return { value: outcome.result, artifacts, transfer };
+  return {
+    value: outcome.result,
+    artifacts: outcome.outputs.map(toOutputFile),
+  };
 }
 
 function answerWithValue(value: unknown): TaskAnswer {
-  return { value, transfer: [] };
+  return { value };
 }
 
 async function perform(
@@ -86,7 +137,7 @@ async function perform(
       const { planSplitPdfBytes } = await import("@consultchimps/pdf/bytes");
       return answerWithValue(
         await planSplitPdfBytes({
-          input: { bytes: task.input.bytes, name: task.input.name },
+          input: await whole(task.input, controls.signal),
           filenamePrefix: task.filenamePrefix,
         }),
       );
@@ -96,7 +147,7 @@ async function perform(
       return answerWithOutputs(
         await splitPdfBytes({
           ...controls,
-          input: { bytes: task.input.bytes, name: task.input.name },
+          input: await whole(task.input, controls.signal),
           filenamePrefix: task.filenamePrefix,
         }),
       );
@@ -106,10 +157,9 @@ async function perform(
       return answerWithOutputs(
         await mergePdfsBytes({
           ...controls,
-          inputs: task.inputs.map((input) => ({
-            bytes: input.bytes,
-            name: input.name,
-          })),
+          inputs: await Promise.all(
+            task.inputs.map((input) => whole(input, controls.signal)),
+          ),
           outputName: task.outputName,
         }),
       );
@@ -120,7 +170,7 @@ async function perform(
       return answerWithValue(
         await planSplitWorkbookBytes({
           ...task.options,
-          input: { bytes: task.input.bytes, name: task.input.name },
+          input: await whole(task.input, controls.signal),
         }),
       );
     }
@@ -130,7 +180,7 @@ async function perform(
         await splitWorkbookBytes({
           ...controls,
           ...task.options,
-          input: { bytes: task.input.bytes, name: task.input.name },
+          input: await whole(task.input, controls.signal),
         }),
       );
     }
@@ -139,10 +189,9 @@ async function perform(
       return answerWithOutputs(
         await mergeWorkbooksBytes({
           ...controls,
-          inputs: task.inputs.map((input) => ({
-            bytes: input.bytes,
-            name: input.name,
-          })),
+          inputs: await Promise.all(
+            task.inputs.map((input) => whole(input, controls.signal)),
+          ),
           outputName: task.outputName,
           values: task.values,
         }),
@@ -154,10 +203,9 @@ async function perform(
       return answerWithOutputs(
         await consolidateWorkbooksBytes({
           ...controls,
-          inputs: task.inputs.map((input) => ({
-            bytes: input.bytes,
-            name: input.name,
-          })),
+          inputs: await Promise.all(
+            task.inputs.map((input) => whole(input, controls.signal)),
+          ),
           addSourceColumns: task.addSourceColumns,
           includeHiddenSheets: task.includeHiddenSheets,
           mapping: task.mapping,
@@ -177,10 +225,9 @@ async function perform(
       // browser's draft and the command line's draft the same document.
       const { result } = await consolidateWorkbooksBytes({
         ...controls,
-        inputs: task.inputs.map((input) => ({
-          bytes: input.bytes,
-          name: input.name,
-        })),
+        inputs: await Promise.all(
+          task.inputs.map((input) => whole(input, controls.signal)),
+        ),
         includeHiddenSheets: task.includeHiddenSheets,
         suggestMapping: true,
       });
@@ -190,8 +237,11 @@ async function perform(
       const { readWorksheetRecordsBytes } =
         await import("@consultchimps/xlsx/bytes");
       const records = await readWorksheetRecordsBytes(
-        { bytes: task.input.bytes, name: task.input.name },
-        { headerRow: task.headerRow, worksheet: task.worksheet },
+        await whole(task.input, controls.signal),
+        {
+          headerRow: task.headerRow,
+          worksheet: task.worksheet,
+        },
       );
       return answerWithValue({
         columns: records.columns,
@@ -202,10 +252,10 @@ async function perform(
       const { describeWorkbookBytes } =
         await import("@consultchimps/xlsx/bytes");
       return answerWithValue(
-        await describeWorkbookBytes(
-          { bytes: task.input.bytes, name: task.input.name },
-          { ...controls, ...task.options },
-        ),
+        await describeWorkbookBytes(await whole(task.input, controls.signal), {
+          ...controls,
+          ...task.options,
+        }),
       );
     }
     case "xlsx.unprotect": {
@@ -214,7 +264,7 @@ async function perform(
       return answerWithOutputs(
         await unprotectWorkbookBytes({
           ...controls,
-          input: task.input,
+          input: await whole(task.input, controls.signal),
           ...(task.outputName === undefined
             ? {}
             : { outputName: task.outputName }),
@@ -226,8 +276,11 @@ async function perform(
         await import("@consultchimps/pptx/bytes");
       return answerWithValue(
         await inspectPresentationOutcomeBytes(
-          { bytes: task.template.bytes, name: task.template.name },
-          { ...controls, templateSlide: task.templateSlide },
+          await whole(task.template, controls.signal),
+          {
+            ...controls,
+            templateSlide: task.templateSlide,
+          },
         ),
       );
     }
@@ -238,8 +291,8 @@ async function perform(
         await planPopulatePresentationBytes({
           ...controls,
           ...task.options,
-          template: { bytes: task.template.bytes, name: task.template.name },
-          workbook: { bytes: task.workbook.bytes, name: task.workbook.name },
+          template: await whole(task.template, controls.signal),
+          workbook: await whole(task.workbook, controls.signal),
         }),
       );
     }
@@ -250,8 +303,8 @@ async function perform(
         await populatePresentationBytes({
           ...controls,
           ...task.options,
-          template: { bytes: task.template.bytes, name: task.template.name },
-          workbook: { bytes: task.workbook.bytes, name: task.workbook.name },
+          template: await whole(task.template, controls.signal),
+          workbook: await whole(task.workbook, controls.signal),
         }),
       );
     }
@@ -269,15 +322,12 @@ async function execute(id: number, task: OperationTask): Promise<void> {
       },
       signal: controller.signal,
     });
-    scope.postMessage(
-      {
-        type: "done",
-        id,
-        value: answer.value,
-        artifacts: answer.artifacts,
-      },
-      answer.transfer,
-    );
+    scope.postMessage({
+      type: "done",
+      id,
+      value: answer.value,
+      artifacts: answer.artifacts,
+    });
   } catch (error) {
     scope.postMessage({
       type: "failed",

@@ -307,8 +307,8 @@ export function PptxPopulateTool() {
           const plan = await runOperation(
             {
               kind: "pptx.plan-populate",
-              template: { bytes: template.bytes, name: template.name },
-              workbook: { bytes: workbook.bytes, name: workbook.name },
+              template: { file: template.file, name: template.name },
+              workbook: { file: workbook.file, name: workbook.name },
               options,
             },
             { signal: controller.signal },
@@ -356,8 +356,8 @@ export function PptxPopulateTool() {
     ranKey.current = previewKey;
     void runState.run({
       kind: "pptx.populate",
-      template: { bytes: template.bytes, name: template.name },
-      workbook: { bytes: workbook.bytes, name: workbook.name },
+      template: { file: template.file, name: template.name },
+      workbook: { file: workbook.file, name: workbook.name },
       options,
     });
   }, [hasUnusableNumber, options, previewKey, runState, template, workbook]);
@@ -666,7 +666,7 @@ export function PptxInspectTool() {
           const outcome = await runOperation(
             {
               kind: "pptx.inspect",
-              template: { bytes: template.bytes, name: template.name },
+              template: { file: template.file, name: template.name },
               templateSlide: slideNumber,
             },
             { signal: controller.signal },

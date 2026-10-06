@@ -309,7 +309,7 @@ function SourceWorkbookList({ disabled, uploads }: SourceWorkbookListProps) {
             </span>
             <span className="truncate font-mono text-sm">{file.name}</span>
             <span className="shrink-0 text-xs text-fd-muted-foreground">
-              {formatBytes(file.bytes.byteLength)}
+              {formatBytes(file.size)}
             </span>
           </span>
           <span className="flex shrink-0 items-center gap-2">
@@ -445,14 +445,20 @@ export function ExcelSplitTool() {
     }
 
     let active = true;
+    // The worker reads the whole workbook for this, so a superseded read is
+    // cancelled rather than merely ignored.
+    const controller = new AbortController();
     void (async () => {
       try {
-        const columns = await runOperation({
-          kind: "xlsx.columns",
-          input: { bytes: input.bytes, name: input.name },
-          headerRow: options.headerRow,
-          worksheet: options.sheet,
-        });
+        const columns = await runOperation(
+          {
+            kind: "xlsx.columns",
+            input: { file: input.file, name: input.name },
+            headerRow: options.headerRow,
+            worksheet: options.sheet,
+          },
+          { signal: controller.signal },
+        );
         if (active) {
           setDetected(columns);
         }
@@ -465,6 +471,7 @@ export function ExcelSplitTool() {
 
     return () => {
       active = false;
+      controller.abort();
     };
   }, [input, options.headerRow, options.sheet]);
 
@@ -473,6 +480,7 @@ export function ExcelSplitTool() {
   // state change in this effect asynchronous.
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     const timer = window.setTimeout(() => {
       if (!input || !options.column) {
         setPlan(null);
@@ -481,11 +489,14 @@ export function ExcelSplitTool() {
       }
       void (async () => {
         try {
-          const nextPlan = await runOperation({
-            kind: "xlsx.plan-split",
-            input: { bytes: input.bytes, name: input.name },
-            options,
-          });
+          const nextPlan = await runOperation(
+            {
+              kind: "xlsx.plan-split",
+              input: { file: input.file, name: input.name },
+              options,
+            },
+            { signal: controller.signal },
+          );
           if (active) {
             setPlan(nextPlan);
             setPlanError(null);
@@ -502,6 +513,7 @@ export function ExcelSplitTool() {
     return () => {
       active = false;
       window.clearTimeout(timer);
+      controller.abort();
     };
   }, [input, options]);
 
@@ -511,7 +523,7 @@ export function ExcelSplitTool() {
     }
     void runState.run({
       kind: "xlsx.split",
-      input: { bytes: input.bytes, name: input.name },
+      input: { file: input.file, name: input.name },
       options,
     });
   }, [input, options, runState]);
@@ -558,9 +570,7 @@ export function ExcelSplitTool() {
           >
             <FileText aria-hidden="true" className="size-4 shrink-0" />
             <span className="truncate font-mono">{input.name}</span>
-            <span className="shrink-0">
-              {formatBytes(input.bytes.byteLength)}
-            </span>
+            <span className="shrink-0">{formatBytes(input.size)}</span>
           </p>
         ) : null}
       </section>
@@ -894,7 +904,7 @@ export function ExcelMergeTool() {
     }
     void runState.run({
       kind: "xlsx.merge",
-      inputs: files.map((file) => ({ bytes: file.bytes, name: file.name })),
+      inputs: files.map((file) => ({ file: file.file, name: file.name })),
       outputName: outputName.trim() || undefined,
       values,
     });
@@ -1092,7 +1102,7 @@ function readMappingSelection(file: UploadedFile | null): ReadMapping {
   try {
     return {
       error: null,
-      mapping: parseColumnMapping(new TextDecoder().decode(file.bytes)),
+      mapping: parseColumnMapping(file.text ?? ""),
     };
   } catch (error) {
     return { error: describeFailure(error), mapping: null };
@@ -1128,6 +1138,8 @@ export function ExcelConsolidateTool() {
   const mappingSelection = useFileSelection(
     MAPPING_FILES.accepts,
     MAPPING_FILES.description,
+    // The page checks the mapping itself the moment it is chosen.
+    { readText: true },
   );
   const mappingFile = mappingSelection.file;
   const [drafted, setDrafted] = useState<DraftedMapping | null>(null);
@@ -1178,7 +1190,7 @@ export function ExcelConsolidateTool() {
       try {
         const suggested = await runOperation({
           kind: "xlsx.suggest-mapping",
-          inputs: files.map((file) => ({ bytes: file.bytes, name: file.name })),
+          inputs: files.map((file) => ({ file: file.file, name: file.name })),
           includeHiddenSheets,
         });
         setDrafted({
@@ -1247,7 +1259,7 @@ export function ExcelConsolidateTool() {
     }
     void runState.run({
       kind: "xlsx.consolidate",
-      inputs: files.map((file) => ({ bytes: file.bytes, name: file.name })),
+      inputs: files.map((file) => ({ file: file.file, name: file.name })),
       addSourceColumns,
       includeHiddenSheets,
       mapping: mapping ?? undefined,
