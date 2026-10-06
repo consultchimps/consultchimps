@@ -436,6 +436,16 @@ OS file creates a browser working copy. Subsequent imports and schema changes
 modify that working copy. They do not synchronize back to the selected file.
 Export a new file when another application needs the current database.
 
+The database tool is verified in Chromium-based desktop browsers such as Chrome
+and Edge. Other browsers that provide origin-private file storage are untested.
+Use the tool in one tab or window at a time: the working database keeps
+exclusive file handles, so a second tab of the same site shows a notice and
+takes over on its own once the first tab is closed. A closed tab can keep its
+file handles for a short while; the next action waits for them with a progress
+message before it starts the engine. If the engine still cannot start, the tool
+reports `DB_BROWSER_ENGINE_UNAVAILABLE` with the browser's reason and starts
+again on the next action once the cause is resolved.
+
 If browser replacement reports a temporary-file cleanup error, inspect its
 outcome before retrying. `published: true` means the new working copy is already
 stored under the reported public name. The error also lists private candidate or
