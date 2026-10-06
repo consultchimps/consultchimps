@@ -1,5 +1,43 @@
 # consultchimps
 
+## 0.14.0
+
+### Minor Changes
+
+- 9362544: A date cell read from a workbook is written back as an Excel date,
+  not as ISO text. Consolidate, a compact split and `writeTable` write it as a
+  1900-system serial formatted `yyyy-mm-dd`, or `yyyy-mm-dd hh:mm:ss` when it
+  carries a time, so the output sorts, filters and calculates on it. Dates from
+  1904-system inputs are recounted, and a date before 1900 stays text. A
+  `writeTable` caller that passes a string in that exact timestamp spelling now
+  gets a date cell too.
+- faca026: A formula cell with no cached value, from a workbook that was saved
+  without being calculated, is no longer read as blank in silence. Consolidate,
+  split, `merge --values`, `sheets inspect` and PowerPoint populate count such
+  cells in a new `formulaCellsWithoutCachedValues` metric and name them in one
+  warning, up to ten `Sheet!B4` locations, so the user knows to open and save
+  the file in Excel. `readWorksheetRecords` returns them as `uncachedFormulas`.
+  Nothing computes the missing value, and a preserving split or merge still
+  carries the formula.
+
+### Patch Changes
+
+- b7e401e: `consolidateWorkbookSources` in `@consultchimps/xlsx/bytes`
+  consolidates workbooks read in pieces into an output written chunk by chunk,
+  so a browser can consolidate large files without holding them whole.
+  `blobSource` reads a browser `File` or `Blob` through `Blob.slice`. The output
+  bytes match `consolidateWorkbooksBytes` and the command line.
+
+  A consolidation whose output cannot be written now fails with that write
+  error, rather than reporting that an input could not be read.
+
+- Updated dependencies [b7e401e]
+- Updated dependencies [9362544]
+- Updated dependencies [faca026]
+  - @consultchimps/xlsx@0.20.0
+  - @consultchimps/pptx@0.8.0
+  - @consultchimps/db@0.2.2
+
 ## 0.13.1
 
 ### Patch Changes
