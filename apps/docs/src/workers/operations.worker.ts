@@ -361,9 +361,14 @@ async function execute(id: number, task: OperationTask): Promise<void> {
 scope.addEventListener("message", (event) => {
   const command = event.data;
   if (command.type === "release") {
-    // The page is going away: delete what it offered, as far as time allows.
+    // The page no longer offers them: delete them, as far as time allows.
+    // Names whose removal failed go back on the list for the next try.
     const offered = new Set(outputRuns.splice(0).flatMap((run) => [...run]));
-    void sweeping.then(() => removeOutputs(outputPlace, offered));
+    sweeping = sweeping
+      .then(() => removeOutputs(outputPlace, offered))
+      .then(() => {
+        if (offered.size > 0) outputRuns.unshift(offered);
+      });
     return;
   }
   if (command.type === "cancel") {
