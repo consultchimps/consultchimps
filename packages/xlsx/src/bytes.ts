@@ -18,6 +18,7 @@ import {
   type OperationControlOptions,
   type OperationPlan,
   type OperationResult,
+  type RandomAccessSource,
 } from "@consultchimps/core";
 
 import {
@@ -351,6 +352,65 @@ export interface ConsolidateWorkbooksBytesResult extends OperationResult<Consoli
 
 export interface ConsolidateWorkbooksBytesOutcome extends ByteOperationOutcome<ConsolidateWorkbooksMetric> {
   result: ConsolidateWorkbooksBytesResult;
+}
+
+/**
+ * A workbook read in pieces through `Blob.slice`, so a browser `File` is never
+ * copied whole into memory. A file changed on disk since it was chosen fails
+ * its next read.
+ */
+export function blobSource(name: string, blob: Blob): RandomAccessSource {
+  return {
+    name,
+    size: blob.size,
+    // Cancellation is left to the operation reading, which reports it in its
+    // own terms between reads.
+    readAt: async (offset, length) => {
+      if (
+        !Number.isSafeInteger(offset) ||
+        !Number.isSafeInteger(length) ||
+        offset < 0 ||
+        length < 0 ||
+        offset + length > blob.size
+      ) {
+        throw new RangeError("The requested range is outside the workbook.");
+      }
+      return new Uint8Array(
+        await blob.slice(offset, offset + length).arrayBuffer(),
+      );
+    },
+  };
+}
+
+/** Where a streamed output's bytes go, in order. */
+export interface ByteSink {
+  /** Take the next chunk. The writer does not touch it again. */
+  write(chunk: Uint8Array): void;
+  /** Called between reads; a sink that buffers writes out what it holds. */
+  flush(): Promise<void>;
+  /**
+   * Called once when the operation fails or is cancelled after it may have
+   * written: discard everything written, so no partial output is left.
+   */
+  abort(): Promise<void>;
+}
+
+export interface ConsolidateWorkbookSourcesOptions extends Omit<
+  ConsolidateWorkbooksBytesOptions,
+  "inputs"
+> {
+  /** Each workbook, read in pieces. Its `name` is what `_source_file` records. */
+  inputs: RandomAccessSource[];
+  /** Receives the consolidated workbook as it is written. */
+  output: ByteSink;
+}
+
+export interface ConsolidateWorkbookSourcesOutcome {
+  result: ConsolidateWorkbooksBytesResult;
+  /** The name of the workbook written to `output`. */
+  outputName: string;
+  /** The mapping draft, present only when `suggestMapping` asked for one. */
+  mappingDraft?: ByteArtifact | undefined;
 }
 
 export interface MergeWorkbooksBytesOptions extends OperationControlOptions {
@@ -737,6 +797,62 @@ async function splitAllWorksheetsBytes(
 export async function consolidateWorkbooksBytes(
   options: ConsolidateWorkbooksBytesOptions,
 ): Promise<ConsolidateWorkbooksBytesOutcome> {
+  const { inputs, ...rest } = options;
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  const { result, outputName, mappingDraft } = await consolidateWorkbookSources(
+    {
+      ...rest,
+      inputs: inputs.map((input) => bytesSource(input.name, input.bytes)),
+      output: {
+        write: (chunk) => {
+          chunks.push(chunk);
+          size += chunk.length;
+        },
+        flush: () => Promise.resolve(),
+        abort: () => {
+          chunks.length = 0;
+          return Promise.resolve();
+        },
+      },
+    },
+  );
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  const outputs: ByteArtifact[] = [
+    { name: outputName, bytes, mediaType: WORKBOOK_MEDIA_TYPE },
+  ];
+  if (mappingDraft) outputs.push(mappingDraft);
+  return { result, outputs };
+}
+
+/**
+ * `consolidateWorkbooksBytes` over workbooks read in pieces and an output
+ * written as it is produced, so neither is held whole: a browser reads each
+ * `File` through `Blob.slice` and writes to a file of its own. `output`
+ * receives exactly the bytes `consolidateWorkbooksBytes` returns. On failure
+ * or cancellation `output.abort()` runs before the operation rejects.
+ */
+export async function consolidateWorkbookSources(
+  options: ConsolidateWorkbookSourcesOptions,
+): Promise<ConsolidateWorkbookSourcesOutcome> {
+  try {
+    return await consolidateIntoSink(options);
+  } catch (error) {
+    // The original failure is what the caller needs; a sink that also fails
+    // to discard cannot make that answer more useful.
+    await options.output.abort().catch(() => undefined);
+    throw error;
+  }
+}
+
+async function consolidateIntoSink(
+  options: ConsolidateWorkbookSourcesOptions,
+): Promise<ConsolidateWorkbookSourcesOutcome> {
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
   if (options.inputs.length === 0) {
     throw new ConsultChimpsError(
@@ -765,7 +881,10 @@ export async function consolidateWorkbooksBytes(
     details: { source: input.name },
     open: () =>
       Promise.resolve({
-        ...bytesSource(input.name, input.bytes),
+        name: input.name,
+        size: input.size,
+        readAt: (offset, length, signal) =>
+          input.readAt(offset, length, signal),
         close: () => Promise.resolve(),
       }),
   }));
@@ -788,26 +907,10 @@ export async function consolidateWorkbooksBytes(
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
   const sheetName = options.outputSheetName ?? CONSOLIDATED_SHEET_NAME;
   assertSheetName(sheetName);
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  await writeConsolidation(sources, plan, settings, sheetName, {
-    write: (chunk) => {
-      chunks.push(chunk);
-      size += chunk.length;
-    },
-    flush: () => Promise.resolve(),
-  });
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
-  const output: ByteArtifact = {
-    name: outputName,
-    bytes,
-    mediaType: WORKBOOK_MEDIA_TYPE,
-  };
+  await writeConsolidation(sources, plan, settings, sheetName, options.output);
+  // A cancellation during the last write or flush still cancels: the caller
+  // asked to stop before the output was complete.
+  throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
   options.onProgress?.({
     operation: CONSOLIDATE_OPERATION,
     stage: "writing-output",
@@ -823,15 +926,15 @@ export async function consolidateWorkbooksBytes(
       path: outputName,
     },
   ];
-  const outputs: ByteArtifact[] = [output];
+  let mappingDraft: ByteArtifact | undefined;
   if (suggestion) {
-    outputs.push({
+    mappingDraft = {
       name: SUGGESTED_MAPPING_FILE_NAME,
       bytes: new TextEncoder().encode(
         serializeColumnMapping(suggestion.mapping),
       ),
       mediaType: MAPPING_MEDIA_TYPE,
-    });
+    };
     artifacts.push({
       kind: "file",
       mediaType: MAPPING_MEDIA_TYPE,
@@ -871,7 +974,7 @@ export async function consolidateWorkbooksBytes(
     result.suggestion = suggestion;
   }
 
-  return { result, outputs };
+  return { result, outputName, mappingDraft };
 }
 
 /**

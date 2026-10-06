@@ -878,9 +878,45 @@ export async function planConsolidation(
 
 /**
  * The second pass: read every table's rows again and write them, in input and
- * worksheet order, through the streaming writer into `sink`.
+ * worksheet order, through the streaming writer into `sink`. A sink that
+ * throws fails the run with its own error, not as a failure to read the input
+ * being copied when it happened, and not as whatever the zip stream it broke
+ * reports next.
  */
 export async function writeConsolidation(
+  sources: readonly ConsolidationSource[],
+  plan: ConsolidationPlan,
+  settings: ConsolidationSettings,
+  sheetName: string,
+  sink: ConsolidationSink,
+): Promise<void> {
+  let failure: { readonly error: unknown } | undefined;
+  const guarded: ConsolidationSink = {
+    write: (chunk) => {
+      try {
+        sink.write(chunk);
+      } catch (error) {
+        failure ??= { error };
+        throw error;
+      }
+    },
+    flush: async () => {
+      try {
+        await sink.flush();
+      } catch (error) {
+        failure ??= { error };
+        throw error;
+      }
+    },
+  };
+  try {
+    await copyTables(sources, plan, settings, sheetName, guarded);
+  } catch (error) {
+    throw failure === undefined ? error : failure.error;
+  }
+}
+
+async function copyTables(
   sources: readonly ConsolidationSource[],
   plan: ConsolidationPlan,
   settings: ConsolidationSettings,
