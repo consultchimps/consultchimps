@@ -84,7 +84,11 @@ interface FakeFile {
  * call, as the standard allows, unless `stall` makes it write nothing.
  */
 function fakeStorage(
-  options: { readonly stall?: boolean; readonly onWrite?: () => void } = {},
+  options: {
+    readonly stall?: boolean;
+    readonly quota?: boolean;
+    readonly onWrite?: () => void;
+  } = {},
 ) {
   const files = new Map<string, FakeFile>();
   const fileHandle = (name: string): OutputFileHandle => ({
@@ -99,6 +103,9 @@ function fakeStorage(
         write: (buffer, { at }) => {
           options.onWrite?.();
           if (options.stall) return 0;
+          if (options.quota) {
+            throw new DOMException("Quota exceeded", "QuotaExceededError");
+          }
           const count = Math.min(buffer.length, 1000);
           const end = at + count;
           if (end > file.data.length) {
@@ -260,8 +267,11 @@ describe("consolidateFiles", () => {
     expect(created.size).toBe(0);
   });
 
-  it("fails rather than spinning when OPFS writes nothing", async () => {
-    const { place, files } = fakeStorage({ stall: true });
+  it.each([
+    ["writes nothing", { stall: true }],
+    ["throws a quota error", { quota: true }],
+  ])("fails as storage full when OPFS %s", async (_, failure) => {
+    const { place, files } = fakeStorage(failure);
     await expect(
       consolidateFiles(
         [guardedFile("north.xlsx", await workbook("N", 20))],

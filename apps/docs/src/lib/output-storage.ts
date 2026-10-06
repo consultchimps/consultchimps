@@ -203,6 +203,11 @@ export async function openOutputTarget(
   }
   created.add(name);
   try {
+    // Safari 15.2 and 15.3 have sync access handles but no getFile, which
+    // the download needs, so they use memory from the start.
+    if (typeof handle.getFile !== "function") {
+      throw new TypeError("This browser cannot read an OPFS file back");
+    }
     access = await handle.createSyncAccessHandle();
   } catch {
     await removeOutput(directory, name, created);
@@ -222,16 +227,21 @@ export async function openOutputTarget(
       write: (chunk) => {
         let rest = chunk;
         while (rest.length > 0) {
-          const written = access.write(rest, { at });
+          let written: number;
+          try {
+            written = access.write(rest, { at });
+          } catch (error) {
+            if (
+              error instanceof DOMException &&
+              error.name === "QuotaExceededError"
+            ) {
+              throw storageFull(at, error);
+            }
+            throw error;
+          }
           // No progress means the disk is full or the handle is gone; going
           // round again would never end.
-          if (written <= 0) {
-            throw new ConsultChimpsError(
-              OUTPUT_STORAGE_FULL,
-              "The browser stopped accepting the output, which usually means the storage it gives this site is full. Free some disk space or clear this site's data in the browser settings, then run the task again",
-              { details: { bytesWritten: at } },
-            );
-          }
+          if (written <= 0) throw storageFull(at, undefined);
           at += written;
           rest = rest.subarray(written);
         }
@@ -255,6 +265,14 @@ export async function openOutputTarget(
       return { blob: await handle.getFile(), inMemory: false };
     },
   };
+}
+
+function storageFull(bytesWritten: number, cause: unknown): ConsultChimpsError {
+  return new ConsultChimpsError(
+    OUTPUT_STORAGE_FULL,
+    "The browser stopped accepting the output, which usually means the storage it gives this site is full. Free some disk space or clear this site's data in the browser settings, then run the task again",
+    { cause, details: { bytesWritten } },
+  );
 }
 
 async function removeOutput(
