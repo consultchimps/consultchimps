@@ -14,7 +14,8 @@ metadata:
 
 # Excel operations with ConsultChimps
 
-Transforming workbooks that already exist. Run everything as
+Transforming workbooks that already exist; formatting or editing cells is
+`chimps-excel-design-skill`. Run everything as
 `npx consultchimps@0.13.1 <command>`; add `--json` before the command for a
 machine-readable result. Every flag used here is in
 [references/cli-reference.md](references/cli-reference.md).
@@ -65,11 +66,19 @@ Behaviour of 0.13.1, which a checkout build can differ from.
 | Duplicate header names                      | renamed `Name_2`, with no warning                                                                                                           |
 | Blank header over a filled column           | named `column_N`, with no warning                                                                                                           |
 | "Mandatory" / "Optional" rows under headers | kept as data rows                                                                                                                           |
+| Formula cells with no stored result         | read as empty, and written blank by `--values`, not always with a warning                                                                   |
+| Date cells, in `sheets consolidate`         | written to the output as ISO text such as `2026-04-11T00:00:00.000Z`, with no warning                                                       |
 
-The last four change your output without a warning. After a run, list the output
-columns and look for `column_N` and `_2` names, and filter the first rows of
-each source for annotation text. Remove annotation rows in the source or after
-the run, and say which you did.
+The last six change your output, mostly without a warning. After a run, list the
+output columns and look for `column_N` and `_2` names, and filter the first rows
+of each source for annotation text. Remove annotation rows in the source or
+after the run, and say which you did. Check date columns, and tell the user when
+they came out as text.
+
+A formula column whose `sampleValues` is empty in `inspect` has no stored
+results, usually because a script wrote the file and Excel never saved it. Ask
+the user to open and save it in Excel before you run anything; do not automate
+Excel yourself.
 
 ## Header rows under title blocks
 

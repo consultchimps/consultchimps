@@ -44,8 +44,8 @@ formatted row inherits nothing. Apply the column's format to every cell you
 write, including the blank ones a Needs Input flag leaves behind, so the column
 stays one format. Round-tripping an existing workbook through a library loses
 what the library does not model: charts, pivot tables, slicers, images and some
-conditional formatting can disappear on save, which is one reason this skill
-authors new files rather than rewriting supplied ones.
+conditional formatting can disappear on save, which is why this skill writes a
+new file and keeps the supplied one.
 
 ## Also worth knowing
 

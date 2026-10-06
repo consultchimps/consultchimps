@@ -5,15 +5,13 @@ no chart image.
 
 ## Inlining ECharts
 
-1. Take `echarts.min.js` from an install of the `echarts` package
-   (`node_modules/echarts/dist/echarts.min.js`) or from a downloaded release.
-2. Paste its contents between an empty `<script></script>` pair in the
-   deliverable. Do not use `<script src>`, not even to a CDN.
-3. Record the version in a comment above the tag, so a later edit can match it.
-
-The minified bundle is roughly 1 MB of text. That is the price of an offline
-file, and it is worth it. If size becomes a real problem, build a custom bundle
-with only the chart types used, and say so in the same comment.
+`scripts/inline_echarts.py` does it: it downloads the echarts 5.6.0 package from
+the npm registry, or reads a local `echarts.min.js` given as a second argument,
+pastes it over the page's one empty `<script></script>` pair, and records the
+version in a comment above the tag. Do not use `<script src>`, not even to a
+CDN, and do not paste the bundle through an editor: it is about 1 MB of text. If
+size becomes a real problem, build a custom bundle with only the chart types
+used, pass it as the local file, and say so in the comment.
 
 Initialise with the SVG renderer: `echarts.init(el, null, { renderer: "svg" })`.
 SVG prints and zooms cleanly, and the canvas renderer's output does not.
