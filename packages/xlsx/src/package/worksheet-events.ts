@@ -20,6 +20,11 @@ export interface RawCell {
   /** The text of `<v>` with entities resolved, or undefined when absent or empty. */
   readonly value: string | undefined;
   /**
+   * Whether the cell has a `<v>` at all. An empty one is a formula's cached
+   * empty result, which `value` cannot tell from no result.
+   */
+  readonly hasValue: boolean;
+  /**
    * The text of `<is>` read as a string item (see `StringItem`), with entities
    * and `_xHHHH_` escapes resolved; null when the cell has no `<is>`.
    */
@@ -299,6 +304,7 @@ export async function readWorksheetEvents(
             type: cell.type,
             style: cell.style,
             value: value === "" ? undefined : value,
+            hasValue: value !== undefined,
             inline: inlineText,
             formula,
           });

@@ -63,7 +63,9 @@ async function recordsWorkbook(): Promise<Uint8Array> {
 const UNCACHED = `${CORPUS_SHEET}!C5`;
 
 /** The corpus workbook with Data!C5 turned into a formula never calculated. */
-async function uncachedWorkbook(): Promise<Uint8Array> {
+async function uncachedWorkbook(
+  replacement = '<c r="C5"><f>"Beta"</f></c>',
+): Promise<Uint8Array> {
   const zip = await JSZip.loadAsync(
     // Structured references, which a preserved table split accepts.
     await buildCorpusWorkbook({ formulas: "structured", shape: "table" }),
@@ -71,10 +73,7 @@ async function uncachedWorkbook(): Promise<Uint8Array> {
   const sheet = await zip.file(CORPUS_PARTS.dataSheet)!.async("string");
   const cell = /<c r="C5"[^>]*?(?:\/>|>[\s\S]*?<\/c>)/u;
   expect(sheet).toMatch(cell);
-  zip.file(
-    CORPUS_PARTS.dataSheet,
-    sheet.replace(cell, '<c r="C5"><f>"Beta"</f></c>'),
-  );
+  zip.file(CORPUS_PARTS.dataSheet, sheet.replace(cell, replacement));
   return zip.generateAsync({ type: "uint8array" });
 }
 
@@ -242,6 +241,31 @@ describe("formula cells with no cached value", () => {
       expect(
         result.warnings.some((warning) => warning.includes(UNCACHED)),
       ).toBe(true);
+    },
+  );
+
+  it.each(["<v></v>", "<v/>"])(
+    "are not confused with a formula whose cached result is empty (%s)",
+    async (empty) => {
+      const directory = await createCorpusDirectory();
+      const bytes = await uncachedWorkbook(
+        `<c r="C5" t="str"><f>""</f>${empty}</c>`,
+      );
+      const input = path.join(directory, "input.xlsx");
+      await writeFile(input, bytes);
+
+      for (const name of [
+        "consolidate",
+        "describe",
+        "split, compact worksheet",
+      ]) {
+        const result = await OPERATIONS[name]!(
+          input,
+          bytes,
+          path.join(directory, name),
+        );
+        expect(result.count).toBe(0);
+      }
     },
   );
 });

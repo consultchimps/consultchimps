@@ -686,7 +686,7 @@ export class StreamedWorkbook {
         const formula = hasFormula(raw, row, columnTag);
         if (row !== undefined && columnTag >= 0) {
           const key = `${String(row)}:${String(columnTag)}`;
-          if (formula && raw.value === undefined && raw.type !== "inlineStr") {
+          if (formula && !raw.hasValue && raw.type !== "inlineStr") {
             uncached.set(key, { row, column: columnTag });
           } else {
             uncached.delete(key);
