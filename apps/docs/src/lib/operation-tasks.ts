@@ -56,6 +56,11 @@ export interface OutputFile {
   readonly name: string;
   readonly blob: Blob;
   readonly mediaType?: string | undefined;
+  /**
+   * Set when the browser gave no private file system, so the output is held
+   * in memory rather than on disk.
+   */
+  readonly inMemory?: boolean | undefined;
 }
 
 /** A byte-level operation's outcome with its outputs as `OutputFile`s. */
@@ -282,7 +287,12 @@ export interface CancelCommand {
   readonly id: number;
 }
 
-export type WorkerCommand = CancelCommand | RunCommand;
+/** Sent when the page goes away, so the worker deletes the outputs it offered. */
+export interface ReleaseCommand {
+  readonly type: "release";
+}
+
+export type WorkerCommand = CancelCommand | ReleaseCommand | RunCommand;
 
 export interface ProgressEvent {
   readonly type: "progress";

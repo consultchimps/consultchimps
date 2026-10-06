@@ -19,6 +19,8 @@ import {
   type OperationControlOptions,
 } from "@consultchimps/core";
 
+import { browserOutputPlace, removeOutputs } from "@/lib/output-storage";
+import { unreadableFile } from "@/lib/unreadable-file";
 import type {
   NamedFile,
   OperationTask,
@@ -40,6 +42,33 @@ const scope = self as unknown as {
   postMessage(message: WorkerEvent): void;
 };
 
+/**
+ * The OPFS outputs this worker wrote, one set per file-producing run. A run's
+ * outputs are deleted when the run after next starts, not the next one, so a
+ * download of them still in progress is not cut short. A sweep removes any
+ * that a closed tab left behind.
+ */
+const outputRuns: Set<string>[] = [];
+const outputPlace = browserOutputPlace();
+let sweeping = removeOutputs(outputPlace, new Set());
+
+/** Start a run's set of outputs, deleting those two runs old. */
+async function nextOutputRun(): Promise<Set<string>> {
+  await sweeping;
+  const stale = new Set(
+    outputRuns
+      .splice(0, Math.max(0, outputRuns.length - 1))
+      .flatMap((run) => [...run]),
+  );
+  sweeping = removeOutputs(outputPlace, stale);
+  await sweeping;
+  // Names whose removal failed stay listed, so a later run retries them.
+  if (stale.size > 0) outputRuns.unshift(stale);
+  const run = new Set<string>();
+  outputRuns.push(run);
+  return run;
+}
+
 /** One controller per in-flight task, so a `cancel` command can reach it. */
 const controllers = new Map<number, AbortController>();
 
@@ -47,13 +76,6 @@ interface TaskAnswer {
   readonly value: unknown;
   readonly artifacts?: readonly OutputFile[] | undefined;
 }
-
-/** The code a chosen file that can no longer be read fails with. */
-const FILE_UNREADABLE = "FILE_UNREADABLE";
-
-/** Said when a chosen file can no longer be read, as the pickers once said it. */
-const UNREADABLE_FILE =
-  "could not be read. It may have moved, gone offline, or been removed since it was chosen. Choose it again, or pick another file";
 
 /** A promise that rejects with the usual cancellation once `signal` aborts. */
 function cancelled(signal: AbortSignal | undefined): Promise<never> {
@@ -89,11 +111,7 @@ async function whole(
   const reading = input.file.arrayBuffer().then(
     (buffer) => ({ name: input.name, bytes: new Uint8Array(buffer) }),
     (error: unknown) => {
-      throw new ConsultChimpsError(
-        FILE_UNREADABLE,
-        `"${input.name}" ${UNREADABLE_FILE}`,
-        { cause: error, details: { source: input.name } },
-      );
+      throw unreadableFile(input.name, error);
     },
   );
   return Promise.race([reading, cancelled(signal)]);
@@ -198,40 +216,37 @@ async function perform(
       );
     }
     case "xlsx.consolidate": {
-      const { consolidateWorkbooksBytes } =
-        await import("@consultchimps/xlsx/bytes");
-      return answerWithOutputs(
-        await consolidateWorkbooksBytes({
-          ...controls,
-          inputs: await Promise.all(
-            task.inputs.map((input) => whole(input, controls.signal)),
-          ),
+      // Read in pieces and written to disk as it goes (ADR 0006).
+      const { consolidateFiles } = await import("@/lib/streamed-consolidation");
+      const { result, outputs } = await consolidateFiles(
+        task.inputs,
+        {
           addSourceColumns: task.addSourceColumns,
           includeHiddenSheets: task.includeHiddenSheets,
           mapping: task.mapping,
           normalizeHeaders: task.normalizeHeaders,
           outputName: task.outputName,
-        }),
+        },
+        controls,
+        outputPlace,
+        await nextOutputRun(),
       );
+      return { value: result, artifacts: outputs };
     }
     case "xlsx.suggest-mapping": {
-      const { consolidateWorkbooksBytes } =
-        await import("@consultchimps/xlsx/bytes");
       // The suggestion is drafted from the tables the consolidation read, so
       // the page proposes exactly what the library proposes for these
-      // workbooks and these options. The consolidated workbook it also builds
-      // is not returned: the page asked what the headers look like, not for a
-      // file, and reading the tables through the operation is what keeps the
-      // browser's draft and the command line's draft the same document.
-      const { result } = await consolidateWorkbooksBytes({
-        ...controls,
-        inputs: await Promise.all(
-          task.inputs.map((input) => whole(input, controls.signal)),
+      // workbooks and these options. The workbook that run writes is not
+      // wanted, so it is dropped as it is produced.
+      const { suggestMappingFromFiles } =
+        await import("@/lib/streamed-consolidation");
+      return answerWithValue(
+        await suggestMappingFromFiles(
+          task.inputs,
+          task.includeHiddenSheets,
+          controls,
         ),
-        includeHiddenSheets: task.includeHiddenSheets,
-        suggestMapping: true,
-      });
-      return answerWithValue(result.suggestion);
+      );
     }
     case "xlsx.columns": {
       const { readWorksheetRecordsBytes } =
@@ -345,6 +360,17 @@ async function execute(id: number, task: OperationTask): Promise<void> {
 
 scope.addEventListener("message", (event) => {
   const command = event.data;
+  if (command.type === "release") {
+    // The page no longer offers them: delete them, as far as time allows.
+    // Names whose removal failed go back on the list for the next try.
+    const offered = new Set(outputRuns.splice(0).flatMap((run) => [...run]));
+    sweeping = sweeping
+      .then(() => removeOutputs(outputPlace, offered))
+      .then(() => {
+        if (offered.size > 0) outputRuns.unshift(offered);
+      });
+    return;
+  }
   if (command.type === "cancel") {
     controllers.get(command.id)?.abort();
     return;

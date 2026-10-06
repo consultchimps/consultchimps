@@ -78,8 +78,9 @@ runs, so CPU time and memory are the measures to trust.
 - **Reading needs random access.** The reader starts from the zip's central
   directory, so the CLI reads through a file handle and the browser through
   `Blob.slice`.
-- **The browser is not yet streaming end to end.** It still holds its inputs and
-  output in memory. Its peak memory was not measured.
+- **The browser consolidates as the command line does**, reading in pieces and
+  writing to disk; see Browser streaming below. Its other operations still read
+  whole inputs, in the worker.
 - **Behaviour must carry over unchanged.** The current suite already tests most
   of what the spike left untested, and those tests gate the change: merged title
   banners, spacer columns, `uniqueHeaders` naming, malformed packages, and
@@ -128,3 +129,70 @@ that rounds to zero shows `0` rather than `-0`, the `A/P` marker shows `AM` or
 3. The remaining readers (inspection, tables, split input), one at a time. Done.
 4. Number-format display text, after which SheetJS can be removed (#241). Done,
    and SheetJS is removed from the repository.
+
+## Browser streaming
+
+Added 2026-10-06. The browser tools held each whole input in the page, copied it
+into the worker, and returned each output as one buffer that the page copied
+again to download. They now follow the command line: inputs are read in pieces
+and outputs are written to disk as they are produced.
+
+- **Inputs.** A page hands the worker each chosen `File`, a reference to the
+  file on disk, and never reads it. Consolidation reads through `blobSource`,
+  which is `Blob.slice` random access. Operations that still need a whole
+  workbook read it once, in the worker.
+- **Outputs.** Consolidation writes into the Origin Private File System through
+  a sync access handle in the worker, and the page downloads the OPFS `File`,
+  which is backed by disk. Where OPFS is missing or refuses (a private window in
+  some browsers), the output is collected as `Blob` parts instead, and the page
+  says so once it passes 50 MB. A run's OPFS file is deleted when the run after
+  next starts, so a download still reading it is not cut short, or as soon as
+  the page stops offering it: the results are cleared, the tool is left, or the
+  page is closed. The worker holds a Web Lock for each output it offers, and
+  whenever a tool page starts its worker it deletes every output whose lock no
+  tab holds. An output can stay in the browser's site storage between a tab
+  closing before cleanup and the next visit; clearing the site's data removes
+  it. Drafting a mapping no longer builds the workbook at all.
+- **Not chosen.** The File System Access save picker writes straight to a file
+  the visitor names, but only Chromium has it and it must be opened by a click
+  before the run starts. OPFS with sync access handles is in Chromium, Firefox
+  and Safari by their documentation, with no extra step.
+
+Peak private memory of the whole headless Chromium process tree, above the idle
+page, on neutral generated workbooks of 12 columns. A spike first wrote 512 MB
+from a worker, 64 KB at a time:
+
+|                                 | Normal profile | Private context |
+| ------------------------------- | -------------- | --------------- |
+| OPFS sync access handle         | 13 MB          | 781 MB          |
+| `Blob` parts                    | 1,164 MB       | 1,163 MB        |
+| One `Uint8Array`, then a `Blob` | not measured   | 1,546 MB        |
+
+OPFS stays on disk in a normal profile and is held in memory in a private one,
+where it is still no worse than `Blob` parts; the page cannot tell the two
+apart, so a private window shows no notice. Firefox wrote and downloaded through
+OPFS correctly. Playwright's WebKit build for Windows refused OPFS in both kinds
+of profile, so Safari was not checked here; that refusal is the case the `Blob`
+fallback covers.
+
+Consolidation in a normal profile, before and after:
+
+| Input                           | Before | After  |
+| ------------------------------- | ------ | ------ |
+| 10 x 15,000 rows (9.8 MB)       | 158 MB | 123 MB |
+| 150,000 rows (9.7 MB)           | 178 MB | 139 MB |
+| 600,000 rows (39 MB, 47 MB out) | 345 MB | 182 MB |
+
+What remains is the reader's working set and the engine, which do not grow with
+the file. The other operations, before, in a private context:
+
+| Operation, input        | Peak above idle |
+| ----------------------- | --------------- |
+| Merge, 10 x 15,000 rows | 263 MB          |
+| Unprotect, 150,000 rows | 301 MB          |
+| Inspect, 150,000 rows   | 950 MB          |
+
+Merge, unprotect, split, inspection and PowerPoint population still build or
+read whole packages in the library, on the command line too, so they gain only
+the input and output transport. Moving each onto the streaming reader and writer
+is separate work.

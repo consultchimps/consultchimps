@@ -28,7 +28,7 @@ import {
   GENERIC_VOCABULARY,
   type MessageVocabulary,
 } from "@consultchimps/messages";
-import { runOperation } from "@/lib/operation-worker";
+import { releaseOutputs, runOperation } from "@/lib/operation-worker";
 import type { ByteOperationTask, OutputFile } from "@/lib/operation-tasks";
 import {
   ArrowRight,
@@ -51,6 +51,12 @@ import {
 
 /** Re-planning re-reads the source file, so wait for a pause in typing first. */
 export const PREVIEW_DEBOUNCE_MS = 250;
+
+/**
+ * An output held in memory rather than on disk (no private file system) is
+ * flagged once it is this large.
+ */
+const MEMORY_NOTICE_BYTES = 50 * 1024 * 1024;
 
 /**
  * Entries in a combined download carry this timestamp rather than the visitor's
@@ -264,6 +270,8 @@ export function useOperationRun(): OperationRun {
   useEffect(
     () => () => {
       controllerRef.current?.abort();
+      // Leaving the tool, even within the site, stops offering its outputs.
+      releaseOutputs();
     },
     [],
   );
@@ -274,6 +282,8 @@ export function useOperationRun(): OperationRun {
 
   const reset = useCallback(() => {
     controllerRef.current?.abort();
+    // The outputs stop being offered, so they need not stay in storage.
+    releaseOutputs();
     setState(IDLE_RUN);
   }, []);
 
@@ -741,6 +751,10 @@ export function ResultsPanel({
 
   const failed = state.status === "failed";
   const bundleName = state.outputs.length > 1 ? archiveName : undefined;
+  const heldInMemory = state.outputs.some(
+    (output) =>
+      output.inMemory === true && output.blob.size >= MEMORY_NOTICE_BYTES,
+  );
 
   return (
     <section
@@ -812,6 +826,14 @@ export function ResultsPanel({
             </div>
           )}
         </>
+      ) : null}
+
+      {heldInMemory ? (
+        <p className={noticeClass} data-testid="memory-notice">
+          This browser gave the page no private storage, so the output is held
+          in memory. Download it soon; a very large output can slow or close the
+          tab
+        </p>
       ) : null}
 
       <pre
