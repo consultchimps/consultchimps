@@ -884,6 +884,9 @@ async function consolidateIntoSink(
   const sheetName = options.outputSheetName ?? CONSOLIDATED_SHEET_NAME;
   assertSheetName(sheetName);
   await writeConsolidation(sources, plan, settings, sheetName, options.output);
+  // A cancellation during the last write or flush still cancels: the caller
+  // asked to stop before the output was complete.
+  throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
   options.onProgress?.({
     operation: CONSOLIDATE_OPERATION,
     stage: "writing-output",

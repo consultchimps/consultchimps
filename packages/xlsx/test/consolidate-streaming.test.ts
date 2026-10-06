@@ -588,6 +588,32 @@ describe("consolidation over sources and a sink", () => {
   });
 });
 
+describe("consolidation cancelled at the very end", () => {
+  it("aborts the sink when cancelled during the last write", async () => {
+    const inputs = await reviewInputs();
+    const controller = new AbortController();
+    // The zip's end-of-directory record is in the last chunk written.
+    const collected = collectingSink();
+    const write = collected.sink.write;
+    collected.sink.write = (chunk) => {
+      write(chunk);
+      if (Buffer.from(chunk).includes(Buffer.from([0x50, 0x4b, 5, 6]))) {
+        controller.abort();
+      }
+    };
+    await expect(
+      consolidateWorkbookSources({
+        inputs: inputs.map((input) =>
+          blobSource(input.name, new Blob([input.bytes.slice()])),
+        ),
+        output: collected.sink,
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ code: "OPERATION_ABORTED" });
+    expect(collected.aborts()).toBe(1);
+  });
+});
+
 describe("blobSource", () => {
   it("reads the requested range and refuses one outside the blob", async () => {
     const source = blobSource(
