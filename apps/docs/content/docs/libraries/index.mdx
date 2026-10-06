@@ -1126,8 +1126,9 @@ nor the output whole. Each input is a random-access source, such as `blobSource`
 over a browser `File`, read in pieces rather than whole, and the workbook goes
 to your `output` sink chunk by chunk. The sink receives the bytes
 `consolidateWorkbooksBytes` would return, and its `abort` runs when the
-consolidation fails or is cancelled, to discard what was written. In a Web Worker, an Origin Private
-File System sync access handle makes a sink that keeps the output on disk.
+consolidation fails or is cancelled, to discard what was written. In a Web
+Worker, an Origin Private File System sync access handle makes a sink that keeps
+the output on disk.
 
 ```ts
 import {
@@ -1138,21 +1139,29 @@ import {
 // `access` is a FileSystemSyncAccessHandle opened in a worker.
 access.truncate(0);
 let at = 0;
-const { outputName } = await consolidateWorkbookSources({
-  inputs: files.map((file) => blobSource(file.name, file)),
-  output: {
-    write: (chunk) => {
-      at += access.write(chunk, { at });
+try {
+  await consolidateWorkbookSources({
+    inputs: files.map((file) => blobSource(file.name, file)),
+    output: {
+      write: (chunk) => {
+        // A sync access handle may write less than it was given.
+        for (let rest = chunk; rest.length > 0;) {
+          const written = access.write(rest, { at });
+          at += written;
+          rest = rest.subarray(written);
+        }
+      },
+      flush: () => Promise.resolve(),
+      // Runs when the consolidation fails or is cancelled.
+      abort: async () => {
+        access.truncate(0);
+      },
     },
-    flush: () => Promise.resolve(),
-    // Runs when the consolidation fails or is cancelled.
-    abort: async () => {
-      access.truncate(0);
-    },
-  },
-});
-access.flush();
-access.close();
+  });
+  access.flush();
+} finally {
+  access.close();
+}
 ```
 
 A template inspection reads a slide and writes nothing, so
