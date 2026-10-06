@@ -28,7 +28,7 @@ import {
   GENERIC_VOCABULARY,
   type MessageVocabulary,
 } from "@consultchimps/messages";
-import { runOperation } from "@/lib/operation-worker";
+import { releaseOutputs, runOperation } from "@/lib/operation-worker";
 import type { ByteOperationTask, OutputFile } from "@/lib/operation-tasks";
 import {
   ArrowRight,
@@ -270,6 +270,8 @@ export function useOperationRun(): OperationRun {
   useEffect(
     () => () => {
       controllerRef.current?.abort();
+      // Leaving the tool, even within the site, stops offering its outputs.
+      releaseOutputs();
     },
     [],
   );

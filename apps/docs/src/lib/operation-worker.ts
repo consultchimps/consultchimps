@@ -101,12 +101,19 @@ function operationWorker(): Worker {
     // as far as the time before the tab closes allows. A page kept for the
     // back button keeps them, since it can still offer them.
     window.addEventListener("pagehide", (event) => {
-      if (!event.persisted) {
-        worker?.postMessage({ type: "release" } satisfies ReleaseCommand);
-      }
+      if (!event.persisted) releaseOutputs();
     });
   }
   return created;
+}
+
+/**
+ * Ask the worker to delete the outputs it has written, because nothing on the
+ * page offers them any more: the tool that showed them unmounted, or the page
+ * is going away. A worker never started has none.
+ */
+export function releaseOutputs(): void {
+  worker?.postMessage({ type: "release" } satisfies ReleaseCommand);
 }
 
 /**
