@@ -159,7 +159,12 @@ function memoryTarget(mediaType: string): OutputTarget {
 
 /** Names carry their creation time, for a sweep in a browser without locks. */
 function outputFileName(now: number): string {
-  return `${now}-${crypto.randomUUID()}.part`;
+  // getRandomValues rather than randomUUID, which Safari lacks before 15.4.
+  const random = crypto.getRandomValues(new Uint8Array(16));
+  const id = Array.from(random, (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  return `${now}-${id}.part`;
 }
 
 function createdAt(name: string): number | undefined {

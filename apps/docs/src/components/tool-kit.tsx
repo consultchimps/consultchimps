@@ -282,6 +282,8 @@ export function useOperationRun(): OperationRun {
 
   const reset = useCallback(() => {
     controllerRef.current?.abort();
+    // The outputs stop being offered, so they need not stay in storage.
+    releaseOutputs();
     setState(IDLE_RUN);
   }, []);
 
