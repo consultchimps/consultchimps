@@ -83,6 +83,8 @@ async function whole(
   readonly name: string;
   readonly bytes: Uint8Array;
 }> {
+  // A task cancelled before it got here starts no read at all.
+  if (signal?.aborted) return cancelled(signal);
   // A large or cloud-backed file can take a while; Cancel must not wait for it.
   const reading = input.file.arrayBuffer().then(
     (buffer) => ({ name: input.name, bytes: new Uint8Array(buffer) }),
