@@ -162,4 +162,35 @@ describe("describing a workbook read in pieces", () => {
     expect(sheet.columns[2]!.sampleValues).toEqual(["2", "3", "4", "5", "6"]);
     expect(result.metrics.dataRows).toBe(39);
   });
+
+  it("counts the same rows whether the worksheet stores them in order or not", async () => {
+    const formula = (ref: string) => `<c r="${ref}"><f>1+1</f></c>`;
+    const rows = [
+      row(1, ["H1", "H2"]),
+      row(2, ["a", "b"]),
+      row(3, ["c", "d"]),
+      // A formula with no cached value in a kept column counts its row; one
+      // in a column holding nothing else does not.
+      `<row r="4">${formula("B4")}</row>`,
+      `<row r="5">${formula("C5")}</row>`,
+    ];
+    const describeRows = async (order: readonly number[]) =>
+      (
+        await describeWorkbookBytes({
+          name: "order.xlsx",
+          bytes: await workbookBytes(
+            order.map((index) => rows[index]!).join(""),
+          ),
+        })
+      ).description.sheets[0]!;
+
+    const ordered = await describeRows([0, 1, 2, 3, 4]);
+    expect(ordered).toMatchObject({ dataRowCount: 3, headerRow: 1 });
+    expect(ordered.columns.map((column) => column.header)).toEqual([
+      "H1",
+      "H2",
+    ]);
+    expect(await describeRows([0, 3, 1, 2, 4])).toEqual(ordered);
+    expect(await describeRows([0, 1, 2, 4, 3])).toEqual(ordered);
+  });
 });
