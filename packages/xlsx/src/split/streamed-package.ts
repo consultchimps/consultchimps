@@ -98,6 +98,14 @@ interface Stub {
 export interface StreamedSplitPackage {
   readonly base: WorkbookPackage;
   readonly stubs: ReadonlyMap<string, Stub>;
+  /**
+   * Parts no step reads, held as an empty placeholder and copied from the
+   * source when written, while the placeholder stands.
+   */
+  readonly opaque: ReadonlyMap<
+    string,
+    { bytes: Uint8Array; feed: (between?: () => Promise<void>) => PartFeed }
+  >;
 }
 
 /** What the analysis settles about one worksheet that carries the column. */
@@ -157,9 +165,23 @@ export async function openStreamedSplitPackage(
 ): Promise<StreamedSplitPackage> {
   const entries = zip.entries();
   const held = new Map<string, Uint8Array>();
+  const opaque = new Map<
+    string,
+    { bytes: Uint8Array; feed: (between?: () => Promise<void>) => PartFeed }
+  >();
   for (const entry of entries) {
     if (isConvertedWorksheetPart(entry.name)) continue;
-    held.set(entry.name, (await zip.readBytes(entry.name))!);
+    if (isOpaquePart(entry.name)) {
+      const bytes = new Uint8Array(0);
+      opaque.set(entry.name, {
+        bytes,
+        feed: (between) => zipPartFeed(zip, entry.name, between),
+      });
+      held.set(entry.name, bytes);
+      continue;
+    }
+    // Held whole, as the operation always held it, however large.
+    held.set(entry.name, (await zip.readBytes(entry.name, Infinity))!);
   }
   // The worksheets the workbook lists, wherever they are, are read as
   // worksheets too.
@@ -225,7 +247,39 @@ export async function openStreamedSplitPackage(
     stubs.set(entry.name, { bytes, feed });
     parts.push({ name: entry.name, bytes, date: entry.date });
   }
-  return { base: WorkbookPackage.fromParts(parts), stubs };
+  return { base: WorkbookPackage.fromParts(parts), stubs, opaque };
+}
+
+/**
+ * Parts the split's steps never read: anything not XML, relationships or VML,
+ * and the pivot parts, which are removed by name. They can be the largest in
+ * a package, so they stay in the source.
+ */
+function isOpaquePart(name: string): boolean {
+  const lower = name.toLowerCase();
+  return (
+    !/\.(xml|rels|vml)$/u.test(lower) ||
+    lower.startsWith("xl/pivotcache/") ||
+    lower.startsWith("xl/pivottables/")
+  );
+}
+
+/** Write a part that is not a worksheet stub: its bytes, or the source's. */
+export async function writeHeldPart(
+  splitPackage: StreamedSplitPackage,
+  workbookPackage: WorkbookPackage,
+  part: string,
+  writing: { push(bytes: Uint8Array): void; close(): Promise<void> },
+  between?: () => Promise<void>,
+): Promise<void> {
+  const bytes = workbookPackage.partBytes(part)!;
+  const opaque = splitPackage.opaque.get(part);
+  if (opaque && opaque.bytes === bytes) {
+    await opaque.feed(between)((chunk) => writing.push(chunk));
+  } else {
+    writing.push(bytes);
+  }
+  await writing.close();
 }
 
 /** A held row the header rule may still need, with its header names. */
@@ -808,13 +862,19 @@ export async function writeSplitGroup(
     const stub = splitPackage.stubs.get(part);
     const current = workbookPackage.partBytes(part)!;
     const partSteps = steps.get(part) ?? [];
-    if (!stub || (current === stub.bytes && partSteps.length === 0)) {
+    if (!stub) {
+      await writeHeldPart(
+        splitPackage,
+        workbookPackage,
+        part,
+        writer.part(part, workbookPackage.partDate(part)),
+        between,
+      );
+      continue;
+    }
+    if (current === stub.bytes && partSteps.length === 0) {
       const writing = writer.part(part, workbookPackage.partDate(part));
-      if (stub) {
-        await stub.feed(between)((chunk) => writing.push(chunk));
-      } else {
-        writing.push(current);
-      }
+      await stub.feed(between)((chunk) => writing.push(chunk));
       await writing.close();
       continue;
     }

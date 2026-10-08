@@ -249,12 +249,20 @@ export class ZipReader {
   }
 
   /** The whole inflated entry, for the small parts a reader holds anyway. */
-  async readBytes(name: string): Promise<Uint8Array | undefined> {
+  /**
+   * A part's bytes, whole. A structural part over 64 MiB is refused unless
+   * the caller lifts the limit, as an operation that has always held the part
+   * may.
+   */
+  async readBytes(
+    name: string,
+    limit: number = MAX_WHOLE_PART,
+  ): Promise<Uint8Array | undefined> {
     const entry = this.#entries.get(name);
     if (entry === undefined) {
       return undefined;
     }
-    if (entry.size > MAX_WHOLE_PART) {
+    if (entry.size > limit) {
       throw new Error(
         `The zip entry ${name} declares ${String(entry.size)} bytes, more than a structural part may hold.`,
       );

@@ -38,7 +38,7 @@ async function workbook(): Promise<Uint8Array> {
   const zip = new JSZip();
   zip.file(
     "[Content_Types].xml",
-    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/tables/table1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/></Types>`,
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="bin" ContentType="application/octet-stream"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/tables/table1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/></Types>`,
   );
   zip.file(
     "_rels/.rels",
@@ -75,6 +75,12 @@ async function workbook(): Promise<Uint8Array> {
   zip.file(
     "xl/worksheets/sheet2.xml",
     `<worksheet xmlns="${MAIN}"><sheetData><row r="1">${cell("A1", "Topic")}</row><row r="2">${cell("A2", "Kept")}</row></sheetData></worksheet>`,
+  );
+  // A part no step reads, larger than any read may be: copied from the
+  // source, never held.
+  zip.file(
+    "xl/embeddings/blob.bin",
+    new Uint8Array(1536 * 1024).map((_, index) => (index * 7919) % 251),
   );
   return zip.generateAsync({ type: "uint8array", compression: "STORE" });
 }

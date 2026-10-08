@@ -76,6 +76,7 @@ import {
 } from "../values-only.js";
 import {
   openStreamedSplitPackage,
+  writeHeldPart,
   type StreamedSplitPackage,
 } from "./streamed-package.js";
 
@@ -954,8 +955,13 @@ export async function writePreservedTableGroup(
     const stub = splitPackage.stubs.get(part);
     const writing = writer.part(part, workbookPackage.partDate(part));
     if (!stub) {
-      writing.push(workbookPackage.partBytes(part)!);
-      await writing.close();
+      await writeHeldPart(
+        splitPackage,
+        workbookPackage,
+        part,
+        writing,
+        between,
+      );
       continue;
     }
     const isTable = part === definition.worksheetPart;
