@@ -3,12 +3,8 @@
  * `Blob.slice`, never whole, and the workbook written to an output target as it
  * is produced (see `output-storage.ts`). The bytes are the command line's.
  */
-import type {
-  OperationControlOptions,
-  RandomAccessSource,
-} from "@consultchimps/core";
+import type { OperationControlOptions } from "@consultchimps/core";
 import {
-  blobSource,
   consolidateWorkbookSources,
   type ConsolidateWorkbooksBytesOptions,
   type ConsolidateWorkbooksBytesResult,
@@ -17,44 +13,10 @@ import type { ColumnMappingSuggestion } from "@consultchimps/tabular";
 
 import type { NamedFile, OutputFile } from "./operation-tasks";
 import { openOutputTarget, type OutputPlace } from "./output-storage";
-import { FILE_UNREADABLE, unreadableFile } from "./unreadable-file";
+import { pieceSource, readingFiles } from "./piece-source";
 
 const WORKBOOK_MEDIA_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-
-/**
- * A chosen file read in pieces. A read the browser refuses fails as the file
- * being unreadable, as a whole-file read does, not as a damaged workbook.
- */
-function pieceSource(input: NamedFile): RandomAccessSource {
-  const source = blobSource(input.name, input.file);
-  return {
-    name: source.name,
-    size: source.size,
-    readAt: (offset, length, signal) =>
-      source.readAt(offset, length, signal).catch((error: unknown) => {
-        if (error instanceof RangeError) throw error;
-        throw unreadableFile(input.name, error);
-      }),
-  };
-}
-
-/**
- * The workbook reader reports any failed read as a damaged workbook. When the
- * cause was the file itself going unreadable, that is the answer to give.
- */
-async function readingFiles<T>(work: () => Promise<T>): Promise<T> {
-  try {
-    return await work();
-  } catch (error) {
-    let cause: unknown = error;
-    for (let depth = 0; cause instanceof Error && depth < 8; depth += 1) {
-      if ((cause as { code?: unknown }).code === FILE_UNREADABLE) throw cause;
-      cause = cause.cause;
-    }
-    throw error;
-  }
-}
 
 export type StreamedConsolidationOptions = Omit<
   ConsolidateWorkbooksBytesOptions,

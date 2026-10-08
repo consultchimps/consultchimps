@@ -118,8 +118,9 @@ for (const sheet of description.sheets) {
 console.log(result.metrics.worksheets, result.warnings);
 ```
 
-`describeWorkbookBytes` is the byte-level twin, and the one the browser tool
-runs. Both produce a structurally identical description for the same workbook.
+`describeWorkbookBytes` is the byte-level twin, and `describeWorkbookSource`
+reads a workbook in pieces, which is how the browser tool reads a chosen file.
+All three produce a structurally identical description for the same workbook.
 The libraries guide covers the
 [options and the result shape](/docs/libraries#inspect-a-workbook-before-operating-on-it)
 in full, and

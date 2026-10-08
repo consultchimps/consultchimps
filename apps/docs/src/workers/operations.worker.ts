@@ -264,13 +264,10 @@ async function perform(
       });
     }
     case "xlsx.inspect": {
-      const { describeWorkbookBytes } =
-        await import("@consultchimps/xlsx/bytes");
+      // Read in pieces through `Blob.slice`, never whole.
+      const { inspectFile } = await import("@/lib/streamed-inspection");
       return answerWithValue(
-        await describeWorkbookBytes(await whole(task.input, controls.signal), {
-          ...controls,
-          ...task.options,
-        }),
+        await inspectFile(task.input, { ...controls, ...task.options }),
       );
     }
     case "xlsx.unprotect": {

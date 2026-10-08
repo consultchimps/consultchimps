@@ -41,7 +41,7 @@ import {
   type ConsolidationSettings,
   type ConsolidationSource,
 } from "./operations/consolidate/consolidate.js";
-import type { StreamedWorkbook } from "./operations/consolidate/reader.js";
+import { StreamedWorkbook } from "./operations/consolidate/reader.js";
 import { openWorkbookBytes } from "./operations/sheet-grid.js";
 import {
   readWorksheetReports,
@@ -1153,8 +1153,20 @@ export async function describeWorkbookBytes(
   input: WorkbookInputBytes,
   options: DescribeWorkbookOptions = {},
 ): Promise<WorkbookDescriptionOutcome> {
+  return describeWorkbookSource(bytesSource(input.name, input.bytes), options);
+}
+
+/**
+ * `describeWorkbookBytes` over a workbook read in pieces, so it is never held
+ * whole: a browser reads a `File` through `blobSource`. The description is the
+ * one `describeWorkbookBytes` gives for the same bytes.
+ */
+export async function describeWorkbookSource(
+  input: RandomAccessSource,
+  options: DescribeWorkbookOptions = {},
+): Promise<WorkbookDescriptionOutcome> {
   throwIfAborted(options.signal, INSPECT_OPERATION, "memory");
-  const workbook = await openWorkbookBytes(input.bytes, {
+  const workbook = await StreamedWorkbook.open(input, {
     file: input.name,
     source: input.name,
     details: { source: input.name },

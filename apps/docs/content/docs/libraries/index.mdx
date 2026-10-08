@@ -1185,23 +1185,27 @@ on its own, for callers that want the reading without the operation result.
 A workbook inspection works the same way. `describeWorkbookBytes` returns the
 description beside the structured result, and the bytes surface also carries
 `readWorkbookExcelTablesBytes` and `readWorkbookNamedRangesBytes`, the byte
-twins of the path-based Excel Table and named-range readers:
+twins of the path-based Excel Table and named-range readers.
+`describeWorkbookSource` gives the same description from a random-access source
+such as `blobSource`, so a browser `File` is read in pieces, never whole:
 
 ```ts
 import {
-  describeWorkbookBytes,
+  blobSource,
+  describeWorkbookSource,
   readWorkbookExcelTablesBytes,
 } from "@consultchimps/xlsx/bytes";
+
+const { description } = await describeWorkbookSource(
+  blobSource(file.name, file),
+  { sampleValues: 3 },
+);
+renderSheetPicker(description.sheets);
 
 const input = {
   name: file.name,
   bytes: new Uint8Array(await file.arrayBuffer()),
 };
-
-const { description } = await describeWorkbookBytes(input, {
-  sampleValues: 3,
-});
-renderSheetPicker(description.sheets);
 
 const excelTables = await readWorkbookExcelTablesBytes(input);
 ```
