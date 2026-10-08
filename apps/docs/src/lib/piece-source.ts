@@ -47,12 +47,14 @@ export class PieceReads {
 
   /**
    * Run the operation. The workbook reader reports a failed read as a damaged
-   * workbook, or may not report it at all; when the file itself went
-   * unreadable, or the run was cancelled, that is the answer to give.
+   * workbook, or may not report it at all, as when loading shared strings no
+   * worksheet turned out to need; when the file itself went unreadable, or the
+   * run was cancelled, that is the answer to give, even after a result.
    */
   async run<T>(work: () => Promise<T>): Promise<T> {
+    let result: T;
     try {
-      return await work();
+      result = await work();
     } catch (error) {
       let cause: unknown = error;
       for (let depth = 0; cause instanceof Error && depth < 8; depth += 1) {
@@ -62,6 +64,8 @@ export class PieceReads {
       }
       throw this.#failure ?? error;
     }
+    if (this.#failure) throw this.#failure;
+    return result;
   }
 
   #abortable<T>(reading: Promise<T>): Promise<T> {

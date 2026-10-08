@@ -41,14 +41,22 @@ export async function consolidateFiles(
 ): Promise<StreamedConsolidation> {
   const target = await openOutputTarget(place, WORKBOOK_MEDIA_TYPE, created);
   const reads = new PieceReads(CONSOLIDATE_OPERATION, controls.signal);
-  const { result, outputName, mappingDraft } = await reads.run(() =>
-    consolidateWorkbookSources({
-      ...options,
-      ...controls,
-      inputs: inputs.map((input) => reads.source(input)),
-      output: target.sink,
-    }),
-  );
+  let consolidated: Awaited<ReturnType<typeof consolidateWorkbookSources>>;
+  try {
+    consolidated = await reads.run(() =>
+      consolidateWorkbookSources({
+        ...options,
+        ...controls,
+        inputs: inputs.map((input) => reads.source(input)),
+        output: target.sink,
+      }),
+    );
+  } catch (error) {
+    // A run the reads fail after it finished has written an output already.
+    await target.sink.abort().catch(() => undefined);
+    throw error;
+  }
+  const { result, outputName, mappingDraft } = consolidated;
   let finished: Awaited<ReturnType<typeof target.finish>>;
   try {
     finished = await target.finish();
