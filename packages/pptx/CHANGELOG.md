@@ -1,5 +1,25 @@
 # @consultchimps/pptx
 
+## 0.8.0
+
+### Minor Changes
+
+- faca026: A formula cell with no cached value, from a workbook that was saved
+  without being calculated, is no longer read as blank in silence. Consolidate,
+  split, `merge --values`, `sheets inspect` and PowerPoint populate count such
+  cells in a new `formulaCellsWithoutCachedValues` metric and name them in one
+  warning, up to ten `Sheet!B4` locations, so the user knows to open and save
+  the file in Excel. `readWorksheetRecords` returns them as `uncachedFormulas`.
+  Nothing computes the missing value, and a preserving split or merge still
+  carries the formula.
+
+### Patch Changes
+
+- Updated dependencies [b7e401e]
+- Updated dependencies [9362544]
+- Updated dependencies [faca026]
+  - @consultchimps/xlsx@0.20.0
+
 ## 0.7.1
 
 ### Patch Changes
