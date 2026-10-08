@@ -19,16 +19,19 @@ path, so it has to be proven software, not new code of our own.
 - **Opening a CSV reads it once**, in pieces, before any row is used:
   - the encoding is the byte order mark's (UTF-8, UTF-16 LE or BE), else UTF-8
     when every byte is valid UTF-8, else Windows-1252, with a warning naming it;
-    `--csv-encoding` overrides. A file with a zero byte and no byte order mark
-    is refused, since it is most likely UTF-16 without one;
+    `--csv-encoding` overrides, except that a byte order mark wins over a choice
+    that contradicts it, with a warning. A file with a zero byte and no byte
+    order mark is refused, since it is most likely UTF-16 without one;
   - Papa guesses the delimiter (comma, semicolon, tab or pipe) from the first
     ten non-blank rows; `--csv-delimiter` overrides it.
 - **Line endings.** Papa splits rows on one kind of line ending per file, and
   joined the rows of a file mixing CRLF and LF silently. So rows are split on
-  LF, and a carriage return ending a row's last field is read as part of its
-  line ending. Mixed files read correctly; the one value this changes is a
-  quoted last field whose text itself ends in a carriage return. A file using CR
-  alone is split on CR.
+  LF, or on CR when the first 64 KB holds no LF, and a carriage return ending a
+  row's last field is read as part of its line ending. CRLF, LF and files mixing
+  the two read correctly; the one value this changes is a quoted last field
+  whose text itself ends in a carriage return. A carriage return on its own
+  anywhere else in a row split on LF could be a line ending or text, so it is
+  refused rather than risk joining two rows.
 - **Malformed quoting is refused**, naming the row: any quote error Papa
   reports, or a row still open after 16 MB of text, which is an opening quote
   never closed. Papa would otherwise carry the rest of the file into one field.
