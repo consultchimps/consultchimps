@@ -13,7 +13,10 @@ import type { ColumnMappingSuggestion } from "@consultchimps/tabular";
 
 import type { NamedFile, OutputFile } from "./operation-tasks";
 import { openOutputTarget, type OutputPlace } from "./output-storage";
-import { pieceSource, readingFiles } from "./piece-source";
+import { PieceReads } from "./piece-source";
+
+/** The operation's name, as the library reports a cancellation. */
+const CONSOLIDATE_OPERATION = "sheets.consolidate";
 
 const WORKBOOK_MEDIA_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -37,11 +40,12 @@ export async function consolidateFiles(
   created: Set<string>,
 ): Promise<StreamedConsolidation> {
   const target = await openOutputTarget(place, WORKBOOK_MEDIA_TYPE, created);
-  const { result, outputName, mappingDraft } = await readingFiles(() =>
+  const reads = new PieceReads(CONSOLIDATE_OPERATION, controls.signal);
+  const { result, outputName, mappingDraft } = await reads.run(() =>
     consolidateWorkbookSources({
       ...options,
       ...controls,
-      inputs: inputs.map(pieceSource),
+      inputs: inputs.map((input) => reads.source(input)),
       output: target.sink,
     }),
   );
@@ -81,10 +85,11 @@ export async function suggestMappingFromFiles(
   includeHiddenSheets: boolean | undefined,
   controls: Required<OperationControlOptions>,
 ): Promise<ColumnMappingSuggestion | undefined> {
-  const { result } = await readingFiles(() =>
+  const reads = new PieceReads(CONSOLIDATE_OPERATION, controls.signal);
+  const { result } = await reads.run(() =>
     consolidateWorkbookSources({
       ...controls,
-      inputs: inputs.map(pieceSource),
+      inputs: inputs.map((input) => reads.source(input)),
       includeHiddenSheets,
       suggestMapping: true,
       output: {

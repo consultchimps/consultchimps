@@ -9,13 +9,15 @@ import {
 } from "@consultchimps/xlsx/bytes";
 
 import type { NamedFile } from "./operation-tasks";
-import { pieceSource, readingFiles } from "./piece-source";
+import { PieceReads } from "./piece-source";
+
+/** The operation's name, as the library reports a cancellation. */
+const INSPECT_OPERATION = "sheets.inspect";
 
 export function inspectFile(
   input: NamedFile,
   options: DescribeWorkbookOptions,
 ): Promise<WorkbookDescriptionOutcome> {
-  return readingFiles(() =>
-    describeWorkbookSource(pieceSource(input), options),
-  );
+  const reads = new PieceReads(INSPECT_OPERATION, options.signal);
+  return reads.run(() => describeWorkbookSource(reads.source(input), options));
 }

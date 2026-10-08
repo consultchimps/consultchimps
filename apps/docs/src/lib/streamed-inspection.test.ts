@@ -104,4 +104,79 @@ describe("inspectFile", () => {
       details: { source: "log.xlsx" },
     });
   });
+
+  it("answers a cancel while a read of the file is still waiting", async () => {
+    const bytes = await workbook(20);
+    const stalled = {
+      size: bytes.length,
+      slice: () => ({ arrayBuffer: () => new Promise<never>(() => undefined) }),
+    } as unknown as Blob;
+    const controller = new AbortController();
+    const inspection = inspectFile(
+      { name: "log.xlsx", file: stalled },
+      { signal: controller.signal },
+    );
+    controller.abort();
+    await expect(inspection).rejects.toMatchObject({
+      code: "OPERATION_ABORTED",
+    });
+  });
+
+  it("fails as an unreadable file whichever single read the browser refuses", async () => {
+    const zip = new JSZip();
+    const source = await JSZip.loadAsync(await workbook(200));
+    for (const [name, entry] of Object.entries(source.files)) {
+      zip.file(name, await entry.async("uint8array"));
+    }
+    // Shared strings, which the reader loads apart from the worksheet.
+    zip.file(
+      "xl/sharedStrings.xml",
+      `<sst xmlns="${MAIN}"><si><t>Report</t></si></sst>`,
+    );
+    zip.file(
+      "[Content_Types].xml",
+      (await zip.file("[Content_Types].xml")!.async("string")).replace(
+        "</Types>",
+        '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>',
+      ),
+    );
+    zip.file(
+      "xl/worksheets/sheet1.xml",
+      (await zip.file("xl/worksheets/sheet1.xml")!.async("string")).replace(
+        `<c r="A1" t="inlineStr"><is><t>Report</t></is></c>`,
+        `<c r="A1" t="s"><v>0</v></c>`,
+      ),
+    );
+    const bytes = await zip.generateAsync({ type: "uint8array" });
+    const blob = new Blob([bytes.slice()]);
+    const failingAt = (refused: number) => {
+      let reads = 0;
+      return {
+        size: blob.size,
+        slice: (start: number, end: number) => {
+          reads += 1;
+          return reads === refused
+            ? { arrayBuffer: () => Promise.reject(new Error("NotReadable")) }
+            : blob.slice(start, end);
+        },
+      } as unknown as Blob;
+    };
+
+    let total = 0;
+    const counted = {
+      size: blob.size,
+      slice: (start: number, end: number) => {
+        total += 1;
+        return blob.slice(start, end);
+      },
+    } as unknown as Blob;
+    await inspectFile({ name: "log.xlsx", file: counted }, {});
+    expect(total).toBeGreaterThan(2);
+
+    for (let refused = 1; refused <= total; refused += 1) {
+      await expect(
+        inspectFile({ name: "log.xlsx", file: failingAt(refused) }, {}),
+      ).rejects.toMatchObject({ code: "FILE_UNREADABLE" });
+    }
+  });
 });
