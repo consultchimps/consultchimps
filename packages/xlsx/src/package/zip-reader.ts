@@ -244,6 +244,12 @@ export class ZipReader {
       }));
   }
 
+  /** Refuse an entry no read could inflate, before any read of it. */
+  refuseUnreadable(name: string): void {
+    const entry = this.#entries.get(name);
+    if (entry !== undefined) refuseUnknownMethod(name, entry);
+  }
+
   has(name: string): boolean {
     return this.#entries.has(name);
   }
@@ -294,11 +300,7 @@ export class ZipReader {
     if (entry === undefined) {
       throw new Error(`The zip entry ${name} is missing.`);
     }
-    if (entry.method !== STORED && entry.method !== DEFLATED) {
-      throw new Error(
-        `The zip entry ${name} uses compression method ${String(entry.method)}.`,
-      );
-    }
+    refuseUnknownMethod(name, entry);
     const header = await this.#source.readAt(entry.localHeader, 30);
     if (header.length < 30 || u32(header, 0) !== LOCAL_HEADER) {
       throw new Error(`The zip entry ${name} has no local header.`);
@@ -345,5 +347,13 @@ export class ZipReader {
     if ((crc ^ -1) >>> 0 !== entry.crc) {
       throw new Error(`The zip entry ${name} fails its CRC check.`);
     }
+  }
+}
+
+function refuseUnknownMethod(name: string, entry: ZipEntry): void {
+  if (entry.method !== STORED && entry.method !== DEFLATED) {
+    throw new Error(
+      `The zip entry ${name} uses compression method ${String(entry.method)}.`,
+    );
   }
 }

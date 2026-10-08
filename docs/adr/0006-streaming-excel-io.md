@@ -192,10 +192,10 @@ the file. The other operations, before, in a private context:
 | Unprotect, 150,000 rows | 301 MB          |
 | Inspect, 150,000 rows   | 950 MB          |
 
-Merge, unprotect and PowerPoint population still build or read whole packages in
-the library, on the command line too, so they gain only the input and output
-transport. Inspection and splitting moved; see below. Moving each other one onto
-the streaming reader and writer is separate work.
+Unprotect and PowerPoint population still build or read whole packages in the
+library, on the command line too, so they gain only the input and output
+transport. Inspection, splitting and merging moved; see below. Moving each other
+one onto the streaming reader and writer is separate work.
 
 ## Inspection
 
@@ -283,3 +283,37 @@ open, about 4,250 split runs across every mode give the same bytes and results.
 The rest are corrections: a failed CRC check or a malformed row or cell
 reference is refused with `XLSX_READ_FAILED`, and a package JSZip read as empty
 is read.
+
+## Merging
+
+Added 2026-10-08. Merging loaded every input whole and built the merged package
+in memory. It now opens each input as splitting does: every part but the
+worksheets held, each worksheet as a stub, and binary parts left in the input.
+The style, number format and formula rewrites run on the stubs as before. Each
+worksheet's rows are read twice: once to replay, in document order, the order in
+which the merged style sheet numbers the styles it first meets, and once to
+write them through the same rewrites into the output. Values-only merging counts
+the formulas it converts in a first read, so the counts come before the output.
+
+What is held is the merged package with its worksheets as stubs, the merged
+style sheet and string table, and one compressed output part; an input's own
+parts go once it is transplanted. A binary part read only when written fails as
+the input's read failure. The command line keeps at most 16 inputs open, opening
+one again when its rows are written, and an input that changed during the merge
+fails it.
+
+Peak memory on neutral generated workbooks; the browser's is the Chromium
+process tree above the idle page:
+
+| Input, surface            | Before       | After        |
+| ------------------------- | ------------ | ------------ |
+| 10 x 15,000 rows, CLI     | 360 MB, 44 s | 224 MB, 48 s |
+| 2 x 150,000 rows, CLI     | 938 MB, 56 s | 320 MB, 62 s |
+| 10 x 15,000 rows, browser | 244 MB       | 191 MB       |
+
+The merged workbooks are byte for byte the same. Over the 439 distinct workbooks
+the package's tests open, alone, twice and in pairs, 4,306 of 4,390 merge runs
+give the same bytes and results. The rest involve six damaged workbooks and are
+corrections, as for splitting: a failed CRC check, or a package with no workbook
+part, is refused with `XLSX_READ_FAILED`, and a package JSZip read as empty is
+read.

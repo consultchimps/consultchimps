@@ -89,6 +89,7 @@ import {
   preservedSplitExtensionOf,
   splitMediaType,
 } from "./split/all-worksheet.js";
+import { MergeInputs, type MergeInput } from "./merge/input-handles.js";
 import { stagedFile } from "./split/staged-file.js";
 import {
   openRegionPackage,
@@ -975,27 +976,65 @@ export async function mergeWorkbooks(
     // project may travel: a package must never claim a type its name denies.
     macroOutput: isMacroWorkbookName(absoluteOutput),
   };
-  const state = createMergeState(buildOptions);
-  for (const [index, inputPath] of absoluteInputs.entries()) {
+  const state = createMergeState(buildOptions, async () => {
+    await yieldToEventLoop();
     throwIfAborted(options.signal, MERGE_OPERATION);
-    await appendWorkbookSheets(
-      state,
-      path.basename(inputPath),
-      await readWorkbookBytes(inputPath),
-    );
-    options.onProgress?.({
-      operation: MERGE_OPERATION,
-      stage: "merging-inputs",
-      completed: index + 1,
-      total: absoluteInputs.length,
-      detail: path.basename(inputPath),
-    });
-  }
-  const merged = await finishMergedWorkbook(state, buildOptions);
+  });
+  // Each input is read in pieces, and its rows again when the merged workbook
+  // is written, through a bounded number of open handles; an input that
+  // changed meanwhile fails the merge rather than mixing two versions.
+  const inputs = new MergeInputs();
+  const opened: MergeInput[] = [];
+  let merged: Awaited<ReturnType<typeof finishMergedWorkbook>>;
+  try {
+    for (const [index, inputPath] of absoluteInputs.entries()) {
+      throwIfAborted(options.signal, MERGE_OPERATION);
+      let source: MergeInput;
+      try {
+        source = await inputs.open(inputPath);
+      } catch (error) {
+        throw new ConsultChimpsError(
+          XLSX_ERRORS.XLSX_READ_FAILED,
+          `Could not read workbook: ${inputPath}`,
+          { cause: error, details: { filePath: inputPath } },
+        );
+      }
+      opened.push(source);
+      await appendWorkbookSheets(state, path.basename(inputPath), source);
+      options.onProgress?.({
+        operation: MERGE_OPERATION,
+        stage: "merging-inputs",
+        completed: index + 1,
+        total: absoluteInputs.length,
+        detail: path.basename(inputPath),
+      });
+    }
+    merged = await finishMergedWorkbook(state, buildOptions);
 
-  throwIfAborted(options.signal, MERGE_OPERATION);
-  await ensureParentDirectory(absoluteOutput);
-  await writeFile(absoluteOutput, merged.bytes);
+    throwIfAborted(options.signal, MERGE_OPERATION);
+    await writeStagedFile(
+      absoluteOutput,
+      { overwrite: options.overwrite },
+      async (sink) => {
+        await merged.write(
+          (chunk) => {
+            sink.write(chunk);
+          },
+          async () => {
+            await sink.flush();
+            await yieldToEventLoop();
+            throwIfAborted(options.signal, MERGE_OPERATION);
+          },
+        );
+        for (const source of opened) await source.verifyUnchanged();
+        // A cancellation that arrived after the last read stops the output
+        // from being published.
+        throwIfAborted(options.signal, MERGE_OPERATION);
+      },
+    );
+  } finally {
+    await inputs.close();
+  }
   options.onProgress?.({
     operation: MERGE_OPERATION,
     stage: "writing-output",

@@ -34,7 +34,10 @@
  * - the macro project, unless exactly one input carries one AND the output is
  *   named as a macro-enabled workbook. See `resolveMacroProject`.
  */
-import { ConsultChimpsError } from "@consultchimps/core";
+import {
+  ConsultChimpsError,
+  type RandomAccessSource,
+} from "@consultchimps/core";
 
 import { XLSX_ERRORS } from "../errors.js";
 import { readExcelTableDefinitionsFrom } from "../excel-tables.js";
@@ -53,11 +56,26 @@ import {
   relationshipsPartPath,
   VBA_PROJECT_PART,
   WORKBOOK_MAIN_CONTENT_TYPE,
-  WorkbookPackage,
+  type WorkbookPackage,
   type PackageRelationship,
 } from "../package/index.js";
+import { readWorksheetPart, type PartFeed } from "../model/worksheet-stream.js";
+import { JsZipWriter, type ZipSink } from "../package/jszip-writer.js";
+import { FIXED_PACKAGE_DATE } from "../package/workbook-package.js";
+import { ZipReader } from "../package/zip-reader.js";
+import {
+  openStreamedSplitPackage,
+  stubPieces,
+  type StreamedSplitPackage,
+  type StreamedStub,
+} from "../split/streamed-package.js";
 import { uncachedFormulaWarnings } from "../uncached-formulas.js";
-import { convertWorkbookToValuesWithReport } from "../values-only.js";
+import {
+  convertTablesAndCalcChain,
+  isConvertedWorksheetPart,
+  removeWorksheetFormulas,
+  worksheetNamesByPart,
+} from "../values-only.js";
 import {
   addContentTypeOverride,
   addRelationship,
@@ -76,6 +94,7 @@ import { rewriteFormulaElements, type NameRewrites } from "./references.js";
 import { MergedStyles, SourceStyles } from "./styles.js";
 import { SharedStringTable } from "./strings.js";
 import {
+  rewriteColumnStyles,
   rewriteDifferentialFormatIds,
   rewriteRelationshipIds,
   rewriteWorksheetIndexes,
@@ -126,7 +145,11 @@ export interface MergeWorkbooksBuildOptions {
 }
 
 export interface MergedWorkbook {
-  bytes: Uint8Array;
+  /**
+   * Write the merged workbook to `sink`, every worksheet's rows read from its
+   * input as it is written. `between` runs between pieces.
+   */
+  write: (sink: ZipSink, between?: () => Promise<void>) => Promise<void>;
   hiddenSheets: number;
   outputSheets: number;
   /**
@@ -180,13 +203,51 @@ export interface MergeWorkbooksState {
   nextTableId: number;
   readonly renamedTables: Array<[string, string]>;
   readonly renamedDefinedNames: Array<[string, string]>;
+  /** Output worksheets held as stubs, and how their rows are written. */
+  readonly worksheets: Map<string, WorksheetOrigin>;
+  /** Output parts copied from an input when written. */
+  readonly opaque: Map<string, OpaqueOrigin>;
+  /** Run between the pieces of every read, where a caller yields or stops. */
+  readonly between: (() => Promise<void>) | undefined;
+}
+
+/** A text edit every piece of a worksheet goes through, in order. */
+interface RowStep {
+  readonly apply: (xml: string) => string;
+  /** Whether a change to a row rewrites the part, giving it the edit time. */
+  readonly datesChange: boolean;
+}
+
+/** An output worksheet: its input, the part it reads, and its row steps. */
+interface WorksheetOrigin {
+  /** The input's name, as a failure to read its rows again gives it. */
+  readonly sourceLabel: string;
+  readonly stub: StreamedStub;
+  readonly steps: RowStep[];
+  /** Missing cached values the values conversion found in the stub. */
+  converted?: {
+    prefix: string[];
+    rows: string[];
+    suffix: string[];
+    count: number;
+  };
+}
+
+/** An output part copied from an input while its placeholder stands. */
+interface OpaqueOrigin {
+  /** The input's name, for a read that fails only when the part is written. */
+  readonly sourceLabel: string;
+  readonly feed: StreamedStub["feed"];
+  readonly bytes: Uint8Array;
 }
 
 export function createMergeState(
   options: MergeWorkbooksBuildOptions,
+  between?: () => Promise<void>,
 ): MergeWorkbooksState {
   return {
     options,
+    between,
     output: undefined,
     styles: undefined,
     strings: undefined,
@@ -210,6 +271,8 @@ export function createMergeState(
     nextTableId: 1,
     renamedTables: [],
     renamedDefinedNames: [],
+    worksheets: new Map(),
+    opaque: new Map(),
   };
 }
 
@@ -420,6 +483,10 @@ function stripUncarriedStructures(workbookPackage: WorkbookPackage): {
 // -- Transplanting one part ------------------------------------------------
 
 interface TransplantContext {
+  readonly state: MergeWorkbooksState;
+  readonly input: StreamedSplitPackage;
+  /** The input's name, as its read failures give it. */
+  readonly sourceFile: string;
   readonly source: WorkbookPackage;
   readonly output: WorkbookPackage;
   readonly rewrites: NameRewrites;
@@ -509,6 +576,14 @@ function copyPart(
   context.copied.set(sourcePart, targetPart);
   // Claim the path before recursing so a dependent cannot be handed the same one.
   context.output.writeBytes(targetPart, bytes);
+  const opaque = context.input.opaque.get(sourcePart);
+  if (opaque && opaque.bytes === bytes) {
+    context.state.opaque.set(targetPart, {
+      sourceLabel: context.sourceFile,
+      feed: opaque.feed,
+      bytes,
+    });
+  }
   copyContentTypeDeclaration(
     context.source,
     sourcePart,
@@ -519,16 +594,29 @@ function copyPart(
   const idMap = copyRelationships(context, sourcePart, targetPart);
   if (isXmlPart(sourcePart)) {
     const xml = context.source.readText(sourcePart) ?? "";
-    context.output.writeText(
-      targetPart,
+    const edit = (text: string): string =>
       context.rewritePart(
         sourcePart,
         rewriteFormulaElements(
-          rewriteRelationshipIds(xml, idMap),
+          rewriteRelationshipIds(text, idMap),
           context.rewrites,
         ),
-      ),
-    );
+      );
+    if (context.input.stubs.has(sourcePart)) {
+      // A worksheet another part points at: its rows follow when written.
+      const pieces = stubPieces(xml);
+      context.output.writeText(
+        targetPart,
+        edit(pieces.prefix) + edit(pieces.suffix),
+      );
+      context.state.worksheets.set(targetPart, {
+        sourceLabel: context.sourceFile,
+        stub: context.input.stubs.get(sourcePart)!,
+        steps: [{ apply: edit, datesChange: false }],
+      });
+    } else {
+      context.output.writeText(targetPart, edit(xml));
+    }
   }
   return targetPart;
 }
@@ -537,12 +625,26 @@ function copyPart(
 
 /** Load one input as a package, reporting failure with the stable read error. */
 async function loadInput(
-  bytes: Uint8Array,
+  source: RandomAccessSource,
   sourceLabel: string,
-): Promise<WorkbookPackage> {
+  between: (() => Promise<void>) | undefined,
+): Promise<StreamedSplitPackage> {
+  let passed: unknown;
   try {
-    return await WorkbookPackage.load(bytes, { sourceLabel });
+    return await openStreamedSplitPackage(
+      await ZipReader.open(source),
+      () => () => undefined,
+      sourceLabel,
+      between &&
+        (() =>
+          between().catch((error: unknown) => {
+            passed = error;
+            throw error;
+          })),
+    );
   } catch (error) {
+    // A cancellation fails as itself, not as the input.
+    if (error === passed) throw error;
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_READ_FAILED,
       `Could not read workbook: ${sourceLabel}`,
@@ -587,27 +689,48 @@ function planRewrites(
 export async function appendWorkbookSheets(
   state: MergeWorkbooksState,
   sourceFile: string,
-  workbookBytes: Uint8Array,
+  workbook: RandomAccessSource,
 ): Promise<void> {
-  const source = await loadInput(workbookBytes, sourceFile);
+  const input = await loadInput(workbook, sourceFile, state.between);
+  const source = input.base;
   if (source.has(VBA_PROJECT_PART)) {
     state.macroInputs += 1;
   }
 
   if (!state.output) {
-    seedOutput(state, source, sourceFile);
+    seedOutput(state, input, sourceFile);
     return;
   }
-  transplantWorkbook(state, source, sourceFile);
+  await transplantWorkbook(state, input, sourceFile);
 }
 
 /** Adopt the first input as the output package and register what it claims. */
 function seedOutput(
   state: MergeWorkbooksState,
-  source: WorkbookPackage,
+  input: StreamedSplitPackage,
   sourceFile: string,
 ): void {
+  const source = input.base;
   const removed = stripUncarriedStructures(source);
+  // The seed's worksheets and opaque parts are the output's, read from it.
+  for (const [part, stub] of input.stubs) {
+    if (source.has(part)) {
+      state.worksheets.set(part, {
+        sourceLabel: sourceFile,
+        stub,
+        steps: [],
+      });
+    }
+  }
+  for (const [part, opaque] of input.opaque) {
+    if (source.readBytes(part) === opaque.bytes) {
+      state.opaque.set(part, {
+        sourceLabel: sourceFile,
+        feed: opaque.feed,
+        bytes: opaque.bytes,
+      });
+    }
+  }
   state.removedPivotTables += removed.pivotTables;
   state.removedExternalLinks += removed.externalLinks;
   state.output = source;
@@ -652,7 +775,7 @@ function seedOutput(
   const rewrites = planRewrites(sheetRenames, tableRenames);
   carryDefinedNames(state, source, rewrites, outputIndexBySource);
   if (sheetRenames.size > 0) {
-    rewriteSeedFormulas(source, declarations, rewrites);
+    rewriteSeedFormulas(state, source, declarations, rewrites);
   }
 }
 
@@ -705,6 +828,7 @@ function renameSheetDeclaration(
 
 /** Follow a seed rename into the seed's own parts that name the sheet. */
 function rewriteSeedFormulas(
+  state: MergeWorkbooksState,
   source: WorkbookPackage,
   declarations: readonly SheetDeclaration[],
   rewrites: NameRewrites,
@@ -723,7 +847,19 @@ function rewriteSeedFormulas(
     if (xml === undefined) {
       continue;
     }
-    const rewritten = rewriteFormulaElements(xml, rewrites);
+    const edit = (text: string): string =>
+      rewriteFormulaElements(text, rewrites);
+    const origin = state.worksheets.get(partPath);
+    let rewritten: string;
+    if (origin) {
+      // The rows take the same edit when written; a row it changes rewrites
+      // the part, as the whole-part edit did.
+      origin.steps.push({ apply: edit, datesChange: true });
+      const pieces = stubPieces(xml);
+      rewritten = edit(pieces.prefix) + edit(pieces.suffix);
+    } else {
+      rewritten = edit(xml);
+    }
     if (rewritten !== xml) {
       source.writeText(partPath, rewritten);
     }
@@ -731,11 +867,12 @@ function rewriteSeedFormulas(
 }
 
 /** Copy every worksheet of a later input into the output package. */
-function transplantWorkbook(
+async function transplantWorkbook(
   state: MergeWorkbooksState,
-  source: WorkbookPackage,
+  input: StreamedSplitPackage,
   sourceFile: string,
-): void {
+): Promise<void> {
+  const source = input.base;
   const output = state.output;
   const styles = state.styles;
   const strings = state.strings;
@@ -818,6 +955,9 @@ function transplantWorkbook(
   };
 
   const context: TransplantContext = {
+    state,
+    input,
+    sourceFile,
     source,
     output,
     rewrites,
@@ -842,7 +982,7 @@ function transplantWorkbook(
       continue;
     }
     const finalName = finalNames.get(declaration.index) ?? declaration.name;
-    const targetPart = transplantWorksheet(
+    const targetPart = await transplantWorksheet(
       context,
       declaration.partPath,
       remaps,
@@ -864,11 +1004,11 @@ function transplantWorkbook(
 }
 
 /** Copy one worksheet part with its dependents and re-index it. */
-function transplantWorksheet(
+async function transplantWorksheet(
   context: TransplantContext,
   sourcePart: string,
   remaps: IndexRemaps,
-): string {
+): Promise<string> {
   const targetPart = allocatePartPath(
     context.output,
     "xl/worksheets",
@@ -887,17 +1027,161 @@ function transplantWorksheet(
 
   const idMap = copyRelationships(context, sourcePart, targetPart);
   const xml = context.source.requireText(sourcePart);
-  context.output.writeText(
-    targetPart,
+  const edit = (text: string): string =>
     rewriteRelationshipIds(
       rewriteFormulaElements(
-        rewriteWorksheetIndexes(xml, remaps),
+        rewriteWorksheetIndexes(text, remaps),
         context.rewrites,
       ),
       idMap,
-    ),
+    );
+  const stub = context.input.stubs.get(sourcePart);
+  if (!stub) {
+    context.output.writeText(targetPart, edit(xml));
+    return targetPart;
+  }
+  const pieces = stubPieces(xml);
+  await remapInDocumentOrder(
+    rereadFeed(context.sourceFile, stub.feed, context.state.between),
+    pieces,
+    remaps,
   );
+  context.output.writeText(
+    targetPart,
+    edit(pieces.prefix) + edit(pieces.suffix),
+  );
+  context.state.worksheets.set(targetPart, {
+    sourceLabel: context.sourceFile,
+    stub,
+    steps: [{ apply: edit, datesChange: false }],
+  });
   return targetPart;
+}
+
+/**
+ * Settle a worksheet's style, string and differential-format remaps in the
+ * order the whole-part rewrite meets them, without keeping its rows. The
+ * merged styles number a source style the first time they meet it, so the
+ * order decides the output's numbering: every cell in document order, then
+ * every row's style, then every column's, then every differential format.
+ * The rows are written later, through the remaps this settles.
+ */
+async function remapInDocumentOrder(
+  feed: Parameters<typeof readWorksheetPart>[0],
+  pieces: { prefix: string; suffix: string },
+  remaps: IndexRemaps,
+): Promise<void> {
+  // First occurrences, in document order, are all that decide the numbering:
+  // a remap is remembered once made.
+  const rowStyles = new Set<number>();
+  const formats = new Set<number>();
+  const piece = (xml: string): void => {
+    forEachOpeningTag(xml, "c", (openTag) => {
+      const index = styleIndex(openTag, "s");
+      if (index !== undefined) remaps.style(index);
+    });
+    forEachOpeningTag(xml, "row", (openTag) => {
+      const index = styleIndex(openTag, "s");
+      if (index !== undefined) rowStyles.add(index);
+    });
+    for (const match of xml.matchAll(/\b[A-Za-z]*[Dd]xfId="(\d+)"/gu)) {
+      formats.add(Number(match[1]));
+    }
+  };
+  piece(pieces.prefix);
+  await readWorksheetPart(feed, {
+    prefix: () => undefined,
+    suffix: () => undefined,
+    row: (row) => {
+      piece(row.text);
+    },
+    text: (text) => {
+      piece(text);
+    },
+  });
+  piece(pieces.suffix);
+  for (const index of rowStyles) remaps.style(index);
+  rewriteColumnStyles(pieces.prefix, remaps);
+  rewriteColumnStyles(pieces.suffix, remaps);
+  for (const index of formats) remaps.differentialFormat(index);
+}
+
+/** An attribute holding a style index, as `remapAttribute` reads one. */
+function styleIndex(openTag: string, attribute: string): number | undefined {
+  const declared = getAttribute(openTag, attribute);
+  if (declared === undefined) return undefined;
+  const index = Number(declared);
+  return Number.isInteger(index) && index >= 0 ? index : undefined;
+}
+
+const TAG_NAME = /[^\s/>!?][^\s/>]*/uy;
+
+/**
+ * The opening tag of every element named `localName`, in document order, as
+ * `editElements` visits them. A piece with no markup construct in it is
+ * scanned directly when each such element closes before the next opens, which
+ * is what well-formed XML comes to; any other piece goes through
+ * `editElements` itself.
+ */
+export function forEachOpeningTag(
+  xml: string,
+  localName: string,
+  visit: (openTag: string) => void,
+): void {
+  const openTags =
+    xml.includes("<!") || xml.includes("<?")
+      ? undefined
+      : scanOpeningTags(xml, localName);
+  if (openTags === undefined) {
+    editElements(xml, localName, (element, text) => {
+      visit(element.openTag);
+      return text;
+    });
+    return;
+  }
+  for (const openTag of openTags) visit(openTag);
+}
+
+/**
+ * The direct scan, or undefined where it could part from `editElements`: an
+ * opening tag left unterminated, an element left unclosed, or one of the same
+ * name inside another.
+ */
+function scanOpeningTags(xml: string, localName: string): string[] | undefined {
+  const wanted = localName.toLowerCase();
+  const openTags: string[] = [];
+  let closeAt = -1;
+  for (let index = xml.indexOf("<"); index >= 0;) {
+    TAG_NAME.lastIndex = index + 1;
+    const name = TAG_NAME.exec(xml)?.[0];
+    if (name === undefined) {
+      index = xml.indexOf("<", index + 1);
+      continue;
+    }
+    let end = index + 1 + name.length;
+    let quote: string | undefined;
+    for (; end < xml.length; end += 1) {
+      const character = xml[end];
+      if (quote) {
+        if (character === quote) quote = undefined;
+      } else if (character === '"' || character === "'") {
+        quote = character;
+      } else if (character === ">") {
+        break;
+      }
+    }
+    const colon = name.indexOf(":");
+    if ((colon < 0 ? name : name.slice(colon + 1)).toLowerCase() === wanted) {
+      if (end >= xml.length || index < closeAt) return undefined;
+      openTags.push(xml.slice(index, end + 1));
+      if (xml[end - 1] !== "/") {
+        closeAt = xml.indexOf(`</${name}>`, end + 1);
+        if (closeAt < 0) return undefined;
+      }
+    }
+    index = xml.indexOf("<", end);
+  }
+  return openTags;
 }
 
 /** Give a copied Excel Table part its new workbook-unique name and id. */
@@ -1262,16 +1546,11 @@ export async function finishMergedWorkbook(
     appendSheetIndex(state);
   }
 
-  let bytes = await output.save();
   // A merge that keeps formulas reads no values, so only a values-only merge
   // has formulas without a cached value to lose.
   const uncachedFormulas: string[] = [];
   if (options.values) {
-    const conversion = await convertWorkbookToValuesWithReport(bytes);
-    bytes = conversion.bytes;
-    for (const missing of conversion.formulasWithoutCachedValues) {
-      uncachedFormulas.push(missing.location);
-    }
+    await convertToValues(state, output, uncachedFormulas);
   }
 
   const warnings: string[] = uncachedFormulaWarnings(
@@ -1331,7 +1610,7 @@ export async function finishMergedWorkbook(
   }
 
   return {
-    bytes,
+    write: (sink, between) => writeMerged(state, output, sink, between),
     hiddenSheets: state.hiddenSheets,
     outputSheets: state.outputSheets,
     uncachedFormulas,
@@ -1351,4 +1630,176 @@ function tableIdOf(
     element === undefined ? "0" : (getAttribute(element.openTag, "id") ?? "0"),
   );
   return Number.isInteger(id) ? id : 0;
+}
+
+/** A row step that converts formulas to values. */
+const CONVERT: RowStep = {
+  apply: (xml) => removeWorksheetFormulas(xml, "").xml,
+  datesChange: false,
+};
+
+/**
+ * The values conversion of the merged workbook, as the whole-package
+ * conversion made it: every worksheet's formulas removed, its cached values
+ * kept, and each formula with none listed in part order. A worksheet held as
+ * a stub has its rows read once here to list them, through the steps they take
+ * before the conversion, and converted again as they are written.
+ */
+async function convertToValues(
+  state: MergeWorkbooksState,
+  output: WorkbookPackage,
+  uncachedFormulas: string[],
+): Promise<void> {
+  const names = worksheetNamesByPart(output);
+  for (const part of output.partNames()) {
+    if (!isConvertedWorksheetPart(part)) continue;
+    const locate =
+      (found: string[]) =>
+      (xml: string): string => {
+        const conversion = removeWorksheetFormulas(xml, part);
+        for (const missing of conversion.formulasWithoutCachedValues) {
+          found.push(`${names.get(part) ?? part}!${missing.cell}`);
+        }
+        return conversion.xml;
+      };
+    const origin = state.worksheets.get(part);
+    if (!origin) {
+      output.writeText(
+        part,
+        locate(uncachedFormulas)(output.requireText(part)),
+      );
+      continue;
+    }
+    const pieces = stubPieces(output.requireText(part));
+    const rows: string[] = [];
+    const prefix: string[] = [];
+    const suffix: string[] = [];
+    const convertedPrefix = locate(prefix)(pieces.prefix);
+    const convertedSuffix = locate(suffix)(pieces.suffix);
+    const throughSteps = (xml: string): string =>
+      origin.steps.reduce((text, step) => step.apply(text), xml);
+    await readWorksheetPart(
+      rereadFeed(origin.sourceLabel, origin.stub.feed, state.between),
+      {
+        prefix: () => undefined,
+        suffix: () => undefined,
+        row: (row) => {
+          locate(rows)(throughSteps(row.text));
+        },
+        text: (text) => {
+          locate(rows)(throughSteps(text));
+        },
+      },
+    );
+    for (const location of [...prefix, ...rows, ...suffix]) {
+      uncachedFormulas.push(location);
+    }
+    // The whole-package conversion writes every worksheet back.
+    output.writeText(part, convertedPrefix + convertedSuffix);
+    origin.steps.push(CONVERT);
+  }
+  convertTablesAndCalcChain(output);
+}
+
+/**
+ * An input's part read again, after the input was opened. A failure of the
+ * read itself is the input's read failure, as it would have been then; what
+ * the read is handed, and `between`, fail as themselves.
+ */
+function rereadFeed(
+  sourceLabel: string,
+  feed: StreamedStub["feed"],
+  between: (() => Promise<void>) | undefined,
+): PartFeed {
+  return async (onData) => {
+    let passed: unknown;
+    const pass = (error: unknown): never => {
+      passed = error;
+      throw error;
+    };
+    try {
+      await feed(between && (() => between().catch(pass)))((chunk) => {
+        try {
+          onData(chunk);
+        } catch (error) {
+          pass(error);
+        }
+      });
+    } catch (error) {
+      if (error === passed || error instanceof ConsultChimpsError) throw error;
+      throw new ConsultChimpsError(
+        XLSX_ERRORS.XLSX_READ_FAILED,
+        `Could not read workbook: ${sourceLabel}`,
+        { cause: error, details: { source: sourceLabel } },
+      );
+    }
+  };
+}
+
+/**
+ * Write the merged package to `sink` with JSZip's bytes, as `save` wrote it:
+ * held parts as they are, opaque parts copied from their inputs, and each
+ * worksheet's rows read from its input through its steps.
+ */
+async function writeMerged(
+  state: MergeWorkbooksState,
+  output: WorkbookPackage,
+  sink: ZipSink,
+  between?: () => Promise<void>,
+): Promise<void> {
+  const writer = new JsZipWriter(sink);
+  for (const part of output.partNames()) {
+    const writing = writer.part(part, output.partDate(part));
+    const bytes = output.readBytes(part)!;
+    const opaque = state.opaque.get(part);
+    if (opaque && opaque.bytes === bytes) {
+      await rereadFeed(
+        opaque.sourceLabel,
+        opaque.feed,
+        between,
+      )((chunk) => writing.push(chunk));
+      await writing.close();
+      continue;
+    }
+    const origin = state.worksheets.get(part);
+    if (!origin) {
+      writing.push(bytes);
+      await writing.close();
+      continue;
+    }
+    const { stub } = origin;
+    if (bytes === stub.bytes && origin.steps.length === 0) {
+      await rereadFeed(
+        origin.sourceLabel,
+        stub.feed,
+        between,
+      )((chunk) => writing.push(chunk));
+      await writing.close();
+      continue;
+    }
+    const pieces = stubPieces(new TextDecoder().decode(bytes));
+    let rewritten = false;
+    const through = (xml: string): string => {
+      let text = xml;
+      for (const step of origin.steps) {
+        const next = step.apply(text);
+        if (step.datesChange && next !== text) rewritten = true;
+        text = next;
+      }
+      return text;
+    };
+    writing.text(pieces.prefix);
+    await readWorksheetPart(
+      rereadFeed(origin.sourceLabel, stub.feed, between),
+      {
+        prefix: () => undefined,
+        suffix: () => undefined,
+        row: (row) => writing.text(through(row.text)),
+        text: (text) => writing.text(through(text)),
+      },
+    );
+    writing.text(pieces.suffix);
+    await writing.close(rewritten ? FIXED_PACKAGE_DATE : output.partDate(part));
+  }
+  await writer.finish();
 }
