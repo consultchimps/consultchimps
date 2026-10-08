@@ -33,11 +33,15 @@ path, so it has to be proven software, not new code of our own.
   reports, or a row still open after 16 MB of text, which is an opening quote
   never closed. Papa would otherwise carry the rest of the file into one field.
 - **A CSV is one worksheet** named after the file stem, so `_source_file` and
-  `_source_sheet` stay meaningful. It has no Excel Tables, named ranges or
-  merged cells. A row is a record, so a line break inside quotes stays in its
-  cell; a blank line is an empty row; an empty field is a blank cell. The shared
-  header rule applies unchanged. Excel's grid (1,048,576 rows, 16,384 columns)
-  limits only `.xlsx` output, which is refused beyond it.
+  `_source_sheet` stay meaningful. The stem is made a legal sheet name the same
+  way everywhere: a character Excel forbids becomes `_`, apostrophes at either
+  end are dropped, it is cut to 31 characters, `History` becomes `History_`, and
+  an empty name becomes `Sheet1`. Merge then numbers repeated names as it does
+  for workbooks. It has no Excel Tables, named ranges or merged cells. A row is
+  a record, so a line break inside quotes stays in its cell; a blank line is an
+  empty row; an empty field is a blank cell. The shared header rule applies
+  unchanged. Excel's grid (1,048,576 rows, 16,384 columns) limits only `.xlsx`
+  output, which is refused beyond it.
 - **Typing is text, with opt-ins** that never change a value they do not fully
   match:
   - `--csv-numbers` reads a number from a field that is only an optional sign,
