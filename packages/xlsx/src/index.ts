@@ -89,6 +89,7 @@ import {
   preservedSplitExtensionOf,
   splitMediaType,
 } from "./split/all-worksheet.js";
+import { stagedFile } from "./split/staged-file.js";
 import {
   openRegionPackage,
   resolveRegionSplit,
@@ -1279,7 +1280,7 @@ async function splitResolvedRegion(
           transactionDirectory,
           `output-${String(index + 1).padStart(6, "0")}.xlsx`,
         );
-        const file = await stagedOutputFile(stagedOutput);
+        const file = await stagedFile(stagedOutput);
         return {
           write: (chunk) => file.write(chunk),
           abort: () => file.abort(),
@@ -1415,46 +1416,6 @@ async function splitResolvedRegion(
       sheetsFiltered: 1,
       skippedRows: resolved.skippedRows,
       valuesOnly: options.values === true ? 1 : 0,
-    },
-  };
-}
-
-/** A staged output written as it is produced, in pieces of up to 1 MiB. */
-async function stagedOutputFile(filePath: string): Promise<{
-  write(chunk: Uint8Array): Promise<void>;
-  close(): Promise<void>;
-  abort(): Promise<void>;
-}> {
-  const handle = await open(filePath, "wx");
-  let pending: Uint8Array[] = [];
-  let pendingSize = 0;
-  const flush = async (): Promise<void> => {
-    if (pendingSize === 0) return;
-    const joined = new Uint8Array(pendingSize);
-    let offset = 0;
-    for (const chunk of pending) {
-      joined.set(chunk, offset);
-      offset += chunk.length;
-    }
-    pending = [];
-    pendingSize = 0;
-    await handle.write(joined);
-  };
-  return {
-    async write(chunk) {
-      pending.push(chunk);
-      pendingSize += chunk.length;
-      if (pendingSize >= 1024 * 1024) await flush();
-    },
-    async close() {
-      try {
-        await flush();
-      } finally {
-        await handle.close();
-      }
-    },
-    async abort() {
-      await handle.close();
     },
   };
 }

@@ -7,7 +7,7 @@
  * every destination before a single output is built, and committing through a
  * staging directory so a failure halfway leaves the destination as it was.
  */
-import { mkdtemp, open, rename, rm, stat } from "node:fs/promises";
+import { mkdtemp, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -43,6 +43,7 @@ import {
   type WorkbookExtension,
 } from "./split/all-worksheet.js";
 import { safeFilenameSegment, splitOutputPaths } from "./split-filenames.js";
+import { stagedFile } from "./split/staged-file.js";
 
 export type FullWorkbookSplitMetric = AllWorksheetSplitMetric;
 export type { SplitOutputDetail, SplitSheetDetail };
@@ -245,46 +246,6 @@ export async function splitFullWorkbookByColumn(
   } finally {
     await resolved.source.close().catch(() => undefined);
   }
-}
-
-/** A staged output written as it is produced, in pieces of up to 1 MiB. */
-async function stagedFile(filePath: string): Promise<{
-  write(chunk: Uint8Array): Promise<void>;
-  close(): Promise<void>;
-  abort(): Promise<void>;
-}> {
-  const handle = await open(filePath, "wx");
-  let pending: Uint8Array[] = [];
-  let pendingSize = 0;
-  const flush = async (): Promise<void> => {
-    if (pendingSize === 0) return;
-    const joined = new Uint8Array(pendingSize);
-    let offset = 0;
-    for (const chunk of pending) {
-      joined.set(chunk, offset);
-      offset += chunk.length;
-    }
-    pending = [];
-    pendingSize = 0;
-    await handle.write(joined);
-  };
-  return {
-    async write(chunk) {
-      pending.push(chunk);
-      pendingSize += chunk.length;
-      if (pendingSize >= 1024 * 1024) await flush();
-    },
-    async close() {
-      try {
-        await flush();
-      } finally {
-        await handle.close();
-      }
-    },
-    async abort() {
-      await handle.close();
-    },
-  };
 }
 
 async function splitResolved(
