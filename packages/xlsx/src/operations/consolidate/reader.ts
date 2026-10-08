@@ -775,7 +775,9 @@ export class StreamedWorkbook {
                 ofRow = new Map();
                 gatheredOccupied.set(row, ofRow);
               }
-              ofRow.set(columnTag, isOccupied);
+              // Any copy of a repeated cell that holds something counts, as
+              // it does when rows arrive in order and as the model counted.
+              ofRow.set(columnTag, ofRow.get(columnTag) === true || isOccupied);
             } else if (isOccupied && inDimension(row, columnTag)) {
               if (row !== rowTag - 1) throw new OutOfOrder();
               (rowOccupied ??= []).push(columnTag);

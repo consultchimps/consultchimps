@@ -246,4 +246,22 @@ describe("describing a workbook read in pieces", () => {
     const tables = await readWorkbookExcelTablesBytes(input);
     expect(tables.map((table) => table.excelTableName)).toEqual(["Sales"]);
   });
+
+  it("counts a repeated cell the same whether rows arrive in order or not", async () => {
+    // Two copies of A2, the first a formula and the last blank: any copy that
+    // holds something counts, on both paths.
+    const header = row(1, ["Name"]);
+    const repeated = `<row r="2"><c r="A2"><f>1+1</f></c><c r="A2"/></row>`;
+    const describeRows = async (rows: string) =>
+      (
+        await describeWorkbookBytes({
+          name: "repeated.xlsx",
+          bytes: await workbookBytes(rows),
+        })
+      ).description.sheets[0]!;
+
+    const ordered = await describeRows(header + repeated);
+    expect(ordered).toMatchObject({ dataRowCount: 1, headerRow: 1 });
+    expect(await describeRows(repeated + header)).toEqual(ordered);
+  });
 });
