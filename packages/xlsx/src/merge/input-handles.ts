@@ -27,13 +27,16 @@ function identityOf(filePath: string) {
   return stat(filePath, { bigint: true });
 }
 
+/**
+ * Whether the path still names the same contents. The change time is left out:
+ * on Windows a scanner reading a file can move it, contents untouched.
+ */
 function sameFile(first: Identity, now: Identity): boolean {
   return (
     first.dev === now.dev &&
     first.ino === now.ino &&
     first.size === now.size &&
-    first.mtimeNs === now.mtimeNs &&
-    first.ctimeNs === now.ctimeNs
+    first.mtimeNs === now.mtimeNs
   );
 }
 
@@ -65,12 +68,19 @@ export class MergeInputs {
 
   /** Open an input; it stays open until others push it out. */
   async open(filePath: string): Promise<MergeInput> {
-    const source = await openRandomAccessSource(filePath);
-    let first: Identity;
+    let first: Identity | undefined;
     try {
       first = await identityOf(filePath);
-      // The path still names the file the handle opened.
-      await source.verifyUnchanged();
+    } catch {
+      // Opening reports a file that cannot be read, as for any operation.
+      first = undefined;
+    }
+    const source = await openRandomAccessSource(filePath);
+    try {
+      // The handle opened the file described: the path named it throughout.
+      if (first === undefined || !sameFile(first, await identityOf(filePath))) {
+        throw changed();
+      }
     } catch (error) {
       await source.close().catch(() => undefined);
       throw error instanceof ConsultChimpsError ? error : changed(error);
@@ -95,7 +105,6 @@ export class MergeInputs {
         }
       },
       verifyUnchanged: async () => {
-        await this.#open.get(entry)?.verifyUnchanged();
         let now: Identity;
         try {
           now = await identityOf(entry.filePath);
