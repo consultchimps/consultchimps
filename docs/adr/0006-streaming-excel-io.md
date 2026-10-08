@@ -224,3 +224,14 @@ identical. Over the 439 distinct workbooks the package's tests open, with seven
 option sets, 20 workbooks describe differently, each now as the readers read it:
 escapes such as `_x000D_` decoded, phonetic runs left out, samples in row order,
 and damaged packages the readers refuse refused here too.
+
+The browser inspector reads the chosen `File` through `Blob.slice` with
+`describeWorkbookSource`, as consolidation does. Peak private memory of the
+Chromium process tree above the idle page: before, then with the whole file read
+in the worker, then read in pieces.
+
+| Input                                  | Before   | Whole file | In pieces |
+| -------------------------------------- | -------- | ---------- | --------- |
+| 150,000 rows (9.7 MB)                  | 1,468 MB | 121 MB     | 89 MB     |
+| 10 sheets x 15,000 rows (9.7 MB)       | 723 MB   | 137 MB     | 129 MB    |
+| 60,000 rows, 400 styles, 12,000 merges | 456 MB   | 92 MB      | 95 MB     |
