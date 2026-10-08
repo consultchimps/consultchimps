@@ -13,3 +13,6 @@ differently from the readers, it now reads it as they do: `_x000D_` and other
 escapes are decoded, phonetic text is left out of a header, and samples follow
 row order. A damaged package the readers refuse, such as a failed CRC check or
 malformed XML, is now refused by inspection too, instead of described.
+
+An Excel Table on a worksheet whose name holds an escape is now found on that
+worksheet, by inspection and by `readWorkbookExcelTables`.

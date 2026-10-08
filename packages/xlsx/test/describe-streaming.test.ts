@@ -11,7 +11,11 @@ import type { RandomAccessSource } from "@consultchimps/core";
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
-import { blobSource, describeWorkbookBytes } from "../src/bytes.js";
+import {
+  blobSource,
+  describeWorkbookBytes,
+  readWorkbookExcelTablesBytes,
+} from "../src/bytes.js";
 import { describeWorkbook } from "../src/index.js";
 import { StreamedWorkbook } from "../src/operations/consolidate/reader.js";
 import { describeStreamedWorkbook } from "../src/operations/describe.js";
@@ -192,5 +196,54 @@ describe("describing a workbook read in pieces", () => {
     ]);
     expect(await describeRows([0, 3, 1, 2, 4])).toEqual(ordered);
     expect(await describeRows([0, 1, 2, 4, 3])).toEqual(ordered);
+  });
+
+  it("finds an Excel Table on a sheet whose name holds an escape", async () => {
+    const zip = new JSZip();
+    zip.file(
+      "[Content_Types].xml",
+      `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>`,
+    );
+    zip.file(
+      "_rels/.rels",
+      `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
+    );
+    zip.file(
+      "xl/workbook.xml",
+      `<workbook xmlns="${MAIN}" xmlns:r="${REL}"><sheets><sheet name="Q_x0031_ data" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+    );
+    zip.file(
+      "xl/_rels/workbook.xml.rels",
+      `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+    );
+    zip.file(
+      "xl/worksheets/sheet1.xml",
+      `<worksheet xmlns="${MAIN}"><sheetData>${row(1, ["Region", "Amount"])}${row(2, ["North", "10"])}</sheetData></worksheet>`,
+    );
+    zip.file(
+      "xl/worksheets/_rels/sheet1.xml.rels",
+      `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL}/table" Target="../tables/table1.xml"/></Relationships>`,
+    );
+    zip.file(
+      "xl/tables/table1.xml",
+      `<table xmlns="${MAIN}" id="1" name="Sales" displayName="Sales" ref="A1:B2"><tableColumns count="2"><tableColumn id="1" name="Region"/><tableColumn id="2" name="Amount"/></tableColumns></table>`,
+    );
+    const input = {
+      name: "escaped.xlsx",
+      bytes: await zip.generateAsync({ type: "uint8array" }),
+    };
+
+    const { description } = await describeWorkbookBytes(input);
+    expect(description.sheets.map((sheet) => sheet.name)).toEqual(["Q1 data"]);
+    expect(description.excelTables).toEqual([
+      {
+        name: "Sales",
+        range: "A1:B2",
+        sheet: "Q1 data",
+        headers: ["Region", "Amount"],
+      },
+    ]);
+    const tables = await readWorkbookExcelTablesBytes(input);
+    expect(tables.map((table) => table.excelTableName)).toEqual(["Sales"]);
   });
 });

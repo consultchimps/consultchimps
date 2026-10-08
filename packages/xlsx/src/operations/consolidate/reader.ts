@@ -404,7 +404,13 @@ export class StreamedWorkbook {
         }
       }
     }
-    const tables = readExcelTableDefinitionsFrom(parts);
+    // Each table names its sheet as the workbook part spells it; decoded as
+    // the sheet names below are, so a table is found on its sheet whatever
+    // escapes the name holds.
+    const tables = readExcelTableDefinitionsFrom(parts).map((table) => ({
+      ...table,
+      sheet: decodeEscapes(table.sheet),
+    }));
 
     const relationships = new Map(
       parts
