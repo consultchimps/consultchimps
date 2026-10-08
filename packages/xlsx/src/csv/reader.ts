@@ -11,8 +11,8 @@
  * Opening reads the file once to settle the encoding and to take a fingerprint;
  * each worksheet read then reads it again from the start. Rows are split on LF,
  * and a carriage return ending a row's last field is part of its line ending,
- * so files mixing CRLF and LF read correctly; a file with no LF at all is split
- * on CR.
+ * so files mixing CRLF and LF read correctly; a file whose rows end in CR alone
+ * is split on CR.
  */
 import Papa from "papaparse";
 import {
@@ -53,6 +53,9 @@ export const CSV_MAX_OPEN_ROW_CHARS: number = 16 * 1024 * 1024;
 /** The delimiters a read guesses between, in Papa's order of preference. */
 const GUESSED_DELIMITERS = [",", "\t", "|", ";"];
 
+/** A carriage return that does not start a CRLF pair. */
+const LONE_CARRIAGE_RETURN = /\r(?!\n)/u;
+
 /** The part name a CSV's one worksheet carries; it names no zip entry. */
 const CSV_PART = "csv";
 
@@ -61,11 +64,39 @@ export function isCsvName(name: string): boolean {
   return /\.csv$/iu.test(name);
 }
 
-/** The worksheet a CSV file reads as is named after the file, without `.csv`. */
+/** Characters a worksheet name cannot hold. */
+// eslint-disable-next-line no-control-regex -- a sheet name cannot hold control characters; the pattern finds them so they can be replaced.
+const SHEET_NAME_FORBIDDEN = /[\\/?*[\]:\x00-\x1f\x7f]/gu;
+const SHEET_NAME_LIMIT = 31;
+
+/** `text` without the apostrophes at either end, which a sheet name cannot hold. */
+function withoutOuterApostrophes(text: string): string {
+  return text.replace(/^'+|'+$/gu, "");
+}
+
+/**
+ * The worksheet a CSV file reads as: the file's name without `.csv`, made a
+ * legal sheet name the same way everywhere. A character Excel forbids becomes
+ * `_`, apostrophes at either end are dropped, the name is cut to 31
+ * characters, `History`, which Excel reserves, becomes `History_`, and an empty
+ * name becomes `Sheet1`.
+ */
 export function csvSheetName(file: string): string {
   const base = file.split(/[\\/]/u).pop() ?? file;
-  const stem = base.replace(/\.csv$/iu, "");
-  return stem === "" ? "Sheet1" : stem;
+  let name = withoutOuterApostrophes(
+    base.replace(/\.csv$/iu, "").replace(SHEET_NAME_FORBIDDEN, "_"),
+  );
+  if (name.length > SHEET_NAME_LIMIT) {
+    // Never between the two halves of a character outside the basic plane.
+    const high = name.charCodeAt(SHEET_NAME_LIMIT - 1);
+    const cut =
+      high >= 0xd800 && high <= 0xdbff
+        ? SHEET_NAME_LIMIT - 1
+        : SHEET_NAME_LIMIT;
+    name = withoutOuterApostrophes(name.slice(0, cut));
+  }
+  if (name.toLowerCase() === "history") return `${name}_`;
+  return name === "" ? "Sheet1" : name;
 }
 
 /** How the encoding a read uses was settled. */
@@ -164,6 +195,7 @@ export class CsvWorkbook {
       delimiter: string;
       newline: "\n" | "\r";
       fingerprint: number;
+      overruled: CsvEncoding | undefined;
     },
   ) {
     this.#source = source;
@@ -182,12 +214,19 @@ export class CsvWorkbook {
         part: CSV_PART,
       },
     ];
-    this.warnings =
-      settled.encodingSource === "fallback"
-        ? [
-            `${context.file} is not valid UTF-8 and has no byte order mark, so it was read as Windows-1252. If its accented letters look wrong, choose its encoding and run again.`,
-          ]
-        : [];
+    const warnings: string[] = [];
+    if (settled.encodingSource === "fallback") {
+      warnings.push(
+        `${context.file} is not valid UTF-8 and has no byte order mark, so it was read as Windows-1252. If its accented letters look wrong, choose its encoding and run again.`,
+      );
+    }
+    if (settled.overruled !== undefined) {
+      const marked = csvEncodingName(settled.encoding);
+      warnings.push(
+        `${context.file} starts with a ${marked} byte order mark, so it was read as ${marked} rather than the chosen ${csvEncodingName(settled.overruled)}.`,
+      );
+    }
+    this.warnings = warnings;
   }
 
   /**
@@ -252,12 +291,18 @@ export class CsvWorkbook {
 
     let encoding: CsvEncoding;
     let encodingSource: CsvEncodingSource;
-    if (options.encoding !== undefined) {
-      encoding = options.encoding;
-      encodingSource = "chosen";
-    } else if (marked !== undefined) {
+    // A byte order mark says what the file is, so it wins over a choice that
+    // contradicts it, which would otherwise read the mark into the first cell.
+    let overruled: CsvEncoding | undefined;
+    if (marked !== undefined) {
       encoding = marked;
       encodingSource = "byte-order-mark";
+      if (options.encoding !== undefined && options.encoding !== marked) {
+        overruled = options.encoding;
+      }
+    } else if (options.encoding !== undefined) {
+      encoding = options.encoding;
+      encodingSource = "chosen";
     } else if (zero) {
       throw new ConsultChimpsError(
         XLSX_ERRORS.XLSX_CSV_ENCODING_UNKNOWN,
@@ -278,6 +323,10 @@ export class CsvWorkbook {
       await source.readAt(0, Math.min(CSV_PIECE_BYTES, size)),
       { stream: true },
     );
+    // Split on LF unless the first piece holds none, so its rows end in CR
+    // alone. A guess weighing CR against LF can be swayed by the half row a
+    // piece ends inside; this rule cannot, and a CR file that is split on LF
+    // is refused below rather than read as one row.
     const newline =
       sample.includes("\n") || !sample.includes("\r") ? "\n" : "\r";
     let delimiter = options.delimiter;
@@ -300,6 +349,7 @@ export class CsvWorkbook {
       delimiter,
       newline,
       fingerprint,
+      overruled,
     });
   }
 
@@ -392,6 +442,16 @@ export class CsvWorkbook {
       for (let column = 0; column < fields.length; column += 1) {
         const field = fields[column]!;
         if (field === "") continue;
+        if (stripCarriageReturn && LONE_CARRIAGE_RETURN.test(field)) {
+          // In a file split on LF, a CR on its own is either a line ending
+          // Papa did not split on or text inside quotes, and nothing tells the
+          // two apart; reading it either way could join two rows.
+          throw malformed(
+            index + 1,
+            "holds a carriage return on its own, which cannot be told apart from a line ending",
+            "Save the file again with one kind of line ending, and run again.",
+          );
+        }
         (cells ??= []).push(cellOf(column, field));
       }
       if (cells === undefined) return;
@@ -422,10 +482,14 @@ export class CsvWorkbook {
       }
     };
 
-    const malformed = (rowNumber: number, why: string): ConsultChimpsError =>
+    const malformed = (
+      rowNumber: number,
+      why: string,
+      fix = "Open the file, correct the quotes on that row, save it, and run again.",
+    ): ConsultChimpsError =>
       new ConsultChimpsError(
         XLSX_ERRORS.XLSX_CSV_MALFORMED,
-        `${this.#context.source} could not be read as CSV: row ${String(rowNumber)} ${why}. Open the file, correct the quotes on that row, save it, and run again.`,
+        `${this.#context.source} could not be read as CSV: row ${String(rowNumber)} ${why}. ${fix}`,
         { details: { ...this.#context.details, row: rowNumber } },
       );
 
@@ -442,7 +506,13 @@ export class CsvWorkbook {
       chunk: (results, parser) => {
         if (failure !== undefined) return;
         try {
-          const error = results.errors[0];
+          // An error in the row a piece ends inside is Papa reading half a row,
+          // such as a closing quote whose line ending is in the next piece.
+          // That row is parsed again whole with the next piece, so only errors
+          // in the rows delivered here count.
+          const error = results.errors.find(
+            (candidate) => (candidate.row ?? 0) < results.data.length,
+          );
           if (error !== undefined) {
             throw malformed(
               row + (error.row ?? 0) + 1,

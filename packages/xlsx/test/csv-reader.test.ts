@@ -133,11 +133,12 @@ describe("CSV structure", () => {
   });
 
   it("reads every row the same wherever a piece ends", async () => {
-    const tail = 'p,"q\r\nr",s\r\n"t""u",v\nw,x\r\n';
+    const tail = 'p,"q\r\nr",s\r\n"t""u",v\nw,"x"\r\n"y" ,z\r\n';
     const expected = [
       ["p", "q\r\nr", "s"],
       ['t"u', "v"],
       ["w", "x"],
+      ["y", "z"],
     ];
     for (let shift = 0; shift <= tail.length; shift += 1) {
       const padding = `${"z".repeat(CSV_PIECE_BYTES - 2 - shift)}\r\n`;
@@ -177,11 +178,32 @@ describe("CSV structure", () => {
     ]);
   });
 
-  it("splits a file with no LF on CR", async () => {
-    const { values } = await read(utf8("a,b\r1,2\r"));
+  it("splits a file whose rows end in CR alone on CR", async () => {
+    const { values } = await read(utf8('a,b\r1,"two\rlines"\r3,4\r'));
     expect(values).toEqual([
       ["a", "b"],
-      ["1", "2"],
+      ["1", "two\rlines"],
+      ["3", "4"],
+    ]);
+  });
+
+  it("refuses a CR file with an LF in its first piece rather than join its rows", async () => {
+    const error = await failure(utf8('a,b\r1,"two\nlines"\r3,4\r'));
+    expect(error.code).toBe("XLSX_CSV_MALFORMED");
+    expect(error.message).toContain("row 1 ");
+  });
+
+  it("refuses a CR on its own in a file split on LF", async () => {
+    const error = await failure(utf8("a,b\n1,2\rc,d\ne,f\n"));
+    expect(error.code).toBe("XLSX_CSV_MALFORMED");
+    expect(error.message).toContain("row 2 holds a carriage return on its own");
+  });
+
+  it("reads a CR ending a quoted last field as part of the line ending", async () => {
+    const { values } = await read(utf8('a,"x\r"\nb,c\n'));
+    expect(values).toEqual([
+      ["a", "x"],
+      ["b", "c"],
     ]);
   });
 
@@ -223,6 +245,15 @@ describe("CSV structure", () => {
     expect(workbook.names).toEqual([]);
     expect(csvSheetName("inputs/2025/q1.csv")).toBe("q1");
     expect(csvSheetName(".csv")).toBe("Sheet1");
+    expect(csvSheetName("[Q1]: a*b?.csv")).toBe("_Q1__ a_b_");
+    expect(csvSheetName("'quoted'.csv")).toBe("quoted");
+    expect(csvSheetName("History.csv")).toBe("History_");
+    expect(csvSheetName("''.csv")).toBe("Sheet1");
+    expect(csvSheetName(`${"a".repeat(40)}.csv`)).toBe("a".repeat(31));
+    expect(csvSheetName(`${"a".repeat(30)}'b.csv`)).toBe("a".repeat(30));
+    expect(
+      csvSheetName(`${"a".repeat(30)}${String.fromCodePoint(0x1f600)}.csv`),
+    ).toBe("a".repeat(30));
     expect(isCsvName("a.CSV")).toBe(true);
     expect(isCsvName("a.xlsx")).toBe(false);
   });
@@ -314,6 +345,21 @@ describe("CSV encodings", () => {
     });
     expect(workbook.encodingSource).toBe("chosen");
     expect(values).toEqual([["a"], ["Ã©"]]);
+  });
+
+  it("lets a byte order mark win over a chosen encoding, with a warning", async () => {
+    const { workbook, values } = await read(
+      Uint8Array.from([0xef, 0xbb, 0xbf, ...utf8(text)]),
+      { encoding: "windows-1252" },
+    );
+    expect([workbook.encoding, workbook.encodingSource]).toEqual([
+      "utf-8",
+      "byte-order-mark",
+    ]);
+    expect(values).toEqual(expected);
+    expect(workbook.warnings).toEqual([
+      "data.csv starts with a UTF-8 byte order mark, so it was read as UTF-8 rather than the chosen Windows-1252.",
+    ]);
   });
 
   it("refuses zero bytes without a byte order mark", async () => {
