@@ -59,7 +59,7 @@ import {
   type WorkbookPackage,
   type PackageRelationship,
 } from "../package/index.js";
-import { readWorksheetPart } from "../model/worksheet-stream.js";
+import { readWorksheetPart, type PartFeed } from "../model/worksheet-stream.js";
 import { JsZipWriter, type ZipSink } from "../package/jszip-writer.js";
 import { FIXED_PACKAGE_DATE } from "../package/workbook-package.js";
 import { ZipReader } from "../package/zip-reader.js";
@@ -220,6 +220,8 @@ interface RowStep {
 
 /** An output worksheet: its input, the part it reads, and its row steps. */
 interface WorksheetOrigin {
+  /** The input's name, as a failure to read its rows again gives it. */
+  readonly sourceLabel: string;
   readonly stub: StreamedStub;
   readonly steps: RowStep[];
   /** Missing cached values the values conversion found in the stub. */
@@ -608,6 +610,7 @@ function copyPart(
         edit(pieces.prefix) + edit(pieces.suffix),
       );
       context.state.worksheets.set(targetPart, {
+        sourceLabel: context.sourceFile,
         stub: context.input.stubs.get(sourcePart)!,
         steps: [{ apply: edit, datesChange: false }],
       });
@@ -702,7 +705,11 @@ function seedOutput(
   // The seed's worksheets and opaque parts are the output's, read from it.
   for (const [part, stub] of input.stubs) {
     if (source.has(part)) {
-      state.worksheets.set(part, { stub, steps: [] });
+      state.worksheets.set(part, {
+        sourceLabel: sourceFile,
+        stub,
+        steps: [],
+      });
     }
   }
   for (const [part, opaque] of input.opaque) {
@@ -1024,12 +1031,17 @@ async function transplantWorksheet(
     return targetPart;
   }
   const pieces = stubPieces(xml);
-  await remapInDocumentOrder(stub.feed(context.state.between), pieces, remaps);
+  await remapInDocumentOrder(
+    rereadFeed(context.sourceFile, stub.feed, context.state.between),
+    pieces,
+    remaps,
+  );
   context.output.writeText(
     targetPart,
     edit(pieces.prefix) + edit(pieces.suffix),
   );
   context.state.worksheets.set(targetPart, {
+    sourceLabel: context.sourceFile,
     stub,
     steps: [{ apply: edit, datesChange: false }],
   });
@@ -1656,16 +1668,19 @@ async function convertToValues(
     const convertedSuffix = locate(suffix)(pieces.suffix);
     const throughSteps = (xml: string): string =>
       origin.steps.reduce((text, step) => step.apply(text), xml);
-    await readWorksheetPart(origin.stub.feed(state.between), {
-      prefix: () => undefined,
-      suffix: () => undefined,
-      row: (row) => {
-        locate(rows)(throughSteps(row.text));
+    await readWorksheetPart(
+      rereadFeed(origin.sourceLabel, origin.stub.feed, state.between),
+      {
+        prefix: () => undefined,
+        suffix: () => undefined,
+        row: (row) => {
+          locate(rows)(throughSteps(row.text));
+        },
+        text: (text) => {
+          locate(rows)(throughSteps(text));
+        },
       },
-      text: (text) => {
-        locate(rows)(throughSteps(text));
-      },
-    });
+    );
     for (const location of [...prefix, ...rows, ...suffix]) {
       uncachedFormulas.push(location);
     }
@@ -1677,42 +1692,38 @@ async function convertToValues(
 }
 
 /**
- * Copy a part read from its input only now. A failure of that read is the
- * input's read failure, as it would have been had the part been read when the
- * input was opened; what the copy is handed, and `between`, fail as
- * themselves.
+ * An input's part read again, after the input was opened. A failure of the
+ * read itself is the input's read failure, as it would have been then; what
+ * the read is handed, and `between`, fail as themselves.
  */
-async function copyOpaquePart(
-  opaque: OpaqueOrigin,
+function rereadFeed(
+  sourceLabel: string,
+  feed: StreamedStub["feed"],
   between: (() => Promise<void>) | undefined,
-  onData: (chunk: Uint8Array) => void,
-): Promise<void> {
-  let passed: unknown;
-  const pass = async (step: () => unknown): Promise<void> => {
-    try {
-      await step();
-    } catch (error) {
+): PartFeed {
+  return async (onData) => {
+    let passed: unknown;
+    const pass = (error: unknown): never => {
       passed = error;
       throw error;
+    };
+    try {
+      await feed(between && (() => between().catch(pass)))((chunk) => {
+        try {
+          onData(chunk);
+        } catch (error) {
+          pass(error);
+        }
+      });
+    } catch (error) {
+      if (error === passed || error instanceof ConsultChimpsError) throw error;
+      throw new ConsultChimpsError(
+        XLSX_ERRORS.XLSX_READ_FAILED,
+        `Could not read workbook: ${sourceLabel}`,
+        { cause: error, details: { source: sourceLabel } },
+      );
     }
   };
-  try {
-    await opaque.feed(between && (() => pass(between)))((chunk) => {
-      try {
-        onData(chunk);
-      } catch (error) {
-        passed = error;
-        throw error;
-      }
-    });
-  } catch (error) {
-    if (error === passed || error instanceof ConsultChimpsError) throw error;
-    throw new ConsultChimpsError(
-      XLSX_ERRORS.XLSX_READ_FAILED,
-      `Could not read workbook: ${opaque.sourceLabel}`,
-      { cause: error, details: { source: opaque.sourceLabel } },
-    );
-  }
 }
 
 /**
@@ -1732,7 +1743,11 @@ async function writeMerged(
     const bytes = output.readBytes(part)!;
     const opaque = state.opaque.get(part);
     if (opaque && opaque.bytes === bytes) {
-      await copyOpaquePart(opaque, between, (chunk) => writing.push(chunk));
+      await rereadFeed(
+        opaque.sourceLabel,
+        opaque.feed,
+        between,
+      )((chunk) => writing.push(chunk));
       await writing.close();
       continue;
     }
@@ -1744,7 +1759,11 @@ async function writeMerged(
     }
     const { stub } = origin;
     if (bytes === stub.bytes && origin.steps.length === 0) {
-      await stub.feed(between)((chunk) => writing.push(chunk));
+      await rereadFeed(
+        origin.sourceLabel,
+        stub.feed,
+        between,
+      )((chunk) => writing.push(chunk));
       await writing.close();
       continue;
     }
@@ -1760,12 +1779,15 @@ async function writeMerged(
       return text;
     };
     writing.text(pieces.prefix);
-    await readWorksheetPart(stub.feed(between), {
-      prefix: () => undefined,
-      suffix: () => undefined,
-      row: (row) => writing.text(through(row.text)),
-      text: (text) => writing.text(through(text)),
-    });
+    await readWorksheetPart(
+      rereadFeed(origin.sourceLabel, stub.feed, between),
+      {
+        prefix: () => undefined,
+        suffix: () => undefined,
+        row: (row) => writing.text(through(row.text)),
+        text: (text) => writing.text(through(text)),
+      },
+    );
     writing.text(pieces.suffix);
     await writing.close(rewritten ? FIXED_PACKAGE_DATE : output.partDate(part));
   }

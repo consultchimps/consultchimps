@@ -187,6 +187,40 @@ describe("merging workbooks read in pieces", () => {
     });
     expect(aborted).toBe(1);
   });
+
+  it("refuses an input that cannot be read again once writing starts", async () => {
+    let writing = false;
+    const south = guardedSource("south.xlsx", await workbook("South", 20));
+    let aborted = 0;
+    await expect(
+      mergeWorkbookSources({
+        inputs: [
+          guardedSource("north.xlsx", await workbook("North", 20)),
+          {
+            ...south,
+            readAt: (offset, length, signal) => {
+              if (writing) throw new Error("The file went away");
+              return south.readAt(offset, length, signal);
+            },
+          },
+        ],
+        output: {
+          write: () => {
+            writing = true;
+          },
+          flush: () => Promise.resolve(),
+          abort: () => {
+            aborted += 1;
+            return Promise.resolve();
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+      message: "Could not read workbook: south.xlsx",
+    });
+    expect(aborted).toBe(1);
+  });
 });
 
 describe("the opening tags the style order is read from", () => {

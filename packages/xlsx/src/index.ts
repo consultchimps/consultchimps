@@ -1025,6 +1025,9 @@ export async function mergeWorkbooks(
           },
         );
         for (const source of opened) await source.verifyUnchanged();
+        // A cancellation that arrived after the last read stops the output
+        // from being published.
+        throwIfAborted(options.signal, MERGE_OPERATION);
       },
     );
   } finally {
