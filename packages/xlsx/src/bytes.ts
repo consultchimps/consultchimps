@@ -42,14 +42,13 @@ import {
   type ConsolidationSource,
 } from "./operations/consolidate/consolidate.js";
 import type { StreamedWorkbook } from "./operations/consolidate/reader.js";
-import { WorkbookRead } from "./operations/read-model.js";
 import { openWorkbookBytes } from "./operations/sheet-grid.js";
 import {
   readWorksheetReports,
   type WorksheetImportReport,
 } from "./operations/worksheets.js";
 import {
-  describeWorkbookModel,
+  describeStreamedWorkbook,
   MAX_COLUMN_SAMPLE_VALUES,
   type DescribeWorkbookMetric,
   type DescribeWorkbookOptions,
@@ -1155,11 +1154,12 @@ export async function describeWorkbookBytes(
   options: DescribeWorkbookOptions = {},
 ): Promise<WorkbookDescriptionOutcome> {
   throwIfAborted(options.signal, INSPECT_OPERATION, "memory");
-  const read = await WorkbookRead.load(input.bytes, {
+  const workbook = await openWorkbookBytes(input.bytes, {
+    file: input.name,
     source: input.name,
     details: { source: input.name },
   });
-  return describeWorkbookModel(read, input.name, options, "memory");
+  return describeStreamedWorkbook(workbook, input.name, options, "memory");
 }
 
 export { XLSX_ERRORS, type XlsxErrorCode } from "./errors.js";

@@ -721,9 +721,9 @@ describe("consultchimps CLI", () => {
   it("shows control characters from a crafted workbook rather than sending them to the terminal", async () => {
     // Written as code points so this file carries no control character of its
     // own, which would defeat the point of the assertions below. The escape is
-    // what a workbook's cells can carry; the C1 control byte is what its
-    // worksheet names can, because the strict parser the workbook part is read
-    // with rejects a character reference for an escape outright.
+    // what a workbook's cells can carry, written as Excel writes it; the C1
+    // control byte is what its worksheet names can, because XML forbids a
+    // character reference for an escape outright.
     const escapeCharacter = String.fromCharCode(0x1b);
     const c1Character = String.fromCharCode(0x9b);
     const directory = await createTemporaryDirectory();
@@ -741,18 +741,17 @@ describe("consultchimps CLI", () => {
       ["EmptyNAMEMARK", [[null]]],
     ]);
 
-    // Excel's own writer stores a control character as the literal text
-    // `_x001b_`, so the reachable path is a hand-built package. Patching the
-    // markers into one produces exactly that workbook without committing a
-    // binary: the shared strings part carries the header and the values, and
-    // the workbook part the worksheet name, which the CLI also narrates as
-    // progress on stderr.
+    // Excel stores a control character in a cell as the escape `_x001B_`,
+    // which reads back as the character. Patching the markers into a package
+    // produces such a workbook without committing a binary: the shared strings
+    // part carries the header and the values, and the workbook part the
+    // worksheet name, which the CLI also narrates as progress on stderr.
     const zip = await JSZip.loadAsync(await readFile(input));
     const stringsXml = await zip.file("xl/sharedStrings.xml")!.async("string");
     expect(stringsXml).toContain("MARKER");
     zip.file(
       "xl/sharedStrings.xml",
-      stringsXml.replaceAll("MARKER", "&#27;[31m"),
+      stringsXml.replaceAll("MARKER", "_x001B_[31m"),
     );
     const workbookXml = await zip.file("xl/workbook.xml")!.async("string");
     expect(workbookXml).toContain("NAMEMARK");

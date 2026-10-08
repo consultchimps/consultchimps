@@ -70,12 +70,19 @@ export interface StreamedCell {
   readonly value: StreamedValue;
   /** The text the worksheet shows, when the read asked for it. */
   readonly text?: string;
+  /**
+   * What the cell stores, when the read asked for occupancy and that differs
+   * from `value`: a number a style formats as a date stores the number, and
+   * a declared date stores its own text.
+   */
+  readonly stored?: StreamedValue;
 }
 
 /** How one worksheet read goes. */
 interface ReadSettings {
   readonly clip: boolean;
   readonly text: boolean;
+  readonly occupancy: boolean;
   readonly between: (() => Promise<void>) | undefined;
 }
 
@@ -83,8 +90,16 @@ interface ReadSettings {
 export interface WorksheetConsumer {
   /** Called before the first row, and again if the read starts over. */
   begin(): void;
-  /** A zero-based row holding at least one cell. */
-  row(row: number, cells: readonly StreamedCell[]): void;
+  /**
+   * A zero-based row holding at least one cell. A read that asked for
+   * occupancy also passes the columns whose cells hold anything at all (see
+   * `readWorksheet`), and calls this for a row with occupied cells only.
+   */
+  row(
+    row: number,
+    cells: readonly StreamedCell[],
+    occupied?: readonly number[],
+  ): void;
 }
 
 export interface WorksheetRead {
@@ -104,6 +119,11 @@ export interface WorksheetRead {
    * would produce is not in the file; this is how a caller learns it was there.
    */
   readonly uncachedFormulas: readonly CellPosition[];
+  /**
+   * Whether any cell anywhere on the worksheet, inside the used range or not,
+   * holds anything; reported only when the read asked for occupancy.
+   */
+  readonly occupied?: boolean;
 }
 
 /** A zero-based cell position. */
@@ -116,6 +136,8 @@ export interface CellPosition {
 export interface StreamedSheet {
   readonly name: string;
   readonly visible: boolean;
+  /** How Excel presents the sheet. */
+  readonly visibility: "visible" | "hidden" | "veryHidden";
   /**
    * The worksheet part; undefined for a sheet that holds no cells to read,
    * such as a chart sheet; empty when nothing says where the sheet is.
@@ -253,6 +275,30 @@ function assertWellFormedRow(
   }
 }
 
+/**
+ * Whether a cell holds anything by the document model's rule: a formula, or any
+ * stored text, whatever value it reads as. A cell carrying only a style does
+ * not.
+ */
+function occupiedCell(raw: RawCell): boolean {
+  return (
+    raw.formula !== undefined ||
+    raw.value !== undefined ||
+    (!raw.hasValue && typeof raw.inline === "string" && raw.inline !== "")
+  );
+}
+
+/**
+ * What a cell read as a date stores: the number a style formats, or a declared
+ * date's own text.
+ */
+function storedDate(raw: RawCell): StreamedValue {
+  const text = raw.value === undefined ? "" : decodeEscapes(raw.value);
+  const trimmed = text.trim();
+  const numeric = Number(trimmed);
+  return trimmed !== "" && Number.isFinite(numeric) ? numeric : text;
+}
+
 class UnresolvedString extends Error {}
 class OutOfOrder extends Error {}
 
@@ -358,7 +404,13 @@ export class StreamedWorkbook {
         }
       }
     }
-    const tables = readExcelTableDefinitionsFrom(parts);
+    // Each table names its sheet as the workbook part spells it; decoded as
+    // the sheet names below are, so a table is found on its sheet whatever
+    // escapes the name holds.
+    const tables = readExcelTableDefinitionsFrom(parts).map((table) => ({
+      ...table,
+      sheet: decodeEscapes(table.sheet),
+    }));
 
     const relationships = new Map(
       parts
@@ -383,6 +435,8 @@ export class StreamedWorkbook {
       sheets.push({
         name: decodeEscapes(name),
         visible: state !== "hidden" && state !== "veryHidden",
+        visibility:
+          state === "hidden" || state === "veryHidden" ? state : "visible",
         part,
       });
     });
@@ -439,6 +493,9 @@ export class StreamedWorkbook {
    * unless `clip` is false, for a reader whose rectangle is declared rather
    * than taken from the used range, such as an Excel Table or a named range.
    * Pass `text` to have each cell carry the text the worksheet shows.
+   * Pass `occupancy` for what the document model counts as content: a cell
+   * holding a formula or any stored text, whatever value it reads as, which
+   * a formula with no cached value or a style-only cell does not and does.
    */
   async readWorksheet(
     sheet: StreamedSheet,
@@ -447,6 +504,7 @@ export class StreamedWorkbook {
       gather?: boolean;
       clip?: boolean;
       text?: boolean;
+      occupancy?: boolean;
       between?: () => Promise<void>;
     } = {},
   ): Promise<WorksheetRead> {
@@ -458,6 +516,7 @@ export class StreamedWorkbook {
         merges: [],
         gathered: false,
         uncachedFormulas: [],
+        ...(options.occupancy === true ? { occupied: false } : {}),
       };
     }
     if (sheet.part === "" || !this.#zip.has(sheet.part)) {
@@ -467,6 +526,7 @@ export class StreamedWorkbook {
     const settings: ReadSettings = {
       clip: options.clip ?? true,
       text: options.text ?? false,
+      occupancy: options.occupancy ?? false,
       between: options.between,
     };
     try {
@@ -596,7 +656,9 @@ export class StreamedWorkbook {
     gather: boolean,
     settings: ReadSettings,
   ): Promise<WorksheetRead> {
-    const { clip, between } = settings;
+    const { clip, between, occupancy } = settings;
+    let occupiedAnywhere = false;
+    let lastDelivered = -1;
     consumer.begin();
     let dimension: CellRectangle | undefined;
     let guessStartRow = 2_000_000;
@@ -652,6 +714,10 @@ export class StreamedWorkbook {
     const gathered = gather
       ? new Map<number, Map<number, StreamedCell | null>>()
       : undefined;
+    // Which cells hold anything, keyed the same way, when gathering for a
+    // read that asked for occupancy.
+    const gatheredOccupied =
+      gather && occupancy ? new Map<number, Map<number, boolean>>() : undefined;
 
     const inDimension = (row: number, column: number): boolean =>
       !clip ||
@@ -673,6 +739,7 @@ export class StreamedWorkbook {
       }
       let columnTag = -1;
       let rowCells: StreamedCell[] | undefined;
+      let rowOccupied: number[] | undefined;
       let previousColumn = -1;
       for (const raw of cells) {
         let row: number | undefined;
@@ -698,6 +765,25 @@ export class StreamedWorkbook {
             uncached.delete(key);
           }
         }
+        if (occupancy) {
+          const isOccupied = occupiedCell(raw);
+          if (isOccupied) occupiedAnywhere = true;
+          if (row !== undefined && columnTag >= 0) {
+            if (gatheredOccupied) {
+              let ofRow = gatheredOccupied.get(row);
+              if (ofRow === undefined) {
+                ofRow = new Map();
+                gatheredOccupied.set(row, ofRow);
+              }
+              // Any copy of a repeated cell that holds something counts, as
+              // it does when rows arrive in order and as the model counted.
+              ofRow.set(columnTag, ofRow.get(columnTag) === true || isOccupied);
+            } else if (isOccupied && inDimension(row, columnTag)) {
+              if (row !== rowTag - 1) throw new OutOfOrder();
+              (rowOccupied ??= []).push(columnTag);
+            }
+          }
+        }
         const engine = this.#engineCell(raw, formula);
         if (engine.kind === "absent") continue;
         if (columnTag >= 0) {
@@ -709,7 +795,7 @@ export class StreamedWorkbook {
         }
         const date = this.#modelDate(raw);
         const value = date ?? engine.value;
-        const cell: StreamedCell | null =
+        let cell: StreamedCell | null =
           value === null
             ? null
             : settings.text
@@ -719,6 +805,9 @@ export class StreamedWorkbook {
                   text: this.#displayText(raw, value, date !== undefined),
                 }
               : { column: columnTag, value };
+        if (cell !== null && occupancy && date !== undefined) {
+          cell = { ...cell, stored: storedDate(raw) };
+        }
         if (gathered) {
           let cellsOfRow = gathered.get(row);
           if (cellsOfRow === undefined) {
@@ -742,7 +831,15 @@ export class StreamedWorkbook {
       if (!gathered && previousColumn >= 0) {
         lastRow = rowTag - 1;
       }
-      if (rowCells !== undefined) {
+      if (occupancy) {
+        if (rowCells !== undefined || rowOccupied !== undefined) {
+          // A row of cells that hold no value never moves `lastRow`, so
+          // the order of delivered rows is checked here as well.
+          if (rowTag - 1 <= lastDelivered) throw new OutOfOrder();
+          lastDelivered = rowTag - 1;
+          consumer.row(rowTag - 1, rowCells ?? [], rowOccupied ?? []);
+        }
+      } else if (rowCells !== undefined) {
         consumer.row(rowTag - 1, rowCells);
       }
     };
@@ -798,13 +895,15 @@ export class StreamedWorkbook {
         : undefined);
 
     if (gathered && range !== undefined) {
-      const rows = [...gathered.keys()]
+      const rows = [
+        ...new Set([...gathered.keys(), ...(gatheredOccupied?.keys() ?? [])]),
+      ]
         .filter(
           (row) => !clip || (row >= range.startRow && row <= range.endRow),
         )
         .sort((left, right) => left - right);
       for (const row of rows) {
-        const cellsOfRow = gathered.get(row)!;
+        const cellsOfRow = gathered.get(row) ?? new Map<number, null>();
         const delivered: StreamedCell[] = [];
         for (const column of [...cellsOfRow.keys()].sort((a, b) => a - b)) {
           const cell = cellsOfRow.get(column);
@@ -817,12 +916,31 @@ export class StreamedWorkbook {
           }
           delivered.push(cell);
         }
-        if (delivered.length > 0) consumer.row(row, delivered);
+        if (gatheredOccupied) {
+          const occupied = [...(gatheredOccupied.get(row) ?? [])]
+            .filter(
+              ([column, isOccupied]) =>
+                isOccupied &&
+                (!clip ||
+                  (column >= range.startColumn && column <= range.endColumn)),
+            )
+            .map(([column]) => column)
+            .sort((a, b) => a - b);
+          if (delivered.length > 0 || occupied.length > 0) {
+            consumer.row(row, delivered, occupied);
+          }
+        } else if (delivered.length > 0) consumer.row(row, delivered);
       }
     }
     const uncachedFormulas = [...uncached.values()].sort(
       (left, right) => left.row - right.row || left.column - right.column,
     );
-    return { range, merges, gathered: gather, uncachedFormulas };
+    return {
+      range,
+      merges,
+      gathered: gather,
+      uncachedFormulas,
+      ...(occupancy ? { occupied: occupiedAnywhere } : {}),
+    };
   }
 }
