@@ -8,7 +8,7 @@ description:
   PowerPoint or PDF files, or when the user mentions ConsultChimps.
 license: Apache-2.0
 metadata:
-  cli-version: "0.13.1"
+  cli-version: "0.14.0"
   repository: consultchimps/consultchimps
 ---
 
@@ -50,7 +50,7 @@ stacked rows (consolidate), or one workbook of separate tabs (merge).
 ## Invocation
 
 ```bash
-npx consultchimps@0.13.1 <command>
+npx consultchimps@0.14.0 <command>
 ```
 
 No global install and no library import. The pinned version is the one this
@@ -80,7 +80,7 @@ Human-readable results go to stdout, progress to stderr, and a failure sets a
 nonzero exit code. Place `--json` before the command for one line of JSON:
 
 ```bash
-npx consultchimps@0.13.1 --json pdf split report.pdf -o pages
+npx consultchimps@0.14.0 --json pdf split report.pdf -o pages
 ```
 
 Success prints `{"ok":true,"result":...}` with `artifacts`, `warnings` and

@@ -2,7 +2,7 @@
 
 # ConsultChimps CLI reference
 
-The `sheets` commands of `consultchimps` 0.13.1, as the CLI itself
+The `sheets` commands of `consultchimps` 0.14.0, as the CLI itself
 prints them. A flag absent here does not exist in that version.
 
 ## consultchimps sheets
