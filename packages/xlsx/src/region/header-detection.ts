@@ -237,6 +237,36 @@ export function detectHeaderRow(
 }
 
 /**
+ * For a reader that sees populated rows one at a time: the index in `counts`
+ * of the first row, from `from` on, that qualifies against every row it is
+ * measured against, with `settled` true once all of those rows have arrived.
+ * Until then the index is the candidate still waiting. Once settled,
+ * `detectHeaderRow` over `counts` gives the answer it would give over the
+ * whole worksheet, so the rows that follow need not be held for it.
+ */
+export function settleHeaderCandidate(
+  counts: readonly RowValueCount[],
+  from: number,
+): { readonly index: number; readonly settled: boolean } {
+  let index = from;
+  while (index + HEADER_LOOKAHEAD_ROWS < counts.length) {
+    let fullest = 0;
+    for (
+      let ahead = index;
+      ahead <= index + HEADER_LOOKAHEAD_ROWS;
+      ahead += 1
+    ) {
+      fullest = Math.max(fullest, counts[ahead]!.values);
+    }
+    if (qualifiesAsHeader(counts[index]!.values, fullest)) {
+      return { index, settled: true };
+    }
+    index += 1;
+  }
+  return { index, settled: false };
+}
+
+/**
  * Rows above `headerRow` that hold at least one value: the title rows a read
  * from `headerRow` leaves out. Blank rows above the header are not counted,
  * since nothing was skipped in them.

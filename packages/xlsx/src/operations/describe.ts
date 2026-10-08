@@ -4,17 +4,18 @@
  * create-nothing precedent.
  *
  * The description answers "what is in this file, and what would an operation
- * see in it". That second half is why this is composed from the L1 model and
- * the L2 region resolver rather than read off SheetJS objects: the header row
- * an inspection reports is the row `resolveRegions` would resolve, the columns
- * are the region's boundary columns, and the visibility is the model's own
- * `SheetInfo`. A second implementation of header detection here would let the
- * promise drift the moment a model-layer fix lands, which is exactly the
- * drift ARCHITECTURE.md's layering exists to prevent.
+ * see in it". So it reads cells through the streaming reader the table readers
+ * and consolidation read through (ADR 0006), and settles the header row and
+ * the columns by the shared rule in `src/region/header-detection.ts`: the
+ * header row an inspection reports is the row a consolidation reads from, and
+ * the columns are the ones it keeps.
  *
- * Samples are bounded because a description is what a picker renders, never a
- * copy of the data; unbounded values and inferred types are excluded by the
- * ADR deliberately.
+ * Each worksheet is read once, as a stream, and nothing proportional to its
+ * rows is kept: per row, whether it holds a value; per column, the last row
+ * holding one and a bounded sample; and the rows the header rule may still
+ * need, which on an ordinary worksheet is a dozen. Samples are bounded because
+ * a description is what a picker renders, never a copy of the data; unbounded
+ * values and inferred types are excluded by the ADR deliberately.
  */
 import {
   ConsultChimpsError,
@@ -26,19 +27,16 @@ import {
 import { type CellValue, uniqueHeaders } from "@consultchimps/tabular";
 
 import { XLSX_ERRORS } from "../errors.js";
-import type { WorkbookModel } from "../model/index.js";
-import type {
-  CellModel,
-  CellRange,
-  CellRef,
-  DefinedNameEntry,
-  RowModel,
-  SheetInfo,
-  WorkbookTableInfo,
-  WorksheetModel,
-} from "../model/types.js";
-import { resolveRegions } from "../region/resolve.js";
-import type { DataRegion } from "../region/types.js";
+import { decodeRange } from "../model/references.js";
+import type { CellRange } from "../model/types.js";
+import { CellError } from "../package/cell-error.js";
+import {
+  cellKey,
+  detectHeaderRow,
+  isBlankValue,
+  settleHeaderCandidate,
+  type RowValueCount,
+} from "../region/header-detection.js";
 import { formatCellRef, parseSheetRange } from "../region/values.js";
 import {
   INSPECT_OPERATION,
@@ -46,7 +44,16 @@ import {
   type ReadWorkbookOptions,
 } from "../shared.js";
 import { uncachedFormulaWarnings } from "../uncached-formulas.js";
-import type { WorkbookRead } from "./read-model.js";
+import type {
+  StreamedCell,
+  StreamedDefinedName,
+  StreamedSheet,
+  StreamedValue,
+  StreamedWorkbook,
+  WorksheetConsumer,
+  WorksheetRead,
+} from "./consolidate/reader.js";
+import { tableValue } from "./sheet-grid.js";
 
 /**
  * The hard ceiling on per-column sample values. ADR 0002 requires samples to
@@ -54,14 +61,6 @@ import type { WorkbookRead } from "./read-model.js";
  * data. A caller may ask for fewer, never for more.
  */
 export const MAX_COLUMN_SAMPLE_VALUES = 5;
-
-/**
- * Rows scanned between yields. A worksheet scan is synchronous work, so
- * without a macrotask boundary a cancellation posted to a worker cannot be
- * dequeued until the whole sheet is done - the same reason `consolidate`
- * yields between inputs. See `yieldToEventLoop`.
- */
-const ROWS_PER_YIELD = 1024;
 
 /** Excel's own reserved defined names (print areas and the like). */
 const BUILTIN_DEFINED_NAME_PREFIX = "_xlnm.";
@@ -211,51 +210,6 @@ function validateHeaderRow(headerRow: number | undefined): void {
   }
 }
 
-/** The model's visibility vocabulary in this operation's public spelling. */
-function publicVisibility(
-  visibility: SheetInfo["visibility"],
-): WorksheetVisibility {
-  return visibility === "veryHidden" ? "very-hidden" : visibility;
-}
-
-/**
- * A cell's value exactly as the workbook stores it.
- *
- * `cellValue` is the grouping-oriented view: it reads the cell's style and
- * infers a `Date` from a date number format, which is the right answer for a
- * split key and the wrong one here. ADR 0002 promises samples are stored
- * values with no inferred types, and a date-formatted cell stores a *number* -
- * the serial - not a date. Reporting an ISO string would show a mapping review
- * a type and a value the cell does not contain.
- *
- * So a `Date` from the model is re-read from the cell's stored text: a numeric
- * serial comes back as that number, and a genuine ISO date cell (`t="d"`,
- * whose stored text is the ISO string) comes back as that text. Both are what
- * the workbook holds, and both are deterministic.
- */
-function storedValue(worksheet: WorksheetModel, ref: CellRef): CellValue {
-  const value = worksheet.cellValue(ref);
-  if (value === undefined || value === null) {
-    return null;
-  }
-  if (value instanceof Date) {
-    const text = worksheet.cellText(ref);
-    if (text === undefined || text.trim() === "") {
-      return null;
-    }
-    const numeric = Number(text.trim());
-    return Number.isFinite(numeric) ? numeric : text;
-  }
-  if (
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return value;
-  }
-  return String(value);
-}
-
 /**
  * A sample value's identity for the distinctness test. The type is part of the
  * key so the number 1 and the text "1", which Excel very much distinguishes
@@ -277,65 +231,6 @@ function formatRange(range: CellRange): string {
   return start === end ? start : `${start}:${end}`;
 }
 
-/**
- * Whether the worksheet carries any value at all inside its used range.
- *
- * A worksheet's used range comes from the stored `<dimension>` hint, which
- * Excel and every writer set to `A1` for a sheet that holds nothing, so the
- * range alone cannot tell "one blank cell" from "no cells". An inspection has
- * to answer "there is no header row here" for a genuinely empty sheet rather
- * than invent a `column_1`, so emptiness is decided by looking.
- *
- * It looks at the cells the sheet actually stores rather than at every
- * coordinate the dimension claims. A blank formatted template can declare an
- * extent spanning hundreds of thousands of rows while storing nothing at all;
- * walking the declared grid made answering "empty" proportional to the claim
- * instead of to the contents.
- *
- * A template can still *store* a great many rows - one styled cell per row is
- * enough - and finding the first occupied cell among them is a long scan when
- * the answer is "none". So it yields on the same cadence as every other scan
- * here rather than running to the end uninterrupted.
- */
-async function hasAnyContent(
-  rows: readonly RowModel[],
-  options: DescribeWorkbookOptions,
-  outputContext: AbortOutputContext,
-): Promise<boolean> {
-  let rowsSinceYield = 0;
-  for (const row of rows) {
-    if (row.cells.some(isOccupiedCell)) {
-      return true;
-    }
-    rowsSinceYield += 1;
-    if (rowsSinceYield >= ROWS_PER_YIELD) {
-      rowsSinceYield = 0;
-      await yieldToEventLoop();
-      throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
-    }
-  }
-  return false;
-}
-
-/**
- * Whether a cell counts as content.
- *
- * A stored value obviously counts. So does a formula with no cached value: the
- * cell is not blank, the worksheet holds it, and reporting the row as absent
- * would tell a reader the sheet is emptier than it is. Sampling stays separate
- * and stays stored-values-only - an uncached formula contributes no sample,
- * because there is no stored value to report and the inspection never computes
- * one - so occupancy and samples answer their own questions.
- *
- * A cell carrying only a style is formatting, not content, and does not count.
- */
-function isOccupiedCell(cell: CellModel): boolean {
-  return (
-    (cell.value !== undefined && cell.value !== "") ||
-    cell.formula !== undefined
-  );
-}
-
 const EMPTY_SHEET = {
   columnCount: 0,
   columns: [] as WorkbookColumnDescription[],
@@ -344,194 +239,356 @@ const EMPTY_SHEET = {
   rowCount: 0,
 } as const;
 
+/** The public spelling of how Excel presents a worksheet. */
+function publicVisibility(
+  visibility: StreamedSheet["visibility"],
+): WorksheetVisibility {
+  return visibility === "veryHidden" ? "very-hidden" : visibility;
+}
+
 /**
- * Describe one worksheet from its resolved region: the dimensions of its used
- * range, the header row an operation would key on, and a bounded sample of
- * each column's values.
+ * A cell's value exactly as the workbook stores it. ADR 0002 promises samples
+ * are stored values with no inferred types: a date-formatted cell stores the
+ * serial, not a date, and a declared date its own text, which the reader
+ * carries as `stored`. An error cell stores its text.
+ */
+function storedValue(cell: StreamedCell): CellValue {
+  return tableValue(cell.stored ?? cell.value);
+}
+
+/**
+ * The name a header cell gives its column, spelled as the table readers spell
+ * it: a number by its value, a boolean as `true` or `false`, a date as its ISO
+ * timestamp, an error by its text, and a blank cell as an empty name for
+ * `uniqueHeaders` to fill in.
+ */
+function headerName(value: StreamedValue | undefined): string {
+  if (value === undefined || isBlankValue(value)) return "";
+  return value instanceof CellError ? value.text : String(value);
+}
+
+/** An Excel Table's range, one-based, as the workbook declares it. */
+function tableRange(reference: string): CellRange {
+  const range = decodeRange(reference);
+  return {
+    start: { row: range.startRow + 1, column: range.startColumn },
+    end: { row: range.endRow + 1, column: range.endColumn },
+  };
+}
+
+/**
+ * The first few distinct non-empty stored values of each column, in the order
+ * they are offered.
+ */
+class ColumnSamples {
+  readonly #limit: number;
+  readonly #values = new Map<number, CellValue[]>();
+  readonly #seen = new Map<number, Set<string>>();
+
+  constructor(limit: number) {
+    this.#limit = limit;
+  }
+
+  offer(column: number, value: CellValue): void {
+    if (isEmptyValue(value)) return;
+    let values = this.#values.get(column);
+    if (values === undefined) {
+      values = [];
+      this.#values.set(column, values);
+      this.#seen.set(column, new Set());
+    }
+    if (values.length >= this.#limit) return;
+    const key = sampleKey(value);
+    const seen = this.#seen.get(column)!;
+    if (seen.has(key)) return;
+    seen.add(key);
+    values.push(value);
+  }
+
+  /** This column's samples, then `later`'s that are new, to the limit. */
+  merged(column: number, later: ColumnSamples): CellValue[] {
+    const values = [...(this.#values.get(column) ?? [])];
+    const seen = new Set(values.map(sampleKey));
+    for (const value of later.#values.get(column) ?? []) {
+      if (values.length >= this.#limit) break;
+      const key = sampleKey(value);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      values.push(value);
+    }
+    return values;
+  }
+}
+
+/** A row the header rule may still need. */
+interface HeldRow {
+  readonly row: number;
+  readonly cells: readonly StreamedCell[];
+  /** The row's position in `counts`. */
+  readonly count: number;
+}
+
+/**
+ * One pass over one worksheet, zero-based throughout.
  *
- * The scan walks the rows the sheet stores, in order, and stops sampling as
- * soon as every column has filled its quota, but keeps counting occupied rows
- * to the end. Because the order is row order and the bound is fixed, the same
- * worksheet always yields the same samples; the periodic yield changes when the
- * scan runs, never what it produces.
- *
- * Rows are read from the model's row store once and looked up by number, so
- * the cost is proportional to what the sheet contains rather than to the extent
- * it declares - and never to the square of it.
+ * Rows holding a value are counted for the header rule and held until the
+ * rule's answer can no longer change (`settleHeaderCandidate`); the header row
+ * is then the candidate or the first populated row, so every row after that
+ * point lies below it either way, and only feeds the counts and samples. A
+ * row of cells that hold something but no value, such as formulas with no
+ * cached value, is remembered by its columns, since whether it is a data row
+ * depends on which columns turn out to be kept.
+ */
+class SheetScan implements WorksheetConsumer {
+  readonly #declared: number | undefined;
+  readonly #limit: number;
+  #counts: RowValueCount[] = [];
+  #held: HeldRow[] = [];
+  #candidate = 0;
+  #settled = false;
+  #declaredCells: readonly StreamedCell[] | undefined;
+  #lastValueRow = new Map<number, number>();
+  #later: ColumnSamples;
+  #rowsLater = 0;
+  #valuelessRows: Array<{ row: number; columns: readonly number[] }> = [];
+
+  /** `headerRow` is the one-based row a caller declared, if any. */
+  constructor(headerRow: number | undefined, sampleLimit: number) {
+    this.#declared = headerRow === undefined ? undefined : headerRow - 1;
+    this.#limit = sampleLimit;
+    this.#later = new ColumnSamples(sampleLimit);
+  }
+
+  begin(): void {
+    this.#counts = [];
+    this.#held = [];
+    this.#candidate = 0;
+    this.#settled = false;
+    this.#declaredCells = undefined;
+    this.#lastValueRow = new Map();
+    this.#later = new ColumnSamples(this.#limit);
+    this.#rowsLater = 0;
+    this.#valuelessRows = [];
+  }
+
+  row(
+    row: number,
+    cells: readonly StreamedCell[],
+    occupied: readonly number[] = [],
+  ): void {
+    let values = 0;
+    for (const cell of cells) {
+      if (!isBlankValue(cell.value)) {
+        values += 1;
+        this.#lastValueRow.set(cell.column, row);
+      }
+    }
+    if (values === 0) {
+      if (occupied.length > 0) {
+        this.#valuelessRows.push({ row, columns: occupied });
+      }
+      return;
+    }
+    if (this.#declared !== undefined) {
+      if (row === this.#declared) this.#declaredCells = cells;
+      else if (row > this.#declared) this.#feedLater(cells);
+      return;
+    }
+    if (this.#settled) {
+      this.#feedLater(cells);
+      return;
+    }
+    this.#counts.push({ row, values, bannerValues: 0 });
+    this.#held.push({ row, cells, count: this.#counts.length - 1 });
+    const { index, settled } = settleHeaderCandidate(
+      this.#counts,
+      this.#candidate,
+    );
+    this.#candidate = index;
+    this.#settled = settled;
+  }
+
+  #feedLater(cells: readonly StreamedCell[]): void {
+    this.#rowsLater += 1;
+    for (const cell of cells) {
+      this.#later.offer(cell.column, storedValue(cell));
+    }
+  }
+
+  /** The description, once the read is complete. */
+  finish(
+    read: WorksheetRead,
+    name: string,
+    visibility: WorksheetVisibility,
+  ): WorkbookSheetDescription {
+    const range = read.range;
+    if (range === undefined || read.occupied !== true) {
+      return { ...EMPTY_SHEET, columns: [], name, visibility };
+    }
+    const rowCount = range.endRow - range.startRow + 1;
+    const columnCount = range.endColumn - range.startColumn + 1;
+    const declared = this.#declared;
+    if (
+      declared !== undefined &&
+      (declared < range.startRow || declared > range.endRow)
+    ) {
+      // A declared header row outside the used range leaves nothing to
+      // preview, as the table readers yield no table for it.
+      return {
+        ...EMPTY_SHEET,
+        columnCount,
+        columns: [],
+        name,
+        rowCount,
+        visibility,
+      };
+    }
+
+    // Merged ranges follow the cells in the part, so the held rows are only
+    // now measured for banners; the rule reads no other row's.
+    const banners = new Set<string>();
+    for (const merge of read.merges) {
+      if (merge.endColumn > merge.startColumn) {
+        banners.add(cellKey(merge.startRow, merge.startColumn));
+      }
+    }
+    if (banners.size > 0) {
+      for (const held of this.#held) {
+        let bannerValues = 0;
+        for (const cell of held.cells) {
+          if (
+            !isBlankValue(cell.value) &&
+            banners.has(cellKey(held.row, cell.column))
+          ) {
+            bannerValues += 1;
+          }
+        }
+        this.#counts[held.count] = {
+          ...this.#counts[held.count]!,
+          bannerValues,
+        };
+      }
+    }
+
+    const detected = declared ?? detectHeaderRow(this.#counts);
+    // A worksheet with no value in any row, one of uncalculated formulas say,
+    // has no row to pick and no column to leave out: it reads from its first
+    // used row, across every used column.
+    const header = detected ?? range.startRow;
+    const columns: number[] = [];
+    for (
+      let column = range.startColumn;
+      column <= range.endColumn;
+      column += 1
+    ) {
+      const last = this.#lastValueRow.get(column);
+      if (detected === undefined || (last !== undefined && last >= header)) {
+        columns.push(column);
+      }
+    }
+    const headerCells =
+      declared === undefined
+        ? this.#held.find((held) => held.row === header)?.cells
+        : this.#declaredCells;
+    const headerValues = new Map<number, StreamedValue>();
+    for (const cell of headerCells ?? []) {
+      headerValues.set(cell.column, cell.value);
+    }
+
+    // Every row holding a value below the header holds it in a kept column,
+    // since a column with a value below the header is never a spacer.
+    const kept = new Set(columns);
+    const earlier = new ColumnSamples(this.#limit);
+    let dataRowCount = this.#rowsLater;
+    for (const held of this.#held) {
+      if (held.row <= header) continue;
+      dataRowCount += 1;
+      for (const cell of held.cells) {
+        earlier.offer(cell.column, storedValue(cell));
+      }
+    }
+    for (const valueless of this.#valuelessRows) {
+      if (
+        valueless.row > header &&
+        valueless.columns.some((column) => kept.has(column))
+      ) {
+        dataRowCount += 1;
+      }
+    }
+
+    const headers = uniqueHeaders(
+      columns.map((column) => headerName(headerValues.get(column)) || null),
+    );
+    return {
+      columnCount,
+      columns: headers.map((headerText, index) => ({
+        header: headerText,
+        index,
+        sampleValues: earlier.merged(columns[index]!, this.#later),
+      })),
+      dataRowCount,
+      headerRow: header + 1,
+      name,
+      rowCount,
+      visibility,
+    };
+  }
+}
+
+/**
+ * Describe one worksheet in one streaming pass. The read hands back control
+ * between chunks of the part, so a cancellation posted while a long worksheet
+ * is read is collected rather than observed after the answer is built.
  */
 async function describeWorksheet(
-  workbook: WorkbookModel,
-  sheet: SheetInfo,
-  worksheet: WorksheetModel,
+  workbook: StreamedWorkbook,
+  sheet: StreamedSheet,
   options: DescribeWorkbookOptions,
   sampleLimit: number,
   outputContext: AbortOutputContext,
   uncachedFormulas: string[],
 ): Promise<WorkbookSheetDescription> {
-  const visibility = publicVisibility(sheet.visibility);
-  const used = worksheet.usedRange;
-  if (!used) {
-    return { ...EMPTY_SHEET, columns: [], name: sheet.name, visibility };
-  }
-
-  // Materializing the row store is one synchronous burst - the model parses
-  // and allocates every row and cell in a single call - so the signal is
-  // checked on a fresh macrotask immediately before it, where a cancellation
-  // queued while the previous worksheet was scanned can still be collected
-  // without paying for this sheet at all.
-  await yieldToEventLoop();
-  throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
-  // One pass over the stored rows answers both "is this sheet empty" and every
-  // per-row occupancy question below.
-  const storedRows = worksheet.rows();
-  throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
-  // Every one on the sheet: none gives a sample, and one standing alone in
-  // a column is the reason that column shows no values.
-  for (const row of storedRows) {
-    for (const cell of row.cells) {
-      if (cell.formula !== undefined && !cell.hasCachedValue) {
-        uncachedFormulas.push(`${sheet.name}!${formatCellRef(cell.ref)}`);
-      }
-    }
-  }
-
-  if (!(await hasAnyContent(storedRows, options, outputContext))) {
-    return { ...EMPTY_SHEET, columns: [], name: sheet.name, visibility };
-  }
-
-  const rowCount = used.end.row - used.start.row + 1;
-  const columnCount = used.end.column - used.start.column + 1;
-
-  // The region resolver owns header detection and the headerRow override, so
-  // the row reported here is the row an operation on this sheet would use.
-  const regions = await resolveRegions(workbook, {
-    headerRow: options.headerRow,
-    sheet: sheet.name,
-  });
-  const region: DataRegion | undefined = regions[0];
-  if (
-    !region ||
-    region.headerRow > used.end.row ||
-    region.headerRow < used.start.row
-  ) {
-    // A declared header row outside the used range leaves nothing to
-    // preview, on either side of it: the table readers yield no table for
-    // such a row, and the description says the same.
-    return {
-      ...EMPTY_SHEET,
-      columnCount,
-      columns: [],
-      name: sheet.name,
-      rowCount,
-      visibility,
-    };
-  }
-
-  // Blank and repeated header cells are filled in and de-duplicated here
-  // rather than in the region layer, which deliberately keeps boundary columns
-  // raw: naming is a `tabular` concern, and this is where the description
-  // promises the names an operation would actually produce.
-  const headers = uniqueHeaders(
-    region.columns.map((column) => column.name || null),
-  );
-  const columnIndexes = region.columns.map((column) => column.index);
-  const regionColumns = new Set(columnIndexes);
-
-  const samples = headers.map(() => [] as CellValue[]);
-  const seen = headers.map(() => new Set<string>());
-  let dataRowCount = 0;
-  let satisfiedColumns = sampleLimit === 0 ? headers.length : 0;
-  let rowsSinceYield = 0;
-
-  // Only the rows the sheet stores, in document order, clipped to the body.
-  // A declared extent far larger than the contents costs nothing here.
-  const bodyRows = storedRows.filter(
-    (row) =>
-      row.number >= region.body.start.row && row.number <= region.body.end.row,
-  );
-
-  for (const row of bodyRows) {
-    rowsSinceYield += 1;
-    if (rowsSinceYield >= ROWS_PER_YIELD) {
-      rowsSinceYield = 0;
-      // A long scan must hand back a macrotask, or a cancellation posted while
-      // it runs cannot be dequeued until the sheet is finished.
+  const scan = new SheetScan(options.headerRow, sampleLimit);
+  const read = await workbook.readWorksheet(sheet, scan, {
+    occupancy: true,
+    between: async () => {
       await yieldToEventLoop();
       throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
+    },
+  });
+  // Every one on the sheet: none gives a sample, and one standing alone in a
+  // column is the reason that column shows no values.
+  if (read.range !== undefined) {
+    for (const position of read.uncachedFormulas) {
+      uncachedFormulas.push(
+        `${sheet.name}!${formatCellRef({
+          column: position.column,
+          row: position.row + 1,
+        })}`,
+      );
     }
-
-    // Occupancy comes from the cells the row holds - a formula with no cached
-    // value still occupies its row - while the samples below stay
-    // stored-values-only.
-    if (
-      !row.cells.some(
-        (cell) => regionColumns.has(cell.ref.column) && isOccupiedCell(cell),
-      )
-    ) {
-      continue;
-    }
-    dataRowCount += 1;
-
-    if (satisfiedColumns >= headers.length) {
-      continue;
-    }
-
-    const values = columnIndexes.map((column) =>
-      storedValue(region.worksheet, { column, row: row.number }),
-    );
-
-    values.forEach((value, index) => {
-      const columnSamples = samples[index]!;
-      if (isEmptyValue(value) || columnSamples.length >= sampleLimit) {
-        return;
-      }
-      const key = sampleKey(value);
-      const columnSeen = seen[index]!;
-      if (columnSeen.has(key)) {
-        return;
-      }
-      columnSeen.add(key);
-      columnSamples.push(value);
-      if (columnSamples.length === sampleLimit) {
-        satisfiedColumns += 1;
-      }
-    });
   }
-
-  return {
-    columnCount,
-    columns: headers.map((header, index) => ({
-      header,
-      index,
-      sampleValues: samples[index]!,
-    })),
-    dataRowCount,
-    headerRow: region.headerRow,
-    name: sheet.name,
-    rowCount,
-    visibility,
-  };
+  return scan.finish(read, sheet.name, publicVisibility(sheet.visibility));
 }
 
 function describeExcelTables(
-  tables: readonly WorkbookTableInfo[],
+  workbook: StreamedWorkbook,
   describedSheets: ReadonlySet<string>,
 ): WorkbookExcelTableDescription[] {
-  return tables
-    .filter((table) => describedSheets.has(table.sheetName))
+  return workbook.tables
+    .filter((table) => describedSheets.has(table.sheet))
     .map((table) => ({
       name: table.name,
-      range: formatRange(table.range),
-      sheet: table.sheetName,
+      range: formatRange(tableRange(table.range)),
+      sheet: table.sheet,
       // The declared column names, not the cells: a table with no data rows
-      // still has headers, and a picker needs to offer them. The model reads
-      // these from the table part, so an empty table is described in full.
-      headers: [...table.columnNames],
+      // still has headers, and a picker needs to offer them.
+      headers: [...table.columns],
     }));
 }
 
 function describeNamedRanges(
-  definedNames: readonly DefinedNameEntry[],
+  definedNames: readonly StreamedDefinedName[],
   describedSheets: ReadonlySet<string>,
 ): WorkbookNamedRangeDescription[] {
   const ranges: WorkbookNamedRangeDescription[] = [];
@@ -540,9 +597,8 @@ function describeNamedRanges(
     if (definedName.name.startsWith(BUILTIN_DEFINED_NAME_PREFIX)) {
       continue;
     }
-    // The model hands back the reference with its entities resolved, so a
-    // worksheet called `Review & Log` matches the decoded sheet names the
-    // membership test below compares against.
+    // The reference arrives with its entities resolved, so a worksheet called
+    // `Review & Log` matches the decoded sheet names compared against below.
     const parsed = parseSheetRange(definedName.reference);
     if (!parsed || !describedSheets.has(parsed.sheet)) {
       continue;
@@ -558,7 +614,8 @@ function describeNamedRanges(
 }
 
 /**
- * The worksheets this description covers, in workbook order.
+ * The worksheets this description covers, in workbook order: the sheets whose
+ * cells the workbook says where to find, so not a chart sheet.
  *
  * `includeHiddenSheets` and `sheets` mean exactly what they mean to every
  * other reader in this package: an option that reads the same everywhere is
@@ -567,10 +624,13 @@ function describeNamedRanges(
  * picker asking about a sheet that is not there has a mistake to report.
  */
 function selectSheets(
-  workbook: WorkbookModel,
+  workbook: StreamedWorkbook,
   options: DescribeWorkbookOptions,
-): { hiddenExcluded: number; selected: SheetInfo[] } {
-  if (workbook.sheets.length === 0) {
+): { hiddenExcluded: number; selected: StreamedSheet[] } {
+  const worksheets = workbook.sheets.filter(
+    (sheet) => sheet.part !== undefined && sheet.part !== "",
+  );
+  if (worksheets.length === 0) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_NO_SHEETS,
       "The workbook does not contain any worksheets.",
@@ -581,7 +641,7 @@ function selectSheets(
   const requested = options.sheets;
   if (requested) {
     const available = new Set(
-      workbook.sheets.map((sheet) => sheet.name.toLocaleLowerCase()),
+      worksheets.map((sheet) => sheet.name.toLocaleLowerCase()),
     );
     const missing = requested.filter(
       (name) => !available.has(name.toLocaleLowerCase()),
@@ -592,7 +652,7 @@ function selectSheets(
         `Worksheet "${missing[0]}" was not found in the workbook.`,
         {
           details: {
-            availableWorksheets: workbook.sheets.map((sheet) => sheet.name),
+            availableWorksheets: worksheets.map((sheet) => sheet.name),
             missingWorksheets: missing,
           },
         },
@@ -603,17 +663,14 @@ function selectSheets(
     ? new Set(requested.map((name) => name.toLocaleLowerCase()))
     : undefined;
 
-  const selected: SheetInfo[] = [];
+  const selected: StreamedSheet[] = [];
   let hiddenExcluded = 0;
 
-  for (const sheet of workbook.sheets) {
+  for (const sheet of worksheets) {
     if (selectedNames && !selectedNames.has(sheet.name.toLocaleLowerCase())) {
       continue;
     }
-    if (
-      options.includeHiddenSheets !== true &&
-      sheet.visibility !== "visible"
-    ) {
+    if (options.includeHiddenSheets !== true && !sheet.visible) {
       hiddenExcluded += 1;
       continue;
     }
@@ -708,20 +765,20 @@ export function workbookDescriptionResult(
 }
 
 /**
- * Describe a loaded workbook. Both surfaces call this with the same model, so
- * the file and byte descriptions of one workbook are structurally identical.
+ * Describe a workbook opened for streaming. Both surfaces call this, the
+ * command line over a file and the byte surface over bytes or a browser
+ * `File`, so one workbook gives one description however it is read.
  *
- * Every worksheet boundary carries an abort check and a yield, and long scans
- * yield inside themselves, so a cancellation posted while the operation runs
- * is actually collected rather than observed after the answer is already built.
+ * Every worksheet boundary carries an abort check and a yield, and each read
+ * yields between chunks, so a cancellation posted while the operation runs is
+ * actually collected rather than observed after the answer is already built.
  */
-export async function describeWorkbookModel(
-  read: WorkbookRead,
+export async function describeStreamedWorkbook(
+  workbook: StreamedWorkbook,
   source: string,
   options: DescribeWorkbookOptions = {},
   outputContext: AbortOutputContext = "files",
 ): Promise<WorkbookDescriptionOutcome> {
-  const workbook = read.workbook;
   throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
   // Options are validated before any worksheet is read, so a bad option is
   // refused the same way whatever the workbook contains.
@@ -731,40 +788,32 @@ export async function describeWorkbookModel(
 
   const sheets: WorkbookSheetDescription[] = [];
   const uncachedFormulas: string[] = [];
-  for (const [index, sheet] of selected.entries()) {
-    if (index > 0) {
-      await yieldToEventLoop();
+  try {
+    for (const [index, sheet] of selected.entries()) {
+      if (index > 0) {
+        await yieldToEventLoop();
+      }
+      throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
+      sheets.push(
+        await describeWorksheet(
+          workbook,
+          sheet,
+          options,
+          sampleLimit,
+          outputContext,
+          uncachedFormulas,
+        ),
+      );
+      options.onProgress?.({
+        operation: INSPECT_OPERATION,
+        stage: "describing-worksheets",
+        completed: index + 1,
+        total: selected.length,
+        detail: sheet.name,
+      });
     }
-    throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
-    // Through the read rather than the model: parsing a worksheet part happens
-    // here, on first access, so this is where a malformed row or cell reference
-    // becomes the same read failure the eager load would have raised.
-    const worksheet = read.worksheet(sheet.name);
-    sheets.push(
-      worksheet
-        ? await describeWorksheet(
-            workbook,
-            sheet,
-            worksheet,
-            options,
-            sampleLimit,
-            outputContext,
-            uncachedFormulas,
-          )
-        : {
-            ...EMPTY_SHEET,
-            columns: [],
-            name: sheet.name,
-            visibility: publicVisibility(sheet.visibility),
-          },
-    );
-    options.onProgress?.({
-      operation: INSPECT_OPERATION,
-      stage: "describing-worksheets",
-      completed: index + 1,
-      total: selected.length,
-      detail: sheet.name,
-    });
+  } finally {
+    workbook.releaseStrings();
   }
 
   throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
@@ -772,11 +821,8 @@ export async function describeWorkbookModel(
   const description: WorkbookDescription = {
     source,
     sheets,
-    excelTables: describeExcelTables(await workbook.tables(), describedSheets),
-    namedRanges: describeNamedRanges(
-      await workbook.definedNames(),
-      describedSheets,
-    ),
+    excelTables: describeExcelTables(workbook, describedSheets),
+    namedRanges: describeNamedRanges(workbook.names, describedSheets),
   };
 
   throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);

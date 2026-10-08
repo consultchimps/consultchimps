@@ -192,7 +192,35 @@ the file. The other operations, before, in a private context:
 | Unprotect, 150,000 rows | 301 MB          |
 | Inspect, 150,000 rows   | 950 MB          |
 
-Merge, unprotect, split, inspection and PowerPoint population still build or
-read whole packages in the library, on the command line too, so they gain only
-the input and output transport. Moving each onto the streaming reader and writer
-is separate work.
+Merge, unprotect, split and PowerPoint population still build or read whole
+packages in the library, on the command line too, so they gain only the input
+and output transport. Inspection moved; see below. Moving each onto the
+streaming reader and writer is separate work.
+
+## Inspection
+
+Added 2026-10-08. Inspection read through the document model, which held the
+expanded package, every cell as an object, and three copies of every row: one
+for the description and one for each header profile. It now reads each worksheet
+once through the streaming reader, as consolidation's first pass does. It keeps
+the rows the header rule may still need, which on an ordinary worksheet is a
+dozen, then per column the last row holding a value and up to five samples, and
+per row only whether it holds content. A row of cells that hold no value, such
+as formulas with no cached value, is remembered by its columns, since whether it
+counts depends on which columns are kept. A worksheet whose rows are out of
+order is gathered whole, as for consolidation. The command line reads the file
+through a file handle.
+
+Peak memory of the command line, on neutral generated workbooks:
+
+| Input                                  | Before   | After  |
+| -------------------------------------- | -------- | ------ |
+| 150,000 rows (9.7 MB)                  | 2,349 MB | 185 MB |
+| 10 sheets x 15,000 rows (9.7 MB)       | 1,311 MB | 236 MB |
+| 60,000 rows, 400 styles, 12,000 merges | 800 MB   | 170 MB |
+
+CPU time for 150,000 rows fell from 70 to 11 seconds. The descriptions are
+identical. Over the 439 distinct workbooks the package's tests open, with seven
+option sets, 20 workbooks describe differently, each now as the readers read it:
+escapes such as `_x000D_` decoded, phonetic runs left out, samples in row order,
+and damaged packages the readers refuse refused here too.

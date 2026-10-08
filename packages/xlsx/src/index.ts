@@ -59,8 +59,7 @@ import {
   type ConsolidationSource,
   type OpenedSource,
 } from "./operations/consolidate/consolidate.js";
-import type { StreamedWorkbook } from "./operations/consolidate/reader.js";
-import { WorkbookRead } from "./operations/read-model.js";
+import { StreamedWorkbook } from "./operations/consolidate/reader.js";
 import { openWorkbookBytes } from "./operations/sheet-grid.js";
 import {
   readWorksheetReports,
@@ -73,7 +72,7 @@ import {
 export type { WorksheetImportReport } from "./operations/worksheets.js";
 export type { WorksheetRegion, WorksheetTableReport } from "./shared.js";
 import {
-  describeWorkbookModel,
+  describeStreamedWorkbook,
   MAX_COLUMN_SAMPLE_VALUES,
   type DescribeWorkbookMetric,
   type DescribeWorkbookOptions,
@@ -454,11 +453,22 @@ export async function describeWorkbook(
   // caring, and a large valid workbook would be loaded in full for nothing.
   throwIfAborted(options.signal, INSPECT_OPERATION);
   const absolutePath = path.resolve(filePath);
-  const read = await WorkbookRead.load(await readWorkbookBytes(absolutePath), {
-    source: absolutePath,
-    details: { filePath: absolutePath },
-  });
-  return describeWorkbookModel(read, path.basename(absolutePath), options);
+  // Read in pieces through a file handle (ADR 0006), never whole.
+  const opened = await openWorkbookSource(absolutePath);
+  try {
+    const workbook = await StreamedWorkbook.open(opened, {
+      file: path.basename(absolutePath),
+      source: absolutePath,
+      details: { filePath: absolutePath },
+    });
+    return await describeStreamedWorkbook(
+      workbook,
+      path.basename(absolutePath),
+      options,
+    );
+  } finally {
+    await opened.close();
+  }
 }
 
 export async function writeTable(

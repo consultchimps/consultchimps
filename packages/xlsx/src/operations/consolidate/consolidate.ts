@@ -49,9 +49,8 @@ import {
   cellKey,
   countTitleRows,
   detectHeaderRow,
-  HEADER_LOOKAHEAD_ROWS,
   isBlankValue,
-  qualifiesAsHeader,
+  settleHeaderCandidate,
   type RowValueCount,
 } from "../../region/header-detection.js";
 import {
@@ -286,21 +285,12 @@ class SheetProfile implements WorksheetConsumer {
     // A candidate's answer is final once all the rows it is measured against
     // have arrived; the first candidate that qualifies is the one the rule
     // picks, so nothing past it can change which rows are kept below.
-    while (this.#candidate + HEADER_LOOKAHEAD_ROWS < this.#counts.length) {
-      let fullest = 0;
-      for (
-        let index = this.#candidate;
-        index <= this.#candidate + HEADER_LOOKAHEAD_ROWS;
-        index += 1
-      ) {
-        fullest = Math.max(fullest, this.#counts[index]!.values);
-      }
-      if (qualifiesAsHeader(this.#counts[this.#candidate]!.values, fullest)) {
-        this.#settled = true;
-        break;
-      }
-      this.#candidate += 1;
-    }
+    const { index, settled } = settleHeaderCandidate(
+      this.#counts,
+      this.#candidate,
+    );
+    this.#candidate = index;
+    this.#settled = settled;
   }
 
   #feed(row: number, cells: readonly StreamedCell[]): void {

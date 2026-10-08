@@ -14,6 +14,7 @@ import {
   isTitleLine,
   profileWorksheet,
   qualifiesAsHeader,
+  settleHeaderCandidate,
   regionColumns,
   type RowValueCount,
 } from "../../src/region/header-detection.js";
@@ -451,5 +452,41 @@ describe("regionColumns", () => {
       { index: 0, name: "Case_ID" },
       { index: 2, name: "Region" },
     ]);
+  });
+});
+
+describe("settleHeaderCandidate", () => {
+  it("settles on a prefix that gives the whole worksheet's header row", () => {
+    // Every sequence of widths from 1 to 4 over 14 rows, some with gaps and
+    // banners: once settled, the rows after the prefix cannot change it.
+    let seed = 7;
+    const next = (bound: number): number => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed % bound;
+    };
+    for (let trial = 0; trial < 2_000; trial += 1) {
+      const counts = [];
+      let row = 1;
+      for (let index = 0; index < 14; index += 1) {
+        row += next(4) === 0 ? 2 : 1;
+        const values = 1 + next(4);
+        counts.push({
+          row,
+          values,
+          bannerValues: next(5) === 0 ? values : 0,
+        });
+      }
+      const whole = detectHeaderRow(counts);
+      let candidate = 0;
+      for (let seen = 1; seen <= counts.length; seen += 1) {
+        const prefix = counts.slice(0, seen);
+        const { index, settled } = settleHeaderCandidate(prefix, candidate);
+        candidate = index;
+        if (settled) {
+          expect(detectHeaderRow(prefix)).toBe(whole);
+          break;
+        }
+      }
+    }
   });
 });
