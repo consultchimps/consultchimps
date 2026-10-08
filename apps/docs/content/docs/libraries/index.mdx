@@ -1155,6 +1155,11 @@ const { outputName } = await consolidateWorkbookSources({
 const workbook = new File(parts, outputName);
 ```
 
+`splitWorkbookSource` does the same for a split: it reads the workbook from a
+source in pieces and asks your `output` function for a sink per output, named
+and typed, which receives that output's bytes and then `flush` once it is
+complete. `planSplitWorkbookSource` previews the split from a source.
+
 A template inspection reads a slide and writes nothing, so
 `inspectPresentationOutcomeBytes` returns the structured result beside the
 placeholder report rather than beside output bytes. Its metrics are the slide's

@@ -24,7 +24,9 @@
  */
 
 import type {
+  CellFormula,
   CellRange,
+  CellRef,
   ColumnIndex,
   RowNumber,
   WorksheetModel,
@@ -122,29 +124,40 @@ export function evaluateFormulaGuard(
 ): FormulaGuardVerdict {
   for (const row of worksheet.rows()) {
     for (const cell of row.cells) {
-      const formula = cell.formula;
-      if (!formula) {
-        continue;
-      }
-      if (formula.kind === "shared" || formula.kind === "array") {
-        return {
-          canRenumber: false,
-          cell: formatCellRef(cell.ref),
-          reason:
-            formula.kind === "shared" ? "shared-formula" : "array-formula",
-        };
-      }
-      const expression = formula.text.replace(STRING_LITERAL_PATTERN, "");
-      if (A1_REFERENCE_PATTERN.test(expression)) {
-        return {
-          canRenumber: false,
-          cell: formatCellRef(cell.ref),
-          reason: "a1-reference",
-        };
-      }
+      const verdict = formulaGuardOfCell(cell.formula, cell.ref);
+      if (verdict) return verdict;
     }
   }
   return { canRenumber: true };
+}
+
+/**
+ * The verdict one cell's formula forces, or undefined when it ties nothing to
+ * row positions. The sheet's verdict is its first cell's, in row order.
+ */
+export function formulaGuardOfCell(
+  formula: CellFormula | undefined,
+  ref: CellRef,
+): FormulaGuardVerdict | undefined {
+  if (!formula) {
+    return undefined;
+  }
+  if (formula.kind === "shared" || formula.kind === "array") {
+    return {
+      canRenumber: false,
+      cell: formatCellRef(ref),
+      reason: formula.kind === "shared" ? "shared-formula" : "array-formula",
+    };
+  }
+  const expression = formula.text.replace(STRING_LITERAL_PATTERN, "");
+  if (A1_REFERENCE_PATTERN.test(expression)) {
+    return {
+      canRenumber: false,
+      cell: formatCellRef(ref),
+      reason: "a1-reference",
+    };
+  }
+  return undefined;
 }
 
 export class RangeBinding implements DataRegion {

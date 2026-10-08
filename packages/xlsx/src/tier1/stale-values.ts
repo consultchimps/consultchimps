@@ -146,6 +146,47 @@ function referencesDeletedRows(
  * names, 3-D sheet ranges and shared-formula slaves that carry no text of their
  * own are not resolved and therefore not detected.
  */
+/**
+ * Blank the cached results in `xml`, a worksheet or any piece of one, whose
+ * formulas cover deleted rows. Each blanked cell is added to `blanked`, in
+ * document order. Cells are matched one by one, so the pieces of a worksheet
+ * give what the whole part gives.
+ */
+export function blankStaleCells(
+  xml: string,
+  sheet: string,
+  ownDeletedRows: ReadonlySet<number> | undefined,
+  deletedRowsByName: ReadonlyMap<string, ReadonlySet<number>>,
+  blanked: BlankedCachedFormula[],
+): string {
+  return xml.replace(CELL_PATTERN, (cellXml) => {
+    const formula = CELL_FORMULA_PATTERN.exec(cellXml)?.[1];
+    if (!formula) {
+      return cellXml;
+    }
+    const reference = cellReference(cellXml);
+    const row = reference === undefined ? undefined : cellRow(reference);
+    if (row !== undefined && ownDeletedRows?.has(row) === true) {
+      return cellXml;
+    }
+    if (
+      !referencesDeletedRows(
+        formula,
+        sheet.trim().toLowerCase(),
+        deletedRowsByName,
+      )
+    ) {
+      return cellXml;
+    }
+    const cleared = cellXml.replace(CACHED_VALUE_PATTERN, "");
+    if (cleared === cellXml) {
+      return cellXml;
+    }
+    blanked.push({ cell: reference ?? "unknown cell", sheet });
+    return cleared;
+  });
+}
+
 export async function blankStaleCachedFormulas(
   workbookBytes: Uint8Array,
   deletedRowsBySheet: DeletedRowsByPart,
@@ -173,36 +214,13 @@ export async function blankStaleCachedFormulas(
     if (worksheetXml === undefined) {
       continue;
     }
-    const ownDeletedRows = deletedRowsBySheet.get(identity.worksheetPart);
-    const rewritten = worksheetXml.replace(CELL_PATTERN, (cellXml) => {
-      const formula = CELL_FORMULA_PATTERN.exec(cellXml)?.[1];
-      if (!formula) {
-        return cellXml;
-      }
-      const reference = cellReference(cellXml);
-      const row = reference === undefined ? undefined : cellRow(reference);
-      if (row !== undefined && ownDeletedRows?.has(row) === true) {
-        return cellXml;
-      }
-      if (
-        !referencesDeletedRows(
-          formula,
-          identity.name.trim().toLowerCase(),
-          deletedRowsByName,
-        )
-      ) {
-        return cellXml;
-      }
-      const blanked = cellXml.replace(CACHED_VALUE_PATTERN, "");
-      if (blanked === cellXml) {
-        return cellXml;
-      }
-      blankedCells.push({
-        cell: reference ?? "unknown cell",
-        sheet: identity.name,
-      });
-      return blanked;
-    });
+    const rewritten = blankStaleCells(
+      worksheetXml,
+      identity.name,
+      deletedRowsBySheet.get(identity.worksheetPart),
+      deletedRowsByName,
+      blankedCells,
+    );
     if (rewritten !== worksheetXml) {
       workbookPackage.writeText(identity.worksheetPart, rewritten);
     }

@@ -166,7 +166,10 @@ export class RowRelocation {
     entries: Iterable<readonly [number, number | null]>,
   ): RowRelocation {
     const explicit = new Map<number, number | null>(entries);
-    const boundary = Math.max(0, ...explicit.keys());
+    let boundary = 0;
+    for (const row of explicit.keys()) {
+      if (row > boundary) boundary = row;
+    }
     return new RowRelocation(explicit, boundary, 0);
   }
 

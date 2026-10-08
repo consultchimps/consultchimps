@@ -1,7 +1,7 @@
 const MAXIMUM_XML_MARKUP_BYTES = 64 * 1024;
 
 function entityBytes(entity: readonly number[]): number {
-  const value = String.fromCharCode(...entity);
+  const value = entity.map((code) => String.fromCharCode(code)).join("");
   if (
     value === "amp" ||
     value === "lt" ||

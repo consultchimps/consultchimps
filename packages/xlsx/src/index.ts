@@ -38,6 +38,7 @@ import {
   openRandomAccessSource,
   pathExists,
   refuseInputOverwrite,
+  type FileSource,
 } from "@consultchimps/files";
 import {
   validateColumnMapping,
@@ -85,9 +86,16 @@ import {
   type WorksheetVisibility,
 } from "./operations/describe.js";
 import {
-  preservedSplitExtension,
+  preservedSplitExtensionOf,
   splitMediaType,
 } from "./split/all-worksheet.js";
+import {
+  openRegionPackage,
+  resolveRegionSplit,
+  uncachedForValues,
+  writeRegionGroups,
+  type ResolvedRegionSplit,
+} from "./split/region-split.js";
 import {
   type FullWorkbookSplitMetric,
   type FullWorkbookSplitSummary,
@@ -97,7 +105,6 @@ import {
 } from "./workbook-column-split.js";
 import {
   appendWorkbookSheets,
-  buildSplitGroupBytes,
   buildTableWorkbookBytes,
   CONSOLIDATE_OPERATION,
   CONSOLIDATED_SHEET_NAME,
@@ -110,10 +117,9 @@ import {
   MACRO_WORKBOOK_MEDIA_TYPE,
   MAPPING_MEDIA_TYPE,
   MERGE_OPERATION,
-  preservedSplitTemplate,
   singleSourceUncachedFormulas,
   refuseMappingWithSuggestion,
-  resolveSplitSource,
+  resolvePreserveWorkbook,
   serializeColumnMapping,
   skippedRowsWarning,
   splitOutputFileNames,
@@ -125,7 +131,7 @@ import {
   workbookNamedRanges,
   workbookWorksheetRecords,
   workbookWorksheetReports,
-  type ResolvedSplitSource,
+  yieldToEventLoop,
 } from "./shared.js";
 
 import type {
@@ -1018,14 +1024,17 @@ export async function mergeWorkbooks(
   };
 }
 
-interface ResolvedSplit extends ResolvedSplitSource {
+interface ResolvedSplit {
   absoluteInput: string;
   absoluteOutputDirectory: string;
   existingOutputs: Set<string>;
   /** The media type every output of this split carries. */
   mediaType: string;
   outputPaths: string[];
-  workbookBytes: Buffer;
+  preserveWorkbook: boolean;
+  resolved: ResolvedRegionSplit;
+  /** The input, open for reading in pieces until the split is done with it. */
+  source: FileSource;
 }
 
 async function resolveSplitWorkbookByColumn(
@@ -1033,10 +1042,10 @@ async function resolveSplitWorkbookByColumn(
 ): Promise<ResolvedSplit> {
   const absoluteInput = path.resolve(options.input);
   const details = { inputPath: absoluteInput };
-  let workbookBytes: Buffer;
+  let source: FileSource;
 
   try {
-    workbookBytes = await readFile(absoluteInput);
+    source = await openRandomAccessSource(absoluteInput);
   } catch (error) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_READ_FAILED,
@@ -1045,72 +1054,81 @@ async function resolveSplitWorkbookByColumn(
     );
   }
 
-  const resolved = await resolveSplitSource(
-    workbookBytes,
-    {
+  try {
+    const context = {
       details,
       file: path.basename(absoluteInput),
       label: absoluteInput,
-    },
-    options,
-  );
+    };
+    const preserveWorkbook = resolvePreserveWorkbook(options);
+    const resolved = await resolveRegionSplit(
+      source,
+      context,
+      options,
+      preserveWorkbook,
+    );
 
-  // A preserved split hands back the source package, so its outputs have to be
-  // named and typed after that package; a rebuilding split writes a fresh
-  // ordinary workbook and stays .xlsx.
-  const extension = resolved.preserveWorkbook
-    ? await preservedSplitExtension(workbookBytes, absoluteInput, {
-        details,
-        label: absoluteInput,
-      })
-    : WORKBOOK_EXTENSION;
+    // A preserved split hands back the source package, so its outputs have
+    // to be named and typed after that package; a rebuilding split writes a
+    // fresh ordinary workbook and stays .xlsx.
+    const extension = preserveWorkbook
+      ? await preservedSplitExtensionOf(source, absoluteInput, {
+          details,
+          label: absoluteInput,
+        })
+      : WORKBOOK_EXTENSION;
 
-  const absoluteOutputDirectory = path.resolve(options.outputDirectory);
-  const filenamePrefix = safeNameFragment(
-    options.filenamePrefix ?? path.parse(absoluteInput).name,
-    "split",
-  );
-  const outputPaths = splitOutputFileNames(
-    filenamePrefix,
-    resolved.grouped.groups.map((group) => group.value),
-    extension,
-  ).map((filename) => path.join(absoluteOutputDirectory, filename));
+    const absoluteOutputDirectory = path.resolve(options.outputDirectory);
+    const filenamePrefix = safeNameFragment(
+      options.filenamePrefix ?? path.parse(absoluteInput).name,
+      "split",
+    );
+    const outputPaths = splitOutputFileNames(
+      filenamePrefix,
+      resolved.groups.map((group) => group.value),
+      extension,
+    ).map((filename) => path.join(absoluteOutputDirectory, filename));
 
-  outputPaths.forEach((outputPath) =>
-    refuseInputOverwrite(outputPath, [absoluteInput]),
-  );
-  const existingOutputs = new Set<string>();
-  await Promise.all(
-    outputPaths.map(async (outputPath) => {
-      try {
-        const outputStat = await stat(outputPath);
-        if (!outputStat.isFile()) {
-          throw new ConsultChimpsError(
-            XLSX_ERRORS.XLSX_SPLIT_OUTPUT_NOT_FILE,
-            `Output path exists but is not a file: ${outputPath}`,
-            { details: { outputPath } },
-          );
+    outputPaths.forEach((outputPath) =>
+      refuseInputOverwrite(outputPath, [absoluteInput]),
+    );
+    const existingOutputs = new Set<string>();
+    await Promise.all(
+      outputPaths.map(async (outputPath) => {
+        try {
+          const outputStat = await stat(outputPath);
+          if (!outputStat.isFile()) {
+            throw new ConsultChimpsError(
+              XLSX_ERRORS.XLSX_SPLIT_OUTPUT_NOT_FILE,
+              `Output path exists but is not a file: ${outputPath}`,
+              { details: { outputPath } },
+            );
+          }
+          existingOutputs.add(outputPath);
+        } catch (error) {
+          if (!isMissingPathError(error)) {
+            throw error;
+          }
         }
-        existingOutputs.add(outputPath);
-      } catch (error) {
-        if (!isMissingPathError(error)) {
-          throw error;
-        }
-      }
-    }),
-  );
+      }),
+    );
 
-  return {
-    ...resolved,
-    absoluteInput,
-    absoluteOutputDirectory,
-    existingOutputs,
-    mediaType: resolved.preserveWorkbook
-      ? splitMediaType(extension)
-      : WORKBOOK_MEDIA_TYPE,
-    outputPaths,
-    workbookBytes,
-  };
+    return {
+      absoluteInput,
+      absoluteOutputDirectory,
+      existingOutputs,
+      mediaType: preserveWorkbook
+        ? splitMediaType(extension)
+        : WORKBOOK_MEDIA_TYPE,
+      outputPaths,
+      preserveWorkbook,
+      resolved,
+      source,
+    };
+  } catch (error) {
+    await source.close().catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function planSplitWorkbookByColumn(
@@ -1124,27 +1142,29 @@ export async function planSplitWorkbookByColumn(
   ) {
     return planFullWorkbookSplit(options);
   }
-  const resolved = await resolveSplitWorkbookByColumn(options);
-  const outputs: PlannedOutput[] = resolved.outputPaths.map((outputPath) => ({
+  const split = await resolveSplitWorkbookByColumn(options);
+  await split.source.close();
+  const { resolved } = split;
+  const outputs: PlannedOutput[] = split.outputPaths.map((outputPath) => ({
     kind: "file",
-    mediaType: resolved.mediaType,
+    mediaType: split.mediaType,
     path: outputPath,
-    exists: resolved.existingOutputs.has(outputPath),
+    exists: split.existingOutputs.has(outputPath),
   }));
 
   const warnings: string[] = [];
-  if (resolved.grouped.skippedRows > 0) {
-    warnings.push(skippedRowsWarning(resolved.grouped));
+  if (resolved.skippedRows > 0) {
+    warnings.push(skippedRowsWarning(resolved.skippedRows, resolved.column));
   }
   // What the plan read; a values-only preserved run also counts what its
   // conversion loses, which only the run can see.
   const uncached = singleSourceUncachedFormulas(
-    resolved.table,
-    resolved.preserveWorkbook,
+    resolved.uncachedFormulas,
+    split.preserveWorkbook,
     options.values === true,
   );
-  warnings.push(...uncached.warnings);
-  const collisions = resolved.existingOutputs.size;
+  for (const warning of uncached.warnings) warnings.push(warning);
+  const collisions = split.existingOutputs.size;
   if (collisions > 0 && options.overwrite !== true) {
     warnings.push(
       `${collisions} planned output file${
@@ -1155,7 +1175,7 @@ export async function planSplitWorkbookByColumn(
 
   return {
     operation: SPLIT_OPERATION,
-    inputs: [resolved.absoluteInput],
+    inputs: [split.absoluteInput],
     outputs,
     warnings,
     metrics: {
@@ -1164,14 +1184,14 @@ export async function planSplitWorkbookByColumn(
       formulaCellsConverted: 0,
       formulaCellsWithoutCachedValues: uncached.count,
       pivotTablesRemoved: 0,
-      groups: resolved.grouped.groups.length,
+      groups: resolved.groups.length,
       inputFiles: 1,
-      inputRows: resolved.table.rows.length,
-      outputFiles: resolved.outputPaths.length,
+      inputRows: resolved.inputRows,
+      outputFiles: split.outputPaths.length,
       rowsDeleted: 0,
       sheetsCopiedUnchanged: 0,
       sheetsFiltered: 1,
-      skippedRows: resolved.grouped.skippedRows,
+      skippedRows: resolved.skippedRows,
       valuesOnly: options.values === true ? 1 : 0,
     },
   };
@@ -1184,8 +1204,9 @@ export async function planSplitWorkbookByColumn(
  * selection the split keeps the whole workbook and filters every worksheet
  * that carries the column: that path runs on the layered engine, so every
  * reference describing a moved row moves with it. Selecting a region instead
- * asks for one of the older, narrower modes - a preserved Excel Table rewrite,
- * or a compact single-worksheet rebuild - which `shared.ts` still owns.
+ * asks for one of the narrower modes - a preserved Excel Table rewrite, or a
+ * compact single-worksheet rebuild - which `split/region-split.ts` owns. Both
+ * read the input in pieces and write each output as it is produced.
  */
 export async function splitWorkbookByColumn(
   options: SplitWorkbookByColumnOptions,
@@ -1199,17 +1220,27 @@ export async function splitWorkbookByColumn(
     return splitFullWorkbookByColumn(options);
   }
   throwIfAborted(options.signal, SPLIT_OPERATION);
+  const split = await resolveSplitWorkbookByColumn(options);
+  try {
+    return await splitResolvedRegion(options, split);
+  } finally {
+    await split.source.close().catch(() => undefined);
+  }
+}
+
+async function splitResolvedRegion(
+  options: SplitWorkbookByColumnOptions,
+  split: ResolvedSplit,
+): Promise<SplitWorkbookByColumnResult> {
   const {
     absoluteOutputDirectory,
     existingOutputs,
-    grouped,
     mediaType,
     outputPaths,
-    preservedTableDefinition,
     preserveWorkbook,
-    table,
-    workbookBytes,
-  } = await resolveSplitWorkbookByColumn(options);
+    resolved,
+    source,
+  } = split;
 
   await Promise.all(
     outputPaths.map((outputPath) =>
@@ -1224,45 +1255,53 @@ export async function splitWorkbookByColumn(
   const stagedOutputs: string[] = [];
   const committedOutputs: string[] = [];
   const backups = new Map<string, string>();
-  const template = preserveWorkbook
-    ? await preservedSplitTemplate(workbookBytes, options.values)
-    : undefined;
-  const templateBytes = template?.bytes;
-  const uncached = singleSourceUncachedFormulas(
-    table,
-    preserveWorkbook,
-    options.values === true,
-    template?.uncachedFormulas,
-  );
-  let pivotTablesRemoved = 0;
+  let uncached: ReturnType<typeof singleSourceUncachedFormulas>;
+  let pivotTablesRemoved: number;
 
   try {
-    for (const [index, group] of grouped.groups.entries()) {
-      throwIfAborted(options.signal, SPLIT_OPERATION);
-      const stagedOutput = path.join(
-        transactionDirectory,
-        `output-${String(index + 1).padStart(6, "0")}.xlsx`,
-      );
-      await writeFile(
-        stagedOutput,
-        await buildSplitGroupBytes(group, {
-          onPivotTablesRemoved: (removed) => {
-            pivotTablesRemoved += removed;
+    const splitPackage =
+      preserveWorkbook && options.values === true
+        ? await openRegionPackage(source)
+        : undefined;
+    uncached = singleSourceUncachedFormulas(
+      resolved.uncachedFormulas,
+      preserveWorkbook,
+      options.values === true,
+      splitPackage ? await uncachedForValues(splitPackage) : [],
+    );
+    pivotTablesRemoved = await writeRegionGroups(
+      source,
+      resolved,
+      options.values === true,
+      async (index) => {
+        throwIfAborted(options.signal, SPLIT_OPERATION);
+        const stagedOutput = path.join(
+          transactionDirectory,
+          `output-${String(index + 1).padStart(6, "0")}.xlsx`,
+        );
+        const file = await stagedOutputFile(stagedOutput);
+        return {
+          write: (chunk) => file.write(chunk),
+          abort: () => file.abort(),
+          close: async () => {
+            await file.close();
+            stagedOutputs[index] = stagedOutput;
+            options.onProgress?.({
+              operation: SPLIT_OPERATION,
+              stage: "staging-workbooks",
+              completed: index + 1,
+              total: resolved.groups.length,
+              detail: path.basename(outputPaths[index] ?? stagedOutput),
+            });
           },
-          preservedTableDefinition,
-          sheetName: table.source?.sheet ?? "Split",
-          templateBytes,
-        }),
-      );
-      stagedOutputs.push(stagedOutput);
-      options.onProgress?.({
-        operation: SPLIT_OPERATION,
-        stage: "staging-workbooks",
-        completed: index + 1,
-        total: grouped.groups.length,
-        detail: path.basename(outputPaths[index] ?? stagedOutput),
-      });
-    }
+        };
+      },
+      async () => {
+        await yieldToEventLoop();
+        throwIfAborted(options.signal, SPLIT_OPERATION);
+      },
+      splitPackage,
+    );
 
     for (const [index, outputPath] of outputPaths.entries()) {
       const stagedOutput = stagedOutputs[index];
@@ -1338,8 +1377,11 @@ export async function splitWorkbookByColumn(
     );
   }
 
-  const warnings = grouped.skippedRows > 0 ? [skippedRowsWarning(grouped)] : [];
-  warnings.push(...uncached.warnings);
+  const warnings =
+    resolved.skippedRows > 0
+      ? [skippedRowsWarning(resolved.skippedRows, resolved.column)]
+      : [];
+  for (const warning of uncached.warnings) warnings.push(warning);
   if (pivotTablesRemoved > 0) {
     warnings.push(
       `Removed ${pivotTablesRemoved} pivot table${pivotTablesRemoved === 1 ? "" : "s"}: their caches contained rows from other groups, and a cache travels inside the workbook whether or not the pivot is opened. Rebuild the pivot in Excel from each output's own rows if it is required.`,
@@ -1360,19 +1402,59 @@ export async function splitWorkbookByColumn(
       formulaCellsConverted: 0,
       formulaCellsWithoutCachedValues: uncached.count,
       pivotTablesRemoved,
-      groups: grouped.groups.length,
+      groups: resolved.groups.length,
       inputFiles: 1,
-      inputRows: table.rows.length,
+      inputRows: resolved.inputRows,
       outputFiles: outputPaths.length,
-      outputRows: grouped.groups.reduce(
-        (total, group) => total + group.table.rows.length,
+      outputRows: resolved.groups.reduce(
+        (total, group) => total + group.rows,
         0,
       ),
       rowsDeleted: 0,
       sheetsCopiedUnchanged: 0,
       sheetsFiltered: 1,
-      skippedRows: grouped.skippedRows,
+      skippedRows: resolved.skippedRows,
       valuesOnly: options.values === true ? 1 : 0,
+    },
+  };
+}
+
+/** A staged output written as it is produced, in pieces of up to 1 MiB. */
+async function stagedOutputFile(filePath: string): Promise<{
+  write(chunk: Uint8Array): Promise<void>;
+  close(): Promise<void>;
+  abort(): Promise<void>;
+}> {
+  const handle = await open(filePath, "wx");
+  let pending: Uint8Array[] = [];
+  let pendingSize = 0;
+  const flush = async (): Promise<void> => {
+    if (pendingSize === 0) return;
+    const joined = new Uint8Array(pendingSize);
+    let offset = 0;
+    for (const chunk of pending) {
+      joined.set(chunk, offset);
+      offset += chunk.length;
+    }
+    pending = [];
+    pendingSize = 0;
+    await handle.write(joined);
+  };
+  return {
+    async write(chunk) {
+      pending.push(chunk);
+      pendingSize += chunk.length;
+      if (pendingSize >= 1024 * 1024) await flush();
+    },
+    async close() {
+      try {
+        await flush();
+      } finally {
+        await handle.close();
+      }
+    },
+    async abort() {
+      await handle.close();
     },
   };
 }

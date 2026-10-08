@@ -14,7 +14,6 @@ import {
   type ColumnHeaderSource,
   type ColumnMapping,
   type ColumnMappingSuggestion,
-  groupTableByColumn,
   normalizedColumnKey,
   suggestColumnMapping,
   type Table,
@@ -31,13 +30,11 @@ import {
   type StreamedWorkbook,
 } from "./operations/consolidate/reader.js";
 import {
-  openWorkbookBytes,
   readSheetGrid,
   SheetGrids,
   type SheetGrid,
 } from "./operations/sheet-grid.js";
 import { XLSX_ERRORS } from "./errors.js";
-import { preserveWorkbookWithFilteredExcelTable } from "./preserve-table-split.js";
 import {
   cellKey,
   countTitleRows,
@@ -47,9 +44,7 @@ import {
 } from "./region/header-detection.js";
 import type { AllWorksheetSplitMetric } from "./split/all-worksheet.js";
 import { splitOutputFilenames } from "./split/names.js";
-import { stripPivotParts } from "./tier1/pivot.js";
 import { CellError } from "./package/cell-error.js";
-import { convertWorkbookToValuesWithReport } from "./values-only.js";
 import {
   cellWidthLength,
   tableColumnWidth,
@@ -1377,263 +1372,13 @@ export function resolvePreserveWorkbook(
   return options.preserveWorkbook ?? options.table !== undefined;
 }
 
-export interface SplitSourceContext {
-  /** Human-readable source used in messages: a file path or an input name. */
-  label: string;
-  /** The name recorded as a table's source file. */
-  file: string;
-  /** Machine-readable source context added to error details. */
-  details: Record<string, unknown>;
-}
-
-export interface ResolvedSplitSource {
-  grouped: ReturnType<typeof groupTableByColumn>;
-  preservedTableDefinition: ExcelTableDefinition | undefined;
-  preserveWorkbook: boolean;
-  table: Table;
-}
-
-/**
- * Every formula cell with no cached value on the worksheets a refused split
- * looked at, so a refusal for finding no data can say why that may be.
- */
-async function uncachedOnSheets(
-  workbook: StreamedWorkbook,
-  sheetName: string | undefined,
-  includeHiddenSheets: boolean | undefined,
-): Promise<string[]> {
-  const locations: string[] = [];
-  for (const sheet of workbook.sheets) {
-    if (
-      sheetName === undefined
-        ? !includeHiddenSheets && !sheet.visible
-        : sheet.name.toLocaleLowerCase() !== sheetName.toLocaleLowerCase()
-    ) {
-      continue;
-    }
-    const grid = await readSheetGrid(workbook, sheet);
-    locations.push(
-      ...uncachedLocationsWithin(sheet.name, grid.uncachedFormulas, undefined),
-    );
-  }
-  return locations;
-}
-
-/**
- * Select the single table a split reads from, group its rows, and locate the
- * package definition a preserved split rewrites.
- */
-export async function resolveSplitSource(
-  workbookBytes: Uint8Array,
-  context: SplitSourceContext,
-  options: SplitSelectionOptions,
-): Promise<ResolvedSplitSource> {
-  const preserveWorkbook = resolvePreserveWorkbook(options);
-  const workbook = await openWorkbookBytes(workbookBytes, {
-    file: context.file,
-    source: context.label,
-    details: context.details,
-  });
-  const sheets = options.sheet ? [options.sheet] : undefined;
-
-  let definitions: ExcelTableDefinition[] = [];
-  let availableExcelTables: WorkbookExcelTable[] = [];
-  let availableNamedRanges: WorkbookNamedRange[] = [];
-  let tables: Table[];
-
-  if (options.table) {
-    definitions = [...workbook.tables];
-    availableExcelTables = await workbookExcelTables(workbook, context.file, {
-      includeHiddenSheets: options.includeHiddenSheets,
-      sheets,
-    });
-    tables = availableExcelTables.filter(
-      (table) =>
-        table.excelTableName.toLocaleLowerCase() ===
-        options.table?.toLocaleLowerCase(),
-    );
-  } else if (options.range) {
-    availableNamedRanges = await workbookNamedRanges(workbook, context.file, {
-      includeHiddenSheets: options.includeHiddenSheets,
-      sheets,
-    });
-    tables = availableNamedRanges.filter(
-      (namedRange) =>
-        namedRange.rangeName.toLocaleLowerCase() ===
-        options.range?.toLocaleLowerCase(),
-    );
-  } else {
-    tables = await workbookTables(workbook, context.file, {
-      headerRow: options.headerRow,
-      includeHiddenSheets: options.includeHiddenSheets,
-      sheets,
-    });
-  }
-
-  if (tables.length === 0) {
-    const uncached = await uncachedOnSheets(
-      workbook,
-      options.sheet,
-      options.includeHiddenSheets,
-    );
-    const selectedSource = options.table
-      ? `Excel Table "${options.table}"`
-      : options.range
-        ? `Named range "${options.range}"`
-        : options.sheet
-          ? `Worksheet "${options.sheet}"`
-          : undefined;
-    throw new ConsultChimpsError(
-      XLSX_ERRORS.XLSX_SPLIT_NO_TABLE,
-      selectedSource
-        ? `${selectedSource} was not found or has no data rows.${uncachedFormulaHint(uncached)}`
-        : `No visible, non-empty worksheet was found in the input workbook.${uncachedFormulaHint(uncached)}`,
-      {
-        details: {
-          uncachedFormulas: uncached,
-          availableRanges: availableNamedRanges.map((namedRange) => ({
-            name: namedRange.rangeName,
-            sheet: namedRange.source?.sheet,
-          })),
-          availableTables: availableExcelTables.map((table) => ({
-            name: table.excelTableName,
-            sheet: table.source?.sheet,
-          })),
-          ...context.details,
-          range: options.range,
-          sheet: options.sheet,
-          table: options.table,
-        },
-      },
-    );
-  }
-
-  if (tables.length > 1) {
-    throw new ConsultChimpsError(
-      XLSX_ERRORS.XLSX_SPLIT_MULTIPLE_TABLES,
-      options.table
-        ? `Excel Table "${options.table}" was found on multiple worksheets; choose one with the sheet option.`
-        : options.range
-          ? `Named range "${options.range}" is defined more than once; choose a worksheet with the sheet option.`
-          : "The workbook contains multiple non-empty worksheets; choose one with the sheet option.",
-      {
-        details: {
-          availableSheets: tables
-            .map((table) => table.source?.sheet)
-            .filter((sheet) => sheet !== undefined),
-          ...context.details,
-        },
-      },
-    );
-  }
-
-  const table = tables[0];
-  if (!table) {
-    throw new ConsultChimpsError(
-      XLSX_ERRORS.XLSX_SPLIT_NO_TABLE,
-      "No worksheet table was available to split.",
-      { details: { ...context.details } },
-    );
-  }
-
-  let grouped: ReturnType<typeof groupTableByColumn>;
-  try {
-    grouped = groupTableByColumn(table, options.column, {
-      includeBlank: options.includeBlank,
-    });
-  } catch (error) {
-    // A header that is a formula with no cached value reads as blank, which
-    // is the likely reason the column was not found.
-    const uncached = uncachedFormulasOf(table);
-    if (
-      error instanceof ConsultChimpsError &&
-      error.code === "TABLE_COLUMN_NOT_FOUND" &&
-      uncached.length > 0
-    ) {
-      throw new ConsultChimpsError(
-        error.code,
-        `${error.message}${uncachedFormulaHint(uncached)}`,
-        {
-          cause: error,
-          details: { ...error.details, uncachedFormulas: uncached },
-        },
-      );
-    }
-    throw error;
-  }
-  if (grouped.groups.length === 0) {
-    throw new ConsultChimpsError(
-      XLSX_ERRORS.XLSX_SPLIT_NO_GROUPS,
-      `No output groups remain for column "${grouped.column}".${uncachedFormulaHint(uncachedFormulasOf(table))}`,
-      {
-        details: {
-          uncachedFormulas: uncachedFormulasOf(table),
-          column: grouped.column,
-          includeBlank: options.includeBlank ?? true,
-          ...context.details,
-        },
-      },
-    );
-  }
-
-  const preservedTableDefinition = preserveWorkbook
-    ? definitions.find(
-        (definition) =>
-          definition.name.toLocaleLowerCase() ===
-            options.table?.toLocaleLowerCase() &&
-          definition.sheet.toLocaleLowerCase() ===
-            table.source?.sheet?.toLocaleLowerCase(),
-      )
-    : undefined;
-  if (preserveWorkbook && !preservedTableDefinition) {
-    throw new ConsultChimpsError(
-      XLSX_ERRORS.XLSX_SPLIT_PRESERVE_TABLE_NOT_FOUND,
-      `Excel Table "${options.table}" could not be located in the workbook package.`,
-      {
-        details: {
-          ...context.details,
-          sheet: table.source?.sheet,
-          table: options.table,
-        },
-      },
-    );
-  }
-
-  return { grouped, preservedTableDefinition, preserveWorkbook, table };
-}
-
-/**
- * Prepare the workbook bytes a preserved split rewrites for every group,
- * optionally replacing formulas with their cached values first.
- */
-export async function preservedSplitTemplate(
-  workbookBytes: Uint8Array,
-  values: boolean | undefined,
-): Promise<{ bytes: Uint8Array; uncachedFormulas: string[] }> {
-  if (!values) return { bytes: workbookBytes, uncachedFormulas: [] };
-  const conversion = await convertWorkbookToValuesWithReport(workbookBytes);
-  return {
-    bytes: conversion.bytes,
-    uncachedFormulas: conversion.formulasWithoutCachedValues.map(
-      (missing) => missing.location,
-    ),
-  };
-}
-
-/**
- * The formula cells with no cached value a single-source split met: those in
- * the table it read, and, for a values-only preserved split, those the
- * conversion blanked anywhere in the workbook. Counted once each.
- */
 export function singleSourceUncachedFormulas(
-  table: Table,
+  readLosses: readonly string[],
   preserveWorkbook: boolean,
   values: boolean,
   conversionLosses: readonly string[] = [],
 ): { count: number; warnings: string[] } {
-  const locations = [
-    ...new Set([...uncachedFormulasOf(table), ...conversionLosses]),
-  ];
+  const locations = [...new Set([...readLosses, ...conversionLosses])];
   const effect = !preserveWorkbook
     ? "they came out blank"
     : values
@@ -1645,53 +1390,13 @@ export function singleSourceUncachedFormulas(
   };
 }
 
-/**
- * Produce one group's workbook, preserving the source package when asked.
- *
- * Both branches are deliberately still off the layered engine after Phase 1.
- * The preserved branch's contract is a refusal, not a repair (see
- * `preserve-table-split.ts`). The rebuilding branch does not edit a workbook at
- * all: it writes a fresh single-worksheet package from parsed cell values, so
- * every structure the corpus tracks is absent by construction rather than lost
- * by accident, and there is no row to relocate. Migrating it would mean
- * changing what a compact split *produces*, which is a decision for the phase
- * that makes it, not a side effect of moving the split engine.
- */
-export async function buildSplitGroupBytes(
-  group: { table: Table },
-  context: {
-    /** Called with the pivot tables removed from this group's output. */
-    onPivotTablesRemoved?: ((removed: number) => void) | undefined;
-    preservedTableDefinition: ExcelTableDefinition | undefined;
-    sheetName: string;
-    templateBytes: Uint8Array | undefined;
-  },
-): Promise<Uint8Array> {
-  if (context.templateBytes && context.preservedTableDefinition) {
-    const preserved = await preserveWorkbookWithFilteredExcelTable(
-      context.templateBytes,
-      {
-        definition: context.preservedTableDefinition,
-        sourceRows: group.table.sourceRows ?? [],
-      },
-    );
-    // Tier-1 wiring: the preserved path copies the source package, pivot caches
-    // included, so this group's recipient would receive every other group's
-    // rows inside the cache. The rebuilding path below cannot leak them because
-    // it writes a fresh package from parsed cell values.
-    const stripped = await stripPivotParts(preserved);
-    context.onPivotTablesRemoved?.(stripped.removedPivotTables);
-    return stripped.bytes;
-  }
-  return buildTableWorkbookBytes(group.table, context.sheetName);
-}
-
 export function skippedRowsWarning(
-  grouped: ReturnType<typeof groupTableByColumn>,
+  skippedRows: number,
+  column: string,
 ): string {
-  return `Skipped ${grouped.skippedRows} row${
-    grouped.skippedRows === 1 ? "" : "s"
-  } with blank values in "${grouped.column}".`;
+  return `Skipped ${skippedRows} row${
+    skippedRows === 1 ? "" : "s"
+  } with blank values in "${column}".`;
 }
 
 /**

@@ -20,6 +20,8 @@ export function bytesSource(
 }
 
 interface ZipEntry {
+  /** The DOS date and time, date in the high half, as the directory stores them. */
+  readonly dosTime: number;
   readonly method: number;
   readonly crc: number;
   readonly compressedSize: number;
@@ -48,7 +50,7 @@ const CRC_TABLE = (() => {
   return table;
 })();
 
-function updateCrc(crc: number, bytes: Uint8Array): number {
+export function updateCrc(crc: number, bytes: Uint8Array): number {
   let value = crc;
   for (let index = 0; index < bytes.length; index += 1) {
     value = CRC_TABLE[(value ^ bytes[index]!) & 0xff]! ^ (value >>> 8);
@@ -62,6 +64,20 @@ const DIRECTORY_ENTRY = 0x02014b50;
 const LOCAL_HEADER = 0x04034b50;
 const STORED = 0;
 const DEFLATED = 8;
+
+/** A DOS date and time as JSZip reads it, in UTC. */
+function dosDate(dostime: number): Date {
+  return new Date(
+    Date.UTC(
+      ((dostime >> 25) & 0x7f) + 1980,
+      ((dostime >> 21) & 0x0f) - 1,
+      (dostime >> 16) & 0x1f,
+      (dostime >> 11) & 0x1f,
+      (dostime >> 5) & 0x3f,
+      (dostime & 0x1f) << 1,
+    ),
+  );
+}
 
 const u16 = (b: Uint8Array, o: number): number => b[o]! | (b[o + 1]! << 8);
 const u32 = (b: Uint8Array, o: number): number =>
@@ -153,6 +169,7 @@ export class ZipReader {
       const flags = u16(directory, offset + 8);
       const method = u16(directory, offset + 10);
       const crc = u32(directory, offset + 16);
+      const dosTime = u32(directory, offset + 12);
       let compressedSize = u32(directory, offset + 20);
       let size = u32(directory, offset + 24);
       const nameLength = u16(directory, offset + 28);
@@ -190,13 +207,33 @@ export class ZipReader {
       if (name.endsWith("/")) {
         continue;
       }
-      entries.set(name, { method, crc, compressedSize, size, localHeader });
+      entries.set(name, {
+        dosTime,
+        method,
+        crc,
+        compressedSize,
+        size,
+        localHeader,
+      });
     }
     return new ZipReader(
       source,
       entries,
       (updateCrc(-1, directory) ^ -1) >>> 0,
     );
+  }
+
+  /**
+   * Every entry that is not a folder, in directory order, a repeated name at
+   * its first place, with its uncompressed size and its time read as JSZip
+   * reads it.
+   */
+  entries(): Array<{ name: string; size: number; date: Date }> {
+    return [...this.#entries].map(([name, entry]) => ({
+      name,
+      size: entry.size,
+      date: dosDate(entry.dosTime),
+    }));
   }
 
   has(name: string): boolean {

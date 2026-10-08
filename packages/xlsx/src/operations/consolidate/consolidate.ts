@@ -202,7 +202,7 @@ function headerCellName(value: StreamedValue | undefined): string | null {
 }
 
 /** What the first pass learns about one worksheet. */
-interface SheetOutcome {
+export interface SheetOutcome {
   readonly table:
     Omit<SheetTable, "input" | "sheetIndex" | "sheet" | "gathered"> | undefined;
   readonly skippedTitleRows: number;
@@ -229,7 +229,7 @@ const NO_TABLE: SheetOutcome = {
  * worksheet is a dozen rows down. Below that, rows only feed per-column
  * statistics and are dropped.
  */
-class SheetProfile implements WorksheetConsumer {
+export class SheetProfile implements WorksheetConsumer {
   readonly #declared: number | undefined;
   readonly #trackDates: boolean;
   #counts: RowValueCount[] = [];
@@ -623,15 +623,15 @@ export async function planConsolidation(
         skippedSpacerColumns += outcome.skippedSpacerColumns;
         // A worksheet that yielded no table is counted whole: its formulas
         // may be why it looked empty.
-        uncachedFormulas.push(
-          ...uncachedLocationsWithin(
-            // Excel's own spelling, `[file.xlsx]Sheet!B4`, once two inputs
-            // can share a sheet name.
-            sources.length > 1 ? `[${source.file}]${sheet.name}` : sheet.name,
-            read.uncachedFormulas,
-            outcome.table === undefined ? undefined : outcome.region,
-          ),
-        );
+        for (const location of uncachedLocationsWithin(
+          // Excel's own spelling, `[file.xlsx]Sheet!B4`, once two inputs can
+          // share a sheet name.
+          sources.length > 1 ? `[${source.file}]${sheet.name}` : sheet.name,
+          read.uncachedFormulas,
+          outcome.table === undefined ? undefined : outcome.region,
+        )) {
+          uncachedFormulas.push(location);
+        }
         if (outcome.table !== undefined) {
           tables.push({
             ...outcome.table,

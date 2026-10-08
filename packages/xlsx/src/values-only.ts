@@ -30,7 +30,7 @@ export interface ValuesOnlyConversion {
   formulasWithoutCachedValues: MissingCachedFormula[];
 }
 
-function removeWorksheetFormulas(
+export function removeWorksheetFormulas(
   worksheetXml: string,
   worksheetPart: string,
 ): {
@@ -68,7 +68,7 @@ function removeWorksheetFormulas(
  * package byte-for-byte apart from formula and calculation-chain metadata.
  */
 /** Each worksheet part's sheet name, as the workbook part lists them. */
-function worksheetNamesByPart(
+export function worksheetNamesByPart(
   workbookPackage: WorkbookPackage,
 ): Map<string, string> {
   const targets = new Map(
@@ -91,6 +91,28 @@ function worksheetNamesByPart(
     if (name !== undefined && part !== undefined) names.set(part, name);
   });
   return names;
+}
+
+/** Worksheet parts the values conversion rewrites. */
+export function isConvertedWorksheetPart(partName: string): boolean {
+  return WORKSHEET_PART_PATTERN.test(partName);
+}
+
+/**
+ * The rest of a values conversion once the worksheets are done: table column
+ * formulas removed, and the calculation chain, which lists formulas, dropped,
+ * since a workbook with no formulas left has nothing to calculate.
+ */
+export function convertTablesAndCalcChain(
+  workbookPackage: WorkbookPackage,
+): void {
+  for (const partName of workbookPackage.partsMatching(TABLE_PART_PATTERN)) {
+    workbookPackage.writeText(
+      partName,
+      workbookPackage.requireText(partName).replace(TABLE_FORMULA_PATTERN, ""),
+    );
+  }
+  workbookPackage.removePartAndReferences(CALC_CHAIN_PART, WORKBOOK_PART);
 }
 
 export async function convertWorkbookToValues(
@@ -124,15 +146,7 @@ export async function convertWorkbookToValuesWithReport(
     }
   }
 
-  for (const partName of workbookPackage.partsMatching(TABLE_PART_PATTERN)) {
-    workbookPackage.writeText(
-      partName,
-      workbookPackage.requireText(partName).replace(TABLE_FORMULA_PATTERN, ""),
-    );
-  }
-
-  // A workbook with no formulas left has nothing to calculate.
-  workbookPackage.removePartAndReferences(CALC_CHAIN_PART, WORKBOOK_PART);
+  convertTablesAndCalcChain(workbookPackage);
 
   return {
     bytes: await workbookPackage.save(),

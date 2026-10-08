@@ -132,7 +132,7 @@ function locateHeaderCell(
  * `ExcelTableDefinition.headerRow` was a boolean), so a header row below 1 is
  * read as "headerless" and never associates.
  */
-function findMatchingTable(
+export function findMatchingTable(
   tables: readonly WorkbookTableInfo[],
   sheetName: string,
   headerRow: RowNumber,

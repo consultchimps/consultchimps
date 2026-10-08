@@ -69,13 +69,27 @@ export async function stripPivotParts(
   workbookBytes: Uint8Array,
 ): Promise<PivotStripResult> {
   const workbookPackage = await WorkbookPackage.load(workbookBytes);
-  const pivotParts = workbookPackage.partNames().filter(isPivotPart);
-  if (pivotParts.length === 0) {
+  const removed = stripPivotPartsIn(workbookPackage);
+  if (removed === undefined) {
     return {
       bytes: workbookBytes,
       removedCaches: 0,
       removedPivotTables: 0,
     };
+  }
+  return { bytes: await workbookPackage.save(), ...removed };
+}
+
+/**
+ * Remove the pivot parts and every reference to them from a package in hand;
+ * undefined, with the package untouched, when it holds none.
+ */
+export function stripPivotPartsIn(
+  workbookPackage: WorkbookPackage,
+): { removedCaches: number; removedPivotTables: number } | undefined {
+  const pivotParts = workbookPackage.partNames().filter(isPivotPart);
+  if (pivotParts.length === 0) {
+    return undefined;
   }
 
   const removedPivotTables = pivotParts.filter((partPath) =>
@@ -106,9 +120,5 @@ export async function stripPivotParts(
     xml.replace(PIVOT_CACHES_PATTERN, ""),
   );
 
-  return {
-    bytes: await workbookPackage.save(),
-    removedCaches,
-    removedPivotTables,
-  };
+  return { removedCaches, removedPivotTables };
 }

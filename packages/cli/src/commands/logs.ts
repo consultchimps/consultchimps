@@ -122,7 +122,10 @@ function formatList(runs: readonly RunListing[], directory: string): string {
     "Run",
   ];
   const widths = header.map((title, column) =>
-    Math.max(title.length, ...rows.map((row) => row[column]!.length)),
+    rows.reduce(
+      (widest, row) => Math.max(widest, row[column]!.length),
+      title.length,
+    ),
   );
   const line = (cells: string[]) =>
     cells
