@@ -221,6 +221,34 @@ describe("merging workbooks read in pieces", () => {
     });
     expect(aborted).toBe(1);
   });
+
+  it("stops between reads of a worksheet when cancelled", async () => {
+    const north = guardedSource("north.xlsx", await workbook("North", 30_000));
+    const controller = new AbortController();
+    let readsAfterAbort = 0;
+    await expect(
+      mergeWorkbookSources({
+        inputs: [
+          {
+            ...north,
+            readAt: (offset, length, signal) => {
+              if (controller.signal.aborted) readsAfterAbort += 1;
+              // The first whole piece of a worksheet: cancel while it is read.
+              if (length === MIB) controller.abort();
+              return north.readAt(offset, length, signal);
+            },
+          },
+        ],
+        signal: controller.signal,
+        output: {
+          write: () => undefined,
+          flush: () => Promise.resolve(),
+          abort: () => Promise.resolve(),
+        },
+      }),
+    ).rejects.toMatchObject({ code: "OPERATION_ABORTED" });
+    expect(readsAfterAbort).toBe(0);
+  });
 });
 
 describe("the opening tags the style order is read from", () => {

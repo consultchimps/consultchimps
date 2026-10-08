@@ -627,14 +627,24 @@ function copyPart(
 async function loadInput(
   source: RandomAccessSource,
   sourceLabel: string,
+  between: (() => Promise<void>) | undefined,
 ): Promise<StreamedSplitPackage> {
+  let passed: unknown;
   try {
     return await openStreamedSplitPackage(
       await ZipReader.open(source),
       () => () => undefined,
       sourceLabel,
+      between &&
+        (() =>
+          between().catch((error: unknown) => {
+            passed = error;
+            throw error;
+          })),
     );
   } catch (error) {
+    // A cancellation fails as itself, not as the input.
+    if (error === passed) throw error;
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_READ_FAILED,
       `Could not read workbook: ${sourceLabel}`,
@@ -681,7 +691,7 @@ export async function appendWorkbookSheets(
   sourceFile: string,
   workbook: RandomAccessSource,
 ): Promise<void> {
-  const input = await loadInput(workbook, sourceFile);
+  const input = await loadInput(workbook, sourceFile, state.between);
   const source = input.base;
   if (source.has(VBA_PROJECT_PART)) {
     state.macroInputs += 1;

@@ -69,9 +69,11 @@ export class MergeInputs {
     let first: Identity;
     try {
       first = await identityOf(filePath);
+      // The path still names the file the handle opened.
+      await source.verifyUnchanged();
     } catch (error) {
       await source.close().catch(() => undefined);
-      throw changed(error);
+      throw error instanceof ConsultChimpsError ? error : changed(error);
     }
     const entry: Entry = {
       filePath,
@@ -125,7 +127,12 @@ export class MergeInputs {
   }
 
   async #reopen(entry: Entry): Promise<FileSource> {
-    const source = await openRandomAccessSource(entry.filePath);
+    let source: FileSource;
+    try {
+      source = await openRandomAccessSource(entry.filePath);
+    } catch (error) {
+      throw changed(error);
+    }
     try {
       const now = await identityOf(entry.filePath);
       if (!sameFile(entry.first, now)) throw changed();

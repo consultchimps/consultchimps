@@ -163,6 +163,7 @@ export async function openStreamedSplitPackage(
       }
     | undefined,
   sourceLabel?: string,
+  between?: () => Promise<void>,
 ): Promise<StreamedSplitPackage> {
   const entries = zip.entries();
   const held = new Map<string, Uint8Array>();
@@ -218,7 +219,7 @@ export async function openStreamedSplitPackage(
     let suffix = "";
     let rows: ReturnType<typeof scan>;
     try {
-      await readWorksheetPart(feed(), {
+      await readWorksheetPart(feed(between), {
         prefix: (text) => {
           prefix = text;
           rows = scan(entry.name, text);
