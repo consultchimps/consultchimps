@@ -378,11 +378,16 @@ export class SheetSummary {
         )
         .map(([column]) => column)
         .sort((left, right) => left - right)[0];
-      if (
+      if (this.#match !== undefined && row.number === this.#match.row) {
+        // A repeated row number: the model looks the row up by number, and
+        // the last row with it wins.
+        this.#match =
+          match === undefined
+            ? undefined
+            : { row: row.number, column: match, names };
+      } else if (
         match !== undefined &&
-        (this.#match === undefined ||
-          row.number < this.#match.row ||
-          (row.number === this.#match.row && match < this.#match.column))
+        (this.#match === undefined || row.number < this.#match.row)
       ) {
         this.#match = { row: row.number, column: match, names };
       }
@@ -459,7 +464,7 @@ export class SheetSummary {
     const detectedRow =
       detected === undefined
         ? undefined
-        : this.#held.find((held) => held.row === detected);
+        : this.#held.findLast((held) => held.row === detected);
     return (
       (detectedRow ? inRow(detectedRow.row, detectedRow.names) : undefined) ??
       (this.#match

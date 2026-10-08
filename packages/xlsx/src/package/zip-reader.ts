@@ -22,6 +22,8 @@ export function bytesSource(
 interface ZipEntry {
   /** The DOS date and time, date in the high half, as the directory stores them. */
   readonly dosTime: number;
+  /** Whether the external attributes mark the entry a folder. */
+  readonly folder: boolean;
   readonly method: number;
   readonly crc: number;
   readonly compressedSize: number;
@@ -170,6 +172,7 @@ export class ZipReader {
       const method = u16(directory, offset + 10);
       const crc = u32(directory, offset + 16);
       const dosTime = u32(directory, offset + 12);
+      const folder = (u32(directory, offset + 38) & 0x10) !== 0;
       let compressedSize = u32(directory, offset + 20);
       let size = u32(directory, offset + 24);
       const nameLength = u16(directory, offset + 28);
@@ -209,6 +212,7 @@ export class ZipReader {
       }
       entries.set(name, {
         dosTime,
+        folder,
         method,
         crc,
         compressedSize,
@@ -224,16 +228,20 @@ export class ZipReader {
   }
 
   /**
-   * Every entry that is not a folder, in directory order, a repeated name at
+   * Every entry that is not a folder, by name or by attribute, in directory
+   * order, a repeated name at
    * its first place, with its uncompressed size and its time read as JSZip
    * reads it.
    */
   entries(): Array<{ name: string; size: number; date: Date }> {
-    return [...this.#entries].map(([name, entry]) => ({
-      name,
-      size: entry.size,
-      date: dosDate(entry.dosTime),
-    }));
+    // JSZip reads an entry its attributes mark a folder as one, name or not.
+    return [...this.#entries]
+      .filter(([, entry]) => !entry.folder)
+      .map(([name, entry]) => ({
+        name,
+        size: entry.size,
+        date: dosDate(entry.dosTime),
+      }));
   }
 
   has(name: string): boolean {

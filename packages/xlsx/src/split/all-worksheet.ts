@@ -418,7 +418,7 @@ export async function analyzeAllWorksheetSplit(
           id = local.length;
           localIndex.set(value.key, id);
           local.push({ value, row });
-        } else if (row < local[id]!.row) {
+        } else if (row <= local[id]!.row) {
           local[id] = { value, row };
         }
         return id;
@@ -626,7 +626,12 @@ export async function runAllWorksheetSplit(
       sheets,
       value: group.display,
     };
-    await target.close(detail);
+    try {
+      await target.close(detail);
+    } catch (error) {
+      await Promise.resolve(target.abort?.()).catch(() => undefined);
+      throw error;
+    }
     outputs.push(detail);
   }
 

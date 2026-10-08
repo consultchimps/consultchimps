@@ -793,6 +793,7 @@ export async function writeCompactGroups(
           }),
         );
       }
+      let begun = false;
       const drain = async (): Promise<void> => {
         for (const [index, queue] of queues) {
           const target = targets.get(index)!;
@@ -802,7 +803,18 @@ export async function writeCompactGroups(
       await resolved.workbook.readWorksheet(
         resolved.sheet,
         {
-          begin: () => undefined,
+          begin: () => {
+            // The grouping read settled the order, so a read that starts over
+            // means the worksheet changed between the two.
+            if (begun) {
+              throw new ConsultChimpsError(
+                XLSX_ERRORS.XLSX_READ_FAILED,
+                `Worksheet "${resolved.sheet.name}" changed while it was being split.`,
+                { details: { worksheet: resolved.sheet.name } },
+              );
+            }
+            begun = true;
+          },
           row: (row, cells) => {
             if (row < resolved.first || row > resolved.last) return;
             const writer = writers.get(
