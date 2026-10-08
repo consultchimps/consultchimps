@@ -301,8 +301,12 @@ function inspectSlideXml(slideXml: string): SlideInspection {
     const start = match.index ?? 0;
     shapeRanges.push({ end: start + match[0].length, start });
     const inspection = inspectShape(match[0]);
-    occurrences.push(...inspection.occurrences);
-    unsupportedSplitRunPlaceholders.push(...inspection.splitRunPlaceholders);
+    for (const occurrence of inspection.occurrences) {
+      occurrences.push(occurrence);
+    }
+    for (const placeholder of inspection.splitRunPlaceholders) {
+      unsupportedSplitRunPlaceholders.push(placeholder);
+    }
     if (inspection.malformed) {
       malformedPlaceholderCount += 1;
     }
@@ -319,9 +323,9 @@ function inspectSlideXml(slideXml: string): SlideInspection {
       continue;
     }
     const text = xmlDecode(match.groups?.text ?? "");
-    unsupportedPlacementPlaceholders.push(
-      ...placeholderMatches(text).map((placeholder) => placeholder.name),
-    );
+    for (const placeholder of placeholderMatches(text)) {
+      unsupportedPlacementPlaceholders.push(placeholder.name);
+    }
     if (hasMalformedPlaceholder(text)) {
       malformedPlaceholderCount += 1;
     }
@@ -747,7 +751,8 @@ function nextSlidePartPaths(zip: JSZip, count: number): string[] {
     )
     .filter((match): match is RegExpExecArray => match !== null)
     .map((match) => Number.parseInt(match.groups?.number ?? "0", 10));
-  let nextNumber = Math.max(0, ...slideNumbers) + 1;
+  let nextNumber =
+    slideNumbers.reduce((highest, number) => Math.max(highest, number), 0) + 1;
   return Array.from({ length: count }, () => {
     const slidePath = `ppt/slides/slide${nextNumber}.xml`;
     nextNumber += 1;
@@ -856,7 +861,8 @@ export async function createOutputPresentation(
       /<p:sldId\b[^>]*\bid="(?<slideId>\d+)"[^>]*\/?>/gu,
     ),
   ].map((match) => Number.parseInt(match.groups?.slideId ?? "0", 10));
-  let nextSlideId = Math.max(255, ...existingSlideIds) + 1;
+  let nextSlideId =
+    existingSlideIds.reduce((highest, id) => Math.max(highest, id), 255) + 1;
   let relationshipSequence = 1;
   const slideParts = nextSlidePartPaths(zip, rows.length);
   const generatedSlideReferences: string[] = [];

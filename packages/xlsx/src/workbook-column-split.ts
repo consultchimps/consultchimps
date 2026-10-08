@@ -7,14 +7,7 @@
  * every destination before a single output is built, and committing through a
  * staging directory so a failure halfway leaves the destination as it was.
  */
-import {
-  mkdtemp,
-  readFile,
-  rename,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { mkdtemp, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -27,7 +20,9 @@ import {
 import {
   ensureDirectory,
   ensureOutputAvailable,
+  openRandomAccessSource,
   refuseInputOverwrite,
+  type FileSource,
 } from "@consultchimps/files";
 
 import { XLSX_ERRORS } from "./errors.js";
@@ -48,6 +43,7 @@ import {
   type WorkbookExtension,
 } from "./split/all-worksheet.js";
 import { safeFilenameSegment, splitOutputPaths } from "./split-filenames.js";
+import { stagedFile } from "./split/staged-file.js";
 
 export type FullWorkbookSplitMetric = AllWorksheetSplitMetric;
 export type { SplitOutputDetail, SplitSheetDetail };
@@ -75,6 +71,8 @@ export interface FullWorkbookSplitResult extends OperationResult<FullWorkbookSpl
 
 interface ResolvedFullWorkbookSplit {
   absoluteInput: string;
+  /** The input, open for reading in pieces until the split is done with it. */
+  source: FileSource;
   absoluteOutputDirectory: string;
   analysis: AllWorksheetSplitAnalysis;
   existingOutputs: Set<string>;
@@ -113,13 +111,13 @@ async function resolveFullWorkbookSplit(
   };
   const extension = workbookExtensionOf(absoluteInput, identity);
 
-  let workbookBytes: Buffer;
+  let source: FileSource;
   try {
     const inputStat = await stat(absoluteInput);
     if (!inputStat.isFile()) {
       throw new Error("The input path is not a file.");
     }
-    workbookBytes = await readFile(absoluteInput);
+    source = await openRandomAccessSource(absoluteInput);
   } catch (error) {
     if (isMissingPathError(error)) {
       throw new ConsultChimpsError(
@@ -135,8 +133,29 @@ async function resolveFullWorkbookSplit(
     );
   }
 
+  try {
+    return await resolveOpenedSplit(
+      options,
+      absoluteInput,
+      identity,
+      extension,
+      source,
+    );
+  } catch (error) {
+    await source.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+async function resolveOpenedSplit(
+  options: FullWorkbookSplitOptions,
+  absoluteInput: string,
+  identity: SplitSourceIdentity,
+  extension: WorkbookExtension,
+  source: FileSource,
+): Promise<ResolvedFullWorkbookSplit> {
   const analysis = await analyzeAllWorksheetSplit(
-    workbookBytes,
+    source,
     extension,
     splitSelection(options),
     identity,
@@ -178,6 +197,7 @@ async function resolveFullWorkbookSplit(
 
   return {
     absoluteInput,
+    source,
     absoluteOutputDirectory,
     analysis,
     existingOutputs,
@@ -191,6 +211,7 @@ export async function planFullWorkbookSplit(
   options: FullWorkbookSplitOptions,
 ): Promise<OperationPlan<Exclude<FullWorkbookSplitMetric, "outputRows">>> {
   const resolved = await resolveFullWorkbookSplit(options);
+  await resolved.source.close();
   const warnings = plannedAllWorksheetSplitWarnings(resolved.analysis);
   if (resolved.existingOutputs.size > 0 && options.overwrite !== true) {
     warnings.push(
@@ -220,6 +241,17 @@ export async function splitFullWorkbookByColumn(
 ): Promise<FullWorkbookSplitResult> {
   throwIfAborted(options.signal, SPLIT_OPERATION);
   const resolved = await resolveFullWorkbookSplit(options);
+  try {
+    return await splitResolved(options, resolved);
+  } finally {
+    await resolved.source.close().catch(() => undefined);
+  }
+}
+
+async function splitResolved(
+  options: FullWorkbookSplitOptions,
+  resolved: ResolvedFullWorkbookSplit,
+): Promise<FullWorkbookSplitResult> {
   await Promise.all(
     resolved.outputPaths.map((outputPath) =>
       ensureOutputAvailable(outputPath, { overwrite: options.overwrite }),
@@ -241,20 +273,27 @@ export async function splitFullWorkbookByColumn(
       outputNames: resolved.outputPaths,
       selection: splitSelection(options),
       signal: options.signal,
-      write: async (index, bytes, detail) => {
+      open: async (index) => {
         const stagedOutput = path.join(
           transactionDirectory,
           `output-${String(index + 1).padStart(6, "0")}${resolved.extension}`,
         );
-        await writeFile(stagedOutput, bytes);
-        stagedOutputs.push(stagedOutput);
-        options.onProgress?.({
-          operation: SPLIT_OPERATION,
-          stage: "staging-workbooks",
-          completed: index + 1,
-          total: resolved.analysis.groups.length,
-          detail: `${path.basename(detail.output)} (${detail.sheets.map((sheet) => `${sheet.sheet}: kept ${sheet.retainedRows}, deleted ${sheet.deletedRows}`).join("; ")})`,
-        });
+        const file = await stagedFile(stagedOutput);
+        return {
+          write: (chunk) => file.write(chunk),
+          abort: () => file.abort(),
+          close: async (detail) => {
+            await file.close();
+            stagedOutputs.push(stagedOutput);
+            options.onProgress?.({
+              operation: SPLIT_OPERATION,
+              stage: "staging-workbooks",
+              completed: index + 1,
+              total: resolved.analysis.groups.length,
+              detail: `${path.basename(detail.output)} (${detail.sheets.map((sheet) => `${sheet.sheet}: kept ${sheet.retainedRows}, deleted ${sheet.deletedRows}`).join("; ")})`,
+            });
+          },
+        };
       },
     });
 

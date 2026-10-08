@@ -27,4 +27,22 @@ export default tseslint.config(
       "no-console": ["error", { allow: ["error", "warn"] }],
     },
   },
+  {
+    // The operation libraries read rows and cells, so their arrays grow with
+    // the workbook.
+    files: ["packages/{core,files,tabular,xlsx,pptx,pdf}/src/**/*.ts"],
+    rules: {
+      // A spread passes every element as an argument, and a large array
+      // overflows the call stack: a split of 150,000 rows crashed this way.
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "CallExpression[callee.property.name=/^(max|min|push|unshift|fromCharCode|fromCodePoint)$/] > SpreadElement",
+          message:
+            "Spreading an array into arguments overflows the stack when it is large. Use a loop.",
+        },
+      ],
+    },
+  },
 );

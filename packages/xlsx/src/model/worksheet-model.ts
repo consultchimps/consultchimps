@@ -232,6 +232,11 @@ export class WorksheetCell {
   }
 
   get formula(): CellFormula | undefined {
+    // Element names match without regard to case; a body holding no "f" at
+    // all holds no formula, and most cells are answered here.
+    if (!this.body.includes("f") && !this.body.includes("F")) {
+      return undefined;
+    }
     const element = findElement(this.body, "f");
     if (!element) {
       return undefined;
@@ -477,6 +482,98 @@ function decodeRange(reference: string): CellRange | undefined {
   };
 }
 
+/**
+ * A cell's text as a person reads it: a shared-string cell resolves through
+ * the string table rather than handing back its index. Header matching and
+ * value normalization both depend on this being the display text.
+ */
+export function cellTextOf(
+  cell: WorksheetCell | undefined,
+  host: Pick<WorksheetHost, "sharedString">,
+): string | undefined {
+  const raw = cell?.valueText;
+  if (!cell || raw === undefined) {
+    return undefined;
+  }
+  if (getAttribute(cell.openTag, "t") !== "s") {
+    return decodeXmlText(raw);
+  }
+  const index = Number(raw);
+  return Number.isInteger(index)
+    ? host.sharedString(index)
+    : decodeXmlText(raw);
+}
+
+/**
+ * A cell's value, typed the way a grouping key needs it: `WorksheetModel.cellValue`
+ * for a cell already in hand.
+ */
+export function cellValueOf(
+  cell: WorksheetCell | undefined,
+  host: Pick<WorksheetHost, "sharedString" | "isDateStyle" | "serialToDate">,
+): WorksheetCellValue {
+  const text = cellTextOf(cell, host);
+  if (!cell || text === undefined) {
+    return undefined;
+  }
+
+  switch (getAttribute(cell.openTag, "t")) {
+    case "b":
+      return text.trim() === "1" || text.trim().toLowerCase() === "true";
+    case "d":
+      // Blank first, the same rule the numeric branch below applies: a cell
+      // holding nothing, or nothing but spaces, holds no value at all. This
+      // branch used to skip it and hand back the empty text, which is a
+      // value, so an empty declared date above a worksheet's real header
+      // counted as content and the header row was found one row too early.
+      return text.trim() === ""
+        ? undefined
+        : (worksheetDateValue(text) ?? text);
+    case "s":
+    case "str":
+    case "inlineStr":
+    case "e":
+      return text;
+    default: {
+      const trimmed = text.trim();
+      if (trimmed === "") {
+        return undefined;
+      }
+      const numeric = Number(trimmed);
+      if (!Number.isFinite(numeric)) {
+        return trimmed;
+      }
+      const styleIndex = getAttribute(cell.openTag, "s");
+      if (
+        !host.isDateStyle(
+          styleIndex === undefined ? undefined : Number(styleIndex),
+        )
+      ) {
+        return numeric;
+      }
+      // A serial that names no moment that can be written is carried as the
+      // number it is, the same decision the text path makes for text that
+      // names none. Handing back a moment nothing could spell is how a cell
+      // holding 1e100 came to be keyed by the same characters as every other
+      // one, and a split gathered them into a single output.
+      return host.serialToDate(numeric) ?? numeric;
+    }
+  }
+}
+
+/**
+ * The used range a worksheet's `<dimension>` declares, read from the text
+ * before its cells, or undefined when it declares none it can read. Without
+ * one, the used range is the extent of the cells.
+ */
+export function declaredUsedRange(prefix: string): CellRange | undefined {
+  const dimension = findElement(prefix, "dimension");
+  const declared = dimension
+    ? getAttribute(dimension.openTag, "ref")
+    : undefined;
+  return declared === undefined ? undefined : decodeRange(declared);
+}
+
 export class WorksheetModel implements WorksheetModelContract {
   readonly info: SheetInfo;
   readonly #host: WorksheetHost;
@@ -571,18 +668,7 @@ export class WorksheetModel implements WorksheetModelContract {
    * value normalization both depend on this being the display text.
    */
   cellText(ref: CellRef): string | undefined {
-    const cell = this.#cellAt(ref);
-    const raw = cell?.valueText;
-    if (!cell || raw === undefined) {
-      return undefined;
-    }
-    if (getAttribute(cell.openTag, "t") !== "s") {
-      return decodeXmlText(raw);
-    }
-    const index = Number(raw);
-    return Number.isInteger(index)
-      ? this.#host.sharedString(index)
-      : decodeXmlText(raw);
+    return cellTextOf(this.#cellAt(ref), this.#host);
   }
 
   /**
@@ -591,54 +677,7 @@ export class WorksheetModel implements WorksheetModelContract {
    * the type the OOXML cell declares.
    */
   cellValue(ref: CellRef): WorksheetCellValue {
-    const cell = this.#cellAt(ref);
-    const text = this.cellText(ref);
-    if (!cell || text === undefined) {
-      return undefined;
-    }
-
-    switch (getAttribute(cell.openTag, "t")) {
-      case "b":
-        return text.trim() === "1" || text.trim().toLowerCase() === "true";
-      case "d":
-        // Blank first, the same rule the numeric branch below applies: a cell
-        // holding nothing, or nothing but spaces, holds no value at all. This
-        // branch used to skip it and hand back the empty text, which is a
-        // value, so an empty declared date above a worksheet's real header
-        // counted as content and the header row was found one row too early.
-        return text.trim() === ""
-          ? undefined
-          : (worksheetDateValue(text) ?? text);
-      case "s":
-      case "str":
-      case "inlineStr":
-      case "e":
-        return text;
-      default: {
-        const trimmed = text.trim();
-        if (trimmed === "") {
-          return undefined;
-        }
-        const numeric = Number(trimmed);
-        if (!Number.isFinite(numeric)) {
-          return trimmed;
-        }
-        const styleIndex = getAttribute(cell.openTag, "s");
-        if (
-          !this.#host.isDateStyle(
-            styleIndex === undefined ? undefined : Number(styleIndex),
-          )
-        ) {
-          return numeric;
-        }
-        // A serial that names no moment that can be written is carried as the
-        // number it is, the same decision the text path makes for text that
-        // names none. Handing back a moment nothing could spell is how a cell
-        // holding 1e100 came to be keyed by the same characters as every other
-        // one, and a split gathered them into a single output.
-        return this.#host.serialToDate(numeric) ?? numeric;
-      }
-    }
+    return cellValueOf(this.#cellAt(ref), this.#host);
   }
 
   /**
@@ -664,30 +703,31 @@ export class WorksheetModel implements WorksheetModelContract {
 
   /** The `<dimension>` the part declares, or the extent of its cells. */
   get usedRange(): CellRange | undefined {
-    const dimension = findElement(this.#prefix, "dimension");
-    const declared = dimension
-      ? getAttribute(dimension.openTag, "ref")
-      : undefined;
-    if (declared !== undefined) {
-      const decoded = decodeRange(declared);
-      if (decoded) {
-        return decoded;
-      }
+    const declared = declaredUsedRange(this.#prefix);
+    if (declared) {
+      return declared;
     }
 
-    const cells = this.#rows.flatMap((row) => row.cells);
-    if (cells.length === 0) {
+    // Loops, not spreads: a spread passes every cell as an argument, which
+    // overflows the call stack on a large worksheet.
+    let startRow = Infinity;
+    let startColumn = Infinity;
+    let endRow = -Infinity;
+    let endColumn = -Infinity;
+    for (const row of this.#rows) {
+      for (const cell of row.cells) {
+        startRow = Math.min(startRow, cell.row);
+        startColumn = Math.min(startColumn, cell.column);
+        endRow = Math.max(endRow, cell.row);
+        endColumn = Math.max(endColumn, cell.column);
+      }
+    }
+    if (endRow === -Infinity) {
       return undefined;
     }
     return {
-      start: {
-        row: Math.min(...cells.map((cell) => cell.row)),
-        column: Math.min(...cells.map((cell) => cell.column)),
-      },
-      end: {
-        row: Math.max(...cells.map((cell) => cell.row)),
-        column: Math.max(...cells.map((cell) => cell.column)),
-      },
+      start: { row: startRow, column: startColumn },
+      end: { row: endRow, column: endColumn },
     };
   }
 
@@ -700,7 +740,12 @@ export class WorksheetModel implements WorksheetModelContract {
     rows: ReadonlySet<RowNumber>,
     options: { readonly renumber: boolean },
   ): DeleteRowsReport {
-    const lastRow = Math.max(this.lastRow, ...rows, 0);
+    // A loop, not a spread: a spread passes every row as an argument, which
+    // overflows the call stack on a large worksheet.
+    let lastRow = this.lastRow;
+    for (const row of rows) {
+      if (row > lastRow) lastRow = row;
+    }
     const present = this.#rows.filter((row) => rows.has(row.number)).length;
     const report = this.applyRowRelocation(
       RowRelocation.compacting(rows, lastRow, options.renumber),

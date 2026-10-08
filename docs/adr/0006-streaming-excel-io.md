@@ -192,10 +192,10 @@ the file. The other operations, before, in a private context:
 | Unprotect, 150,000 rows | 301 MB          |
 | Inspect, 150,000 rows   | 950 MB          |
 
-Merge, unprotect, split and PowerPoint population still build or read whole
-packages in the library, on the command line too, so they gain only the input
-and output transport. Inspection moved; see below. Moving each onto the
-streaming reader and writer is separate work.
+Merge, unprotect and PowerPoint population still build or read whole packages in
+the library, on the command line too, so they gain only the input and output
+transport. Inspection and splitting moved; see below. Moving each other one onto
+the streaming reader and writer is separate work.
 
 ## Inspection
 
@@ -235,3 +235,51 @@ in the worker, then read in pieces.
 | 150,000 rows (9.7 MB)                  | 1,468 MB | 121 MB     | 89 MB     |
 | 10 sheets x 15,000 rows (9.7 MB)       | 723 MB   | 137 MB     | 129 MB    |
 | 60,000 rows, 400 styles, 12,000 merges | 456 MB   | 92 MB      | 95 MB     |
+
+## Splitting
+
+Added 2026-10-08. Splitting loaded the whole package into the document model,
+then loaded it again for every group to build that group's output. On 150,000
+rows it ran out of stack in a spread of every deleted row into one call. Every
+mode now reads the input in pieces and writes each output as it is produced.
+
+- **Keeping the workbook.** Every part but the worksheets is held, as small as
+  it is, and each worksheet as a stub: the text around its rows. The model, the
+  values conversion and the pivot removal run on this light package as before,
+  so every edit they make to tables, the calculation chain, comments and the
+  worksheets' own merged ranges is the edit they made. Each worksheet's rows are
+  then read again and go through the same per-row steps, the model's own row
+  code included, for every output.
+- **Same bytes.** The outputs were JSZip's, so `JsZipWriter` writes JSZip 3.10's
+  layout with pako 1.0, which JSZip compresses with. Deflate's output does not
+  depend on how its input is divided. A part's compressed bytes are held until
+  it ends, because the sizes go in its header.
+- **Excel Table kept in place.** The table's rows are moved or dropped as they
+  are read, by the same rewrite.
+- **Compact.** One read gives each record its group and each group its column
+  widths, then one read per batch of 16 groups writes them through the streaming
+  table writer.
+
+What is held is the light package, one compressed output part, and one group
+number per row. A worksheet whose rows are stored out of order keeps its header
+names for every row while it is analysed. Splitting by a column with many values
+reads the worksheet once per output.
+
+Peak memory on 150,000 rows split by a column of 8 values, keeping the workbook,
+and on one of the 15,000-row workbooks:
+
+| Input, surface        | Before                          | After         |
+| --------------------- | ------------------------------- | ------------- |
+| 150,000 rows, CLI     | failed after 1,910 MB and 255 s | 335 MB, 123 s |
+| 150,000 rows, values  | not measured                    | 488 MB, 119 s |
+| 150,000 rows, compact | 543 MB, 40 s                    | 295 MB, 41 s  |
+| 15,000 rows, CLI      | 658 MB, 109 s                   | 178 MB, 14 s  |
+| 15,000 rows, browser  | 348 MB, 131 s                   | 129 MB, 29 s  |
+| 150,000 rows, browser | did not finish in 15 minutes    | 517 MB, 237 s |
+
+The three 150,000-row command line runs also complete within a 192 MB heap; the
+rest of their peak is Node. Over the 439 distinct workbooks the package's tests
+open, about 4,250 split runs across every mode give the same bytes and results.
+The rest are corrections: a failed CRC check or a malformed row or cell
+reference is refused with `XLSX_READ_FAILED`, and a package JSZip read as empty
+is read.

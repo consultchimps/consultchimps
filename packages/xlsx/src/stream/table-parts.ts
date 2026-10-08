@@ -109,7 +109,10 @@ class TablePartScanner {
     }
     if (
       this.#tag.length === 9 &&
-      String.fromCharCode(...this.#tag).toUpperCase() === "<!DOCTYPE"
+      this.#tag
+        .map((code) => String.fromCharCode(code))
+        .join("")
+        .toUpperCase() === "<!DOCTYPE"
     ) {
       throw new Error(
         "Document type declarations are not allowed in XLSX XML.",

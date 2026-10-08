@@ -22,6 +22,7 @@ import {
   ConsultChimpsError,
   throwIfAborted,
   type AbortOutputContext,
+  type RandomAccessSource,
 } from "@consultchimps/core";
 
 import { XLSX_ERRORS } from "../errors.js";
@@ -30,24 +31,25 @@ import {
   MACRO_WORKBOOK_MAIN_CONTENT_TYPE,
   WORKBOOK_MAIN_PART,
   WorkbookPackage,
+  ZipReader,
 } from "../package/index.js";
 import { encodeCell } from "../model/references.js";
-import type { RowNumber } from "../model/types.js";
-import { isTableEditReport } from "../region/table-binding.js";
-import type { DataRegion } from "../region/types.js";
-import { resolveRegions } from "../region/resolve.js";
-import {
-  normalizeHeader,
-  readRowValues,
-  type NormalizedValue,
-} from "../region/values.js";
-import { stripPivotParts } from "../tier1/pivot.js";
-import { blankStaleCachedFormulas } from "../tier1/stale-values.js";
+import type { NormalizedValue } from "../region/values.js";
+import { yieldToEventLoop } from "../shared.js";
 import {
   uncachedFormulaHint,
   uncachedFormulaWarnings,
 } from "../uncached-formulas.js";
-import { convertWorkbookToValuesWithReport } from "../values-only.js";
+import {
+  lightModel,
+  openStreamedSplitPackage,
+  readSplitColumn,
+  SheetSummary,
+  summaryRegion,
+  writeSplitGroup,
+  type StreamedSheetRegion,
+  type StreamedSplitPackage,
+} from "./streamed-package.js";
 
 export const SPLIT_OPERATION = "sheets.split-by-column";
 const XLSX_MEDIA_TYPE =
@@ -124,32 +126,23 @@ export interface SplitSourceIdentity {
 
 export type SplitGroup = NormalizedValue;
 
-/** One filtered worksheet, as the analysis pass understood it. */
-interface SheetAnalysis {
-  /** True when the region is an Excel Table rather than a worksheet range. */
-  isTable: boolean;
-  name: string;
-  /** Normalized key per body row; every body row has an entry. */
-  rowValues: Map<RowNumber, NormalizedValue | undefined>;
-  worksheetPart: string;
-}
-
 /**
- * Everything a split learned by reading the source once. Both the plan and the
- * run are computed from this, so a preview and the split it previews cannot
- * disagree.
+ * Everything a split learned by reading the source: the light package, each
+ * filtered worksheet's region with one group number per body row, and the
+ * groups. Both the plan and the run are computed from this, so a preview and
+ * the split it previews cannot disagree.
  */
 export interface AllWorksheetSplitAnalysis {
   extension: WorkbookExtension;
   groups: SplitGroup[];
   inputRows: number;
   mediaType: string;
-  sheets: SheetAnalysis[];
+  /** The workbook, its worksheets held as stubs and read again as needed. */
+  package: StreamedSplitPackage;
+  /** The filtered worksheets, in workbook order. */
+  regions: StreamedSheetRegion[];
   skippedRows: number;
   unchangedSheets: string[];
-  workbookBytes: Uint8Array;
-  /** Sheet name by worksheet part, for every sheet, filtered or not. */
-  worksheetNames: ReadonlyMap<string, string>;
   /**
    * `Sheet!B4` of every split-column cell holding a formula with no cached
    * value: the split reads it as blank, so its row joins no group.
@@ -157,20 +150,6 @@ export interface AllWorksheetSplitAnalysis {
   uncachedSplitCells: string[];
 }
 
-function isColumnNotFound(error: unknown): boolean {
-  return (
-    error instanceof ConsultChimpsError &&
-    error.code === XLSX_ERRORS.XLSX_SPLIT_COLUMN_NOT_FOUND
-  );
-}
-
-/**
- * The workbook type a name declares, refusing anything the split cannot open.
- *
- * The check is on the name rather than the bytes because the extension also
- * decides what the outputs are called: a macro workbook has to stay `.xlsm`,
- * or Excel opens the result with a corruption warning.
- */
 export function workbookExtensionOf(
   name: string,
   identity: SplitSourceIdentity,
@@ -195,106 +174,6 @@ export function splitMediaType(extension: WorkbookExtension): string {
  * The region's column carrying the split key. The resolver already proved the
  * header text is there; this finds it again by name so the operation never has
  * to know whether the names came from a table part or from header cells.
- */
-function splitColumnOf(
-  region: DataRegion,
-  columnText: string,
-): { index: number } | undefined {
-  const target = normalizeHeader(columnText);
-  return region.columns.find(
-    (candidate) => normalizeHeader(candidate.name) === target,
-  );
-}
-
-/**
- * Every worksheet that carries the split column, as a region, plus the names
- * of the worksheets that do not and are therefore copied through untouched.
- *
- * The all-worksheet selector has no `headerRow`, so each sheet is resolved on
- * its own with the `{ sheet, headerRow }` selector and a missing column is
- * read as "this sheet is not part of the split" rather than as a failure. That
- * is exactly what the previous engine's per-sheet header search did.
- */
-async function resolveSplitRegions(
-  workbook: WorkbookModel,
-  columnText: string,
-  headerRow: number | undefined,
-): Promise<{
-  regions: readonly DataRegion[];
-  unchangedSheets: string[];
-}> {
-  const regions: DataRegion[] = [];
-  const unchangedSheets: string[] = [];
-
-  for (const sheet of workbook.sheets) {
-    let resolved: readonly DataRegion[];
-    try {
-      resolved = await resolveRegions(
-        workbook,
-        { headerRow, sheet: sheet.name },
-        columnText,
-      );
-    } catch (error) {
-      if (isColumnNotFound(error)) {
-        unchangedSheets.push(sheet.name);
-        continue;
-      }
-      throw error;
-    }
-    const region = resolved[0];
-    if (!region || !splitColumnOf(region, columnText)) {
-      unchangedSheets.push(sheet.name);
-      continue;
-    }
-    regions.push(region);
-  }
-
-  return { regions, unchangedSheets };
-}
-
-/** The source rows one group's output drops from one analysed worksheet. */
-function rowsRemovedFromSheet(
-  sheet: SheetAnalysis,
-  groupKey: string,
-): Set<RowNumber> {
-  const removed = new Set<RowNumber>();
-  for (const [row, value] of sheet.rowValues) {
-    if (value?.key !== groupKey) {
-      removed.add(row);
-    }
-  }
-  return removed;
-}
-
-async function loadWorkbookModel(
-  workbookBytes: Uint8Array,
-  identity: SplitSourceIdentity,
-): Promise<WorkbookModel> {
-  try {
-    return await WorkbookModel.load(workbookBytes);
-  } catch (error) {
-    throw new ConsultChimpsError(
-      XLSX_ERRORS.XLSX_READ_FAILED,
-      `Could not inspect workbook structure: ${identity.label}. The file may be corrupted, encrypted, or contain invalid workbook XML.`,
-      { cause: error, details: { ...identity.details } },
-    );
-  }
-}
-
-/**
- * Refuse a workbook whose package contradicts the name it arrived under.
- *
- * The split preserves the source package, so the outputs inherit whatever the
- * source declares while taking their extension and media type from the input's
- * name. When the two disagree, every output would be mislabelled: `.xlsm` bytes
- * named `.xlsx` would carry a macro project the name denies, and `.xlsx` bytes
- * named `.xlsm` would be advertised as macro-enabled while the package says
- * otherwise - a contradiction Excel opens with a corruption warning.
- *
- * Neither reading can be repaired without deciding something the caller did not
- * ask for: stripping macros loses work, rewriting the declared type changes what
- * the file is. So this refuses before an output exists, and says which side to
- * correct.
  */
 function refuseMislabelledPackage(
   workbook: WorkbookModel,
@@ -351,39 +230,60 @@ export function refuseMislabelledWorkbookType(
  * A split that rebuilds instead writes a fresh ordinary package and is always
  * `.xlsx`, so this is asked only when the workbook is preserved.
  */
-export async function preservedSplitExtension(
-  workbookBytes: Uint8Array,
+/**
+ * `preservedSplitExtension` for a workbook read in pieces: only its content
+ * types are read to learn whether it declares macros.
+ */
+export async function preservedSplitExtensionOf(
+  source: RandomAccessSource,
   name: string,
   identity: SplitSourceIdentity,
 ): Promise<WorkbookExtension> {
   const extension = workbookExtensionOf(name, identity);
-  // The content-type lookup parses `[Content_Types].xml` on demand, so a
-  // malformed or DOCTYPE-bearing declaration fails here rather than in the
-  // load. Both belong inside the wrapper: a caller of this operation gets the
-  // package's stable read failure, never a raw parser error.
   let declaresMacroWorkbook: boolean;
   try {
-    const workbookPackage = await WorkbookPackage.load(workbookBytes);
+    const zip = await ZipReader.open(source);
+    const contentTypes = await zip.readBytes("[Content_Types].xml");
+    const workbookPackage = WorkbookPackage.fromParts(
+      contentTypes
+        ? [
+            {
+              name: "[Content_Types].xml",
+              bytes: contentTypes,
+              date: new Date(0),
+            },
+          ]
+        : [],
+    );
     declaresMacroWorkbook =
       workbookPackage.contentTypeOverride(WORKBOOK_MAIN_PART)?.trim() ===
       MACRO_WORKBOOK_MAIN_CONTENT_TYPE;
   } catch (error) {
-    throw new ConsultChimpsError(
-      XLSX_ERRORS.XLSX_READ_FAILED,
-      `Could not inspect workbook structure: ${identity.label}. The file may be corrupted, encrypted, or contain invalid workbook XML.`,
-      { cause: error, details: { ...identity.details } },
-    );
+    throw workbookStructureFailure(identity, error);
   }
   refuseMislabelledWorkbookType(declaresMacroWorkbook, extension, identity);
   return extension;
 }
 
+function workbookStructureFailure(
+  identity: SplitSourceIdentity,
+  error: unknown,
+): ConsultChimpsError {
+  return new ConsultChimpsError(
+    XLSX_ERRORS.XLSX_READ_FAILED,
+    `Could not inspect workbook structure: ${identity.label}. The file may be corrupted, encrypted, or contain invalid workbook XML.`,
+    { cause: error, details: { ...identity.details } },
+  );
+}
+
 /**
- * Read the source once: which worksheets carry the split column, which rows
- * belong to which group, and which worksheets are copied through untouched.
+ * Read the source for a split: each worksheet once to find its header and
+ * columns, and each worksheet carrying the column once more for its split
+ * values. Nothing proportional to the rows is kept but one group number per
+ * body row (see `streamed-package.ts`).
  */
 export async function analyzeAllWorksheetSplit(
-  workbookBytes: Uint8Array,
+  source: RandomAccessSource,
   extension: WorkbookExtension,
   selection: AllWorksheetSplitSelection,
   identity: SplitSourceIdentity,
@@ -396,7 +296,51 @@ export async function analyzeAllWorksheetSplit(
     );
   }
 
-  const workbook = await loadWorkbookModel(workbookBytes, identity);
+  const summaries = new Map<string, SheetSummary>();
+  const uncachedByPart = new Map<string, string[]>();
+  let splitPackage: StreamedSplitPackage;
+  let workbook: WorkbookModel;
+  try {
+    const zip = await ZipReader.open(source);
+    splitPackage = await openStreamedSplitPackage(zip, (listed) => {
+      const host = WorkbookModel.fromPackage(listed);
+      const names = new Map(
+        host.sheets.map((sheet) => [sheet.partPath, sheet.name] as const),
+      );
+      return (part, prefix) => {
+        const summary = new SheetSummary(
+          host,
+          selection.column,
+          selection.headerRow,
+          prefix,
+          selection.values === true,
+        );
+        summaries.set(part, summary);
+        const uncached: string[] = [];
+        uncachedByPart.set(part, uncached);
+        const sheetName = names.get(part) ?? part;
+        return {
+          row: (streamed) => {
+            summary.row(streamed);
+            for (const cell of streamed.parse().cells) {
+              if (cell.formula !== undefined && !cell.hasCachedValue) {
+                uncached.push(
+                  `${sheetName}!${encodeCell(cell.column, cell.row)}`,
+                );
+              }
+            }
+          },
+          end: (suffix) => {
+            summary.end(suffix);
+          },
+        };
+      };
+    });
+    workbook = lightModel(splitPackage);
+  } catch (error) {
+    if (error instanceof ConsultChimpsError) throw error;
+    throw workbookStructureFailure(identity, error);
+  }
   refuseMislabelledPackage(workbook, extension, identity);
   const columnNotFound = (): ConsultChimpsError =>
     new ConsultChimpsError(
@@ -415,26 +359,32 @@ export async function analyzeAllWorksheetSplit(
     throw columnNotFound();
   }
 
-  const { regions, unchangedSheets } = await resolveSplitRegions(
-    workbook,
-    selection.column,
-    selection.headerRow,
-  );
-  if (regions.length === 0) {
-    // A header that is a formula with no cached value reads as blank, which
-    // may be why the column was not found.
-    const uncached: string[] = [];
-    for (const sheet of workbook.sheets) {
-      for (const row of workbook.worksheet(sheet.name)?.rows() ?? []) {
-        for (const cell of row.cells) {
-          if (cell.formula !== undefined && !cell.hasCachedValue) {
-            uncached.push(
-              `${sheet.name}!${encodeCell(cell.ref.column, cell.ref.row)}`,
-            );
-          }
-        }
-      }
+  const tables = await workbook.tables();
+  const found: Array<{
+    sheet: { name: string; partPath: string };
+    summary: SheetSummary;
+    region: NonNullable<ReturnType<typeof summaryRegion>>;
+  }> = [];
+  const unchangedSheets: string[] = [];
+  for (const sheet of workbook.sheets) {
+    const summary = summaries.get(sheet.partPath);
+    if (!summary) {
+      // Not read as a stream: the model reads it, and refuses it, as before.
+      workbook.worksheet(sheet.name);
+      unchangedSheets.push(sheet.name);
+      continue;
     }
+    const region = summaryRegion(summary, sheet.name, selection.column, tables);
+    if (!region) {
+      unchangedSheets.push(sheet.name);
+      continue;
+    }
+    found.push({ sheet, summary, region });
+  }
+  if (found.length === 0) {
+    const uncached = workbook.sheets.flatMap(
+      (sheet) => uncachedByPart.get(sheet.partPath) ?? [],
+    );
     const error = columnNotFound();
     if (uncached.length === 0) throw error;
     throw new ConsultChimpsError(
@@ -444,57 +394,65 @@ export async function analyzeAllWorksheetSplit(
     );
   }
 
-  const matching = { strict: selection.strict === true };
-  const groupsByKey = new Map<string, SplitGroup>();
-  const sheets: SheetAnalysis[] = [];
+  const strict = selection.strict === true;
+  const groups: SplitGroup[] = [];
+  const groupIndex = new Map<string, number>();
+  const regions: StreamedSheetRegion[] = [];
+  const uncachedSplitCells: string[] = [];
   let inputRows = 0;
   let skippedRows = 0;
-  const uncachedSplitCells: string[] = [];
-
-  for (const region of regions) {
-    const column = splitColumnOf(region, selection.column)!;
-    for (const row of region.worksheet.rows()) {
-      if (
-        row.number < region.body.start.row ||
-        row.number > region.body.end.row
-      ) {
-        continue;
-      }
-      const cell = row.cells.find(
-        (candidate) => candidate.ref.column === column.index,
-      );
-      if (cell?.formula !== undefined && !cell.hasCachedValue) {
-        uncachedSplitCells.push(
-          `${region.sheetName}!${encodeCell(column.index, row.number)}`,
-        );
-      }
-    }
-    const rowValues = readRowValues(
-      region.worksheet,
-      region.body.start.row,
-      region.body.end.row,
-      column.index,
-      matching,
+  for (const { sheet, summary, region } of found) {
+    // A group is named by the first row, top to bottom, carrying its value.
+    const local: Array<{ value: NormalizedValue; row: number }> = [];
+    const localIndex = new Map<string, number>();
+    const stub = splitPackage.stubs.get(sheet.partPath)!;
+    const ids = await readSplitColumn(
+      stub.feed(),
+      workbook,
+      region,
+      sheet.name,
+      strict,
+      (value, row) => {
+        let id = localIndex.get(value.key);
+        if (id === undefined) {
+          id = local.length;
+          localIndex.set(value.key, id);
+          local.push({ value, row });
+        } else if (row <= local[id]!.row) {
+          local[id] = { value, row };
+        }
+        return id;
+      },
+      uncachedSplitCells,
     );
-    for (const value of rowValues.values()) {
+    for (let index = 0; index < ids.length; index += 1) {
       inputRows += 1;
-      if (!value) {
+      const id = ids[index]!;
+      if (id < 0) {
         skippedRows += 1;
         continue;
       }
-      if (!groupsByKey.has(value.key)) {
-        groupsByKey.set(value.key, value);
+      const value = local[id]!.value;
+      let group = groupIndex.get(value.key);
+      if (group === undefined) {
+        group = groups.length;
+        groupIndex.set(value.key, group);
+        groups.push(value);
       }
+      ids[index] = group;
     }
-    sheets.push({
-      isTable: region.origin.kind === "table",
-      name: region.sheetName,
-      rowValues,
-      worksheetPart: region.worksheet.info.partPath,
+    regions.push({
+      ...region,
+      name: sheet.name,
+      worksheetPart: sheet.partPath,
+      declared: selection.headerRow !== undefined,
+      lastRow: summary.lastRow,
+      guard: summary.guard ?? { canRenumber: true },
+      guardAfterValues: summary.guardAfterValues ?? { canRenumber: true },
+      groupOfRow: ids,
     });
   }
 
-  const groups = [...groupsByKey.values()];
   if (groups.length === 0) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_SPLIT_NO_GROUPS,
@@ -514,138 +472,14 @@ export async function analyzeAllWorksheetSplit(
     groups,
     inputRows,
     mediaType: splitMediaType(extension),
-    sheets,
+    package: splitPackage,
+    regions,
     skippedRows,
     unchangedSheets,
     uncachedSplitCells,
-    workbookBytes,
-    worksheetNames: new Map(
-      workbook.sheets.map((sheet) => [sheet.partPath, sheet.name] as const),
-    ),
   };
 }
 
-/** What building one group's workbook produced, beyond its bytes. */
-interface GroupOutput {
-  bytes: Uint8Array;
-  calcChainEntriesRemoved: number;
-  formulaCellsBlanked: number;
-  formulaCellsConverted: number;
-  formulaCellsWithoutCachedValues: number;
-  pivotTablesRemoved: number;
-  /** `Sheet!A1` of every cached result cleared as covering other groups. */
-  staleAggregates: string[];
-  /** Sheets whose Excel Table kept its original range, with the reason. */
-  tableFallbackSheets: string[];
-  /** `Sheet!A1` of every formula that lost its value in a values conversion. */
-  uncachedFormulas: string[];
-}
-
-/**
- * Build one group's workbook: clear results computed over other groups' rows,
- * bake values when asked, filter every region, and remove the pivot caches
- * that would otherwise hand this recipient every other group's records.
- */
-async function buildGroupWorkbook(
-  analysis: AllWorksheetSplitAnalysis,
-  group: SplitGroup,
-  selection: AllWorksheetSplitSelection,
-  identity: SplitSourceIdentity,
-): Promise<GroupOutput> {
-  const output: GroupOutput = {
-    bytes: analysis.workbookBytes,
-    calcChainEntriesRemoved: 0,
-    formulaCellsBlanked: 0,
-    formulaCellsConverted: 0,
-    formulaCellsWithoutCachedValues: 0,
-    pivotTablesRemoved: 0,
-    staleAggregates: [],
-    tableFallbackSheets: [],
-    uncachedFormulas: [],
-  };
-  // A table region compacts its rows, so a values conversion has to run before
-  // the filter for the cached results to line up with the rows they describe.
-  // A pure worksheet split converts afterwards, over the rows that survive.
-  const containsFilteredTable = analysis.sheets.some((sheet) => sheet.isTable);
-
-  const convertToValues = async (): Promise<void> => {
-    const conversion = await convertWorkbookToValuesWithReport(output.bytes);
-    output.bytes = conversion.bytes;
-    output.formulaCellsConverted = conversion.formulasConverted;
-    output.formulaCellsWithoutCachedValues =
-      conversion.formulasWithoutCachedValues.length;
-    for (const missing of conversion.formulasWithoutCachedValues) {
-      output.uncachedFormulas.push(missing.location);
-    }
-  };
-
-  if (selection.values) {
-    // A values-only conversion bakes each formula's cached result into the
-    // output, so any result computed over rows this group does not receive is
-    // cleared first, while row numbers are still the source's.
-    const staleValues = await blankStaleCachedFormulas(
-      output.bytes,
-      new Map(
-        analysis.sheets.map(
-          (sheet) =>
-            [
-              sheet.worksheetPart,
-              rowsRemovedFromSheet(sheet, group.key),
-            ] as const,
-        ),
-      ),
-    );
-    output.bytes = staleValues.bytes;
-    output.formulaCellsBlanked = staleValues.blankedCells.length;
-    for (const blanked of staleValues.blankedCells) {
-      output.staleAggregates.push(`${blanked.sheet}!${blanked.cell}`);
-    }
-    if (containsFilteredTable) {
-      await convertToValues();
-    }
-  }
-
-  const workbook = await loadWorkbookModel(output.bytes, identity);
-  const { regions } = await resolveSplitRegions(
-    workbook,
-    selection.column,
-    selection.headerRow,
-  );
-  for (const region of regions) {
-    const sheet = analysis.sheets.find(
-      (candidate) => candidate.name === region.sheetName,
-    );
-    if (!sheet) {
-      continue;
-    }
-    const report = region.filterRows(
-      (row) => sheet.rowValues.get(row)?.key === group.key,
-    );
-    if (isTableEditReport(report) && !report.tableResized) {
-      output.tableFallbackSheets.push(region.sheetName);
-    }
-  }
-  output.bytes = await workbook.save();
-  // The invariant pass maintained the chain as the rows moved; a values-only
-  // output has no chain left to maintain, because the conversion removes it.
-  output.calcChainEntriesRemoved = selection.values
-    ? 0
-    : workbook.calcChainEntriesRemoved;
-
-  if (selection.values && !containsFilteredTable) {
-    await convertToValues();
-  }
-
-  // A pivot cache is a private copy of every source row, so it would hand this
-  // group's recipient every other group's data. It leaves with the rows it
-  // cached, on every output.
-  const strippedPivots = await stripPivotParts(output.bytes);
-  output.bytes = strippedPivots.bytes;
-  output.pivotTablesRemoved = strippedPivots.removedPivotTables;
-  return output;
-}
-
-/** The warning a plan gives for split-column cells it read as blank. */
 export function plannedAllWorksheetSplitWarnings(
   analysis: AllWorksheetSplitAnalysis,
 ): string[] {
@@ -675,7 +509,7 @@ export function plannedAllWorksheetSplitMetrics(
     pivotTablesRemoved: 0,
     rowsDeleted: 0,
     sheetsCopiedUnchanged: analysis.unchangedSheets.length,
-    sheetsFiltered: analysis.sheets.length,
+    sheetsFiltered: analysis.regions.length,
     skippedRows: analysis.skippedRows,
     valuesOnly: selection.values === true ? 1 : 0,
   };
@@ -688,6 +522,16 @@ export interface AllWorksheetSplitRun {
   warnings: string[];
 }
 
+/** Where one output's bytes go, opened by the surface for each group. */
+export interface SplitOutputTarget {
+  /** Receives the output's bytes in order. */
+  write: (chunk: Uint8Array) => void | Promise<void>;
+  /** Called once every byte is written, with what the output holds. */
+  close: (detail: SplitOutputDetail) => Promise<void> | void;
+  /** Called instead of `close` when the output cannot be finished. */
+  abort?: () => Promise<void> | void;
+}
+
 export interface AllWorksheetSplitRunOptions {
   analysis: AllWorksheetSplitAnalysis;
   identity: SplitSourceIdentity;
@@ -698,25 +542,19 @@ export interface AllWorksheetSplitRunOptions {
   selection: AllWorksheetSplitSelection;
   signal?: AbortSignal | undefined;
   /**
-   * Take delivery of one finished output. The surface decides what that means
-   * - staging it in a transaction directory, or keeping the buffer - and
+   * Open the output for one group. The surface decides what that means -
+   * a staging file in a transaction directory, or chunks in memory - and
    * reports its own progress, because the two surfaces describe different work.
    */
-  write: (
-    index: number,
-    bytes: Uint8Array,
-    detail: SplitOutputDetail,
-  ) => Promise<void> | void;
+  open: (index: number) => Promise<SplitOutputTarget> | SplitOutputTarget;
 }
 
 /**
- * Build every group's workbook in group order, handing each to `write`, and
- * report what the whole split did.
+ * Write every group's workbook in group order, each to the target `open`
+ * gives, and report what the whole split did.
  *
- * Outputs are produced one at a time on purpose: a workbook per group, each a
- * copy of the source, is the largest thing this operation holds, and a surface
- * that can put one down (the filesystem's staging directory) should not be
- * forced to keep all of them.
+ * Outputs are produced one at a time and written as they are produced: the
+ * largest thing held is one compressed part of one output.
  */
 export async function runAllWorksheetSplit(
   options: AllWorksheetSplitRunOptions,
@@ -737,12 +575,24 @@ export async function runAllWorksheetSplit(
 
   for (const [index, group] of analysis.groups.entries()) {
     throwIfAborted(signal, SPLIT_OPERATION, outputContext);
-    const built = await buildGroupWorkbook(
-      analysis,
-      group,
-      selection,
-      identity,
-    );
+    const target = await options.open(index);
+    let built: Awaited<ReturnType<typeof writeSplitGroup>>;
+    try {
+      built = await writeSplitGroup(
+        analysis.package,
+        analysis.regions,
+        index,
+        selection.values === true,
+        target.write,
+        async () => {
+          await yieldToEventLoop();
+          throwIfAborted(signal, SPLIT_OPERATION, outputContext);
+        },
+      );
+    } catch (error) {
+      await Promise.resolve(target.abort?.()).catch(() => undefined);
+      throw error;
+    }
     pivotTablesRemoved += built.pivotTablesRemoved;
     calcChainEntriesRemoved += built.calcChainEntriesRemoved;
     formulaCellsBlankedForRemovedRows += built.formulaCellsBlanked;
@@ -758,14 +608,15 @@ export async function runAllWorksheetSplit(
       tableFallbackSheets.add(sheet),
     );
 
-    const sheets = analysis.sheets.map((sheet) => {
-      const retainedRows = [...sheet.rowValues.values()].filter(
-        (value) => value?.key === group.key,
-      ).length;
-      const deletedRows = sheet.rowValues.size - retainedRows;
+    const sheets = analysis.regions.map((region) => {
+      let retainedRows = 0;
+      for (const id of region.groupOfRow) {
+        if (id === index) retainedRows += 1;
+      }
+      const deletedRows = region.groupOfRow.length - retainedRows;
       outputRows += retainedRows;
       rowsDeleted += deletedRows;
-      return { deletedRows, retainedRows, sheet: sheet.name };
+      return { deletedRows, retainedRows, sheet: region.name };
     });
 
     const detail: SplitOutputDetail = {
@@ -775,12 +626,15 @@ export async function runAllWorksheetSplit(
       sheets,
       value: group.display,
     };
-    await options.write(index, built.bytes, detail);
+    try {
+      await target.close(detail);
+    } catch (error) {
+      await Promise.resolve(target.abort?.()).catch(() => undefined);
+      throw error;
+    }
     outputs.push(detail);
   }
 
-  // The last workbook was serialized asynchronously; honour a cancellation
-  // that arrived while it was being built.
   throwIfAborted(signal, SPLIT_OPERATION, outputContext);
 
   const warnings: string[] = [];
@@ -796,15 +650,15 @@ export async function runAllWorksheetSplit(
     (location) => !missingFormulaLocations.has(location),
   );
   formulaCellsWithoutCachedValues += splitCellsOnly.length;
-  warnings.push(
-    ...uncachedFormulaWarnings(
-      [...splitCellsOnly, ...missingFormulaLocations],
-      selection.values === true
-        ? "a row whose split value is one joins no group, and any other became a blank cell in the values-only outputs"
-        : "they read as blank, so a row whose split value is one joins no group",
-      formulaCellsWithoutCachedValues,
-    ),
-  );
+  for (const warning of uncachedFormulaWarnings(
+    [...splitCellsOnly, ...missingFormulaLocations],
+    selection.values === true
+      ? "a row whose split value is one joins no group, and any other became a blank cell in the values-only outputs"
+      : "they read as blank, so a row whose split value is one joins no group",
+    formulaCellsWithoutCachedValues,
+  )) {
+    warnings.push(warning);
+  }
 
   if (pivotTablesRemoved > 0) {
     warnings.push(
@@ -838,7 +692,7 @@ export async function runAllWorksheetSplit(
       pivotTablesRemoved,
       rowsDeleted,
       sheetsCopiedUnchanged: analysis.unchangedSheets.length,
-      sheetsFiltered: analysis.sheets.length,
+      sheetsFiltered: analysis.regions.length,
       skippedRows: analysis.skippedRows,
       valuesOnly: selection.values === true ? 1 : 0,
     },
@@ -846,7 +700,7 @@ export async function runAllWorksheetSplit(
     summary: {
       column: selection.column,
       copiedUnchangedSheets: analysis.unchangedSheets,
-      filteredSheets: analysis.sheets.map((sheet) => sheet.name),
+      filteredSheets: analysis.regions.map((region) => region.name),
       input: identity.label,
       valuesOnly: selection.values === true,
     },

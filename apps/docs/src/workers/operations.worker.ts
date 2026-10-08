@@ -183,24 +183,23 @@ async function perform(
       );
     }
     case "xlsx.plan-split": {
-      const { planSplitWorkbookBytes } =
-        await import("@consultchimps/xlsx/bytes");
+      // Read in pieces through `Blob.slice`, never whole.
+      const { planSplitFile } = await import("@/lib/streamed-split");
       return answerWithValue(
-        await planSplitWorkbookBytes({
-          ...task.options,
-          input: await whole(task.input, controls.signal),
-        }),
+        await planSplitFile(task.input, task.options, controls.signal),
       );
     }
     case "xlsx.split": {
-      const { splitWorkbookBytes } = await import("@consultchimps/xlsx/bytes");
-      return answerWithOutputs(
-        await splitWorkbookBytes({
-          ...controls,
-          ...task.options,
-          input: await whole(task.input, controls.signal),
-        }),
+      // Read in pieces and each output written to disk as it goes.
+      const { splitFile } = await import("@/lib/streamed-split");
+      const { result, outputs } = await splitFile(
+        task.input,
+        task.options,
+        controls,
+        outputPlace,
+        await nextOutputRun(),
       );
+      return { value: result, artifacts: outputs };
     }
     case "xlsx.merge": {
       const { mergeWorkbooksBytes } = await import("@consultchimps/xlsx/bytes");

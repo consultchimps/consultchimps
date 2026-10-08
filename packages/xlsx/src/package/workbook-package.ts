@@ -23,7 +23,8 @@ import type {
 } from "./types.js";
 
 /** Every part this layer writes takes this timestamp, so outputs reproduce. */
-const FIXED_PACKAGE_DATE = new Date("1980-01-01T00:00:00.000Z");
+/** The time an edited part is written with, so outputs do not depend on the clock. */
+export const FIXED_PACKAGE_DATE: Date = new Date("1980-01-01T00:00:00.000Z");
 
 const CONTENT_TYPES_PART = "[Content_Types].xml";
 /** The relationships of the package root live in a well-known part. */
@@ -236,6 +237,42 @@ export class WorkbookPackage implements WorkbookPackageContract {
     }
 
     return workbookPackage;
+  }
+
+  /**
+   * A package from parts already read, in order, each with the time its zip
+   * entry carries, as `load` would hold them.
+   */
+  static fromParts(
+    parts: Iterable<{ name: string; bytes: Uint8Array; date: Date }>,
+    options: LoadWorkbookPackageOptions = {},
+  ): WorkbookPackage {
+    const workbookPackage = new WorkbookPackage(
+      options.sourceLabel ?? "memory",
+    );
+    for (const part of parts) {
+      workbookPackage.#parts.set(part.name, part.bytes);
+      workbookPackage.#dates.set(part.name, part.date);
+    }
+    return workbookPackage;
+  }
+
+  /** A copy whose edits leave this package as it is. */
+  clone(): WorkbookPackage {
+    const copy = new WorkbookPackage(this.#sourceLabel);
+    for (const [name, bytes] of this.#parts) copy.#parts.set(name, bytes);
+    for (const [name, date] of this.#dates) copy.#dates.set(name, date);
+    return copy;
+  }
+
+  /** The time `save` writes for a part. */
+  partDate(partPath: string): Date {
+    return this.#dates.get(partPath) ?? FIXED_PACKAGE_DATE;
+  }
+
+  /** The bytes of a part as held, or undefined when the package has none. */
+  partBytes(partPath: string): Uint8Array | undefined {
+    return this.#parts.get(partPath);
   }
 
   /** The label errors name this package by: a filename, or "memory". */

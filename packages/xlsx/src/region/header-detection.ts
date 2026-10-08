@@ -385,15 +385,22 @@ export function headerCellName(
   worksheet: WorksheetModel,
   ref: CellRef,
 ): string {
-  const value = worksheet.cellValue(ref);
+  return headerCellNameOf(worksheet.cellValue(ref), () =>
+    worksheet.cellText(ref),
+  );
+}
+
+/** `headerCellName` for a cell's value and, when a date needs it, its text. */
+export function headerCellNameOf(
+  value: unknown,
+  text: () => string | undefined,
+): string {
   if (isBlankValue(value)) {
     return "";
   }
   if (value instanceof Date) {
     const parts = utcCalendarParts(value);
-    return isComponentsInRange(parts)
-      ? calendarIsoText(parts)
-      : (worksheet.cellText(ref) ?? "");
+    return isComponentsInRange(parts) ? calendarIsoText(parts) : (text() ?? "");
   }
   return String(value);
 }
