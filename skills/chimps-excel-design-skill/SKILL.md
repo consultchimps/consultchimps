@@ -6,7 +6,7 @@ description:
   handover. Not for editing existing files.
 license: Apache-2.0
 metadata:
-  cli-version: "0.13.1"
+  cli-version: "0.14.0"
   repository: consultchimps/consultchimps
 ---
 
@@ -115,7 +115,7 @@ yourself. Tell the user which of these ran.
    one file that needs only Node, no install:
 
    ```bash
-   curl -sSLO https://github.com/consultchimps/consultchimps/releases/download/consultchimps%400.13.1/consultchimps.mjs
+   curl -sSLO https://github.com/consultchimps/consultchimps/releases/download/consultchimps%400.14.0/consultchimps.mjs
    node consultchimps.mjs --json sheets inspect model.xlsx
    ```
 
