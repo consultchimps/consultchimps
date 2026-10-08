@@ -89,6 +89,7 @@ import {
   preservedSplitExtensionOf,
   splitMediaType,
 } from "./split/all-worksheet.js";
+import { MergeInputs, type MergeInput } from "./merge/input-handles.js";
 import { stagedFile } from "./split/staged-file.js";
 import {
   openRegionPackage,
@@ -979,17 +980,18 @@ export async function mergeWorkbooks(
     await yieldToEventLoop();
     throwIfAborted(options.signal, MERGE_OPERATION);
   });
-  // Each input is read in pieces through a file handle, kept open until the
-  // merged workbook, which reads their rows again, is written; an input that
+  // Each input is read in pieces, and its rows again when the merged workbook
+  // is written, through a bounded number of open handles; an input that
   // changed meanwhile fails the merge rather than mixing two versions.
-  const opened: FileSource[] = [];
+  const inputs = new MergeInputs();
+  const opened: MergeInput[] = [];
   let merged: Awaited<ReturnType<typeof finishMergedWorkbook>>;
   try {
     for (const [index, inputPath] of absoluteInputs.entries()) {
       throwIfAborted(options.signal, MERGE_OPERATION);
-      let source: FileSource;
+      let source: MergeInput;
       try {
-        source = await openRandomAccessSource(inputPath);
+        source = await inputs.open(inputPath);
       } catch (error) {
         throw new ConsultChimpsError(
           XLSX_ERRORS.XLSX_READ_FAILED,
@@ -1031,7 +1033,7 @@ export async function mergeWorkbooks(
       },
     );
   } finally {
-    for (const source of opened) await source.close().catch(() => undefined);
+    await inputs.close();
   }
   options.onProgress?.({
     operation: MERGE_OPERATION,

@@ -298,8 +298,9 @@ the formulas it converts in a first read, so the counts come before the output.
 What is held is the merged package with its worksheets as stubs, the merged
 style sheet and string table, and one compressed output part; an input's own
 parts go once it is transplanted. A binary part read only when written fails as
-the input's read failure. On the command line an input that changed during the
-merge fails it.
+the input's read failure. The command line keeps at most 16 inputs open, opening
+one again when its rows are written, and an input that changed during the merge
+fails it.
 
 Peak memory on neutral generated workbooks; the browser's is the Chromium
 process tree above the idle page:
