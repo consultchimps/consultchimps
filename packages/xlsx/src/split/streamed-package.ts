@@ -133,7 +133,7 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 /** Split a stub's text at its empty `sheetData`, as the model does. */
-function stubPieces(xml: string): { prefix: string; suffix: string } {
+export function stubPieces(xml: string): { prefix: string; suffix: string } {
   const sheetData = findElement(xml, "sheetData");
   if (!sheetData) {
     throw new Error("Worksheet package part does not contain sheetData.");
@@ -162,6 +162,7 @@ export async function openStreamedSplitPackage(
         end(suffix: string): void;
       }
     | undefined,
+  sourceLabel?: string,
 ): Promise<StreamedSplitPackage> {
   const entries = zip.entries();
   const held = new Map<string, Uint8Array>();
@@ -247,7 +248,14 @@ export async function openStreamedSplitPackage(
     stubs.set(entry.name, { bytes, feed });
     parts.push({ name: entry.name, bytes, date: entry.date });
   }
-  return { base: WorkbookPackage.fromParts(parts), stubs, opaque };
+  return {
+    base: WorkbookPackage.fromParts(
+      parts,
+      sourceLabel === undefined ? {} : { sourceLabel },
+    ),
+    stubs,
+    opaque,
+  };
 }
 
 /**

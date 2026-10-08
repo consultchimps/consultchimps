@@ -29,16 +29,13 @@ export class StreamedRow {
   constructor(text: string, openTag: string, implied: number) {
     this.text = text;
     this.implied = implied;
+    // Read, not judged: a number the model refuses is refused when the row is
+    // parsed, so a reader that copies rows as written copies this one too.
     const written = getAttribute(openTag, "r");
-    const number = written === undefined ? implied : Number(written);
-    if (!Number.isInteger(number) || number < 1) {
-      // The model's own refusal, with its words.
-      this.#parsed = new WorksheetRow(text, implied);
-    }
-    this.number = number;
+    this.number = written === undefined ? implied : Number(written);
   }
 
-  /** The row as the model parses it. */
+  /** The row as the model parses it, refused as the model refuses it. */
   parse(): WorksheetRow {
     this.#parsed ??= new WorksheetRow(this.text, this.implied);
     return this.#parsed;

@@ -1068,6 +1068,71 @@ async function consolidateIntoSink(
 export async function mergeWorkbooksBytes(
   options: MergeWorkbooksBytesOptions,
 ): Promise<ByteOperationOutcome<MergeWorkbooksMetric>> {
+  const { inputs, ...rest } = options;
+  const chunks: Uint8Array[] = [];
+  const { result, outputName } = await mergeWorkbookSources({
+    ...rest,
+    inputs: inputs.map((input) => bytesSource(input.name, input.bytes)),
+    output: {
+      write: (chunk) => {
+        chunks.push(chunk);
+      },
+      flush: () => Promise.resolve(),
+      abort: () => {
+        chunks.length = 0;
+        return Promise.resolve();
+      },
+    },
+  });
+  return {
+    result,
+    outputs: [
+      {
+        name: outputName,
+        bytes: concatenate(chunks),
+        mediaType: result.artifacts[0]!.mediaType!,
+      },
+    ],
+  };
+}
+
+export interface MergeWorkbookSourcesOptions extends Omit<
+  MergeWorkbooksBytesOptions,
+  "inputs"
+> {
+  /** Each workbook, read in pieces. Its `name` is what the index records. */
+  inputs: RandomAccessSource[];
+  /** Receives the merged workbook as it is written. */
+  output: ByteSink;
+}
+
+export interface MergeWorkbookSourcesOutcome {
+  result: OperationResult<MergeWorkbooksMetric>;
+  /** The name of the workbook written to `output`. */
+  outputName: string;
+}
+
+/**
+ * `mergeWorkbooksBytes` over workbooks read in pieces and an output written
+ * as it is produced, so neither is held whole: a browser reads each `File`
+ * through `blobSource`. `output` receives exactly the bytes
+ * `mergeWorkbooksBytes` returns; on failure or cancellation its `abort` runs
+ * before the operation rejects.
+ */
+export async function mergeWorkbookSources(
+  options: MergeWorkbookSourcesOptions,
+): Promise<MergeWorkbookSourcesOutcome> {
+  try {
+    return await mergeIntoSink(options);
+  } catch (error) {
+    await options.output.abort().catch(() => undefined);
+    throw error;
+  }
+}
+
+async function mergeIntoSink(
+  options: MergeWorkbookSourcesOptions,
+): Promise<MergeWorkbookSourcesOutcome> {
   throwIfAborted(options.signal, MERGE_OPERATION, "memory");
   if (options.inputs.length === 0) {
     throw new ConsultChimpsError(
@@ -1090,7 +1155,7 @@ export async function mergeWorkbooksBytes(
 
   for (const [index, input] of options.inputs.entries()) {
     throwIfAborted(options.signal, MERGE_OPERATION, "memory");
-    await appendWorkbookSheets(state, input.name, input.bytes);
+    await appendWorkbookSheets(state, input.name, input);
     options.onProgress?.({
       operation: MERGE_OPERATION,
       stage: "merging-inputs",
@@ -1104,23 +1169,30 @@ export async function mergeWorkbooksBytes(
   const mediaType = merged.macroEnabled
     ? MACRO_WORKBOOK_MEDIA_TYPE
     : WORKBOOK_MEDIA_TYPE;
-  const output: ByteArtifact = {
-    name: outputName,
-    bytes: merged.bytes,
-    mediaType,
-  };
-  // The merged workbook was serialized asynchronously; honour a cancellation
+  await merged.write(
+    (chunk) => {
+      options.output.write(chunk);
+    },
+    async () => {
+      await options.output.flush();
+      await yieldToEventLoop();
+      throwIfAborted(options.signal, MERGE_OPERATION, "memory");
+    },
+  );
+  await options.output.flush();
+  // The merged workbook was written asynchronously; honour a cancellation
   // that arrived while it was being written.
   throwIfAborted(options.signal, MERGE_OPERATION, "memory");
 
   return {
+    outputName,
     result: {
       operation: MERGE_OPERATION,
       artifacts: [
         {
           kind: "file",
           mediaType,
-          path: output.name,
+          path: outputName,
         },
       ],
       warnings: merged.warnings,
@@ -1131,7 +1203,6 @@ export async function mergeWorkbooksBytes(
         formulaCellsWithoutCachedValues: merged.uncachedFormulas.length,
       },
     },
-    outputs: [output],
   };
 }
 

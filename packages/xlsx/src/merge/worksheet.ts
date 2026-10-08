@@ -47,7 +47,22 @@ export function rewriteWorksheetIndexes(
   xml: string,
   remaps: IndexRemaps,
 ): string {
-  let rewritten = editElements(xml, "c", (element, text) => {
+  return rewriteDifferentialFormatIds(
+    rewriteColumnStyles(
+      rewriteRowStyles(rewriteCellIndexes(xml, remaps), remaps),
+      remaps,
+    ),
+    remaps.differentialFormat,
+  );
+}
+
+/**
+ * The first pass of `rewriteWorksheetIndexes`: each cell's style, and a
+ * shared-string cell's string. It reads each cell alone, so a worksheet's
+ * pieces give what the whole part gives.
+ */
+export function rewriteCellIndexes(xml: string, remaps: IndexRemaps): string {
+  return editElements(xml, "c", (element, text) => {
     const openTag = remapAttribute(element.openTag, "s", remaps.style);
     const body = text.slice(element.openTag.length);
     if (getAttribute(openTag, "t") !== "s") {
@@ -59,26 +74,24 @@ export function rewriteWorksheetIndexes(
         `${open}${remaps.sharedString(Number(digits))}${close}`,
     )}`;
   });
+}
 
-  rewritten = editElements(rewritten, "row", (element, text) => {
+/** The second pass: each row's style. */
+export function rewriteRowStyles(xml: string, remaps: IndexRemaps): string {
+  return editElements(xml, "row", (element, text) => {
     const openTag = remapAttribute(element.openTag, "s", remaps.style);
     return `${openTag}${text.slice(element.openTag.length)}`;
   });
+}
 
-  rewritten = editElements(rewritten, "col", (element, text) => {
+/** The third pass: each column's style. */
+export function rewriteColumnStyles(xml: string, remaps: IndexRemaps): string {
+  return editElements(xml, "col", (element, text) => {
     const openTag = remapAttribute(element.openTag, "style", remaps.style);
     return `${openTag}${text.slice(element.openTag.length)}`;
   });
-
-  return rewriteDifferentialFormatIds(rewritten, remaps.differentialFormat);
 }
 
-/**
- * Rewrite every attribute that indexes `dxfs`. Conditional-formatting rules
- * name one; an Excel Table part names up to four (header, data, totals and per
- * column), which is why the attributes are matched by suffix rather than by a
- * list that would have to grow with the schema.
- */
 export function rewriteDifferentialFormatIds(
   xml: string,
   remap: (index: number) => number,

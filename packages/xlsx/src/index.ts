@@ -976,26 +976,55 @@ export async function mergeWorkbooks(
     macroOutput: isMacroWorkbookName(absoluteOutput),
   };
   const state = createMergeState(buildOptions);
-  for (const [index, inputPath] of absoluteInputs.entries()) {
-    throwIfAborted(options.signal, MERGE_OPERATION);
-    await appendWorkbookSheets(
-      state,
-      path.basename(inputPath),
-      await readWorkbookBytes(inputPath),
-    );
-    options.onProgress?.({
-      operation: MERGE_OPERATION,
-      stage: "merging-inputs",
-      completed: index + 1,
-      total: absoluteInputs.length,
-      detail: path.basename(inputPath),
-    });
-  }
-  const merged = await finishMergedWorkbook(state, buildOptions);
+  // Each input is read in pieces through a file handle, kept open until the
+  // merged workbook, which reads their rows again, is written.
+  const opened: FileSource[] = [];
+  let merged: Awaited<ReturnType<typeof finishMergedWorkbook>>;
+  try {
+    for (const [index, inputPath] of absoluteInputs.entries()) {
+      throwIfAborted(options.signal, MERGE_OPERATION);
+      let source: FileSource;
+      try {
+        source = await openRandomAccessSource(inputPath);
+      } catch (error) {
+        throw new ConsultChimpsError(
+          XLSX_ERRORS.XLSX_READ_FAILED,
+          `Could not read workbook: ${inputPath}`,
+          { cause: error, details: { filePath: inputPath } },
+        );
+      }
+      opened.push(source);
+      await appendWorkbookSheets(state, path.basename(inputPath), source);
+      options.onProgress?.({
+        operation: MERGE_OPERATION,
+        stage: "merging-inputs",
+        completed: index + 1,
+        total: absoluteInputs.length,
+        detail: path.basename(inputPath),
+      });
+    }
+    merged = await finishMergedWorkbook(state, buildOptions);
 
-  throwIfAborted(options.signal, MERGE_OPERATION);
-  await ensureParentDirectory(absoluteOutput);
-  await writeFile(absoluteOutput, merged.bytes);
+    throwIfAborted(options.signal, MERGE_OPERATION);
+    await writeStagedFile(
+      absoluteOutput,
+      { overwrite: options.overwrite },
+      async (sink) => {
+        await merged.write(
+          (chunk) => {
+            sink.write(chunk);
+          },
+          async () => {
+            await sink.flush();
+            await yieldToEventLoop();
+            throwIfAborted(options.signal, MERGE_OPERATION);
+          },
+        );
+      },
+    );
+  } finally {
+    for (const source of opened) await source.close().catch(() => undefined);
+  }
   options.onProgress?.({
     operation: MERGE_OPERATION,
     stage: "writing-output",

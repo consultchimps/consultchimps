@@ -1155,6 +1155,9 @@ const { outputName } = await consolidateWorkbookSources({
 const workbook = new File(parts, outputName);
 ```
 
+`mergeWorkbookSources` takes the same inputs and writes the merged workbook to
+your `output` sink as it is produced.
+
 `splitWorkbookSource` does the same for a split: it reads the workbook from a
 source in pieces and asks your `output` function for a sink per output, named
 and typed, which receives that output's bytes and then `flush` once it is

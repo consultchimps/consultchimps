@@ -202,17 +202,16 @@ async function perform(
       return { value: result, artifacts: outputs };
     }
     case "xlsx.merge": {
-      const { mergeWorkbooksBytes } = await import("@consultchimps/xlsx/bytes");
-      return answerWithOutputs(
-        await mergeWorkbooksBytes({
-          ...controls,
-          inputs: await Promise.all(
-            task.inputs.map((input) => whole(input, controls.signal)),
-          ),
-          outputName: task.outputName,
-          values: task.values,
-        }),
+      // Read in pieces and written to disk as it goes (ADR 0006).
+      const { mergeFiles } = await import("@/lib/streamed-merge");
+      const { result, outputs } = await mergeFiles(
+        task.inputs,
+        { outputName: task.outputName, values: task.values },
+        controls,
+        outputPlace,
+        await nextOutputRun(),
       );
+      return { value: result, artifacts: outputs };
     }
     case "xlsx.consolidate": {
       // Read in pieces and written to disk as it goes (ADR 0006).
