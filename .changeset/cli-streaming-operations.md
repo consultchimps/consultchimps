@@ -8,5 +8,5 @@ memory. Splitting a workbook of 150,000 rows no longer fails with "Maximum call
 stack size exceeded". A damaged workbook, such as one with a failed CRC check or
 malformed XML, is now refused by all three commands instead of being described,
 split or merged. `sheets inspect` decodes `_x000D_` and similar escapes, leaves
-phonetic text out of headers, and lists sample values in row order, as the
-other commands already did.
+phonetic text out of headers, and lists sample values in row order, as the other
+commands already did.
