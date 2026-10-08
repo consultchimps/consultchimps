@@ -16,7 +16,7 @@ In bash, zsh or Git Bash:
 ```bash
 mkdir -p inspect
 for f in templates/sources/*.xlsx; do
-  npx consultchimps@0.13.1 --json sheets inspect --samples 0 "$f" > "inspect/$(basename "$f" .xlsx).json"
+  npx consultchimps@0.14.0 --json sheets inspect --samples 0 "$f" > "inspect/$(basename "$f" .xlsx).json"
 done
 ```
 
@@ -25,7 +25,7 @@ In Windows PowerShell:
 ```powershell
 New-Item -ItemType Directory -Force inspect | Out-Null
 Get-ChildItem templates/sources -Filter *.xlsx | ForEach-Object {
-  npx consultchimps@0.13.1 --json sheets inspect --samples 0 $_.FullName |
+  npx consultchimps@0.14.0 --json sheets inspect --samples 0 $_.FullName |
     Set-Content -Encoding utf8 "inspect/$($_.BaseName).json"
 }
 ```
@@ -63,11 +63,11 @@ With a single group, skip the folders and the combining runs.
 One trial run per group, then one combined trial to audit:
 
 ```bash
-npx consultchimps@0.13.1 sheets consolidate groups/row1 \
+npx consultchimps@0.14.0 sheets consolidate groups/row1 \
   --normalize-headers --suggest-map draft-row1.json -o trial-row1.xlsx
-npx consultchimps@0.13.1 sheets consolidate groups/row3 --header-row 3 \
+npx consultchimps@0.14.0 sheets consolidate groups/row3 --header-row 3 \
   --normalize-headers --suggest-map draft-row3.json -o trial-row3.xlsx
-npx consultchimps@0.13.1 sheets consolidate trial-row1.xlsx trial-row3.xlsx \
+npx consultchimps@0.14.0 sheets consolidate trial-row1.xlsx trial-row3.xlsx \
   --no-source -o trial.xlsx
 ```
 
@@ -100,18 +100,18 @@ mean to keep as a canonical entry and the synonyms as aliases, so the group
 outputs line up. Then run each group with it, and combine:
 
 ```bash
-npx consultchimps@0.13.1 --json sheets consolidate groups/row1 \
+npx consultchimps@0.14.0 --json sheets consolidate groups/row1 \
   --map mapping.json -o mapped-row1.xlsx
-npx consultchimps@0.13.1 --json sheets consolidate groups/row3 --header-row 3 \
+npx consultchimps@0.14.0 --json sheets consolidate groups/row3 --header-row 3 \
   --map mapping.json -o mapped-row3.xlsx
-npx consultchimps@0.13.1 --json sheets consolidate mapped-row1.xlsx mapped-row3.xlsx \
+npx consultchimps@0.14.0 --json sheets consolidate mapped-row1.xlsx mapped-row3.xlsx \
   --no-source -o consolidated/sources.xlsx
 ```
 
 ## 5. Reconcile and hand over
 
 - The sum of `dataRowCount` across the inputs equals `metrics.outputRows` of the
-  last run, less any annotation rows you removed. A title block 0.13.1 skips on
+  last run, less any annotation rows you removed. A title block 0.14.0 skips on
   its own is already left out of both counts. For a file you consolidated with
   `--header-row`, step 1's `dataRowCount` (read without it) also counts every
   filled row between the title and the real header, and the real header itself;
