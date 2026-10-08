@@ -975,9 +975,13 @@ export async function mergeWorkbooks(
     // project may travel: a package must never claim a type its name denies.
     macroOutput: isMacroWorkbookName(absoluteOutput),
   };
-  const state = createMergeState(buildOptions);
+  const state = createMergeState(buildOptions, async () => {
+    await yieldToEventLoop();
+    throwIfAborted(options.signal, MERGE_OPERATION);
+  });
   // Each input is read in pieces through a file handle, kept open until the
-  // merged workbook, which reads their rows again, is written.
+  // merged workbook, which reads their rows again, is written; an input that
+  // changed meanwhile fails the merge rather than mixing two versions.
   const opened: FileSource[] = [];
   let merged: Awaited<ReturnType<typeof finishMergedWorkbook>>;
   try {
@@ -1020,6 +1024,7 @@ export async function mergeWorkbooks(
             throwIfAborted(options.signal, MERGE_OPERATION);
           },
         );
+        for (const source of opened) await source.verifyUnchanged();
       },
     );
   } finally {

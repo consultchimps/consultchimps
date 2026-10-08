@@ -295,8 +295,11 @@ which the merged style sheet numbers the styles it first meets, and once to
 write them through the same rewrites into the output. Values-only merging counts
 the formulas it converts in a first read, so the counts come before the output.
 
-What is held is every input's light package, one compressed output part, and the
-merged style sheet.
+What is held is the merged package with its worksheets as stubs, the merged
+style sheet and string table, and one compressed output part; an input's own
+parts go once it is transplanted. A binary part read only when written fails as
+the input's read failure. On the command line an input that changed during the
+merge fails it.
 
 Peak memory on neutral generated workbooks; the browser's is the Chromium
 process tree above the idle page:

@@ -11,6 +11,8 @@ import {
   mergeWorkbookSources,
   mergeWorkbooksBytes,
 } from "../src/bytes.js";
+import { forEachOpeningTag } from "../src/merge/transplant.js";
+import { editElements } from "../src/model/xml.js";
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const REL =
@@ -154,5 +156,66 @@ describe("merging workbooks read in pieces", () => {
       }),
     ).rejects.toMatchObject({ code: "XLSX_READ_FAILED" });
     expect(aborted).toBe(1);
+  });
+
+  it("refuses an input whose binary part fails its check, read only when written", async () => {
+    // The first input's parts all travel, so its binary part is copied.
+    const damaged = await workbook("South", 20);
+    const name = new TextEncoder().encode("xl/embeddings/blob.bin");
+    const at = Buffer.from(damaged).indexOf(Buffer.from(name));
+    const extra = damaged[at - 2]! | (damaged[at - 1]! << 8);
+    damaged[at + name.length + extra + 100]! ^= 0xff;
+    let aborted = 0;
+    await expect(
+      mergeWorkbookSources({
+        inputs: [
+          guardedSource("south.xlsx", damaged),
+          guardedSource("north.xlsx", await workbook("North", 20)),
+        ],
+        output: {
+          write: () => undefined,
+          flush: () => Promise.resolve(),
+          abort: () => {
+            aborted += 1;
+            return Promise.resolve();
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "XLSX_READ_FAILED",
+      message: "Could not read workbook: south.xlsx",
+    });
+    expect(aborted).toBe(1);
+  });
+});
+
+describe("the opening tags the style order is read from", () => {
+  it.each([
+    [
+      "well formed",
+      '<row r="1" s="3"><c r="A1" s="2"><v>1</v></c><x:c r="B1" s="1"/><col s="9"/><cfRule dxfId="0"/></row>',
+    ],
+    ["a quoted >", '<row r="1"><c r="A1" s="2" t="a>b"><v>1</v></c></row>'],
+    [
+      "an unclosed cell",
+      '<row r="1"><c r="A1" s="2"><v>1</v><c r="B1" s="1"/></row>',
+    ],
+    [
+      "a cell inside a cell",
+      '<row r="1"><c r="A1" s="2"><c r="B1" s="1"></c></c><c r="C1" s="4"/></row>',
+    ],
+    ["an unterminated tag", '<row r="1"><c r="A1" s="2"/><c r="B1" s="1"'],
+    ["a comment", '<row r="1"><!-- <c s="5"/> --><c r="A1" s="2"/></row>'],
+  ])("visits what editElements visits: %s", (_, xml) => {
+    for (const name of ["c", "row"]) {
+      const scanned: string[] = [];
+      forEachOpeningTag(xml, name, (openTag) => scanned.push(openTag));
+      const edited: string[] = [];
+      editElements(xml, name, (element, text) => {
+        edited.push(element.openTag);
+        return text;
+      });
+      expect(scanned).toEqual(edited);
+    }
   });
 });

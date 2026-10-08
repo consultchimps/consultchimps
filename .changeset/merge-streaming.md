@@ -11,5 +11,6 @@ sources, such as `blobSource`, into an output written as it is produced.
 
 A damaged input the readers refuse is now refused by merging too, with
 `XLSX_READ_FAILED`: a failed CRC check, or a package without its workbook part,
-which gave an error with no code before. A package JSZip read as empty is now
-read.
+which gave an error with no code before. Merging and splitting refuse a part
+compressed with a method they cannot read when the workbook is opened. A package
+JSZip read as empty is now read.

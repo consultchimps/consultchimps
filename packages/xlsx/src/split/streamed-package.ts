@@ -87,7 +87,7 @@ import {
 } from "../values-only.js";
 
 /** A worksheet held as the text around its cells. */
-interface Stub {
+export interface StreamedStub {
   /** The stub's bytes as first held: the part is unedited while they stay. */
   readonly bytes: Uint8Array;
   /** Reads the original part again, `between` run after each piece. */
@@ -97,7 +97,7 @@ interface Stub {
 /** The workbook with its worksheets held as stubs, and the source to read rows from. */
 export interface StreamedSplitPackage {
   readonly base: WorkbookPackage;
-  readonly stubs: ReadonlyMap<string, Stub>;
+  readonly stubs: ReadonlyMap<string, StreamedStub>;
   /**
    * Parts no step reads, held as an empty placeholder and copied from the
    * source when written, while the placeholder stands.
@@ -173,6 +173,8 @@ export async function openStreamedSplitPackage(
   for (const entry of entries) {
     if (isConvertedWorksheetPart(entry.name)) continue;
     if (isOpaquePart(entry.name)) {
+      // Read only when written, so refused now as a read would refuse it.
+      zip.refuseUnreadable(entry.name);
       const bytes = new Uint8Array(0);
       opaque.set(entry.name, {
         bytes,
@@ -198,7 +200,7 @@ export async function openStreamedSplitPackage(
   }
   const scan = scanner(listed);
 
-  const stubs = new Map<string, Stub>();
+  const stubs = new Map<string, StreamedStub>();
   const parts: Array<{ name: string; bytes: Uint8Array; date: Date }> = [];
   for (const entry of entries) {
     const inMemory = held.get(entry.name);
@@ -248,6 +250,9 @@ export async function openStreamedSplitPackage(
     stubs.set(entry.name, { bytes, feed });
     parts.push({ name: entry.name, bytes, date: entry.date });
   }
+  // The feeds outlive this call, and the scope they close over holds this
+  // map: emptied, it keeps none of the parts once the package lets them go.
+  held.clear();
   return {
     base: WorkbookPackage.fromParts(
       parts,

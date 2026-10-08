@@ -1151,7 +1151,11 @@ async function mergeIntoSink(
     "merged",
   )}${macroOutput ? MACRO_WORKBOOK_EXTENSION : WORKBOOK_EXTENSION}`;
   const buildOptions = { ...options, macroOutput };
-  const state = createMergeState(buildOptions);
+  // Reads before the output starts yield and honour a cancellation too.
+  const state = createMergeState(buildOptions, async () => {
+    await yieldToEventLoop();
+    throwIfAborted(options.signal, MERGE_OPERATION, "memory");
+  });
 
   for (const [index, input] of options.inputs.entries()) {
     throwIfAborted(options.signal, MERGE_OPERATION, "memory");

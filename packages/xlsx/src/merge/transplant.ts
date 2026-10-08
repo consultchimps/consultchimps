@@ -67,6 +67,7 @@ import {
   openStreamedSplitPackage,
   stubPieces,
   type StreamedSplitPackage,
+  type StreamedStub,
 } from "../split/streamed-package.js";
 import { uncachedFormulaWarnings } from "../uncached-formulas.js";
 import {
@@ -206,6 +207,8 @@ export interface MergeWorkbooksState {
   readonly worksheets: Map<string, WorksheetOrigin>;
   /** Output parts copied from an input when written. */
   readonly opaque: Map<string, OpaqueOrigin>;
+  /** Run between the pieces of every read, where a caller yields or stops. */
+  readonly between: (() => Promise<void>) | undefined;
 }
 
 /** A text edit every piece of a worksheet goes through, in order. */
@@ -217,8 +220,7 @@ interface RowStep {
 
 /** An output worksheet: its input, the part it reads, and its row steps. */
 interface WorksheetOrigin {
-  readonly input: StreamedSplitPackage;
-  readonly sourcePart: string;
+  readonly stub: StreamedStub;
   readonly steps: RowStep[];
   /** Missing cached values the values conversion found in the stub. */
   converted?: {
@@ -231,16 +233,19 @@ interface WorksheetOrigin {
 
 /** An output part copied from an input while its placeholder stands. */
 interface OpaqueOrigin {
-  readonly input: StreamedSplitPackage;
-  readonly sourcePart: string;
+  /** The input's name, for a read that fails only when the part is written. */
+  readonly sourceLabel: string;
+  readonly feed: StreamedStub["feed"];
   readonly bytes: Uint8Array;
 }
 
 export function createMergeState(
   options: MergeWorkbooksBuildOptions,
+  between?: () => Promise<void>,
 ): MergeWorkbooksState {
   return {
     options,
+    between,
     output: undefined,
     styles: undefined,
     strings: undefined,
@@ -478,6 +483,8 @@ function stripUncarriedStructures(workbookPackage: WorkbookPackage): {
 interface TransplantContext {
   readonly state: MergeWorkbooksState;
   readonly input: StreamedSplitPackage;
+  /** The input's name, as its read failures give it. */
+  readonly sourceFile: string;
   readonly source: WorkbookPackage;
   readonly output: WorkbookPackage;
   readonly rewrites: NameRewrites;
@@ -570,8 +577,8 @@ function copyPart(
   const opaque = context.input.opaque.get(sourcePart);
   if (opaque && opaque.bytes === bytes) {
     context.state.opaque.set(targetPart, {
-      input: context.input,
-      sourcePart,
+      sourceLabel: context.sourceFile,
+      feed: opaque.feed,
       bytes,
     });
   }
@@ -601,8 +608,7 @@ function copyPart(
         edit(pieces.prefix) + edit(pieces.suffix),
       );
       context.state.worksheets.set(targetPart, {
-        input: context.input,
-        sourcePart,
+        stub: context.input.stubs.get(sourcePart)!,
         steps: [{ apply: edit, datesChange: false }],
       });
     } else {
@@ -694,14 +700,18 @@ function seedOutput(
   const source = input.base;
   const removed = stripUncarriedStructures(source);
   // The seed's worksheets and opaque parts are the output's, read from it.
-  for (const part of input.stubs.keys()) {
+  for (const [part, stub] of input.stubs) {
     if (source.has(part)) {
-      state.worksheets.set(part, { input, sourcePart: part, steps: [] });
+      state.worksheets.set(part, { stub, steps: [] });
     }
   }
   for (const [part, opaque] of input.opaque) {
     if (source.readBytes(part) === opaque.bytes) {
-      state.opaque.set(part, { input, sourcePart: part, bytes: opaque.bytes });
+      state.opaque.set(part, {
+        sourceLabel: sourceFile,
+        feed: opaque.feed,
+        bytes: opaque.bytes,
+      });
     }
   }
   state.removedPivotTables += removed.pivotTables;
@@ -930,6 +940,7 @@ async function transplantWorkbook(
   const context: TransplantContext = {
     state,
     input,
+    sourceFile,
     source,
     output,
     rewrites,
@@ -1013,14 +1024,13 @@ async function transplantWorksheet(
     return targetPart;
   }
   const pieces = stubPieces(xml);
-  await remapInDocumentOrder(stub.feed(), pieces, remaps);
+  await remapInDocumentOrder(stub.feed(context.state.between), pieces, remaps);
   context.output.writeText(
     targetPart,
     edit(pieces.prefix) + edit(pieces.suffix),
   );
   context.state.worksheets.set(targetPart, {
-    input: context.input,
-    sourcePart,
+    stub,
     steps: [{ apply: edit, datesChange: false }],
   });
   return targetPart;
@@ -1074,7 +1084,7 @@ async function remapInDocumentOrder(
   for (const index of formats) remaps.differentialFormat(index);
 }
 
-/** An attribute holding a style index, as \`remapAttribute\` reads one. */
+/** An attribute holding a style index, as `remapAttribute` reads one. */
 function styleIndex(openTag: string, attribute: string): number | undefined {
   const declared = getAttribute(openTag, attribute);
   if (declared === undefined) return undefined;
@@ -1085,24 +1095,40 @@ function styleIndex(openTag: string, attribute: string): number | undefined {
 const TAG_NAME = /[^\s/>!?][^\s/>]*/uy;
 
 /**
- * The opening tag of every element named \`localName\`, in document order, as
- * \`editElements\` visits them. A piece with no markup construct in it is
- * scanned directly, which is what it comes to in well-formed XML; one with a
- * comment, CDATA or instruction goes through \`editElements\` itself.
+ * The opening tag of every element named `localName`, in document order, as
+ * `editElements` visits them. A piece with no markup construct in it is
+ * scanned directly when each such element closes before the next opens, which
+ * is what well-formed XML comes to; any other piece goes through
+ * `editElements` itself.
  */
-function forEachOpeningTag(
+export function forEachOpeningTag(
   xml: string,
   localName: string,
   visit: (openTag: string) => void,
 ): void {
-  if (xml.includes("<!") || xml.includes("<?")) {
+  const openTags =
+    xml.includes("<!") || xml.includes("<?")
+      ? undefined
+      : scanOpeningTags(xml, localName);
+  if (openTags === undefined) {
     editElements(xml, localName, (element, text) => {
       visit(element.openTag);
       return text;
     });
     return;
   }
+  for (const openTag of openTags) visit(openTag);
+}
+
+/**
+ * The direct scan, or undefined where it could part from `editElements`: an
+ * opening tag left unterminated, an element left unclosed, or one of the same
+ * name inside another.
+ */
+function scanOpeningTags(xml: string, localName: string): string[] | undefined {
   const wanted = localName.toLowerCase();
+  const openTags: string[] = [];
+  let closeAt = -1;
   for (let index = xml.indexOf("<"); index >= 0;) {
     TAG_NAME.lastIndex = index + 1;
     const name = TAG_NAME.exec(xml)?.[0];
@@ -1124,10 +1150,16 @@ function forEachOpeningTag(
     }
     const colon = name.indexOf(":");
     if ((colon < 0 ? name : name.slice(colon + 1)).toLowerCase() === wanted) {
-      visit(xml.slice(index, end + 1));
+      if (end >= xml.length || index < closeAt) return undefined;
+      openTags.push(xml.slice(index, end + 1));
+      if (xml[end - 1] !== "/") {
+        closeAt = xml.indexOf(`</${name}>`, end + 1);
+        if (closeAt < 0) return undefined;
+      }
     }
     index = xml.indexOf("<", end);
   }
+  return openTags;
 }
 
 /** Give a copied Excel Table part its new workbook-unique name and id. */
@@ -1624,7 +1656,7 @@ async function convertToValues(
     const convertedSuffix = locate(suffix)(pieces.suffix);
     const throughSteps = (xml: string): string =>
       origin.steps.reduce((text, step) => step.apply(text), xml);
-    await readWorksheetPart(origin.input.stubs.get(origin.sourcePart)!.feed(), {
+    await readWorksheetPart(origin.stub.feed(state.between), {
       prefix: () => undefined,
       suffix: () => undefined,
       row: (row) => {
@@ -1645,6 +1677,45 @@ async function convertToValues(
 }
 
 /**
+ * Copy a part read from its input only now. A failure of that read is the
+ * input's read failure, as it would have been had the part been read when the
+ * input was opened; what the copy is handed, and `between`, fail as
+ * themselves.
+ */
+async function copyOpaquePart(
+  opaque: OpaqueOrigin,
+  between: (() => Promise<void>) | undefined,
+  onData: (chunk: Uint8Array) => void,
+): Promise<void> {
+  let passed: unknown;
+  const pass = async (step: () => unknown): Promise<void> => {
+    try {
+      await step();
+    } catch (error) {
+      passed = error;
+      throw error;
+    }
+  };
+  try {
+    await opaque.feed(between && (() => pass(between)))((chunk) => {
+      try {
+        onData(chunk);
+      } catch (error) {
+        passed = error;
+        throw error;
+      }
+    });
+  } catch (error) {
+    if (error === passed || error instanceof ConsultChimpsError) throw error;
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_READ_FAILED,
+      `Could not read workbook: ${opaque.sourceLabel}`,
+      { cause: error, details: { source: opaque.sourceLabel } },
+    );
+  }
+}
+
+/**
  * Write the merged package to `sink` with JSZip's bytes, as `save` wrote it:
  * held parts as they are, opaque parts copied from their inputs, and each
  * worksheet's rows read from its input through its steps.
@@ -1661,9 +1732,7 @@ async function writeMerged(
     const bytes = output.readBytes(part)!;
     const opaque = state.opaque.get(part);
     if (opaque && opaque.bytes === bytes) {
-      await opaque.input.opaque.get(opaque.sourcePart)!.feed(between)((chunk) =>
-        writing.push(chunk),
-      );
+      await copyOpaquePart(opaque, between, (chunk) => writing.push(chunk));
       await writing.close();
       continue;
     }
@@ -1673,7 +1742,7 @@ async function writeMerged(
       await writing.close();
       continue;
     }
-    const stub = origin.input.stubs.get(origin.sourcePart)!;
+    const { stub } = origin;
     if (bytes === stub.bytes && origin.steps.length === 0) {
       await stub.feed(between)((chunk) => writing.push(chunk));
       await writing.close();
