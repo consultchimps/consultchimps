@@ -300,8 +300,8 @@ describe("consultchimps CLI", () => {
     expect(consolidateHelp.stdout).toContain("--values");
     expect(consolidateHelp.stdout).toContain("--map <file>");
     expect(consolidateHelp.stdout).toContain("--suggest-map <file>");
-    expect(consolidateHelp.stdout).toContain(
-      "where to save the new consolidated .xlsx workbook",
+    expect(consolidateHelp.stdout.replace(/\s+/g, " ")).toContain(
+      "where to save the new consolidated .xlsx workbook, or .csv file",
     );
     expect(consolidateHelp.stdout).toContain("Examples:");
     expect(consolidateHelp.stdout).toContain("What happens:");
