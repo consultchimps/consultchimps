@@ -354,7 +354,7 @@ describe("consultchimps CLI", () => {
     const consolidateHelp = await runCli(["sheets", "consolidate", "--help"]);
     const consolidateHelpText = consolidateHelp.stdout.replace(/\s+/g, " ");
     expect(consolidateHelpText).toContain(
-      "stack the rows from every worksheet into one combined sheet, matching columns by header",
+      "stack the rows from every worksheet and CSV file into one combined sheet, matching columns by header",
     );
     expect(consolidateHelp.stdout).toContain(
       "When you want each worksheet kept as its own tab instead:",

@@ -854,6 +854,8 @@ export async function consolidateWorkbooks(
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
   const { absoluteInputs, absoluteOutput, absoluteSuggestOutput } =
     resolveConsolidateWorkbooks(options);
+  // Before anything is created, as every other refusal of options is.
+  settleCsvOptions(options.csv);
 
   // Both the mapping and the draft's destination are settled before a single
   // workbook is opened, so an unusable mapping or an occupied destination
@@ -871,12 +873,6 @@ export async function consolidateWorkbooks(
     await ensureOutputAvailable(absoluteSuggestOutput, {
       overwrite: options.overwrite,
     });
-    // The draft's folder is made now rather than beside its write, because a
-    // parent that cannot be a folder - a plain file already standing where one
-    // is wanted - is only discovered by trying. Discovering it after the
-    // workbook has been written would leave that workbook behind on a run that
-    // reports failure.
-    await ensureParentDirectory(absoluteSuggestOutput);
   }
 
   const sources: ConsolidationSource[] = absoluteInputs.map(
@@ -903,8 +899,16 @@ export async function consolidateWorkbooks(
   };
   const plan = await planConsolidation(sources, settings);
   const { suggestion, unmappedColumns } = plan;
-  // Before the staging file or its folder is made.
+  // Before the staging file or any folder is made.
   assertFitsWorksheet(plan);
+  if (absoluteSuggestOutput !== undefined) {
+    // The draft's folder is made before the workbook is written, because a
+    // parent that cannot be a folder - a plain file already standing where one
+    // is wanted - is only discovered by trying. Discovering it after the
+    // workbook has been written would leave that workbook behind on a run that
+    // reports failure.
+    await ensureParentDirectory(absoluteSuggestOutput);
+  }
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
   const sheetName = options.outputSheetName ?? CONSOLIDATED_SHEET_NAME;
   assertSheetName(sheetName);

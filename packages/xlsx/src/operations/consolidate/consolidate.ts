@@ -166,6 +166,8 @@ export interface ConsolidationPlan {
   readonly outputs: readonly TableOutput[];
   readonly columns: readonly string[];
   readonly widths: readonly number[];
+  /** The most characters any one cell of the output holds, header included. */
+  readonly longestCell: number;
   readonly rowCount: number;
   readonly addSourceColumns: boolean;
   readonly unmappedColumns: readonly string[];
@@ -878,6 +880,10 @@ export async function planConsolidation(
     outputs,
     columns: union.columns,
     widths: widthLengths.map((length) => tableColumnWidth(length)),
+    longestCell: widthLengths.reduce(
+      (longest, length) => Math.max(longest, length),
+      0,
+    ),
     rowCount: tables.reduce((sum, table) => sum + table.rowCount, 0),
     addSourceColumns: sourceColumnCount > 0,
     unmappedColumns,
@@ -895,9 +901,10 @@ export async function planConsolidation(
   };
 }
 
-/** The most rows and columns an Excel worksheet holds. */
+/** The most rows and columns an Excel worksheet holds, and characters a cell holds. */
 const WORKSHEET_ROWS = 1_048_576;
 const WORKSHEET_COLUMNS = 16_384;
+const CELL_CHARACTERS = 32_767;
 
 /**
  * Refuse a consolidated table an Excel worksheet cannot hold. Each surface calls
@@ -907,6 +914,13 @@ const WORKSHEET_COLUMNS = 16_384;
 export function assertFitsWorksheet(plan: ConsolidationPlan): void {
   const rows = plan.rowCount + 1;
   const columns = plan.columns.length;
+  if (plan.longestCell > CELL_CHARACTERS) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_OUTPUT_TOO_LARGE,
+      `A cell of the consolidated table would hold ${plan.longestCell.toLocaleString("en-US")} characters, more than the 32,767 an Excel cell holds, so nothing was written.`,
+      { details: { longestCell: plan.longestCell } },
+    );
+  }
   if (rows <= WORKSHEET_ROWS && columns <= WORKSHEET_COLUMNS) return;
   throw new ConsultChimpsError(
     XLSX_ERRORS.XLSX_OUTPUT_TOO_LARGE,

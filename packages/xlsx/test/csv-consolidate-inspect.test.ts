@@ -3,7 +3,7 @@
  * worksheet named after the file, read through the same header rule and the
  * same writer as a workbook, on both surfaces.
  */
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -220,6 +220,21 @@ describe("consolidating CSV files", () => {
     expect(suggestion?.mapping.columns).toEqual([]);
   });
 
+  it("refuses a cell longer than an Excel cell holds", async () => {
+    const error = await failure(() =>
+      consolidateWorkbooksBytes({
+        inputs: [
+          {
+            name: "notes.csv",
+            bytes: utf8(`Note\n${"x".repeat(32_768)}\n`),
+          },
+        ],
+      }),
+    );
+    expect(error.code).toBe("XLSX_OUTPUT_TOO_LARGE");
+    expect(error.details).toEqual({ longestCell: 32_768 });
+  });
+
   it("holds exactly what a worksheet holds", () => {
     const plan = (rowCount: number, columns: number) =>
       ({
@@ -278,6 +293,22 @@ describe("CSV files on the command line surface", () => {
       },
     });
     expect(Buffer.concat(chunks).equals(await readFile(output))).toBe(true);
+  });
+
+  it("creates no folder for a draft when the table is refused", async () => {
+    await writeFile(
+      path.join(folder, "notes.csv"),
+      utf8(`Note\n${"x".repeat(32_768)}\n`),
+    );
+    const error = await failure(() =>
+      consolidateWorkbooks({
+        inputs: [path.join(folder, "notes.csv")],
+        output: path.join(folder, "out.xlsx"),
+        suggestMappingOutput: path.join(folder, "drafts", "draft.json"),
+      }),
+    );
+    expect(error.code).toBe("XLSX_OUTPUT_TOO_LARGE");
+    expect((await readdir(folder)).sort()).toEqual(["notes.csv"]);
   });
 
   it("describes a CSV file the way the byte surface does", async () => {

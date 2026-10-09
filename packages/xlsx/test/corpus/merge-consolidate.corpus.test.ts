@@ -700,6 +700,7 @@ describe("corpus: consolidate", () => {
     // Both Data worksheets contribute; the Summary worksheets have no rows
     // below row 3, so they produce no table at all.
     expect(result.metrics).toEqual({
+      csvInputFiles: 0,
       formulaCellsWithoutCachedValues: 0,
       inputFiles: 2,
       inputTables: 2,
