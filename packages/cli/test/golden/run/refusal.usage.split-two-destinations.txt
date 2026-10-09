@@ -14,3 +14,7 @@ What you can do:
   - Read the message above and check the supplied files, folders, and command options.
   - Run the command again with --help if you need examples.
   - If the problem continues, keep the error reference below when asking for support.
+
+Error reference:
+  CLI_USAGE
+  This reference can help a developer or support person identify the exact type of problem.

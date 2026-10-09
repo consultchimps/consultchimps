@@ -23,7 +23,7 @@ Warnings:
   - None. ConsultChimps did not detect any recoverable problems during this task.
 
 What you can do next:
-  - Open the new Excel workbook listed below and confirm that you can edit the worksheets and workbook structure.
+  - Open the new Excel workbook listed above and confirm that you can edit the worksheets and workbook structure.
   - This removes ordinary worksheet and workbook-structure protection only; a workbook encrypted to require a password to open is not affected.
 
 --- stderr ---

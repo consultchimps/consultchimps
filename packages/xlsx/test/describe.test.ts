@@ -186,6 +186,7 @@ describe("describeWorkbook", () => {
     expect(result.artifacts).toEqual([]);
     expect(result.warnings).toEqual([]);
     expect(result.metrics).toEqual({
+      csvInputFiles: 0,
       dataRows: 3,
       excelTables: 0,
       formulaCellsWithoutCachedValues: 0,

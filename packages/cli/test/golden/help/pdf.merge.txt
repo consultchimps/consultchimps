@@ -21,9 +21,14 @@ Examples:
   consultchimps pdf merge first.pdf second.pdf --output combined.pdf
 
 What happens:
-  ConsultChimps reads the matching PDFs in their resolved order, copies every
-  page into one new document, reports the final page count, and leaves every
-  source PDF unchanged.
+  ConsultChimps reads the PDFs in order, copies every page into one new
+  document, reports the final page count, and leaves every source PDF
+  unchanged.
+
+Order:
+  Files you name are merged in the order you give them. A folder or a quoted
+  pattern adds the PDFs it matches in alphabetical order of their paths, at its
+  place in the list. A file named twice is used once, where it first appears.
 
 
 --- stderr ---

@@ -73,6 +73,49 @@ describe("discoverFiles", () => {
     expect(discovered).toEqual([deep, top].sort());
   });
 
+  it("keeps the given order, with each pattern's matches sorted in place", async () => {
+    const directory = await createTemporaryDirectory();
+    const folder = path.join(directory, "folder");
+    await mkdir(folder);
+    const [zulu, alpha, beta, gamma] = [
+      path.join(directory, "zulu.pdf"),
+      path.join(directory, "alpha.pdf"),
+      path.join(folder, "beta.pdf"),
+      path.join(folder, "gamma.pdf"),
+    ];
+    for (const file of [zulu, alpha, beta, gamma]) await writeFile(file, "");
+
+    // A named file keeps its place, a folder adds its files alphabetically at
+    // its place, and a file named again is used once, where it first appears.
+    await expect(
+      discoverFiles([zulu, folder, alpha, zulu], {
+        extensions: [".pdf"],
+        order: "given",
+      }),
+    ).resolves.toEqual([zulu, beta, gamma, alpha]);
+    await expect(
+      discoverFiles([zulu, folder, alpha], { extensions: [".pdf"] }),
+    ).resolves.toEqual([alpha, beta, gamma, zulu]);
+  });
+
+  it("treats paths as one file only when the volume says they are", async () => {
+    const directory = await createTemporaryDirectory();
+    const lower = path.join(directory, "report.pdf");
+    await writeFile(lower, "lower");
+    const upper = path.join(directory, "REPORT.pdf");
+    const foldsCase = await pathExists(upper);
+    if (!foldsCase) await writeFile(upper, "upper");
+
+    const discovered = await discoverFiles(
+      [upper, path.join(directory, "*.pdf")],
+      { extensions: [".pdf"], order: "given" },
+    );
+    // Folding volumes: the typed name and the pattern's match are one file.
+    // Case-sensitive volumes: two files that differ only in case stay two.
+    expect(discovered).toHaveLength(foldsCase ? 1 : 2);
+    expect(discovered[0]).toBe(upper);
+  });
+
   it("normalizes extension filters with and without leading dots", async () => {
     const directory = await createTemporaryDirectory();
     const workbook = path.join(directory, "MIXED.XLSX");

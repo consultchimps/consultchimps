@@ -4,7 +4,7 @@ exit code: 0
 --- stdout ---
 Usage: consultchimps db import record [options] <database>
 
-Record another batch without importing row values again
+record another batch without importing row values again
 
 Options:
   --capture <id>     capture ID, repeat for additional captures

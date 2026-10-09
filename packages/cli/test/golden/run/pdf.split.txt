@@ -28,7 +28,7 @@ Warnings:
   - None. ConsultChimps did not detect any recoverable problems during this task.
 
 What you can do next:
-  - Open the new PDF files listed below and confirm that the pages are in the expected order.
+  - Open the new PDF files listed above and confirm that the pages are in the expected order.
   - The page number in each filename identifies its position in the original PDF.
 
 --- stderr ---

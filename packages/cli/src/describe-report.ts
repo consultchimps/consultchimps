@@ -103,6 +103,12 @@ export function formatWorkbookDescription(
     );
   });
 
+  // A CSV file has no Excel Tables or named ranges to list.
+  if (csv !== undefined) {
+    lines.push("");
+    return lines.join("\n");
+  }
+
   lines.push("", "Excel Tables:");
   if (description.excelTables.length === 0) {
     lines.push("  - None found in the described worksheets.");

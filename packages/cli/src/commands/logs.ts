@@ -9,8 +9,9 @@ import {
   type TaskLogSummary,
   type TaskLogUnitSummary,
 } from "@consultchimps/core";
-import { InvalidArgumentError, type Command } from "commander";
+import type { Command } from "commander";
 
+import { positiveInteger } from "../numbers.js";
 import { RUN_RECORD_PATTERN, resolveLogDirectory } from "../task-log.js";
 import { withoutTerminalControls } from "../text.js";
 
@@ -211,18 +212,7 @@ export function registerLogsCommands(
   logs
     .command("list", { isDefault: true })
     .description("list recent runs, newest first")
-    .option(
-      "--limit <count>",
-      "how many runs to list",
-      (value) => {
-        const count = Number(value);
-        if (!Number.isInteger(count) || count < 1) {
-          throw new InvalidArgumentError("Expected a positive integer.");
-        }
-        return count;
-      },
-      20,
-    )
+    .option("--limit <count>", "how many runs to list", positiveInteger, 20)
     .action((options: { limit: number }) => {
       const directory = resolveLogDirectory();
       const runs = listRuns(directory).slice(0, options.limit);

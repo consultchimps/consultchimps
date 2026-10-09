@@ -4,7 +4,7 @@ exit code: 0
 --- stdout ---
 Usage: consultchimps db import inspect [options] <batch>
 
-Inspect a saved batch without reading Excel
+inspect a saved batch without reading Excel
 
 Arguments:
   batch                    saved batch file

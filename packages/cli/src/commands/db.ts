@@ -13,6 +13,7 @@ import type {
 } from "@consultchimps/db";
 import { Option, type Command } from "commander";
 
+import { positiveInteger } from "../numbers.js";
 import {
   openDbInputs,
   readDbDocument,
@@ -140,7 +141,7 @@ function sources(command: Command): Command {
     .option(
       "--header-row <number>",
       "worksheet header row, starting at 1",
-      Number,
+      positiveInteger,
       1,
     )
     .option("--hidden", "include hidden worksheets in default sheet selection")
@@ -297,7 +298,7 @@ export function registerDbCommands(
   const db = program
     .command("db")
     .description(
-      "Create persistent local databases, manage schemas, and import workbook submissions",
+      "create persistent local databases, manage schemas, and import workbook submissions",
     )
     .addHelpText(
       "after",
@@ -305,7 +306,7 @@ export function registerDbCommands(
     );
 
   db.command("create")
-    .description("Create a persistent SQLite or DuckDB file")
+    .description("create a persistent SQLite or DuckDB file")
     .requiredOption("-o, --output <file>", "new database file")
     .addOption(
       new Option("--format <format>", "database storage format").choices([
@@ -361,7 +362,7 @@ export function registerDbCommands(
     );
 
   db.command("inspect")
-    .description("Inspect a database without changing it")
+    .description("inspect a database without changing it")
     .argument("<database>", "SQLite or DuckDB database file")
     .action(async (file: string) => {
       await withDeferredDbCommandOutput(output, async (output) => {
@@ -402,9 +403,9 @@ export function registerDbCommands(
     });
 
   db.command("schema")
-    .description("Manage database table definitions")
+    .description("manage database table definitions")
     .command("apply")
-    .description("Review or apply additive schema changes")
+    .description("review or apply additive schema changes")
     .argument("<database>")
     .requiredOption("--file <schema>", "versioned JSON schema")
     .option("--dry-run", "report proposed changes without applying them")
@@ -445,18 +446,18 @@ export function registerDbCommands(
 
   const importCommand = db
     .command("import")
-    .description("Prepare, review, apply, and audit workbook batches");
+    .description("prepare, review, apply, and audit workbook batches");
 
   importCommand
     .command("inspect")
-    .description("Inspect a saved batch without reading Excel")
+    .description("inspect a saved batch without reading Excel")
     .argument("<batch>", "saved batch file")
-    .option("--limit <number>", "maximum preview rows", Number, 20)
+    .option("--limit <number>", "maximum preview rows", positiveInteger, 20)
     .option(
       "--cursor <cursor>",
       "preview cursor returned by a prior batch inspection",
     )
-    .option("--route-limit <number>", "maximum routes", Number, 50)
+    .option("--route-limit <number>", "maximum routes", positiveInteger, 50)
     .option(
       "--route-cursor <cursor>",
       "route cursor returned by a prior batch inspection",
@@ -519,7 +520,7 @@ export function registerDbCommands(
   sources(
     importCommand
       .command("prepare")
-      .description("Capture workbook data into a durable, reviewable batch")
+      .description("capture workbook data into a durable, reviewable batch")
       .argument("<database>"),
   )
     .requiredOption("-o, --output <file>", "private saved batch file")
@@ -531,7 +532,7 @@ export function registerDbCommands(
   sources(
     importCommand
       .command("run")
-      .description("Prepare and apply a workbook batch with one profile")
+      .description("prepare and apply a workbook batch with one profile")
       .argument("<database>"),
   )
     .option(
@@ -545,7 +546,7 @@ export function registerDbCommands(
 
   importCommand
     .command("apply")
-    .description("Apply a reviewed saved batch")
+    .description("apply a reviewed saved batch")
     .argument("<database>")
     .requiredOption("--batch <file>", "saved batch file")
     .option("--context <file>", "batch context JSON")
@@ -633,7 +634,7 @@ export function registerDbCommands(
 
   importCommand
     .command("update")
-    .description("Update a saved batch's table routing and column mapping")
+    .description("update a saved batch's table routing and column mapping")
     .argument("<database>")
     .requiredOption("--batch <file>", "saved batch file")
     .option(
@@ -697,9 +698,9 @@ export function registerDbCommands(
 
   importCommand
     .command("history")
-    .description("List recorded batches and their source captures")
+    .description("list recorded batches and their source captures")
     .argument("<database>")
-    .option("--limit <number>", "maximum batch records", Number, 50)
+    .option("--limit <number>", "maximum batch records", positiveInteger, 50)
     .option("--cursor <cursor>", "pagination cursor from a prior response")
     .action(
       async (
@@ -727,7 +728,7 @@ export function registerDbCommands(
 
   importCommand
     .command("record")
-    .description("Record another batch without importing row values again")
+    .description("record another batch without importing row values again")
     .argument("<database>")
     .requiredOption(
       "--capture <id>",
@@ -775,7 +776,7 @@ export function registerDbCommands(
 
   db.command("export")
     .description(
-      "Create a validated database copy or convert its storage format",
+      "create a validated database copy or convert its storage format",
     )
     .argument("<database>")
     .requiredOption("-o, --output <file>", "independent database output file")

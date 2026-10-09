@@ -4,7 +4,7 @@ exit code: 0
 --- stdout ---
 Usage: consultchimps db import update [options] <database>
 
-Update a saved batch's table routing and column mapping
+update a saved batch's table routing and column mapping
 
 Options:
   --batch <file>    saved batch file

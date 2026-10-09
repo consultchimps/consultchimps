@@ -32,6 +32,22 @@ export type FilesErrorCode = (typeof FILES_ERRORS)[keyof typeof FILES_ERRORS];
 export interface DiscoverFilesOptions {
   cwd?: string | undefined;
   extensions?: string[] | undefined;
+  /**
+   * `"sorted"` (the default) returns every match in alphabetical order of its
+   * path. `"given"` keeps the order of `inputs`: a file keeps its place, and a
+   * folder or pattern adds its matches, alphabetically, at its place. Either
+   * way a file matched twice is returned once, where it first appears.
+   */
+  order?: "given" | "sorted" | undefined;
+}
+
+/**
+ * Alphabetical order of two paths. The locale is named because the default one
+ * comes from the environment, and a POSIX locale on Linux would order mixed
+ * case differently from Windows.
+ */
+function comparePaths(left: string, right: string): number {
+  return left.localeCompare(right, "en");
 }
 
 function normalizeExtensions(
@@ -102,6 +118,16 @@ export function isPathWithin(
   );
 }
 
+/** A key naming the file a path reaches, or the path when it cannot be read. */
+async function fileIdentity(filePath: string): Promise<string> {
+  try {
+    const { dev, ino } = await stat(filePath, { bigint: true });
+    return ino === 0n ? `path:${filePath}` : `file:${dev}:${ino}`;
+  } catch {
+    return `path:${filePath}`;
+  }
+}
+
 export async function discoverFiles(
   inputs: string[],
   options: DiscoverFilesOptions = {},
@@ -115,43 +141,49 @@ export async function discoverFiles(
 
   const cwd = path.resolve(options.cwd ?? process.cwd());
   const extensions = normalizeExtensions(options.extensions);
-  const discovered = new Set<string>();
+  // Keyed by the file itself (device and inode), so a file named in one case
+  // and matched by a pattern in another is one file where the volume folds
+  // case, and two files that differ only in case stay two where it does not.
+  const discovered = new Map<string, string>();
 
   for (const input of inputs) {
     const absoluteInput = path.resolve(cwd, input);
+    let matches: string[] = [];
 
     try {
       const inputStat = await stat(absoluteInput);
       if (inputStat.isFile()) {
-        discovered.add(absoluteInput);
-        continue;
-      }
-
-      if (inputStat.isDirectory()) {
-        const matches = await fg("**/*", {
+        matches = [absoluteInput];
+      } else if (inputStat.isDirectory()) {
+        matches = await fg("**/*", {
           absolute: true,
           cwd: absoluteInput,
           onlyFiles: true,
         });
-        matches.forEach((match) => discovered.add(path.resolve(match)));
-        continue;
       }
     } catch {
-      const matches = await fg(normalizeGlobPattern(input), {
+      matches = await fg(normalizeGlobPattern(input), {
         absolute: true,
         cwd,
         onlyFiles: true,
       });
-      matches.forEach((match) => discovered.add(path.resolve(match)));
+    }
+    // Filtered before deduplicating, so an alias with another extension never
+    // stands in for the file it reaches.
+    for (const match of matches
+      .map((candidate) => path.resolve(candidate))
+      .filter(
+        (candidate) =>
+          !extensions || extensions.has(path.extname(candidate).toLowerCase()),
+      )
+      .sort(comparePaths)) {
+      const key = await fileIdentity(match);
+      if (!discovered.has(key)) discovered.set(key, match);
     }
   }
 
-  const files = [...discovered]
-    .filter(
-      (filePath) =>
-        !extensions || extensions.has(path.extname(filePath).toLowerCase()),
-    )
-    .sort((left, right) => left.localeCompare(right));
+  const files = [...discovered.values()];
+  if (options.order !== "given") files.sort(comparePaths);
 
   if (files.length === 0) {
     throw new ConsultChimpsError(

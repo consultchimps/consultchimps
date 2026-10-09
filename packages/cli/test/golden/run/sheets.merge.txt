@@ -4,7 +4,7 @@ exit code: 0
 --- stdout ---
 SUCCESS: ConsultChimps finished your task.
 
-Your Excel workbook merge is complete.
+Your workbook merge is complete.
 
 What ConsultChimps did:
   - ConsultChimps copied 3 worksheets from 2 Excel files and 1 CSV file into one workbook.
@@ -26,11 +26,11 @@ Warnings:
   - None. ConsultChimps did not detect any recoverable problems during this task.
 
 What you can do next:
-  - Open the new Excel workbook listed below and review the copied worksheets.
-  - Keep the original workbooks until you have confirmed the merged workbook is complete.
+  - Open the new Excel workbook listed above and review the copied worksheets.
+  - Keep the original files until you have confirmed the merged workbook is complete.
 
 --- stderr ---
-Merging inputs 1/3: east.csv
-Merging inputs 2/3: north.xlsx
-Merging inputs 3/3: south.xlsx
+Merging inputs 1/3: north.xlsx
+Merging inputs 2/3: south.xlsx
+Merging inputs 3/3: east.csv
 Writing output 1/1: merged.xlsx

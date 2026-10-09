@@ -68,6 +68,7 @@ export const MAX_COLUMN_SAMPLE_VALUES = 5;
 const BUILTIN_DEFINED_NAME_PREFIX = "_xlnm.";
 
 export type DescribeWorkbookMetric =
+  | "csvInputFiles"
   | "dataRows"
   | "excelTables"
   | "formulaCellsWithoutCachedValues"
@@ -764,6 +765,9 @@ export function workbookDescriptionResult(
       ...inputWarnings,
     ],
     metrics: {
+      // A CSV input is described as one worksheet; this says which it was, so
+      // an explanation can name the file the reader gave.
+      csvInputFiles: description.csv === undefined ? 0 : 1,
       dataRows: description.sheets.reduce(
         (total, sheet) => total + sheet.dataRowCount,
         0,

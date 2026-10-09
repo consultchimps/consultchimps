@@ -4,7 +4,7 @@ exit code: 0
 --- stdout ---
 Usage: consultchimps db import apply [options] <database>
 
-Apply a reviewed saved batch
+apply a reviewed saved batch
 
 Options:
   --batch <file>     saved batch file

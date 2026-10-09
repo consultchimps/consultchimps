@@ -4,7 +4,7 @@ exit code: 0
 --- stdout ---
 Usage: consultchimps db import prepare [options] <database>
 
-Capture workbook data into a durable, reviewable batch
+capture workbook data into a durable, reviewable batch
 
 Options:
   --input <source>       workbook path or alias=path; existing paths are used as

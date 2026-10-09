@@ -4,7 +4,7 @@ exit code: 0
 --- stdout ---
 Usage: consultchimps db export [options] <database>
 
-Create a validated database copy or convert its storage format
+create a validated database copy or convert its storage format
 
 Options:
   -o, --output <file>  independent database output file

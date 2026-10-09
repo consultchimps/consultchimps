@@ -18,13 +18,13 @@ Options:
   -h, --help      display help for command
 
 Commands:
-  sheets          inspect, combine, or divide Excel workbooks without changing
-                  the original files
+  sheets          inspect, combine, or divide Excel workbooks and CSV files
+                  without changing the original files
   pptx            inspect or populate PowerPoint templates without changing the
                   source files
   pdf             split or combine PDF documents without changing the originals
   logs            list and read the local records of earlier runs
-  db              Create persistent local databases, manage schemas, and import
+  db              create persistent local databases, manage schemas, and import
                   workbook submissions
   help [command]  display help for command
 

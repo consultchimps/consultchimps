@@ -4,7 +4,7 @@ exit code: 0
 --- stdout ---
 Usage: consultchimps db schema apply [options] <database>
 
-Review or apply additive schema changes
+review or apply additive schema changes
 
 Options:
   --file <schema>  versioned JSON schema

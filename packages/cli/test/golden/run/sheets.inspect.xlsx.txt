@@ -22,7 +22,7 @@ Named ranges:
 
 SUCCESS: ConsultChimps finished your task.
 
-Your Excel workbook inspection is complete.
+Your inspection is complete.
 
 What ConsultChimps did:
   - ConsultChimps described 1 worksheet, holding 3 columns and 3 data rows in total.
@@ -45,7 +45,7 @@ Warnings:
   - None. ConsultChimps did not detect any recoverable problems during this task.
 
 What you can do next:
-  - Read the worksheet names, column headers, and sample values from the description that accompanies this result, and confirm they are the ones you expected before consolidating, merging, or splitting the workbook.
+  - Read the worksheet names, column headers, and sample values from the description that accompanies this result, and confirm they are the ones you expected before consolidating, merging, or splitting the file.
   - Check the header row of every worksheet: a report title above the real headers is skipped when it can be told from a header, and you can name the correct row when the guess is wrong.
   - Run the command with --help to review the available spreadsheet options and examples.
 
