@@ -50,7 +50,7 @@ Four things are removed, each reported as a warning in the result: pivot tables
 and their caches (a cache holds a private copy of its source rows), external
 links (they are addressed by position in a single workbook's list), the
 calculation chain (Excel rebuilds it, and the merged workbook asks it to), and a
-macro project unless the first workbook you list is the only one carrying macros
+macro project unless the first input you list is the only one carrying macros
 and the output is named `.xlsm`. That last case is reachable from the library
 and the browser today, not from this command: `sheets merge` collects `.xlsx`
 and `.csv` inputs only, so an `.xlsm` handed to it is filtered out before the
@@ -65,9 +65,10 @@ top of this page opens: [merge workbooks in your browser](/tools/excel-merge) to
 combine tabs without installing anything. The browser tool takes `.xlsx` and
 `.xlsm` workbooks and `.csv` files, and follows the same output rule as the
 command line: the output filename decides the type, so end it in `.xlsm` to keep
-a macro project and leave it alone for an `.xlsx`. Only the first workbook's
-macro project can travel, and only when no other workbook carries one.
-Consolidation has [its own guide](/docs/tools/spreadsheet-consolidate) and
+a macro project and leave it alone for an `.xlsx`. Only the first input's macro
+project can travel, and only when no other workbook carries one, so a CSV file
+listed first leaves it behind. Consolidation has
+[its own guide](/docs/tools/spreadsheet-consolidate) and
 [its own browser tool](/tools/excel-consolidate).
 
 ## CSV files
