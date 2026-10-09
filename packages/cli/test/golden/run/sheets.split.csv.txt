@@ -15,11 +15,6 @@ What ConsultChimps did:
   - Your original file was not changed.
 
 Detailed results:
-  - Calculation chain entries removed: 0
-  - Formula cells cleared because their rows were removed: 0
-  - Formula cells converted to cached values: 0
-  - Formula cells missing cached values: 0
-  - Pivot tables removed: 0
   - Distinct groups found: 2
   - Input files read: 1
   - Source data rows read: 3
@@ -29,7 +24,6 @@ Detailed results:
   - Sheets copied without filtering: 0
   - Sheets filtered: 1
   - Rows skipped: 0
-  - Values-only mode (1 enabled, 0 disabled): 0
 
 Files created:
   1. <tmp>/by-region/orders-North.csv

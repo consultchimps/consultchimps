@@ -398,6 +398,19 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
       lines.push("Your original file was not changed.");
       return lines;
     },
+    // Formulas, pivot tables, and a calculation chain exist only in a
+    // workbook, so a split that wrote CSV files has none of them to report.
+    omittedMetrics: (result) =>
+      writesCsv(result)
+        ? [
+            "calcChainEntriesRemoved",
+            "formulaCellsBlankedForRemovedRows",
+            "formulaCellsConverted",
+            "formulaCellsWithoutCachedValues",
+            "pivotTablesRemoved",
+            "valuesOnly",
+          ]
+        : [],
     nextSteps: (vocabulary, result) => [
       `Open the new ${writesCsv(result) ? "files" : "workbooks"} ${vocabulary.artifactListReference} and confirm that each file contains the expected group.`,
       "If rows were skipped, review the warning section to understand why.",

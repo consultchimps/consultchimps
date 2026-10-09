@@ -13,6 +13,7 @@ import type {
 } from "@consultchimps/db";
 import { Option, type Command } from "commander";
 
+import { positiveInteger } from "../numbers.js";
 import {
   openDbInputs,
   readDbDocument,
@@ -140,7 +141,7 @@ function sources(command: Command): Command {
     .option(
       "--header-row <number>",
       "worksheet header row, starting at 1",
-      Number,
+      positiveInteger,
       1,
     )
     .option("--hidden", "include hidden worksheets in default sheet selection")
@@ -451,12 +452,12 @@ export function registerDbCommands(
     .command("inspect")
     .description("inspect a saved batch without reading Excel")
     .argument("<batch>", "saved batch file")
-    .option("--limit <number>", "maximum preview rows", Number, 20)
+    .option("--limit <number>", "maximum preview rows", positiveInteger, 20)
     .option(
       "--cursor <cursor>",
       "preview cursor returned by a prior batch inspection",
     )
-    .option("--route-limit <number>", "maximum routes", Number, 50)
+    .option("--route-limit <number>", "maximum routes", positiveInteger, 50)
     .option(
       "--route-cursor <cursor>",
       "route cursor returned by a prior batch inspection",
@@ -699,7 +700,7 @@ export function registerDbCommands(
     .command("history")
     .description("list recorded batches and their source captures")
     .argument("<database>")
-    .option("--limit <number>", "maximum batch records", Number, 50)
+    .option("--limit <number>", "maximum batch records", positiveInteger, 50)
     .option("--cursor <cursor>", "pagination cursor from a prior response")
     .action(
       async (

@@ -131,7 +131,9 @@ export async function discoverFiles(
 
   const cwd = path.resolve(options.cwd ?? process.cwd());
   const extensions = normalizeExtensions(options.extensions);
-  const discovered = new Set<string>();
+  // Keyed the way the platform compares paths, so a file named in one case
+  // and matched by a pattern in another is still one file.
+  const discovered = new Map<string, string>();
 
   for (const input of inputs) {
     const absoluteInput = path.resolve(cwd, input);
@@ -158,10 +160,13 @@ export async function discoverFiles(
     matches
       .map((match) => path.resolve(match))
       .sort(comparePaths)
-      .forEach((match) => discovered.add(match));
+      .forEach((match) => {
+        const key = filesystemPathKey(match);
+        if (!discovered.has(key)) discovered.set(key, match);
+      });
   }
 
-  const files = [...discovered].filter(
+  const files = [...discovered.values()].filter(
     (filePath) =>
       !extensions || extensions.has(path.extname(filePath).toLowerCase()),
   );

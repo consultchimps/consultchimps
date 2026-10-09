@@ -18,7 +18,10 @@ point at the files listed above them; `pptx populate` progress names slides as
 "slide 1" rather than part names; `pptx inspect-template` drops the always-empty
 split-run line, since split-run placeholders are supported.
 
-Every usage mistake reports `CLI_USAGE`, including an invalid number, `-o` with
-`--output-dir`, and a pattern matching several files for a one-file command
-(which `pdf split` and `sheets unprotect` used to resolve silently to the first
-match). `db` help descriptions are lowercase like the others.
+Usage mistakes report `CLI_USAGE` rather than no code: a number option given
+anything but a whole number from 1 (`--header-row 1.5` used to read row 1, and
+the db `--limit` options accepted any text), `-o` with `--output-dir`, and a
+pattern matching several files for a one-file command (which `pdf split` and
+`sheets unprotect` used to resolve silently to the first match). A file named in
+one letter case and matched by a pattern in another is used once. `db` help
+descriptions are lowercase like the others.

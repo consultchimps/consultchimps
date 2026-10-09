@@ -476,6 +476,8 @@ describe("consultchimps CLI", () => {
     const mistakes: string[][] = [
       ["sheets", "consolidate", csv, "--csv-bom", "maybe", "-o", "o.csv"],
       ["sheets", "consolidate", csv, "--header-row", "0", "-o", "o.xlsx"],
+      ["sheets", "consolidate", csv, "--header-row", "1.5", "-o", "o.xlsx"],
+      ["db", "import", "history", "x.duckdb", "--limit", "abc"],
       ["sheets", "split", csv, "-c", "Region", "--header-row", "x"],
       ["sheets", "split", csv, "-c", "Region", "-o", out, "--output-dir", out],
       ["sheets", "split", pattern("*.csv"), "-c", "Region", "-o", out],

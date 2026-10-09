@@ -13,7 +13,7 @@ import {
   formatHumanError,
   formatHumanResult,
 } from "@consultchimps/messages";
-import { Command, CommanderError, InvalidArgumentError } from "commander";
+import { Command, CommanderError } from "commander";
 
 import {
   csvOutputOptions,
@@ -25,6 +25,7 @@ import {
 } from "./csv-options.js";
 import { formatWorkbookDescription } from "./describe-report.js";
 import { filesModule, pdfModule, pptxModule, xlsxModule } from "./modules.js";
+import { positiveInteger } from "./numbers.js";
 import { registerDbCommands } from "./commands/db.js";
 import { registerLogsCommands } from "./commands/logs.js";
 import { createCliProgress, finishActiveProgress } from "./progress.js";
@@ -117,14 +118,6 @@ interface PptxPopulateOptions {
 
 interface PptxInspectOptions {
   templateSlide?: number;
-}
-
-function positiveInteger(value: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new InvalidArgumentError("Expected a positive integer.");
-  }
-  return parsed;
 }
 
 // Reads a numeric option without judging it, for the options whose rule the
