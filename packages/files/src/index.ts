@@ -118,6 +118,16 @@ export function isPathWithin(
   );
 }
 
+/** A key naming the file a path reaches, or the path when it cannot be read. */
+async function fileIdentity(filePath: string): Promise<string> {
+  try {
+    const { dev, ino } = await stat(filePath, { bigint: true });
+    return ino === 0n ? `path:${filePath}` : `file:${dev}:${ino}`;
+  } catch {
+    return `path:${filePath}`;
+  }
+}
+
 export async function discoverFiles(
   inputs: string[],
   options: DiscoverFilesOptions = {},
@@ -131,8 +141,9 @@ export async function discoverFiles(
 
   const cwd = path.resolve(options.cwd ?? process.cwd());
   const extensions = normalizeExtensions(options.extensions);
-  // Keyed the way the platform compares paths, so a file named in one case
-  // and matched by a pattern in another is still one file.
+  // Keyed by the file itself (device and inode), so a file named in one case
+  // and matched by a pattern in another is one file where the volume folds
+  // case, and two files that differ only in case stay two where it does not.
   const discovered = new Map<string, string>();
 
   for (const input of inputs) {
@@ -157,13 +168,12 @@ export async function discoverFiles(
         onlyFiles: true,
       });
     }
-    matches
-      .map((match) => path.resolve(match))
-      .sort(comparePaths)
-      .forEach((match) => {
-        const key = filesystemPathKey(match);
-        if (!discovered.has(key)) discovered.set(key, match);
-      });
+    for (const match of matches
+      .map((candidate) => path.resolve(candidate))
+      .sort(comparePaths)) {
+      const key = await fileIdentity(match);
+      if (!discovered.has(key)) discovered.set(key, match);
+    }
   }
 
   const files = [...discovered.values()].filter(
