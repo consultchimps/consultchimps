@@ -507,6 +507,8 @@ describe("CSV typing", () => {
     const reader = new CsvNumberReader(".", "");
     expect(reader.read("1234.5")).toBe(1234.5);
     expect(reader.read("1,234")).toBeUndefined();
+    expect(reader.read(`0.${"0".repeat(400)}1`)).toBeUndefined();
+    expect(reader.read("0.000")).toBe(0);
   });
 
   it("reads ISO dates only when asked, and only whole real days", async () => {

@@ -55,6 +55,8 @@ export class CsvNumberReader {
       fraction === "" ? `${sign}${whole}` : `${sign}${whole}.${fraction}`,
     );
     if (!Number.isFinite(value)) return undefined;
+    // A nonzero field too small for a double reads as zero; it stays text.
+    if (value === 0 && significant !== "") return undefined;
     // Negative zero writes as zero everywhere, so it is read as zero.
     return value === 0 ? 0 : value;
   }
