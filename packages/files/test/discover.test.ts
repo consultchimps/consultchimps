@@ -73,6 +73,31 @@ describe("discoverFiles", () => {
     expect(discovered).toEqual([deep, top].sort());
   });
 
+  it("keeps the given order, with each pattern's matches sorted in place", async () => {
+    const directory = await createTemporaryDirectory();
+    const folder = path.join(directory, "folder");
+    await mkdir(folder);
+    const [zulu, alpha, beta, gamma] = [
+      path.join(directory, "zulu.pdf"),
+      path.join(directory, "alpha.pdf"),
+      path.join(folder, "beta.pdf"),
+      path.join(folder, "gamma.pdf"),
+    ];
+    for (const file of [zulu, alpha, beta, gamma]) await writeFile(file, "");
+
+    // A named file keeps its place, a folder adds its files alphabetically at
+    // its place, and a file named again is used once, where it first appears.
+    await expect(
+      discoverFiles([zulu, folder, alpha, zulu], {
+        extensions: [".pdf"],
+        order: "given",
+      }),
+    ).resolves.toEqual([zulu, beta, gamma, alpha]);
+    await expect(
+      discoverFiles([zulu, folder, alpha], { extensions: [".pdf"] }),
+    ).resolves.toEqual([alpha, beta, gamma, zulu]);
+  });
+
   it("normalizes extension filters with and without leading dots", async () => {
     const directory = await createTemporaryDirectory();
     const workbook = path.join(directory, "MIXED.XLSX");

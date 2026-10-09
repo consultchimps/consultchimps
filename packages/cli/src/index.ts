@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
+  ConsultChimpsError,
   isConsultChimpsError,
   type OperationResult,
 } from "@consultchimps/core";
@@ -12,7 +13,7 @@ import {
   formatHumanError,
   formatHumanResult,
 } from "@consultchimps/messages";
-import { Command, CommanderError } from "commander";
+import { Command, CommanderError, InvalidArgumentError } from "commander";
 
 import {
   csvOutputOptions,
@@ -121,7 +122,7 @@ interface PptxInspectOptions {
 function positiveInteger(value: string): number {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new Error("Expected a positive integer.");
+    throw new InvalidArgumentError("Expected a positive integer.");
   }
   return parsed;
 }
@@ -205,6 +206,22 @@ function printResult<TMetric extends string>(
 // report one stable code of their own rather than null, which is reserved for
 // genuinely unexpected failures.
 const USAGE_ERROR_CODE = "CLI_USAGE";
+
+// A usage mistake an action finds itself, after Commander has parsed the line,
+// reports the same code as one Commander finds.
+function usageError(message: string): ConsultChimpsError {
+  return new ConsultChimpsError(USAGE_ERROR_CODE, message);
+}
+
+/** The one file a single-input command reads, or a usage error. */
+function singleInput(paths: string[], kind: string): string {
+  if (paths.length !== 1 || !paths[0]) {
+    throw usageError(
+      `Expected exactly one input ${kind}; found ${paths.length}. Name one file, or a pattern that matches only one.`,
+    );
+  }
+  return paths[0];
+}
 
 // --json has to be read from argv rather than program.opts() because a usage
 // error is thrown before Commander finishes populating the parsed options. A
@@ -301,7 +318,7 @@ Run consultchimps help <command> or append --help to a command for all options.
 const sheets = program
   .command("sheets")
   .description(
-    "inspect, combine, or divide Excel workbooks without changing the original files",
+    "inspect, combine, or divide Excel workbooks and CSV files without changing the original files",
   )
   .addHelpText(
     "after",
@@ -313,8 +330,8 @@ Examples:
   consultchimps sheets split clients.xlsx -c Region -o by-region
 
 Safety:
-  Your original Excel workbooks are not changed. ConsultChimps creates new
-  output files and refuses to replace existing outputs unless you use --force.
+  Your original workbooks and CSV files are not changed. ConsultChimps creates
+  new output files and refuses to replace existing outputs unless you use --force.
 
 Run consultchimps sheets help <command> for all command options.
 `,
@@ -335,16 +352,17 @@ sheets
   )
   .action(
     async (input: string, options: { output: string; force?: boolean }) => {
-      const [inputPath] = await (
+      const inputPaths = await (
         await filesModule()
       ).discoverFiles([input], {
         extensions: [".xlsx", ".xlsm"],
       });
-      currentRecorder().recordInputs([inputPath!]);
+      currentRecorder().recordInputs(inputPaths);
+      const inputPath = singleInput(inputPaths, "workbook");
       const result = await (
         await xlsxModule()
       ).unprotectWorkbook({
-        input: inputPath!,
+        input: inputPath,
         output: options.output,
         overwrite: options.force === true,
       });
@@ -387,6 +405,11 @@ named after the file, its rows as they are, every field text unless
 and hidden/visible status. Duplicate tab names receive a suffix. --values
 removes formulas but always retains cell and workbook formatting.
 
+Order: files you name are merged in the order you give them. A folder or a
+quoted pattern adds the files it matches in alphabetical order of their paths,
+at its place in the list. A file named twice is used once, where it first
+appears.
+
 When you want one combined sheet instead of separate tabs:
   Use consultchimps sheets consolidate to stack the rows from every worksheet
   into a single sheet, matching columns by header.
@@ -395,7 +418,7 @@ When you want one combined sheet instead of separate tabs:
   .action(async (inputs: string[], options: SheetMergeOptions) => {
     const inputPaths = await (
       await filesModule()
-    ).discoverFiles(inputs, { extensions: [".xlsx", ".csv"] });
+    ).discoverFiles(inputs, { extensions: [".xlsx", ".csv"], order: "given" });
     currentRecorder().recordInputs(inputPaths);
     const csv = csvReadOptions(options);
     const progress = createCliProgress(
@@ -483,9 +506,10 @@ What happens:
   1. ConsultChimps finds the matching Excel and CSV files.
   2. It reads every selected, non-empty worksheet.
   3. It matches columns by header name and combines all data rows.
-  4. It writes one new workbook and explains exactly what was created.
+  4. It writes one new workbook or CSV file and explains exactly what was
+     created.
 
-Your original workbooks are never changed.
+Your original files are never changed.
 Consolidation already writes stored values rather than copying formulas;
 --values makes that requirement explicit.
 
@@ -557,15 +581,15 @@ withCsvOutputOptions(
       .argument("<input>", "the source .xlsx, .xlsm, or .csv file to divide")
       .requiredOption(
         "-c, --column <name>",
-        "column whose values decide which rows go into each new workbook",
+        "column whose values decide which rows go into each new file",
       )
       .option(
         "-o, --output <directory>",
-        "folder where the new workbooks will be saved",
+        "folder where the new files will be saved",
       )
       .option(
         "--output-dir <directory>",
-        "folder where the new workbooks will be saved (alias for --output)",
+        "folder where the new files will be saved (alias for --output)",
       )
       .option("--sheet <name>", "exact name of the worksheet to divide")
       .option(
@@ -645,15 +669,15 @@ formatting in a preserved workbook. A formula without a stored result becomes
 a formatted blank cell and is reported as a warning.
 
 Pro tip: before a table split, prepare the workbook exactly as you want to
-deliver it - set each sheet's zoom, place the cursor on cell A1 so every
-file opens consistently, add any cover sheet, and save.
+deliver it: set each sheet's zoom, place the cursor on cell A1 so every file
+opens consistently, add any cover sheet, and save.
 
-Your original workbook is never changed.
+Your original file is never changed.
 `,
   )
   .action(async (input: string, options: SheetSplitOptions) => {
     if (options.output && options.outputDir) {
-      throw new Error(
+      throw usageError(
         "Choose either --output or --output-dir; they name the same destination option.",
       );
     }
@@ -663,16 +687,7 @@ Your original workbook is never changed.
       extensions: [".xlsx", ".xlsm", ".csv"],
     });
     currentRecorder().recordInputs(inputPaths);
-    if (inputPaths.length !== 1) {
-      throw new Error(
-        `Expected exactly one input workbook; found ${inputPaths.length}.`,
-      );
-    }
-
-    const inputPath = inputPaths[0];
-    if (!inputPath) {
-      throw new Error("No input workbook was found.");
-    }
+    const inputPath = singleInput(inputPaths, "file");
     const csv = csvReadOptions(options);
 
     const outputDirectory =
@@ -748,10 +763,10 @@ What you get:
   3. The Excel Tables and named ranges the described worksheets contain.
 
 Sample values are the first few distinct non-empty values a column stores, at
-most five, reported exactly as the workbook holds them: text is quoted, so the
+most five, reported exactly as the file holds them: text is quoted, so the
 number 1 and the text "1" stay apart. Use --samples 0 for headers only.
 
-No file is created and nothing in the workbook is changed. Run this before
+No file is created and nothing in the source file is changed. Run this before
 consolidating, merging, or splitting to confirm the worksheet names, header
 rows, and column spellings those commands will match on.
 `,
@@ -763,16 +778,7 @@ rows, and column spellings those commands will match on.
       extensions: [".xlsx", ".xlsm", ".csv"],
     });
     currentRecorder().recordInputs(inputPaths);
-    if (inputPaths.length !== 1) {
-      throw new Error(
-        `Expected exactly one input workbook; found ${inputPaths.length}.`,
-      );
-    }
-
-    const inputPath = inputPaths[0];
-    if (!inputPath) {
-      throw new Error("No input workbook was found.");
-    }
+    const inputPath = singleInput(inputPaths, "file");
     const csv = csvReadOptions(options);
 
     const json = program.opts<GlobalOptions>().json === true;
@@ -870,9 +876,6 @@ supported.
           )
         : ["  - None"]),
       `Malformed placeholder locations: ${inspection.malformedPlaceholderCount}`,
-      `Unsupported split-run placeholders: ${
-        inspection.unsupportedSplitRunPlaceholders.join(", ") || "None"
-      }`,
       `Unsupported placeholder placements: ${
         inspection.unsupportedPlacementPlaceholders.join(", ") || "None"
       }`,
@@ -994,13 +997,11 @@ What happens:
 `,
   )
   .action(async (input: string, options: SplitOptions) => {
-    const [inputPath] = await (
+    const inputPaths = await (
       await filesModule()
     ).discoverFiles([input], { extensions: [".pdf"] });
-    currentRecorder().recordInputs([inputPath!]);
-    if (!inputPath) {
-      throw new Error("No input PDF was found.");
-    }
+    currentRecorder().recordInputs(inputPaths);
+    const inputPath = singleInput(inputPaths, "PDF");
     const outputDirectory =
       options.output ??
       path.join(path.dirname(inputPath), `${path.parse(inputPath).name}-pages`);
@@ -1043,15 +1044,20 @@ Examples:
   consultchimps pdf merge first.pdf second.pdf --output combined.pdf
 
 What happens:
-  ConsultChimps reads the matching PDFs in their resolved order, copies every
-  page into one new document, reports the final page count, and leaves every
-  source PDF unchanged.
+  ConsultChimps reads the PDFs in order, copies every page into one new
+  document, reports the final page count, and leaves every source PDF
+  unchanged.
+
+Order:
+  Files you name are merged in the order you give them. A folder or a quoted
+  pattern adds the PDFs it matches in alphabetical order of their paths, at its
+  place in the list. A file named twice is used once, where it first appears.
 `,
   )
   .action(async (inputs: string[], options: MergeOptions) => {
     const inputPaths = await (
       await filesModule()
-    ).discoverFiles(inputs, { extensions: [".pdf"] });
+    ).discoverFiles(inputs, { extensions: [".pdf"], order: "given" });
     currentRecorder().recordInputs(inputPaths);
     const progress = createCliProgress(
       program.opts<GlobalOptions>().json === true,

@@ -47,10 +47,10 @@ What you get:
   3. The Excel Tables and named ranges the described worksheets contain.
 
 Sample values are the first few distinct non-empty values a column stores, at
-most five, reported exactly as the workbook holds them: text is quoted, so the
+most five, reported exactly as the file holds them: text is quoted, so the
 number 1 and the text "1" stay apart. Use --samples 0 for headers only.
 
-No file is created and nothing in the workbook is changed. Run this before
+No file is created and nothing in the source file is changed. Run this before
 consolidating, merging, or splitting to confirm the worksheet names, header
 rows, and column spellings those commands will match on.
 

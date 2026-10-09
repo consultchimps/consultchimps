@@ -62,9 +62,10 @@ What happens:
   1. ConsultChimps finds the matching Excel and CSV files.
   2. It reads every selected, non-empty worksheet.
   3. It matches columns by header name and combines all data rows.
-  4. It writes one new workbook and explains exactly what was created.
+  4. It writes one new workbook or CSV file and explains exactly what was
+     created.
 
-Your original workbooks are never changed.
+Your original files are never changed.
 Consolidation already writes stored values rather than copying formulas;
 --values makes that requirement explicit.
 

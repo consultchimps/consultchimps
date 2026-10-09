@@ -17,8 +17,8 @@ export interface MessageVocabulary {
    */
   readonly actionNoun: string;
   /**
-   * Fragment that points at the list of created files, such as "listed below"
-   * in a scrolling transcript or "shown in the list of created files" in an
+   * Fragment that points at the list of created files, such as "listed above"
+   * in a scrolling transcript, where the next steps follow that list, or "shown in the list of created files" in an
    * interface that renders the files somewhere else.
    */
   readonly artifactListReference: string;
@@ -91,7 +91,7 @@ export const GENERIC_VOCABULARY: MessageVocabulary = {
  */
 export const CLI_VOCABULARY: MessageVocabulary = {
   actionNoun: "command",
-  artifactListReference: "listed below",
+  artifactListReference: "listed above",
   examplesReference: "Run the command again with --help if you need examples.",
   hiddenWorksheetOption:
     "If the data is on a hidden worksheet, review the --hidden option in the command help.",
@@ -124,6 +124,8 @@ interface OperationExplanation {
   ) => readonly string[];
   readonly summary: (result: OperationResult) => readonly string[];
   readonly title: string;
+  /** Metrics that say nothing about this result, left out of the details. */
+  readonly omittedMetrics?: (result: OperationResult) => readonly string[];
 }
 
 const numberFormatter = new Intl.NumberFormat("en-US");
@@ -154,6 +156,11 @@ function sheetInputFiles(result: OperationResult): string {
 /** Whether a sheets operation wrote CSV files rather than workbooks. */
 function writesCsv(result: OperationResult): boolean {
   return result.artifacts.some((artifact) => artifact.mediaType === "text/csv");
+}
+
+/** Whether any input of a sheets operation was a CSV file. */
+function readsCsv(result: OperationResult): boolean {
+  return metric(result, "csvInputFiles") > 0;
 }
 
 function sheetInputsUnchanged(result: OperationResult): string {
@@ -283,22 +290,22 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
     ],
   },
   "sheets.merge": {
-    title: "Your Excel workbook merge is complete.",
+    title: "Your workbook merge is complete.",
     summary: (result) => [
       `ConsultChimps copied ${quantity(metric(result, "outputSheets"), "worksheet")} from ${sheetInputFiles(result)} into one workbook.`,
       `${quantity(metric(result, "hiddenSheets"), "source worksheet")} ${metric(result, "hiddenSheets") === 1 ? "was" : "were"} hidden.`,
       sheetInputsUnchanged(result),
     ],
-    nextSteps: (vocabulary) => [
+    nextSteps: (vocabulary, result) => [
       `Open the new Excel workbook ${vocabulary.artifactListReference} and review the copied worksheets.`,
-      "Keep the original workbooks until you have confirmed the merged workbook is complete.",
+      `Keep the original ${readsCsv(result) ? "files" : "workbooks"} until you have confirmed the merged workbook is complete.`,
     ],
   },
   "sheets.consolidate": {
-    title: "Your Excel consolidation is complete.",
+    title: "Your consolidation is complete.",
     summary: (result) => {
       const lines = [
-        `ConsultChimps read ${sheetInputFiles(result)} and combined ${quantity(metric(result, "inputTables"), "visible worksheet")}.`,
+        `ConsultChimps read ${sheetInputFiles(result)} and combined ${quantity(metric(result, "inputTables"), readsCsv(result) ? "sheet" : "visible worksheet")}.`,
         `The finished ${writesCsv(result) ? "CSV file" : "workbook"} contains ${quantity(metric(result, "outputRows"), "data row")} arranged across ${quantity(metric(result, "outputColumns"), "column")}.`,
       ];
       // Title rows above a header and spacer columns between blocks are left
@@ -358,19 +365,25 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
     },
   },
   "sheets.split-by-column": {
-    title: "Your Excel workbook split is complete.",
+    title: "Your split is complete.",
     summary: (result) => {
       const splitSummary = workbookSplitSummary(result);
       const lines = [
-        `ConsultChimps read ${quantity(metric(result, "inputRows"), "data row")} from the source ${writesCsv(result) ? "file" : "workbook"}.`,
+        `ConsultChimps read ${quantity(metric(result, "inputRows"), "data row")} from the source file.`,
         `It found ${quantity(metric(result, "groups"), "distinct group")} and created ${quantity(metric(result, "outputFiles"), writesCsv(result) ? "separate CSV file" : "separate Excel workbook")}.`,
         `${quantity(metric(result, "outputRows"), "data row")} ${metric(result, "outputRows") === 1 ? "was" : "were"} retained across the new ${writesCsv(result) ? "files" : "workbooks"}, and ${quantity(metric(result, "skippedRows"), "row")} ${metric(result, "skippedRows") === 1 ? "was" : "were"} skipped.`,
       ];
       if (Object.hasOwn(result.metrics, "sheetsFiltered")) {
         lines.push(
-          `${quantity(metric(result, "sheetsFiltered"), "worksheet")} contained the split column and ${metric(result, "sheetsFiltered") === 1 ? "was" : "were"} filtered.`,
-          `${quantity(metric(result, "sheetsCopiedUnchanged"), "worksheet")} did not contain the split column and ${metric(result, "sheetsCopiedUnchanged") === 1 ? "was" : "were"} copied unchanged.`,
-          `Values-only mode was ${metric(result, "valuesOnly") === 1 ? "enabled" : "disabled"}.`,
+          `${quantity(metric(result, "sheetsFiltered"), "sheet")} contained the split column and ${metric(result, "sheetsFiltered") === 1 ? "was" : "were"} filtered.`,
+          `${quantity(metric(result, "sheetsCopiedUnchanged"), "sheet")} did not contain the split column and ${metric(result, "sheetsCopiedUnchanged") === 1 ? "was" : "were"} copied unchanged.`,
+        );
+      }
+      // Values-only mode replaces formulas, which only a workbook has, so it is
+      // worth a sentence only when it was asked for.
+      if (metric(result, "valuesOnly") === 1) {
+        lines.push(
+          "Formulas were replaced with their stored values (values-only mode).",
         );
       }
       if (splitSummary) {
@@ -382,11 +395,7 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
           `Output directory: ${splitSummary.outputDirectory}`,
         );
       }
-      lines.push(
-        writesCsv(result)
-          ? "Your original file was not changed."
-          : "Your original Excel workbook was not changed.",
-      );
+      lines.push("Your original file was not changed.");
       return lines;
     },
     nextSteps: (vocabulary, result) => [
@@ -409,7 +418,7 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
   "pdf.merge": {
     title: "Your PDF merge is complete.",
     summary: (result) => [
-      `ConsultChimps combined ${quantity(metric(result, "inputFiles"), "PDF file")} in the resolved input order.`,
+      `ConsultChimps combined ${quantity(metric(result, "inputFiles"), "PDF file")} in the order given, with the files a folder or pattern matched in alphabetical order.`,
       `The new PDF contains ${quantity(metric(result, "pages"), "page")}.`,
       "Your original PDF files were not changed.",
     ],
@@ -460,23 +469,45 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
   // sheet names, headers, and sample values travel beside it in the
   // description, so the next steps send the reader there rather than "above".
   "sheets.inspect": {
-    title: "Your Excel workbook inspection is complete.",
-    summary: (result) => [
-      `ConsultChimps described ${quantity(
-        metric(result, "worksheets"),
-        "worksheet",
-      )}, holding ${quantity(
-        metric(result, "headerColumns"),
-        "column",
-      )} and ${quantity(metric(result, "dataRows"), "data row")} in total.`,
-      `It also found ${quantity(
-        metric(result, "excelTables"),
-        "Excel Table",
-      )} and ${quantity(metric(result, "namedRanges"), "named range")}.`,
-      "Nothing was created or changed. An inspection only reads the workbook.",
-    ],
+    title: "Your inspection is complete.",
+    // A CSV file has no Excel Tables, named ranges, hidden worksheets, or
+    // formulas, so counting them for one would only suggest it might.
+    summary: (result) =>
+      readsCsv(result)
+        ? [
+            `ConsultChimps described the CSV file as one sheet, holding ${quantity(
+              metric(result, "headerColumns"),
+              "column",
+            )} and ${quantity(metric(result, "dataRows"), "data row")}.`,
+            "Nothing was created or changed. An inspection only reads the file.",
+          ]
+        : [
+            `ConsultChimps described ${quantity(
+              metric(result, "worksheets"),
+              "worksheet",
+            )}, holding ${quantity(
+              metric(result, "headerColumns"),
+              "column",
+            )} and ${quantity(metric(result, "dataRows"), "data row")} in total.`,
+            `It also found ${quantity(
+              metric(result, "excelTables"),
+              "Excel Table",
+            )} and ${quantity(metric(result, "namedRanges"), "named range")}.`,
+            "Nothing was created or changed. An inspection only reads the workbook.",
+          ],
+    // The summary already says whether the one file described was a CSV file.
+    omittedMetrics: (result) =>
+      readsCsv(result)
+        ? [
+            "csvInputFiles",
+            "excelTables",
+            "formulaCellsWithoutCachedValues",
+            "hiddenWorksheets",
+            "namedRanges",
+          ]
+        : ["csvInputFiles"],
     nextSteps: (vocabulary) => [
-      "Read the worksheet names, column headers, and sample values from the description that accompanies this result, and confirm they are the ones you expected before consolidating, merging, or splitting the workbook.",
+      "Read the worksheet names, column headers, and sample values from the description that accompanies this result, and confirm they are the ones you expected before consolidating, merging, or splitting the file.",
       "Check the header row of every worksheet: a report title above the real headers is skipped when it can be told from a header, and you can name the correct row when the guess is wrong.",
       vocabulary.spreadsheetOptionsReference,
     ],
@@ -538,9 +569,9 @@ const metricLabels: Readonly<Record<string, string>> = {
   inputFiles: "Input files read",
   namedRanges: "Named ranges found",
   inputRows: "Source data rows read",
-  inputTables: "Visible worksheets combined",
+  inputTables: "Sheets combined",
   malformedPlaceholderLocations: "Locations with malformed placeholder braces",
-  outputColumns: "Columns in the finished spreadsheet",
+  outputColumns: "Columns in the finished output",
   outputFiles: "New files created",
   outputRows: "Data rows written",
   outputSheets: "Source worksheets copied",
@@ -551,15 +582,20 @@ const metricLabels: Readonly<Record<string, string>> = {
   skippedRows: "Rows skipped",
   skippedSpacerColumns: "Empty spacer columns left out",
   skippedTitleRows: "Title rows above the column headers left out",
-  rowsDeleted: "Rows deleted across output workbooks",
+  rowsDeleted: "Rows removed across the new files",
   sheetProtectionsRemoved: "Worksheet protections removed",
-  sheetsCopiedUnchanged: "Worksheets copied without filtering",
-  sheetsFiltered: "Worksheets filtered",
+  sheetsCopiedUnchanged: "Sheets copied without filtering",
+  sheetsFiltered: "Sheets filtered",
   suggestedColumns: "Canonical columns proposed in the drafted mapping",
   unmappedColumns: "Columns that did not match the column mapping",
   unsupportedPlacementPlaceholders:
     "Placeholders outside a supported text shape",
-  unsupportedSplitRunPlaceholders: "Placeholders split across text runs",
+  unsupportedSplitRunPlaceholders:
+    "Placeholders split across text runs that could not be read",
+  calcChainEntriesRemoved: "Calculation chain entries removed",
+  formulaCellsBlankedForRemovedRows:
+    "Formula cells cleared because their rows were removed",
+  pivotTablesRemoved: "Pivot tables removed",
   formulaCellsConverted: "Formula cells converted to cached values",
   formulaCellsWithoutCachedValues: "Formula cells missing cached values",
   valuesOnly: "Values-only mode (1 enabled, 0 disabled)",
@@ -567,6 +603,18 @@ const metricLabels: Readonly<Record<string, string>> = {
   workbookProtectionsRemoved: "Workbook-structure protections removed",
   worksheets: "Worksheets described",
 };
+
+/**
+ * A metric's label. One without a written label is spelled out from its name,
+ * "pivotTablesRemoved" as "Pivot tables removed", so a new metric never reaches
+ * a reader as a raw identifier.
+ */
+function metricLabel(name: string): string {
+  const label = metricLabels[name];
+  if (label !== undefined) return label;
+  const words = name.replace(/([a-z0-9])([A-Z])/gu, "$1 $2").toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
 
 function artifactType(artifact: Artifact): string {
   if (artifact.mediaType === "application/vnd.sqlite3")
@@ -614,7 +662,7 @@ function genericExplanation(
     title: "Your task is complete.",
     summary: () => [
       `ConsultChimps completed the "${result.operation}" operation successfully.`,
-      `Review the detailed results and the files ${vocabulary.artifactListReference}.`,
+      "Review the detailed results and the files created.",
     ],
     nextSteps: () => [
       `Open the files ${vocabulary.artifactListReference} and confirm that they contain the expected results.`,
@@ -642,6 +690,7 @@ function renderResult(
   const explanation =
     operationExplanations[result.operation] ??
     genericExplanation(result, vocabulary);
+  const omitted = new Set(explanation.omittedMetrics?.(result) ?? []);
   const lines = [
     "SUCCESS: ConsultChimps finished your task.",
     "",
@@ -651,10 +700,11 @@ function renderResult(
     ...explanation.summary(result).map((line) => `  - ${line}`),
     "",
     "Detailed results:",
-    ...Object.entries(result.metrics).map(
-      ([name, value]) =>
-        `  - ${metricLabels[name] ?? name}: ${formatNumber(value)}`,
-    ),
+    ...Object.entries(result.metrics)
+      .filter(([name]) => !omitted.has(name))
+      .map(
+        ([name, value]) => `  - ${metricLabel(name)}: ${formatNumber(value)}`,
+      ),
     "",
     "Files created:",
   ];

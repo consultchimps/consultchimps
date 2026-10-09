@@ -2,6 +2,7 @@
  * The options every sheets command that reads CSV files takes (ADR 0007), and
  * their translation into the library's `CsvReadOptions`.
  */
+import { ConsultChimpsError } from "@consultchimps/core";
 import { InvalidArgumentError, type Command } from "commander";
 import type { CsvReadOptions } from "@consultchimps/xlsx";
 
@@ -133,7 +134,10 @@ export function csvOutputOptions(options: CsvOutputCliOptions): {
   if (options.csvBom !== undefined) {
     const value = options.csvBom.toLowerCase();
     if (value !== "true" && value !== "false") {
-      throw new Error(
+      // The option's parser refuses this first; kept for a caller that
+      // builds the options itself.
+      throw new ConsultChimpsError(
+        "CLI_USAGE",
         `--csv-bom takes true or false, not "${options.csvBom}".`,
       );
     }

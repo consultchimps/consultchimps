@@ -912,7 +912,9 @@ export async function createOutputPresentation(
       stage: "generating-slides",
       completed: index + 1,
       total: rows.length,
-      detail: partName(slidePath),
+      // The slide as a reader counts it in the finished presentation, which
+      // holds only the generated slides, rather than its package part name.
+      detail: `slide ${index + 1}`,
     });
   }
 

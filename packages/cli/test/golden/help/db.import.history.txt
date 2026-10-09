@@ -4,7 +4,7 @@ exit code: 0
 --- stdout ---
 Usage: consultchimps db import history [options] <database>
 
-List recorded batches and their source captures
+list recorded batches and their source captures
 
 Options:
   --limit <number>   maximum batch records (default: 50)

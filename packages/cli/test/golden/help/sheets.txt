@@ -4,7 +4,8 @@ exit code: 0
 --- stdout ---
 Usage: consultchimps sheets [options] [command]
 
-inspect, combine, or divide Excel workbooks without changing the original files
+inspect, combine, or divide Excel workbooks and CSV files without changing the
+original files
 
 Options:
   -h, --help                         display help for command
@@ -32,8 +33,8 @@ Examples:
   consultchimps sheets split clients.xlsx -c Region -o by-region
 
 Safety:
-  Your original Excel workbooks are not changed. ConsultChimps creates new
-  output files and refuses to replace existing outputs unless you use --force.
+  Your original workbooks and CSV files are not changed. ConsultChimps creates
+  new output files and refuses to replace existing outputs unless you use --force.
 
 Run consultchimps sheets help <command> for all command options.
 

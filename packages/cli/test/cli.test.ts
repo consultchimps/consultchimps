@@ -306,7 +306,7 @@ describe("consultchimps CLI", () => {
     expect(consolidateHelp.stdout).toContain("Examples:");
     expect(consolidateHelp.stdout).toContain("What happens:");
     expect(consolidateHelp.stdout).toContain(
-      "Your original workbooks are never changed.",
+      "Your original files are never changed.",
     );
 
     const splitHelp = await runCli(["sheets", "split", "--help"]);
@@ -455,6 +455,48 @@ describe("consultchimps CLI", () => {
     expect(craftedArgument.stderr.endsWith("\n")).toBe(true);
   });
 
+  it("gives every usage mistake a code, never null", async () => {
+    const directory = await createTemporaryDirectory();
+    const csv = path.join(directory, "inputs", "orders.csv");
+    await writeFile(csv, "Region,Amount\nNorth,1\n");
+    await writeFile(path.join(directory, "inputs", "more.csv"), "Region\nX\n");
+    const pdfSource = await PDFDocument.create();
+    pdfSource.addPage();
+    const pdfBytes = await pdfSource.save();
+    await writeFile(path.join(directory, "inputs", "a.pdf"), pdfBytes);
+    await writeFile(path.join(directory, "inputs", "b.pdf"), pdfBytes);
+    for (const name of ["a.xlsx", "b.xlsx"]) {
+      await writeWorkbook(path.join(directory, "inputs", name), [
+        ["Sheet1", [["Value"], [1]]],
+      ]);
+    }
+    const out = path.join(directory, "outputs");
+    const pattern = (name: string) => path.join(directory, "inputs", name);
+
+    const mistakes: string[][] = [
+      ["sheets", "consolidate", csv, "--csv-bom", "maybe", "-o", "o.csv"],
+      ["sheets", "consolidate", csv, "--header-row", "0", "-o", "o.xlsx"],
+      ["sheets", "split", csv, "-c", "Region", "--header-row", "x"],
+      ["sheets", "split", csv, "-c", "Region", "-o", out, "--output-dir", out],
+      ["sheets", "split", pattern("*.csv"), "-c", "Region", "-o", out],
+      ["sheets", "inspect", pattern("*.csv")],
+      ["sheets", "unprotect", pattern("*.xlsx"), "-o", "o.xlsx"],
+      ["pdf", "split", pattern("*.pdf"), "-o", out],
+      ["pptx", "inspect-template", "t.pptx", "--template-slide", "0"],
+      ["logs", "list", "--limit", "0"],
+      ["db", "create", "--format", "other", "-o", "x.db"],
+      ["sheets", "split", csv],
+      ["sheets", "nothing"],
+      ["--bogus"],
+    ];
+    for (const args of mistakes) {
+      const outcome = await runCli(["--json", ...args], 1);
+      expect(parseJsonError(outcome.stdout).code, args.join(" ")).toBe(
+        "CLI_USAGE",
+      );
+    }
+  });
+
   it("inspects and populates a PowerPoint template through the built command", async () => {
     const directory = await createTemporaryDirectory();
     const template = path.join(directory, "inputs", "profile.pptx");
@@ -569,7 +611,7 @@ describe("consultchimps CLI", () => {
     expect(help.stdout).toContain("--samples <number>");
     expect(help.stdout).toContain("consultchimps sheets inspect clients.xlsx");
     expect(help.stdout.replace(/\s+/g, " ")).toContain(
-      "No file is created and nothing in the workbook is changed.",
+      "No file is created and nothing in the source file is changed.",
     );
 
     const command = await runCli(["sheets", "inspect", input]);
@@ -590,9 +632,7 @@ describe("consultchimps CLI", () => {
     expect(command.stdout).toContain("Named ranges:");
     // The description is rendered beside the result the messages package
     // explains, and an inspection reports no artifacts because it writes none.
-    expect(command.stdout).toContain(
-      "Your Excel workbook inspection is complete.",
-    );
+    expect(command.stdout).toContain("Your inspection is complete.");
     expect(command.stdout).toContain(
       "Nothing was created or changed. An inspection only reads the workbook.",
     );
@@ -1137,8 +1177,8 @@ describe("consultchimps CLI", () => {
       output,
       "--force",
     ]);
-    expect(force.stderr).toContain("Reading workbooks 1/2: north.xlsx");
-    expect(force.stderr).toContain("Reading workbooks 2/2: south.xlsx");
+    expect(force.stderr).toContain("Reading inputs 1/2: north.xlsx");
+    expect(force.stderr).toContain("Reading inputs 2/2: south.xlsx");
     expect(force.stderr).toContain("Writing output 1/1: consolidated.xlsx");
   });
 
@@ -1341,7 +1381,7 @@ describe("consultchimps CLI", () => {
       "--no-index",
       "--values",
     ]);
-    expect(human.stdout).toContain("Your Excel workbook merge is complete.");
+    expect(human.stdout).toContain("Your workbook merge is complete.");
     // Human mode narrates each merged input and the final write on stderr.
     expect(human.stderr).toContain("Merging inputs 1/2: north.xlsx");
     expect(human.stderr).toContain("Merging inputs 2/2: south.xlsx");

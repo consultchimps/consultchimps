@@ -66,8 +66,10 @@ envelope, and the command still exits with a nonzero status:
 errors, which have no stable code to depend on. The same object is repeated on
 stderr so failures remain visible there, but stdout alone is always valid JSON.
 
-Usage errors (an unknown option, an unknown command, or a missing required
-option) are reported the same way under `--json`, with the code `CLI_USAGE`:
+Usage errors (an unknown option, an unknown command, a missing required option,
+an invalid option value, conflicting options, or a pattern that matches more
+than one file for a command that reads one) are reported the same way under
+`--json`, with the code `CLI_USAGE`:
 
 ```json
 {
@@ -107,9 +109,9 @@ automation.
 
 Long-running operations additionally report progress on standard error while
 they work: the current stage with counts, such as
-`Reading workbooks 3/14: report.xlsx`, updated in place on an interactive
-terminal and printed as plain lines elsewhere. Progress never appears under
-`--json`, so piped output stays clean.
+`Reading inputs 3/14: report.xlsx`, updated in place on an interactive terminal
+and printed as plain lines elsewhere. Progress never appears under `--json`, so
+piped output stays clean.
 
 Documents and filenames are untrusted input, and a control character written to
 a terminal is an instruction rather than a character. Four places carry such
@@ -279,11 +281,14 @@ Options:
   --csv-dates <order>       read CSV dates: iso, dmy, mdy, or ymd
 ```
 
-The command copies every source worksheet into a separate tab in resolved input
-order. Duplicate worksheet names receive a numeric suffix. Source visibility is
-retained, and the default `Sheet Index` records each source file, original tab
-name, final tab name, and visibility. A `.csv` input becomes one tab named after
-the file; see [CSV files](#csv-files).
+The command copies every source worksheet into a separate tab in input order.
+Files you name are used in the order you give them. A folder or a quoted pattern
+adds the files it matches in alphabetical order of their paths, at its place in
+the list, and a file named twice is used once, where it first appears. Duplicate
+worksheet names receive a numeric suffix. Source visibility is retained, and the
+default `Sheet Index` records each source file, original tab name, final tab
+name, and visibility. A `.csv` input becomes one tab named after the file; see
+[CSV files](#csv-files).
 
 ## Spreadsheet splitting
 
@@ -408,6 +413,11 @@ Required:
 Options:
   -f, --force               replace an existing output file
 ```
+
+The command copies every page of each PDF, one document after another, in input
+order. Files you name are used in the order you give them. A folder or a quoted
+pattern adds the files it matches in alphabetical order of their paths, at its
+place in the list, and a file named twice is used once, where it first appears.
 
 <Feature name="database">
 

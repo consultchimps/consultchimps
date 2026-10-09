@@ -45,6 +45,11 @@ named after the file, its rows as they are, every field text unless
 and hidden/visible status. Duplicate tab names receive a suffix. --values
 removes formulas but always retains cell and workbook formatting.
 
+Order: files you name are merged in the order you give them. A folder or a
+quoted pattern adds the files it matches in alphabetical order of their paths,
+at its place in the list. A file named twice is used once, where it first
+appears.
+
 When you want one combined sheet instead of separate tabs:
   Use consultchimps sheets consolidate to stack the rows from every worksheet
   into a single sheet, matching columns by header.

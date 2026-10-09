@@ -1,0 +1,8 @@
+$ consultchimps sheets consolidate inputs/north.xlsx --header-row 0 -o combined.xlsx
+exit code: 1
+
+--- stdout ---
+(empty)
+
+--- stderr ---
+error: option '--header-row <number>' argument '0' is invalid. Expected a positive integer.

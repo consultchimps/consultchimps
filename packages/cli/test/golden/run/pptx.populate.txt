@@ -30,10 +30,10 @@ Warnings:
   - None. ConsultChimps did not detect any recoverable problems during this task.
 
 What you can do next:
-  - Open the new PowerPoint presentation listed below and review every generated slide.
+  - Open the new PowerPoint presentation listed above and review every generated slide.
   - Check longer replacement values for fit because this version does not shrink or truncate text automatically.
 
 --- stderr ---
-Generating slides 1/2: slide2.xml
-Generating slides 2/2: slide3.xml
+Generating slides 1/2: slide 1
+Generating slides 2/2: slide 2
 Writing output 1/1: profiles.pptx

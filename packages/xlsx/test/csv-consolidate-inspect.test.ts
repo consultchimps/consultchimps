@@ -322,6 +322,7 @@ describe("CSV files on the command line surface", () => {
       { csv: { numbers: true, decimalSeparator: "," } },
     );
     expect(fromBlob).toEqual(fromFile);
+    expect(fromFile.result.metrics.csvInputFiles).toBe(1);
     expect(fromFile.description).toMatchObject({
       source: "east.csv",
       csv: { encoding: "utf-8", delimiter: ";" },

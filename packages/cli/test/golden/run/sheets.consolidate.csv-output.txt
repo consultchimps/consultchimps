@@ -4,10 +4,10 @@ exit code: 0
 --- stdout ---
 SUCCESS: ConsultChimps finished your task.
 
-Your Excel consolidation is complete.
+Your consolidation is complete.
 
 What ConsultChimps did:
-  - ConsultChimps read 1 Excel file and 1 CSV file and combined 2 visible worksheets.
+  - ConsultChimps read 1 Excel file and 1 CSV file and combined 2 sheets.
   - The finished CSV file contains 4 data rows arranged across 6 columns.
   - Your original files were not changed.
 
@@ -15,8 +15,8 @@ Detailed results:
   - CSV files read, each as one worksheet: 1
   - Formula cells missing cached values: 0
   - Input files read: 2
-  - Visible worksheets combined: 2
-  - Columns in the finished spreadsheet: 6
+  - Sheets combined: 2
+  - Columns in the finished output: 6
   - Data rows written: 4
   - Empty spacer columns left out: 0
   - Title rows above the column headers left out: 0
@@ -31,10 +31,10 @@ Warnings:
   - None. ConsultChimps did not detect any recoverable problems during this task.
 
 What you can do next:
-  - Open the new CSV file listed below and review the consolidated rows.
+  - Open the new CSV file listed above and review the consolidated rows.
   - Keep the source columns in the file if you need to trace a row back to its original file and worksheet.
 
 --- stderr ---
-Reading workbooks 1/2: east.csv
-Reading workbooks 2/2: north.xlsx
+Reading inputs 1/2: east.csv
+Reading inputs 2/2: north.xlsx
 Writing output 1/1: combined.csv

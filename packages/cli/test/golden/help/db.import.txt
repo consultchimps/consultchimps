@@ -4,22 +4,22 @@ exit code: 0
 --- stdout ---
 Usage: consultchimps db import [options] [command]
 
-Prepare, review, apply, and audit workbook batches
+prepare, review, apply, and audit workbook batches
 
 Options:
   -h, --help                    display help for command
 
 Commands:
-  inspect [options] <batch>     Inspect a saved batch without reading Excel
-  prepare [options] <database>  Capture workbook data into a durable, reviewable
+  inspect [options] <batch>     inspect a saved batch without reading Excel
+  prepare [options] <database>  capture workbook data into a durable, reviewable
                                 batch
-  run [options] <database>      Prepare and apply a workbook batch with one
+  run [options] <database>      prepare and apply a workbook batch with one
                                 profile
-  apply [options] <database>    Apply a reviewed saved batch
-  update [options] <database>   Update a saved batch's table routing and column
+  apply [options] <database>    apply a reviewed saved batch
+  update [options] <database>   update a saved batch's table routing and column
                                 mapping
-  history [options] <database>  List recorded batches and their source captures
-  record [options] <database>   Record another batch without importing row
+  history [options] <database>  list recorded batches and their source captures
+  record [options] <database>   record another batch without importing row
                                 values again
   help [command]                display help for command
 

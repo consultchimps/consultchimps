@@ -29,7 +29,7 @@ describe("human-readable CLI output", () => {
   it.each([
     {
       expected: [
-        "Your Excel consolidation is complete.",
+        "Your consolidation is complete.",
         "2 Excel files",
         "3 visible worksheets",
         "10 data rows",
@@ -49,12 +49,12 @@ describe("human-readable CLI output", () => {
     },
     {
       expected: [
-        "Your Excel workbook split is complete.",
+        "Your split is complete.",
         "10 data rows",
         "3 distinct groups",
         "3 separate Excel workbooks",
         "1 row was skipped",
-        "Your original Excel workbook was not changed.",
+        "Your original file was not changed.",
       ],
       value: result(
         "sheets.split-by-column",
@@ -103,8 +103,48 @@ describe("human-readable CLI output", () => {
     expect(output).toContain("Files created:");
     expect(output).toContain("Warnings:");
     expect(output).toContain("What you can do next:");
-    expect(output).toContain("listed below");
+    expect(output).toContain("listed above");
     expected.forEach((text) => expect(output).toContain(text));
+  });
+
+  it("spells out a metric that has no written label", () => {
+    const output = formatHumanResult(
+      result(
+        "sheets.split-by-column",
+        {
+          someNewCount: 2,
+          pivotTablesRemoved: 1,
+        },
+        [],
+      ),
+      cli,
+    );
+
+    expect(output).toContain("  - Some new count: 2");
+    expect(output).toContain("  - Pivot tables removed: 1");
+    expect(output).not.toMatch(/^ {2}- [a-z]+[A-Z]\w*:/mu);
+  });
+
+  it("names a CSV input as a file, never a workbook", () => {
+    const inspection = formatHumanResult(
+      result(
+        "sheets.inspect",
+        {
+          csvInputFiles: 1,
+          dataRows: 3,
+          excelTables: 0,
+          headerColumns: 2,
+          namedRanges: 0,
+          worksheets: 1,
+        },
+        [],
+      ),
+      cli,
+    );
+
+    expect(inspection).toContain("described the CSV file as one sheet");
+    expect(inspection).toContain("An inspection only reads the file.");
+    expect(inspection).not.toMatch(/workbook|Excel/u);
   });
 
   it("explains worksheet merges without exposing raw metric names", () => {
@@ -118,7 +158,7 @@ describe("human-readable CLI output", () => {
       cli,
     );
 
-    expect(output).toContain("Your Excel workbook merge is complete.");
+    expect(output).toContain("Your workbook merge is complete.");
     expect(output).toContain("4 worksheets");
     expect(output).toContain("2 Excel files");
     expect(output).toContain("1 source worksheet was hidden");
@@ -377,7 +417,7 @@ describe("human-readable CLI output", () => {
       "It also drafted a column mapping proposing 3 canonical columns, and applied none of them.",
     );
     expect(drafted).toContain(
-      "Review and edit the drafted column mapping listed below",
+      "Review and edit the drafted column mapping listed above",
     );
     expect(drafted).not.toContain("did not match the column mapping and");
 
@@ -490,7 +530,9 @@ describe("human-readable CLI output", () => {
     // Every metric reads as plain language, never as its internal name.
     expect(output).toContain("Locations with malformed placeholder braces: 1");
     expect(output).toContain("Distinct placeholder fields: 2");
-    expect(output).toContain("Placeholders split across text runs: 0");
+    expect(output).toContain(
+      "Placeholders split across text runs that could not be read: 0",
+    );
     expect(output).not.toContain("malformedPlaceholderLocations:");
     expect(output).not.toContain("unsupportedSplitRunPlaceholders:");
 
@@ -533,7 +575,7 @@ describe("human-readable CLI output", () => {
       cli,
     );
 
-    expect(output).toContain("Your Excel workbook inspection is complete.");
+    expect(output).toContain("Your inspection is complete.");
     expect(output).toContain(
       "ConsultChimps described 2 worksheets, holding 5 columns and 12 data rows in total.",
     );
@@ -593,7 +635,7 @@ describe("human-readable CLI output", () => {
     expect(output).not.toContain("workbookProtectionsRemoved:");
 
     expect(output).toContain(
-      "Open the new Excel workbook listed below and confirm that you can edit the worksheets and workbook structure.",
+      "Open the new Excel workbook listed above and confirm that you can edit the worksheets and workbook structure.",
     );
   });
 
@@ -660,7 +702,7 @@ describe("human-readable CLI output", () => {
     expect(output).toContain("Folder");
     expect(output).toContain("PowerPoint presentation");
     expect(output).toContain("Type: File");
-    expect(output).toContain("customMetric: 2");
+    expect(output).toContain("Custom metric: 2");
     expect(output).toContain("1. One recoverable warning.");
   });
 
@@ -750,7 +792,7 @@ describe("interface-neutral output", () => {
     expect(output).toContain(
       "Open the new PDF files shown in the list of created files",
     );
-    expect(output).not.toContain("listed below");
+    expect(output).not.toContain("listed above");
     commandLineVocabulary.forEach((phrase) =>
       expect(output).not.toContain(phrase),
     );

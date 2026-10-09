@@ -4,7 +4,7 @@ exit code: 0
 --- stdout ---
 Usage: consultchimps db import run [options] <database>
 
-Prepare and apply a workbook batch with one profile
+prepare and apply a workbook batch with one profile
 
 Options:
   --input <source>       workbook path or alias=path; existing paths are used as

@@ -98,7 +98,9 @@ const workbooks = await discoverFiles(
 );
 ```
 
-The result contains unique, absolute, sorted paths.
+The result contains unique, absolute paths in alphabetical order. With
+`order: "given"` it keeps the order of the inputs instead: a named file keeps
+its place, and a folder or pattern adds its matches alphabetically at its place.
 
 ## Union in-memory tables
 

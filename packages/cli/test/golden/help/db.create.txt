@@ -4,7 +4,7 @@ exit code: 0
 --- stdout ---
 Usage: consultchimps db create [options]
 
-Create a persistent SQLite or DuckDB file
+create a persistent SQLite or DuckDB file
 
 Options:
   -o, --output <file>  new database file

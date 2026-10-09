@@ -4,19 +4,19 @@ exit code: 0
 --- stdout ---
 Usage: consultchimps db [options] [command]
 
-Create persistent local databases, manage schemas, and import workbook
+create persistent local databases, manage schemas, and import workbook
 submissions
 
 Options:
   -h, --help                   display help for command
 
 Commands:
-  create [options]             Create a persistent SQLite or DuckDB file
-  inspect <database>           Inspect a database without changing it
-  schema                       Manage database table definitions
-  import                       Prepare, review, apply, and audit workbook
+  create [options]             create a persistent SQLite or DuckDB file
+  inspect <database>           inspect a database without changing it
+  schema                       manage database table definitions
+  import                       prepare, review, apply, and audit workbook
                                batches
-  export [options] <database>  Create a validated database copy or convert its
+  export [options] <database>  create a validated database copy or convert its
                                storage format
   help [command]               display help for command
 

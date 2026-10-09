@@ -12,10 +12,10 @@ Arguments:
 
 Options:
   -c, --column <name>          column whose values decide which rows go into
-                               each new workbook
-  -o, --output <directory>     folder where the new workbooks will be saved
-  --output-dir <directory>     folder where the new workbooks will be saved
-                               (alias for --output)
+                               each new file
+  -o, --output <directory>     folder where the new files will be saved
+  --output-dir <directory>     folder where the new files will be saved (alias
+                               for --output)
   --sheet <name>               exact name of the worksheet to divide
   --table <name>               use this named Excel Table instead of the
                                worksheet's full used range (preferred)
@@ -87,10 +87,10 @@ formatting in a preserved workbook. A formula without a stored result becomes
 a formatted blank cell and is reported as a warning.
 
 Pro tip: before a table split, prepare the workbook exactly as you want to
-deliver it - set each sheet's zoom, place the cursor on cell A1 so every
-file opens consistently, add any cover sheet, and save.
+deliver it: set each sheet's zoom, place the cursor on cell A1 so every file
+opens consistently, add any cover sheet, and save.
 
-Your original workbook is never changed.
+Your original file is never changed.
 
 
 --- stderr ---

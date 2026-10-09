@@ -269,7 +269,7 @@ async function writePowerPointTemplate(filePath: string): Promise<void> {
   );
   zip.file(
     "ppt/slides/slide1.xml",
-    '<?xml version="1.0" encoding="UTF-8"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:sp><p:nvSpPr><p:cNvPr id="2" name="Profile"/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:p><a:r><a:t>{{company}}: {{revenue}}</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>',
+    '<?xml version="1.0" encoding="UTF-8"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:sp><p:nvSpPr><p:cNvPr id="2" name="Profile"/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:p><a:r><a:t>{{com</a:t></a:r><a:r><a:rPr b="1"/><a:t>pany}}: {{revenue}}</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>',
   );
   await writeFile(
     filePath,
@@ -333,6 +333,9 @@ async function writeInputs(directory: string): Promise<void> {
   ]);
   await writePdf(path.join(inputs, "report.pdf"), 3);
   await writePdf(path.join(inputs, "appendix.pdf"), 1);
+  await mkdir(path.join(inputs, "chapters"));
+  await writePdf(path.join(inputs, "chapters", "two.pdf"), 1);
+  await writePdf(path.join(inputs, "chapters", "one.pdf"), 2);
   await writeFile(path.join(inputs, "not-a-pdf.pdf"), "plain text, not a PDF");
   await writeFile(path.join(inputs, "existing.pdf"), "");
 }
@@ -493,7 +496,19 @@ const runCases: RunCase[] = [
       "combined.pdf",
     ],
   },
-  // One refusal per command family, a usage error, and an unexpected error.
+  {
+    // A named file keeps its place; a folder adds its files alphabetically.
+    name: "pdf.merge.folder",
+    args: [
+      "pdf",
+      "merge",
+      "inputs/appendix.pdf",
+      "inputs/chapters",
+      "-o",
+      "combined.pdf",
+    ],
+  },
+  // One refusal per command family, and usage errors.
   {
     name: "refusal.sheets.split-missing-column",
     args: [
@@ -545,8 +560,19 @@ const runCases: RunCase[] = [
     args: ["pdf", "split", "inputs/not-a-pdf.pdf", "-o", "pages"],
   },
   {
-    // A plain Error, so it reports no error code.
-    name: "refusal.unexpected.split-two-destinations",
+    name: "refusal.usage.header-row-zero",
+    args: [
+      "sheets",
+      "consolidate",
+      "inputs/north.xlsx",
+      "--header-row",
+      "0",
+      "-o",
+      "combined.xlsx",
+    ],
+  },
+  {
+    name: "refusal.usage.split-two-destinations",
     args: [
       "sheets",
       "split",
@@ -567,6 +593,8 @@ describe("run goldens", () => {
     temporaryDirectories.push(created);
     await writeInputs(created);
     const run = await runCli(args, created);
+    // Every detail is a plain-language label, never a raw metric name.
+    expect(run.stdout).not.toMatch(/^ {2}- [a-z]+[A-Z]\w*:/mu);
     // The CLI may print the folder as created, as resolved through links, or
     // (on Windows) in its long form, so all of them are rewritten.
     const directories = [...new Set([await realpath(created), created])].sort(
