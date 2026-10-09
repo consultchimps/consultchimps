@@ -103,8 +103,15 @@ export function csvSheetName(file: string): string {
 export type CsvEncodingSource =
   "chosen" | "byte-order-mark" | "valid-utf-8" | "fallback";
 
-function byteOrderMark(head: Uint8Array): CsvEncoding | undefined {
+function byteOrderMark(head: Uint8Array): CsvEncoding | "utf-32" | undefined {
   if (head[0] === 0xef && head[1] === 0xbb && head[2] === 0xbf) return "utf-8";
+  // UTF-32 LE's mark begins with UTF-16 LE's, so it is told apart first.
+  if (
+    (head[0] === 0xff && head[1] === 0xfe && head[2] === 0 && head[3] === 0) ||
+    (head[0] === 0 && head[1] === 0 && head[2] === 0xfe && head[3] === 0xff)
+  ) {
+    return "utf-32";
+  }
   if (head[0] === 0xff && head[1] === 0xfe) return "utf-16le";
   if (head[0] === 0xfe && head[1] === 0xff) return "utf-16be";
   return undefined;
@@ -316,7 +323,15 @@ export class CsvWorkbook {
   ): Promise<CsvWorkbook> {
     const size = source.size;
     const head = await source.readAt(0, Math.min(4, size));
-    const marked = byteOrderMark(head);
+    const mark = byteOrderMark(head);
+    if (mark === "utf-32") {
+      throw new ConsultChimpsError(
+        XLSX_ERRORS.XLSX_CSV_ENCODING_UNKNOWN,
+        `${context.source} starts with a UTF-32 byte order mark, and UTF-32 text is not read. Save it as UTF-8 and run again.`,
+        { details: context.details },
+      );
+    }
+    const marked = mark;
     const validator =
       options.encoding === undefined && marked === undefined
         ? new TextDecoder("utf-8", { fatal: true })
@@ -595,7 +610,7 @@ export class CsvWorkbook {
       if (open > CSV_MAX_OPEN_ROW_CHARS && failure === undefined) {
         failure = malformed(
           row + 1,
-          "runs past 16 MB of text without ending, so it most likely opens a quoted field that is never closed",
+          "is longer than 16 MB, the most one row may hold here; a row that long is most often a quote that opens a field and is never closed",
         );
       }
     };

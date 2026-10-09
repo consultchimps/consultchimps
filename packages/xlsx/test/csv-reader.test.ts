@@ -380,6 +380,17 @@ describe("CSV encodings", () => {
     ]);
   });
 
+  it("refuses UTF-32, whose mark begins as UTF-16 LE's does", async () => {
+    for (const mark of [
+      [0xff, 0xfe, 0, 0],
+      [0, 0, 0xfe, 0xff],
+    ]) {
+      const error = await failure(Uint8Array.from([...mark, 0x61, 0, 0, 0]));
+      expect(error.code).toBe("XLSX_CSV_ENCODING_UNKNOWN");
+      expect(error.message).toContain("UTF-32");
+    }
+  });
+
   it("refuses zero bytes without a byte order mark", async () => {
     const bytes = utf16(text, true).subarray(2);
     const error = await failure(bytes);
@@ -596,7 +607,7 @@ describe("a row that never ends", () => {
     }
     expect((caught as ConsultChimpsError).code).toBe("XLSX_CSV_MALFORMED");
     expect((caught as ConsultChimpsError).message).toContain(
-      "row 2 runs past 16 MB of text without ending",
+      "row 2 is longer than 16 MB, the most one row may hold here",
     );
     expect(furthest).toBeLessThan(bytes.length);
   });
