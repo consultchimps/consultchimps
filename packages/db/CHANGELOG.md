@@ -1,5 +1,15 @@
 # @consultchimps/db
 
+## 0.2.3
+
+### Patch Changes
+
+- Updated dependencies [c688e0b]
+- Updated dependencies [bdf145b]
+- Updated dependencies [3693e97]
+- Updated dependencies [47b2661]
+  - @consultchimps/xlsx@0.21.0
+
 ## 0.2.2
 
 ### Patch Changes
