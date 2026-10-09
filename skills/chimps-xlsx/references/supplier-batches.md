@@ -111,7 +111,7 @@ npx consultchimps@0.14.1 --json sheets consolidate mapped-row1.xlsx mapped-row3.
 ## 5. Reconcile and hand over
 
 - The sum of `dataRowCount` across the inputs equals `metrics.outputRows` of the
-  last run, less any annotation rows you removed. A title block 0.14.0 skips on
+  last run, less any annotation rows you removed. A title block 0.14.1 skips on
   its own is already left out of both counts. For a file you consolidated with
   `--header-row`, step 1's `dataRowCount` (read without it) also counts every
   filled row between the title and the real header, and the real header itself;
