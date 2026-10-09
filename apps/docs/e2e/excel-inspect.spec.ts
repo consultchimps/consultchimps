@@ -54,6 +54,24 @@ function report(page: Page): Locator {
 }
 
 test.describe("/tools/excel-inspect", () => {
+  test("describes a CSV file as one worksheet and says how it was read", async ({
+    page,
+  }) => {
+    await page.goto("/tools/excel-inspect");
+    await fileInput(page).setInputFiles({
+      name: "cases.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from("Region;Amount\r\nNorth;1,5\r\n", "utf8"),
+    });
+    await expect(page.getByTestId("csv-options")).toBeVisible();
+    await expect(report(page).getByTestId("inspection-csv")).toContainText(
+      "Read as UTF-8 text, delimited by semicolons",
+    );
+    await expect(report(page).getByTestId("worksheet-name")).toHaveText([
+      "cases",
+    ]);
+  });
+
   test("describes the worksheets, structures, and sample values", async ({
     page,
   }) => {

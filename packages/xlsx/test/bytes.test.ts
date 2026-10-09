@@ -1445,6 +1445,7 @@ describe("byte-level workbook consolidation", () => {
 
     expect(result.operation).toBe("sheets.consolidate");
     expect(result.metrics).toEqual({
+      csvInputFiles: 0,
       formulaCellsWithoutCachedValues: 0,
       inputFiles: 2,
       inputTables: 2,
@@ -1532,6 +1533,7 @@ describe("byte-level workbook consolidation", () => {
       normalizeHeaders: true,
     });
     expect(normalized.result.metrics).toEqual({
+      csvInputFiles: 0,
       formulaCellsWithoutCachedValues: 0,
       inputFiles: 3,
       inputTables: 4,

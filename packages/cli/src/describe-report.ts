@@ -1,9 +1,24 @@
 import type {
+  CsvEncoding,
   WorkbookColumnDescription,
   WorkbookDescription,
 } from "@consultchimps/xlsx";
 
 import { printable, quotedValue } from "./text.js";
+
+const CSV_ENCODING_NAMES: Record<CsvEncoding, string> = {
+  "utf-8": "UTF-8",
+  "utf-16le": "UTF-16 LE",
+  "utf-16be": "UTF-16 BE",
+  "windows-1252": "Windows-1252",
+};
+
+const CSV_DELIMITER_NAMES: Record<string, string> = {
+  ",": "commas",
+  ";": "semicolons",
+  "\t": "tabs",
+  "|": "pipes",
+};
 
 /**
  * The human-readable half of `sheets inspect`.
@@ -57,11 +72,17 @@ function formatColumn(column: WorkbookColumnDescription): string {
 export function formatWorkbookDescription(
   description: WorkbookDescription,
 ): string {
-  const lines = [
-    `Excel workbook inspection: ${printable(description.source)}`,
-    "",
-    "Worksheets:",
-  ];
+  const csv = description.csv;
+  const lines =
+    csv === undefined
+      ? [`Excel workbook inspection: ${printable(description.source)}`]
+      : [
+          `CSV file inspection: ${printable(description.source)}`,
+          `Read as ${CSV_ENCODING_NAMES[csv.encoding]} text, delimited by ${
+            CSV_DELIMITER_NAMES[csv.delimiter] ?? printable(csv.delimiter)
+          }. Each CSV file is one worksheet named after the file.`,
+        ];
+  lines.push("", "Worksheets:");
 
   if (description.sheets.length === 0) {
     lines.push("  - None. No worksheet matched the selection.");

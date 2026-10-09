@@ -44,12 +44,14 @@ import {
   type ReadWorkbookOptions,
 } from "../shared.js";
 import { uncachedFormulaWarnings } from "../uncached-formulas.js";
+import type { CsvEncoding, CsvReadOptions } from "../csv/options.js";
+import { CsvWorkbook } from "../csv/reader.js";
 import type {
+  SheetBook,
   StreamedCell,
   StreamedDefinedName,
   StreamedSheet,
   StreamedValue,
-  StreamedWorkbook,
   WorksheetConsumer,
   WorksheetRead,
 } from "./consolidate/reader.js";
@@ -88,6 +90,19 @@ export interface DescribeWorkbookOptions
    * `MAX_COLUMN_SAMPLE_VALUES`. Defaults to the maximum.
    */
   sampleValues?: number | undefined;
+  /**
+   * How to read a `.csv` input: one worksheet named after the file, its
+   * cells text unless `csv` asks for numbers or dates (ADR 0007).
+   */
+  csv?: CsvReadOptions | undefined;
+}
+
+/** How a CSV file was read, which a workbook description does not carry. */
+export interface WorkbookCsvDescription {
+  /** The encoding the text was read in, detected or chosen. */
+  encoding: CsvEncoding;
+  /** The field delimiter, guessed or chosen. */
+  delimiter: string;
 }
 
 /** One column of a worksheet's effective header row. */
@@ -144,6 +159,8 @@ export interface WorkbookDescription {
   sheets: WorkbookSheetDescription[];
   excelTables: WorkbookExcelTableDescription[];
   namedRanges: WorkbookNamedRangeDescription[];
+  /** Present when the input is a CSV file: how it was read. */
+  csv?: WorkbookCsvDescription;
 }
 
 /**
@@ -541,7 +558,7 @@ class SheetScan implements WorksheetConsumer {
  * is read is collected rather than observed after the answer is built.
  */
 async function describeWorksheet(
-  workbook: StreamedWorkbook,
+  workbook: SheetBook,
   sheet: StreamedSheet,
   options: DescribeWorkbookOptions,
   sampleLimit: number,
@@ -572,7 +589,7 @@ async function describeWorksheet(
 }
 
 function describeExcelTables(
-  workbook: StreamedWorkbook,
+  workbook: SheetBook,
   describedSheets: ReadonlySet<string>,
 ): WorkbookExcelTableDescription[] {
   return workbook.tables
@@ -624,7 +641,7 @@ function describeNamedRanges(
  * picker asking about a sheet that is not there has a mistake to report.
  */
 function selectSheets(
-  workbook: StreamedWorkbook,
+  workbook: SheetBook,
   options: DescribeWorkbookOptions,
 ): { hiddenExcluded: number; selected: StreamedSheet[] } {
   const worksheets = workbook.sheets.filter(
@@ -731,6 +748,7 @@ export function workbookDescriptionResult(
   description: WorkbookDescription,
   hiddenExcluded: number,
   uncachedFormulas: readonly string[] = [],
+  inputWarnings: readonly string[] = [],
 ): OperationResult<DescribeWorkbookMetric> {
   return {
     operation: INSPECT_OPERATION,
@@ -743,6 +761,7 @@ export function workbookDescriptionResult(
         uncachedFormulas,
         "they give no sample values",
       ),
+      ...inputWarnings,
     ],
     metrics: {
       dataRows: description.sheets.reduce(
@@ -774,7 +793,7 @@ export function workbookDescriptionResult(
  * actually collected rather than observed after the answer is already built.
  */
 export async function describeStreamedWorkbook(
-  workbook: StreamedWorkbook,
+  workbook: SheetBook,
   source: string,
   options: DescribeWorkbookOptions = {},
   outputContext: AbortOutputContext = "files",
@@ -824,6 +843,12 @@ export async function describeStreamedWorkbook(
     excelTables: describeExcelTables(workbook, describedSheets),
     namedRanges: describeNamedRanges(workbook.names, describedSheets),
   };
+  if (workbook instanceof CsvWorkbook) {
+    description.csv = {
+      encoding: workbook.encoding,
+      delimiter: workbook.delimiter,
+    };
+  }
 
   throwIfAborted(options.signal, INSPECT_OPERATION, outputContext);
   options.onProgress?.({
@@ -839,6 +864,7 @@ export async function describeStreamedWorkbook(
       description,
       hiddenExcluded,
       uncachedFormulas,
+      workbook.warnings,
     ),
   };
 }

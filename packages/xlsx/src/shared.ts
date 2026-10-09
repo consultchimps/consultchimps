@@ -79,6 +79,7 @@ export function isMacroWorkbookName(name: string): boolean {
 // carry fixed document timestamps instead of the current time.
 
 export type ConsolidateWorkbooksMetric =
+  | "csvInputFiles"
   | "formulaCellsWithoutCachedValues"
   | "inputFiles"
   | "inputTables"

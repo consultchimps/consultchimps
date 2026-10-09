@@ -3,6 +3,8 @@ export {
   uncachedFormulaHint,
   uncachedFormulaWarnings,
 } from "./uncached-formulas.js";
+import { openSheetBook } from "./operations/sheet-book.js";
+import { settleCsvOptions, type CsvReadOptions } from "./csv/options.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -53,6 +55,7 @@ import {
 
 import { XLSX_ERRORS } from "./errors.js";
 import {
+  assertFitsWorksheet,
   planConsolidation,
   writeConsolidation,
   type ConsolidationSettings,
@@ -60,7 +63,7 @@ import {
   type ConsolidationSource,
   type OpenedSource,
 } from "./operations/consolidate/consolidate.js";
-import { StreamedWorkbook } from "./operations/consolidate/reader.js";
+import type { StreamedWorkbook } from "./operations/consolidate/reader.js";
 import { openWorkbookBytes } from "./operations/sheet-grid.js";
 import {
   readWorksheetReports,
@@ -78,6 +81,7 @@ import {
   type DescribeWorkbookMetric,
   type DescribeWorkbookOptions,
   type WorkbookColumnDescription,
+  type WorkbookCsvDescription,
   type WorkbookDescription,
   type WorkbookDescriptionOutcome,
   type WorkbookExcelTableDescription,
@@ -151,6 +155,11 @@ import type {
 } from "./shared.js";
 
 export { XLSX_ERRORS, type XlsxErrorCode } from "./errors.js";
+export type {
+  CsvDateOrder,
+  CsvEncoding,
+  CsvReadOptions,
+} from "./csv/options.js";
 /**
  * The conformance contract: what this package promises to do to each tracked
  * workbook structure, per operation, with a recorded reason for every cell it
@@ -226,6 +235,7 @@ export type {
   DescribeWorkbookMetric,
   DescribeWorkbookOptions,
   WorkbookColumnDescription,
+  WorkbookCsvDescription,
   WorkbookDescription,
   WorkbookDescriptionOutcome,
   WorkbookExcelTableDescription,
@@ -261,6 +271,12 @@ export interface ConsolidateWorkbooksOptions
   normalizeHeaders?: boolean | undefined;
   outputSheetName?: string | undefined;
   overwrite?: boolean | undefined;
+  /**
+   * How to read the inputs that are `.csv` files: each is one worksheet named
+   * after the file, its cells text unless `csv` asks for numbers or dates
+   * (ADR 0007).
+   */
+  csv?: CsvReadOptions | undefined;
   /**
    * Where to write a drafted mapping built from the headers that were read.
    * The draft is written for review, never applied. Cannot be combined with
@@ -460,15 +476,21 @@ export async function describeWorkbook(
   // otherwise answer XLSX_READ_FAILED to a caller who had already stopped
   // caring, and a large valid workbook would be loaded in full for nothing.
   throwIfAborted(options.signal, INSPECT_OPERATION);
+  // Checked whatever the input is, as consolidation checks them.
+  settleCsvOptions(options.csv);
   const absolutePath = path.resolve(filePath);
   // Read in pieces through a file handle (ADR 0006), never whole.
   const opened = await openWorkbookSource(absolutePath);
   try {
-    const workbook = await StreamedWorkbook.open(opened, {
-      file: path.basename(absolutePath),
-      source: absolutePath,
-      details: { filePath: absolutePath },
-    });
+    const workbook = await openSheetBook(
+      opened,
+      {
+        file: path.basename(absolutePath),
+        source: absolutePath,
+        details: { filePath: absolutePath },
+      },
+      options.csv,
+    );
     return await describeStreamedWorkbook(
       workbook,
       path.basename(absolutePath),
@@ -760,6 +782,8 @@ export async function planConsolidateWorkbooks(
 ): Promise<OperationPlan<ConsolidateWorkbooksPlanMetric>> {
   const { absoluteInputs, absoluteOutput, absoluteSuggestOutput } =
     resolveConsolidateWorkbooks(options);
+  // The options a run would refuse, a plan refuses too.
+  settleCsvOptions(options.csv);
 
   // A plan promises the run's destinations, so an unusable mapping has to fail
   // here too rather than surviving until the workbooks are read.
@@ -832,6 +856,8 @@ export async function consolidateWorkbooks(
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
   const { absoluteInputs, absoluteOutput, absoluteSuggestOutput } =
     resolveConsolidateWorkbooks(options);
+  // Before anything is created, as every other refusal of options is.
+  settleCsvOptions(options.csv);
 
   // Both the mapping and the draft's destination are settled before a single
   // workbook is opened, so an unusable mapping or an occupied destination
@@ -849,12 +875,6 @@ export async function consolidateWorkbooks(
     await ensureOutputAvailable(absoluteSuggestOutput, {
       overwrite: options.overwrite,
     });
-    // The draft's folder is made now rather than beside its write, because a
-    // parent that cannot be a folder - a plain file already standing where one
-    // is wanted - is only discovered by trying. Discovering it after the
-    // workbook has been written would leave that workbook behind on a run that
-    // reports failure.
-    await ensureParentDirectory(absoluteSuggestOutput);
   }
 
   const sources: ConsolidationSource[] = absoluteInputs.map(
@@ -873,6 +893,7 @@ export async function consolidateWorkbooks(
     normalizeHeaders: options.normalizeHeaders,
     mapping,
     suggestMapping: absoluteSuggestOutput !== undefined,
+    csv: options.csv,
     signal: options.signal,
     onProgress: options.onProgress,
     outputContext: "files",
@@ -880,6 +901,16 @@ export async function consolidateWorkbooks(
   };
   const plan = await planConsolidation(sources, settings);
   const { suggestion, unmappedColumns } = plan;
+  // Before the staging file or any folder is made.
+  assertFitsWorksheet(plan);
+  if (absoluteSuggestOutput !== undefined) {
+    // The draft's folder is made before the workbook is written, because a
+    // parent that cannot be a folder - a plain file already standing where one
+    // is wanted - is only discovered by trying. Discovering it after the
+    // workbook has been written would leave that workbook behind on a run that
+    // reports failure.
+    await ensureParentDirectory(absoluteSuggestOutput);
+  }
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
   const sheetName = options.outputSheetName ?? CONSOLIDATED_SHEET_NAME;
   assertSheetName(sheetName);
@@ -934,8 +965,10 @@ export async function consolidateWorkbooks(
         ? [unmappedColumnsWarning([...unmappedColumns])]
         : []),
       ...uncachedFormulaWarnings(plan.uncachedFormulas, "they came out blank"),
+      ...plan.inputWarnings,
     ],
     metrics: {
+      csvInputFiles: plan.csvInputs,
       formulaCellsWithoutCachedValues: plan.uncachedFormulas.length,
       inputFiles: absoluteInputs.length,
       inputTables: plan.inputTables,

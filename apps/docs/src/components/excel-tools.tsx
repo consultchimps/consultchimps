@@ -39,8 +39,18 @@ import {
   useOperationRun,
   type UploadedFile,
 } from "@/components/tool-kit";
+import {
+  CsvOptionsFields,
+  csvReadOptionsFrom,
+  isCsvFileName,
+  useCsvChoices,
+} from "@/components/csv-options";
 import { WorkbookInspector } from "@/components/workbook-inspector";
-import { MAPPING_FILES, WORKBOOK_FILES } from "@/lib/accepted-files";
+import {
+  MAPPING_FILES,
+  SHEET_FILES,
+  WORKBOOK_FILES,
+} from "@/lib/accepted-files";
 import {
   DRAFT_MAPPING_FILE_NAME,
   groupEvidence,
@@ -61,7 +71,10 @@ import type {
   ColumnMappingSuggestion,
 } from "@consultchimps/tabular";
 // Type-only: the runtime module is loaded inside the worker.
-import type { SplitWorkbookByColumnPlanMetric } from "@consultchimps/xlsx/bytes";
+import type {
+  CsvReadOptions,
+  SplitWorkbookByColumnPlanMetric,
+} from "@consultchimps/xlsx/bytes";
 import { ArrowDown, ArrowUp, Download, FileText, Trash2 } from "lucide-react";
 import Link from "next/link";
 import {
@@ -174,6 +187,8 @@ function CheckboxField({
 interface InspectorDisclosureProps {
   /** A chooser the host page renders above the report, when it has several. */
   readonly children?: ReactNode;
+  /** How to read the chosen file when it is a CSV file. */
+  readonly csv?: CsvReadOptions | undefined;
   /** Shown by the report while the host has nothing chosen for it. */
   readonly emptyMessage: string;
   readonly file: UploadedFile | null;
@@ -200,6 +215,7 @@ interface InspectorDisclosureProps {
  */
 function WorkbookInspectorDisclosure({
   children,
+  csv,
   emptyMessage,
   file,
   headerRow,
@@ -223,6 +239,7 @@ function WorkbookInspectorDisclosure({
       {open ? (
         <WorkbookInspector
           className="mt-4"
+          csv={csv}
           emptyMessage={emptyMessage}
           file={file}
           headerRow={headerRow}
@@ -1018,10 +1035,12 @@ export function ExcelMergeTool() {
  */
 export function ExcelInspectTool() {
   const selection = useFileSelection(
-    WORKBOOK_FILES.accepts,
-    WORKBOOK_FILES.description,
+    SHEET_FILES.accepts,
+    SHEET_FILES.description,
   );
   const workbook = selection.file;
+  const [csvChoices, setCsvChoice] = useCsvChoices();
+  const isCsv = workbook !== null && isCsvFileName(workbook.name);
   // On by default: a page whose whole job is "what is in this file" would
   // otherwise leave out the worksheets a reader is most likely hunting for.
   // Every worksheet in the report carries its visibility, so nothing hidden is
@@ -1042,8 +1061,8 @@ export function ExcelInspectTool() {
         </h2>
         <div className="mt-4">
           <FilePicker
-            accept={WORKBOOK_FILES.accept}
-            description={`Drag ${WORKBOOK_FILES.description} here, or pick one with the button below. Only the first workbook is used, and it is only ever read`}
+            accept={SHEET_FILES.accept}
+            description={`Drag ${SHEET_FILES.description} here, or pick one with the button below. Only the first file is used, and it is only ever read`}
             disabled={false}
             label="Workbook to inspect"
             multiple={false}
@@ -1072,9 +1091,17 @@ export function ExcelInspectTool() {
             testId="include-hidden-checkbox"
           />
         </div>
+        {isCsv ? (
+          <CsvOptionsFields
+            choices={csvChoices}
+            disabled={false}
+            onChange={setCsvChoice}
+          />
+        ) : null}
       </section>
 
       <WorkbookInspector
+        csv={isCsv ? csvReadOptionsFrom(csvChoices) : undefined}
         file={workbook}
         heading="2. What is in the workbook"
         includeHiddenSheets={includeHiddenSheets}
@@ -1135,6 +1162,15 @@ export function ExcelConsolidateTool() {
   const [addSourceColumns, setAddSourceColumns] = useState(true);
   const [includeHiddenSheets, setIncludeHiddenSheets] = useState(false);
   const [inspectedId, setInspectedId] = useState("");
+  const [csvChoices, setCsvChoice] = useCsvChoices();
+  const hasCsv = files.some((file) => isCsvFileName(file.name));
+  // Kept as one value per set of choices, so the callbacks below are not
+  // rebuilt on every render.
+  const csv = useMemo(
+    () => (hasCsv ? csvReadOptionsFrom(csvChoices) : undefined),
+    [csvChoices, hasCsv],
+  );
+  const csvKey = csv === undefined ? "" : JSON.stringify(csv);
   const mappingSelection = useFileSelection(
     MAPPING_FILES.accepts,
     MAPPING_FILES.description,
@@ -1176,7 +1212,7 @@ export function ExcelConsolidateTool() {
   // read, makes it evidence about a run that no longer exists, so the draft is
   // held under the key it was drafted for and shown only while that key still
   // describes the page.
-  const draftKey = `${files.map((file) => file.id).join(",")}:${includeHiddenSheets}`;
+  const draftKey = `${files.map((file) => file.id).join(",")}:${includeHiddenSheets}:${csvKey}`;
   const currentDraft = drafted?.key === draftKey ? drafted : null;
   const suggestion = currentDraft?.suggestion ?? null;
 
@@ -1191,6 +1227,7 @@ export function ExcelConsolidateTool() {
         const suggested = await runOperation({
           kind: "xlsx.suggest-mapping",
           inputs: files.map((file) => ({ file: file.file, name: file.name })),
+          csv,
           includeHiddenSheets,
         });
         setDrafted({
@@ -1214,7 +1251,7 @@ export function ExcelConsolidateTool() {
         setSuggesting(false);
       }
     })();
-  }, [draftKey, files, includeHiddenSheets]);
+  }, [csv, draftKey, files, includeHiddenSheets]);
 
   const renameCanonicalColumn = useCallback((key: string, name: string) => {
     setDrafted((previous) =>
@@ -1261,6 +1298,7 @@ export function ExcelConsolidateTool() {
       kind: "xlsx.consolidate",
       inputs: files.map((file) => ({ file: file.file, name: file.name })),
       addSourceColumns,
+      csv,
       includeHiddenSheets,
       mapping: mapping ?? undefined,
       normalizeHeaders,
@@ -1268,6 +1306,7 @@ export function ExcelConsolidateTool() {
     });
   }, [
     addSourceColumns,
+    csv,
     files,
     includeHiddenSheets,
     mapping,
@@ -1306,13 +1345,13 @@ export function ExcelConsolidateTool() {
         </h2>
         <div className="mt-4">
           <FilePicker
-            accept={WORKBOOK_FILES.accept}
-            description={`Drag one or more ${WORKBOOK_FILES.pluralDescription} here, or pick them with the button below. Rows are stacked in the order shown`}
+            accept={SHEET_FILES.accept}
+            description={`Drag one or more ${SHEET_FILES.pluralDescription} here, or pick them with the button below. Rows are stacked in the order shown`}
             disabled={isRunning}
             label="Source workbooks"
             multiple
             onFiles={(chosen) => {
-              void readUploads(chosen, WORKBOOK_FILES.accepts).then((read) => {
+              void readUploads(chosen, SHEET_FILES.accepts).then((read) => {
                 if (read.length > 0) {
                   add(read);
                   runState.reset();
@@ -1359,6 +1398,13 @@ export function ExcelConsolidateTool() {
             testId="include-hidden-checkbox"
           />
         </div>
+        {hasCsv ? (
+          <CsvOptionsFields
+            choices={csvChoices}
+            disabled={isRunning}
+            onChange={setCsvChoice}
+          />
+        ) : null}
       </section>
 
       {/*
@@ -1368,6 +1414,9 @@ export function ExcelConsolidateTool() {
         worksheets this run would actually read.
       */}
       <WorkbookInspectorDisclosure
+        csv={
+          inspected !== null && isCsvFileName(inspected.name) ? csv : undefined
+        }
         emptyMessage="Choose one of the workbooks above to see the worksheets, header rows, and structures it holds"
         file={inspected}
         hint="See the worksheets, header rows, columns, and sample values one of these workbooks holds, and which spellings its headers carry before you map them"

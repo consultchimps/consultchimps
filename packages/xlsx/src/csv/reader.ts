@@ -24,6 +24,7 @@ import { XLSX_ERRORS } from "../errors.js";
 import type { ExcelTableDefinition } from "../excel-tables.js";
 import type { CellRectangle } from "../model/references.js";
 import type {
+  SheetBook,
   StreamedCell,
   StreamedDefinedName,
   StreamedSheet,
@@ -31,6 +32,7 @@ import type {
   StreamedWorkbookContext,
   WorksheetConsumer,
   WorksheetRead,
+  WorksheetReadOptions,
 } from "../operations/consolidate/reader.js";
 import { readFailure } from "../operations/read-model.js";
 import {
@@ -71,7 +73,11 @@ const SHEET_NAME_LIMIT = 31;
 
 /** `text` without the apostrophes at either end, which a sheet name cannot hold. */
 function withoutOuterApostrophes(text: string): string {
-  return text.replace(/^'+|'+$/gu, "");
+  let start = 0;
+  let end = text.length;
+  while (start < end && text[start] === "'") start += 1;
+  while (end > start && text[end - 1] === "'") end -= 1;
+  return text.slice(start, end);
 }
 
 /**
@@ -237,7 +243,7 @@ function guessDelimiter(sample: string, newline: "\n" | "\r"): string {
 }
 
 /** A CSV file opened for reading as one worksheet. */
-export class CsvWorkbook {
+export class CsvWorkbook implements SheetBook {
   readonly sheets: readonly StreamedSheet[];
   readonly tables: readonly ExcelTableDefinition[] = [];
   readonly names: readonly StreamedDefinedName[] = [];
@@ -450,13 +456,7 @@ export class CsvWorkbook {
   async readWorksheet(
     sheet: StreamedSheet,
     consumer: WorksheetConsumer,
-    options: {
-      gather?: boolean;
-      clip?: boolean;
-      text?: boolean;
-      occupancy?: boolean;
-      between?: () => Promise<void>;
-    } = {},
+    options: WorksheetReadOptions = {},
   ): Promise<WorksheetRead> {
     try {
       return await this.#read(consumer, options);

@@ -88,6 +88,37 @@ describe("inspectFile", () => {
     }
   }, 60_000);
 
+  it("reads a CSV file in pieces and gives the command line's description", async () => {
+    const lines = ["Case_ID;Amount"];
+    for (let row = 1; row <= 80_000; row += 1) {
+      lines.push(`C-${row};${row},5`);
+    }
+    const bytes = new TextEncoder().encode(lines.join("\r\n"));
+    expect(bytes.length).toBeGreaterThan(1024 * 1024);
+    const csv = { numbers: true, decimalSeparator: "," } as const;
+    const directory = await mkdtemp(path.join(tmpdir(), "consultchimps-docs-"));
+    try {
+      const file = path.join(directory, "cases.csv");
+      await writeFile(file, bytes);
+      const reference = await describeWorkbook(file, { csv });
+
+      const outcome = await inspectFile(guardedFile("cases.csv", bytes), {
+        csv,
+      });
+
+      expect(outcome).toEqual(reference);
+      expect(outcome.description.csv).toEqual({
+        encoding: "utf-8",
+        delimiter: ";",
+      });
+      expect(outcome.description.sheets[0]?.columns[1]?.sampleValues[0]).toBe(
+        1.5,
+      );
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  }, 60_000);
+
   it("fails as an unreadable file, not a damaged workbook", async () => {
     const bytes = await workbook(20);
     const blob = new Blob([bytes.slice()]);

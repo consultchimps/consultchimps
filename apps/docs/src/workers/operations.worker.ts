@@ -220,6 +220,7 @@ async function perform(
         task.inputs,
         {
           addSourceColumns: task.addSourceColumns,
+          csv: task.csv,
           includeHiddenSheets: task.includeHiddenSheets,
           mapping: task.mapping,
           normalizeHeaders: task.normalizeHeaders,
@@ -234,8 +235,8 @@ async function perform(
     case "xlsx.suggest-mapping": {
       // The suggestion is drafted from the tables the consolidation read, so
       // the page proposes exactly what the library proposes for these
-      // workbooks and these options. The workbook that run writes is not
-      // wanted, so it is dropped as it is produced.
+      // workbooks and these options, from the first pass alone: nothing is
+      // written.
       const { suggestMappingFromFiles } =
         await import("@/lib/streamed-consolidation");
       return answerWithValue(
@@ -243,6 +244,7 @@ async function perform(
           task.inputs,
           task.includeHiddenSheets,
           controls,
+          task.csv,
         ),
       );
     }

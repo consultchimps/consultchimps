@@ -207,6 +207,24 @@ describe("human-readable CLI output", () => {
     },
   );
 
+  it("names CSV files among a consolidation's inputs only when there are some", () => {
+    const summary = (csvInputFiles: number): string =>
+      formatHumanResult(
+        result(
+          "sheets.consolidate",
+          { csvInputFiles, inputFiles: 3, inputTables: 3 },
+          ["combined.xlsx"],
+        ),
+        cli,
+      );
+    expect(summary(0)).toContain("ConsultChimps read 3 Excel files and");
+    expect(summary(1)).toContain(
+      "ConsultChimps read 2 Excel files and 1 CSV file and",
+    );
+    expect(summary(3)).toContain("ConsultChimps read 3 CSV files and");
+    expect(summary(1)).toContain("CSV files read, each as one worksheet: 1");
+  });
+
   it("says what a consolidation left out, and nothing when it left out nothing", () => {
     const both = formatHumanResult(
       result(

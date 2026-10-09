@@ -6,7 +6,9 @@
 import type { OperationControlOptions } from "@consultchimps/core";
 import {
   consolidateWorkbookSources,
+  suggestColumnMappingSources,
   type ConsolidateWorkbooksBytesOptions,
+  type CsvReadOptions,
   type ConsolidateWorkbooksBytesResult,
 } from "@consultchimps/xlsx/bytes";
 import type { ColumnMappingSuggestion } from "@consultchimps/tabular";
@@ -85,27 +87,22 @@ export async function consolidateFiles(
 }
 
 /**
- * Draft a mapping from the tables a consolidation would read. The workbook the
- * run writes is not wanted, so its bytes are dropped as they are produced.
+ * Draft a mapping from the tables a consolidation would read: the headers are
+ * read and nothing is written.
  */
 export async function suggestMappingFromFiles(
   inputs: readonly NamedFile[],
   includeHiddenSheets: boolean | undefined,
   controls: Required<OperationControlOptions>,
+  csv?: CsvReadOptions,
 ): Promise<ColumnMappingSuggestion | undefined> {
   const reads = new PieceReads(CONSOLIDATE_OPERATION, controls.signal);
-  const { result } = await reads.run(() =>
-    consolidateWorkbookSources({
+  return reads.run(() =>
+    suggestColumnMappingSources({
       ...controls,
       inputs: inputs.map((input) => reads.source(input)),
       includeHiddenSheets,
-      suggestMapping: true,
-      output: {
-        write: () => undefined,
-        flush: () => Promise.resolve(),
-        abort: () => Promise.resolve(),
-      },
+      csv,
     }),
   );
-  return result.suggestion;
 }

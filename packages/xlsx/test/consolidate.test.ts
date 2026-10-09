@@ -357,6 +357,7 @@ describe("consolidateWorkbooks title rows and spacer columns", () => {
         addSourceColumns: false,
       });
       expect(result.metrics).toEqual({
+        csvInputFiles: 0,
         formulaCellsWithoutCachedValues: 0,
         inputFiles: 2,
         inputTables: 2,
