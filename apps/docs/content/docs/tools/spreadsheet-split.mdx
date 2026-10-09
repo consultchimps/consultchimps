@@ -133,6 +133,26 @@ while resizing its table and AutoFilter range. `--no-preserve-workbook` creates
 compact data-only outputs. Named-range and selected-worksheet modes are
 data-only.
 
+## Split a CSV file
+
+```bash
+consultchimps sheets split export.csv   --column Region   --output-dir outputs/by-region
+```
+
+A CSV file is one worksheet named after the file, with no workbook to keep, so
+it splits into one CSV file per value, or into compact workbooks with
+`--output-format xlsx`. `--output-format csv` splits a workbook into CSV files
+the same compact way, and asking to keep the workbook with CSV output is
+refused. Fields stay text unless `--csv-numbers` or `--csv-dates` asks
+otherwise, and the encoding and delimiter are detected, with `--csv-encoding`
+and `--csv-delimiter` to override them; a byte order mark wins over a
+contradicting encoding. Each CSV output is UTF-8 with a byte order mark
+(`--csv-bom false` leaves it out), ends rows with CRLF, writes dates as ISO
+text, and puts an apostrophe before text that would start a formula. In the
+browser, "Output files" chooses CSV files or workbooks, and "Reading CSV files"
+appears for a CSV input. The CLI reference covers every flag under
+[CSV files](/docs/reference/cli#csv-files).
+
 <Callout title="What the online tool does">
   The [in-browser splitter](/tools/excel-split) runs the same all-worksheet
   split as the command line, so each workbook it creates keeps the source

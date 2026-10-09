@@ -53,7 +53,8 @@ calculation chain (Excel rebuilds it, and the merged workbook asks it to), and a
 macro project unless the first workbook you list is the only one carrying macros
 and the output is named `.xlsm`. That last case is reachable from the library
 and the browser today, not from this command: `sheets merge` collects `.xlsx`
-inputs only, so an `.xlsm` handed to it is filtered out before the merge starts.
+and `.csv` inputs only, so an `.xlsm` handed to it is filtered out before the
+merge starts.
 
 [What the Excel operations preserve](/docs/tools/excel-preservation) sets these
 promises out structure by structure, beside what the split and the workbook
@@ -62,12 +63,27 @@ inspection do with the same structures.
 The workbook merge is also the tool the "Try Merge tabs online" button at the
 top of this page opens: [merge workbooks in your browser](/tools/excel-merge) to
 combine tabs without installing anything. The browser tool takes `.xlsx` and
-`.xlsm` workbooks and follows the same output rule as the command line: the
-output filename decides the type, so end it in `.xlsm` to keep a macro project
-and leave it alone for an `.xlsx`. Only the first workbook's macro project can
-travel, and only when no other workbook carries one. Consolidation has
-[its own guide](/docs/tools/spreadsheet-consolidate) and
+`.xlsm` workbooks and `.csv` files, and follows the same output rule as the
+command line: the output filename decides the type, so end it in `.xlsm` to keep
+a macro project and leave it alone for an `.xlsx`. Only the first workbook's
+macro project can travel, and only when no other workbook carries one.
+Consolidation has [its own guide](/docs/tools/spreadsheet-consolidate) and
 [its own browser tool](/tools/excel-consolidate).
+
+## CSV files
+
+```bash
+consultchimps sheets merge north.xlsx exports/   --csv-numbers   --output outputs/all-sheets.xlsx
+```
+
+Each CSV file becomes one tab named after the file, and a repeated name takes a
+suffix like any other tab. Its fields stay text unless `--csv-numbers` or
+`--csv-dates` asks otherwise. The encoding and delimiter are detected;
+`--csv-encoding` and `--csv-delimiter` override them, but a byte order mark wins
+over a contradicting encoding. A merge cannot write CSV, since one CSV file
+cannot hold several tabs. In the browser, adding a CSV file shows "Reading CSV
+files" with the same choices. The CLI reference covers every flag under
+[CSV files](/docs/reference/cli#csv-files).
 
 ## Replace formulas with values
 

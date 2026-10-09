@@ -60,10 +60,10 @@ Reach for it before an operation rather than after a surprising result:
 
 ## The online tool
 
-[The browser tool](/tools/excel-inspect) takes `.xlsx` and `.xlsm` workbooks,
-reads them in the page, and renders the report. There is no Run button and no
-download, because the inspection produces no file: choosing a workbook is the
-whole interaction.
+[The browser tool](/tools/excel-inspect) takes `.xlsx` and `.xlsm` workbooks and
+`.csv` files, reads them in the page, and renders the report. There is no Run
+button and no download, because the inspection produces no file: choosing a
+workbook is the whole interaction.
 
 The same report is embedded in the two operating pages that read a workbook
 before they write one, folded away under "Look inside this workbook" on the
@@ -88,15 +88,30 @@ consultchimps sheets inspect clients.xlsx
 consultchimps sheets inspect --sheet North --sheet South clients.xlsx
 ```
 
-The command reads an `.xlsx` or `.xlsm` workbook and writes nothing: it prints
-the description as a report, then the plain-language explanation of the result
-and its warnings. `--sheet` names one worksheet and may be repeated,
-`--header-row` names the row the headers sit on, `--hidden` includes hidden
-worksheets, and `--samples` sets how many sample values each column reports,
-from 0 to 5. Placing the global `--json` before the command returns the
-description beside the operation result instead. The
+The command reads an `.xlsx` or `.xlsm` workbook or a `.csv` file and writes
+nothing: it prints the description as a report, then the plain-language
+explanation of the result and its warnings. `--sheet` names one worksheet and
+may be repeated, `--header-row` names the row the headers sit on, `--hidden`
+includes hidden worksheets, and `--samples` sets how many sample values each
+column reports, from 0 to 5. Placing the global `--json` before the command
+returns the description beside the operation result instead. The
 [CLI reference](/docs/reference/cli#spreadsheet-inspection) documents them in
 full.
+
+## CSV files
+
+```bash
+consultchimps sheets inspect export.csv --csv-numbers
+```
+
+A CSV file is described as one worksheet named after the file, with no Excel
+Tables or named ranges. The report names the encoding and delimiter it read the
+file with; `--csv-encoding` and `--csv-delimiter` override the detection, but a
+byte order mark wins over a contradicting encoding. Fields stay text unless
+`--csv-numbers` or `--csv-dates` asks otherwise, so the samples show what a run
+with the same flags would read. In the browser, "Reading CSV files" holds the
+same choices. The CLI reference covers every flag under
+[CSV files](/docs/reference/cli#csv-files).
 
 ## TypeScript API
 

@@ -5,9 +5,9 @@ description:
 icon: TableProperties
 ---
 
-The spreadsheet consolidator discovers `.xlsx` files, reads each selected
-worksheet as a table, unions columns by case-insensitive header name, and writes
-one formatted workbook.
+The spreadsheet consolidator discovers `.xlsx` workbooks and `.csv` files, reads
+each selected worksheet as a table, unions columns by case-insensitive header
+name, and writes one formatted workbook or one CSV file.
 
 ## Which one do I want?
 
@@ -41,14 +41,14 @@ beside the structures a split and a merge do keep.
   non-empty worksheet of each workbook you add into one table and writes a
   single workbook, `consolidated.xlsx` by default, on a worksheet named
   `Consolidated`. Workbooks are combined in the order they appear on the page,
-  and that list can be reordered. The page offers four controls: the output
-  filename, "Normalize headers", "Add source columns" (on by default), and
-  "Include hidden worksheets" (off by default). Choosing worksheets by name and
-  setting a header row remain command-line options. Both `.xlsx` and `.xlsm`
-  workbooks can be added; the result is a new table workbook either way, so the
-  output is always an `.xlsx`. Column mapping runs there too, both applying a
-  mapping and drafting one for review: see [In the browser](#in-the-browser)
-  below. "Look inside a workbook" opens the [workbook
+  and that list can be reordered. The page offers the output filename,
+  "Normalize headers", "Add source columns" (on by default), and "Include hidden
+  worksheets" (off by default). Choosing worksheets by name and setting a header
+  row remain command-line options. `.xlsx` and `.xlsm` workbooks and `.csv`
+  files can be added; the output is an `.xlsx` unless you ask for a CSV file, as
+  described under [CSV files](#csv-files). Column mapping runs there too, both
+  applying a mapping and drafting one for review: see [In the
+  browser](#in-the-browser) below. "Look inside a workbook" opens the [workbook
   inspection](/docs/tools/workbook-inspect) report for any workbook on the list,
   so you can read the header spellings your sources actually carry before you
   decide how to map them. The work happens in a Web Worker inside the page, so
@@ -73,8 +73,8 @@ consultchimps sheets consolidate \
   --output outputs/q1-master.xlsx
 ```
 
-Inputs are resolved to absolute paths, deduplicated, filtered to `.xlsx`, and
-sorted before processing.
+Inputs are resolved to absolute paths, deduplicated, filtered to `.xlsx` and
+`.csv`, and sorted before processing.
 
 ## How columns are matched
 
@@ -338,6 +338,33 @@ never second-guessed: the row you name is the header, whatever sits above it.
 [Inspecting a workbook](/docs/tools/workbook-inspect) shows the header row and
 the columns a consolidation will use, so you can check the detection before
 running one.
+
+## CSV files
+
+`.csv` files can sit beside workbooks in any run:
+
+```bash
+consultchimps sheets consolidate north.xlsx exports/   --csv-numbers   --output outputs/combined.csv
+```
+
+- Each CSV file is one worksheet named after the file, so `_source_sheet` names
+  it.
+- The encoding and delimiter are detected; `--csv-encoding` and
+  `--csv-delimiter` override them, but a byte order mark wins over a
+  contradicting encoding.
+- Every field stays text unless you ask: `--csv-numbers` reads plain numbers,
+  with `--csv-decimal` and `--csv-thousands` for other separators.
+- `--csv-dates iso` reads `yyyy-mm-dd`, and `dmy`, `mdy` or `ymd` name the order
+  of other dates; day and month order is never guessed.
+
+Name the output `.csv`, or pass `--output-format csv`, to write a CSV file. It
+is UTF-8 with a byte order mark (`--csv-bom false` leaves it out), ends rows
+with CRLF, writes dates as ISO text, and puts an apostrophe before text that
+would start a formula. The CLI reference covers every flag under
+[CSV files](/docs/reference/cli#csv-files).
+
+In the browser, adding a CSV file shows "Reading CSV files" with the same
+choices, and "Write a CSV file" writes `consolidated.csv` instead of a workbook.
 
 ## Output controls
 
