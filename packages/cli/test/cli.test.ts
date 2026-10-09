@@ -342,7 +342,7 @@ describe("consultchimps CLI", () => {
     const mergeHelp = await runCli(["sheets", "merge", "--help"]);
     const mergeHelpText = mergeHelp.stdout.replace(/\s+/g, " ");
     expect(mergeHelpText).toContain(
-      "copy every worksheet from multiple Excel workbooks into one workbook, keeping each sheet separate",
+      "copy every worksheet from multiple Excel workbooks and CSV files into one workbook, keeping each sheet separate",
     );
     expect(mergeHelp.stdout).toContain(
       "When you want one combined sheet instead of separate tabs:",
@@ -913,6 +913,43 @@ describe("consultchimps CLI", () => {
       1,
     );
     expect(refused.stderr).toContain("XLSX_CSV_INVALID_OPTION");
+  });
+
+  it("splits and merges CSV files read with the CSV flags", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "orders.csv");
+    await writeFile(input, "Region;Amount\r\nNorth;1,5\r\nSouth;2\r\n", "utf8");
+
+    const split = await runCli([
+      "--json",
+      "sheets",
+      "split",
+      input,
+      "-c",
+      "Region",
+      "--csv-numbers",
+      "--csv-decimal",
+      ",",
+      "-o",
+      path.join(directory, "by-region"),
+    ]);
+    expect(parseJsonSuccess(split.stdout).metrics).toMatchObject({
+      groups: 2,
+      outputFiles: 2,
+    });
+
+    const merge = await runCli([
+      "--json",
+      "sheets",
+      "merge",
+      input,
+      "-o",
+      path.join(directory, "merged.xlsx"),
+    ]);
+    expect(parseJsonSuccess(merge.stdout).metrics).toMatchObject({
+      csvInputFiles: 1,
+      outputSheets: 1,
+    });
   });
 
   it("reports the title rows and spacer columns a consolidation left out", async () => {

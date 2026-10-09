@@ -3,8 +3,6 @@ export {
   uncachedFormulaHint,
   uncachedFormulaWarnings,
 } from "./uncached-formulas.js";
-import { openSheetBook } from "./operations/sheet-book.js";
-import { settleCsvOptions, type CsvReadOptions } from "./csv/options.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -18,6 +16,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
@@ -29,8 +28,11 @@ import {
   type OperationPlan,
   type OperationResult,
   type PlannedOutput,
+  type RandomAccessFile,
+  type RandomAccessSource,
 } from "@consultchimps/core";
 import {
+  createScratchDirectory,
   ensureDirectory,
   ensureOutputAvailable,
   ensureParentDirectory,
@@ -41,6 +43,7 @@ import {
   pathExists,
   refuseInputOverwrite,
   type FileSource,
+  type ScratchDirectory,
 } from "@consultchimps/files";
 import {
   validateColumnMapping,
@@ -53,7 +56,12 @@ import {
   type UnprotectWorkbookMetric,
 } from "./bytes.js";
 
+import { settleCsvOptions, type CsvReadOptions } from "./csv/options.js";
+import { isCsvName } from "./csv/reader.js";
+import { splitOptionsFor } from "./csv/split.js";
+import { csvAsWorkbook, type CsvScratch } from "./csv/workbook.js";
 import { XLSX_ERRORS } from "./errors.js";
+import { openSheetBook } from "./operations/sheet-book.js";
 import {
   assertFitsWorksheet,
   planConsolidation,
@@ -295,6 +303,11 @@ export interface ConsolidateWorkbooksResult extends OperationResult<ConsolidateW
 }
 
 export interface MergeWorkbooksOptions extends OperationControlOptions {
+  /**
+   * How to read the inputs that are `.csv` files: each becomes one worksheet
+   * named after the file (ADR 0007).
+   */
+  csv?: CsvReadOptions | undefined;
   includeSheetIndex?: boolean | undefined;
   overwrite?: boolean | undefined;
   values?: boolean | undefined;
@@ -304,6 +317,12 @@ export interface SplitWorkbookByColumnOptions extends OperationControlOptions {
   input: string;
   outputDirectory: string;
   column: string;
+  /**
+   * How to read the input when it is a `.csv` file: one worksheet named after
+   * the file, split compactly, since a CSV file has no workbook to keep (ADR
+   * 0007).
+   */
+  csv?: CsvReadOptions | undefined;
   filenamePrefix?: string | undefined;
   headerRow?: number | undefined;
   includeBlank?: boolean | undefined;
@@ -1019,6 +1038,50 @@ export async function mergeWorkbooks(
   const inputs = new MergeInputs();
   const opened: MergeInput[] = [];
   let merged: Awaited<ReturnType<typeof finishMergedWorkbook>>;
+  settleCsvOptions(options.csv);
+  const csvWarnings: string[] = [];
+  let csvInputs = 0;
+  // Every CSV input's worksheet is written, one after another, into one
+  // temporary file the merge reads as it writes, so the CSV inputs hold one
+  // handle between them; it is removed when the merge ends.
+  let scratchDirectory: ScratchDirectory | undefined;
+  let scratchFile: RandomAccessFile | undefined;
+  let scratchEnd = 0;
+  const scratch: CsvScratch = async (name) => {
+    scratchDirectory ??= await createScratchDirectory(tmpdir());
+    scratchFile ??= await scratchDirectory.create();
+    const file = scratchFile;
+    const start = scratchEnd;
+    let pending: Uint8Array[] = [];
+    return {
+      sink: {
+        write: (chunk) => {
+          pending.push(chunk);
+        },
+        flush: async () => {
+          const chunks = pending;
+          pending = [];
+          for (const chunk of chunks) {
+            await file.writeAt(scratchEnd, chunk);
+            scratchEnd += chunk.length;
+          }
+        },
+        abort: () => {
+          pending = [];
+          return Promise.resolve();
+        },
+      },
+      finish: () => {
+        const size = scratchEnd - start;
+        return Promise.resolve({
+          name,
+          size,
+          readAt: (offset: number, length: number) =>
+            file.readAt(start + offset, length),
+        });
+      },
+    };
+  };
   try {
     for (const [index, inputPath] of absoluteInputs.entries()) {
       throwIfAborted(options.signal, MERGE_OPERATION);
@@ -1033,7 +1096,26 @@ export async function mergeWorkbooks(
         );
       }
       opened.push(source);
-      await appendWorkbookSheets(state, path.basename(inputPath), source);
+      let workbook: RandomAccessSource = source;
+      if (isCsvName(inputPath)) {
+        const converted = await csvAsWorkbook(
+          {
+            name: path.basename(inputPath),
+            size: source.size,
+            readAt: (offset, length) => source.readAt(offset, length),
+          },
+          options.csv,
+          scratch,
+          async () => {
+            await yieldToEventLoop();
+            throwIfAborted(options.signal, MERGE_OPERATION);
+          },
+        );
+        workbook = converted.workbook;
+        for (const warning of converted.warnings) csvWarnings.push(warning);
+        csvInputs += 1;
+      }
+      await appendWorkbookSheets(state, path.basename(inputPath), workbook);
       options.onProgress?.({
         operation: MERGE_OPERATION,
         stage: "merging-inputs",
@@ -1065,9 +1147,23 @@ export async function mergeWorkbooks(
         throwIfAborted(options.signal, MERGE_OPERATION);
       },
     );
-  } finally {
-    await inputs.close();
+  } catch (error) {
+    // The merge's own failure is what the caller needs to hear about.
+    await Promise.allSettled([inputs.close(), scratchDirectory?.close()]);
+    throw error;
   }
+  const [closedInputs, closedScratch] = await Promise.allSettled([
+    inputs.close(),
+    scratchDirectory?.close(),
+  ]);
+  // The merged workbook is already saved, so a temporary file that would not
+  // go away is reported rather than turned into a failure.
+  if (closedScratch.status === "rejected") {
+    csvWarnings.push(
+      "A temporary copy of a CSV input could not be removed from the system's temporary folder. Delete folders there named cc-scratch- followed by letters once nothing is using them.",
+    );
+  }
+  if (closedInputs.status === "rejected") throw closedInputs.reason;
   options.onProgress?.({
     operation: MERGE_OPERATION,
     stage: "writing-output",
@@ -1087,8 +1183,9 @@ export async function mergeWorkbooks(
         path: absoluteOutput,
       },
     ],
-    warnings: merged.warnings,
+    warnings: [...merged.warnings, ...csvWarnings],
     metrics: {
+      csvInputFiles: csvInputs,
       inputFiles: inputPaths.length,
       outputSheets: merged.outputSheets,
       hiddenSheets: merged.hiddenSheets,
@@ -1205,8 +1302,9 @@ async function resolveSplitWorkbookByColumn(
 }
 
 export async function planSplitWorkbookByColumn(
-  options: SplitWorkbookByColumnOptions,
+  requested: SplitWorkbookByColumnOptions,
 ): Promise<OperationPlan<SplitWorkbookByColumnPlanMetric>> {
+  const options = splitOptionsFor(path.basename(requested.input), requested);
   if (
     !options.table &&
     !options.range &&
@@ -1229,6 +1327,7 @@ export async function planSplitWorkbookByColumn(
   if (resolved.skippedRows > 0) {
     warnings.push(skippedRowsWarning(resolved.skippedRows, resolved.column));
   }
+  for (const warning of resolved.workbook.warnings) warnings.push(warning);
   // What the plan read; a values-only preserved run also counts what its
   // conversion loses, which only the run can see.
   const uncached = singleSourceUncachedFormulas(
@@ -1282,8 +1381,9 @@ export async function planSplitWorkbookByColumn(
  * read the input in pieces and write each output as it is produced.
  */
 export async function splitWorkbookByColumn(
-  options: SplitWorkbookByColumnOptions,
+  requested: SplitWorkbookByColumnOptions,
 ): Promise<SplitWorkbookByColumnResult> {
+  const options = splitOptionsFor(path.basename(requested.input), requested);
   if (
     !options.table &&
     !options.range &&
@@ -1455,6 +1555,7 @@ async function splitResolvedRegion(
       ? [skippedRowsWarning(resolved.skippedRows, resolved.column)]
       : [];
   for (const warning of uncached.warnings) warnings.push(warning);
+  for (const warning of resolved.workbook.warnings) warnings.push(warning);
   if (pivotTablesRemoved > 0) {
     warnings.push(
       `Removed ${pivotTablesRemoved} pivot table${pivotTablesRemoved === 1 ? "" : "s"}: their caches contained rows from other groups, and a cache travels inside the workbook whether or not the pivot is opened. Rebuild the pivot in Excel from each output's own rows if it is required.`,

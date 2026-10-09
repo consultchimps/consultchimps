@@ -3,6 +3,7 @@
  * operations. This module must stay free of node:fs and node:path imports so
  * the byte entry point can run in browsers.
  */
+import type { CsvReadOptions } from "./csv/options.js";
 import {
   uncachedFormulaHint,
   uncachedFormulaWarnings,
@@ -91,6 +92,7 @@ export type ConsolidateWorkbooksMetric =
   | "unmappedColumns";
 export type ConsolidateWorkbooksPlanMetric = "inputFiles" | "outputFiles";
 export type MergeWorkbooksMetric =
+  | "csvInputFiles"
   | "formulaCellsWithoutCachedValues"
   | "hiddenSheets"
   | "inputFiles"
@@ -1303,6 +1305,8 @@ export {
 
 export interface SplitSelectionOptions {
   column: string;
+  /** How to read the input when it is a CSV file (ADR 0007). */
+  csv?: CsvReadOptions | undefined;
   headerRow?: number | undefined;
   includeBlank?: boolean | undefined;
   includeHiddenSheets?: boolean | undefined;
@@ -1417,7 +1421,7 @@ export function splitOutputFileNames(
 }
 
 export function withoutWorkbookExtension(name: string): string {
-  return name.replace(/\.xls[xm]$/iu, "");
+  return name.replace(/\.(?:xls[xm]|csv)$/iu, "");
 }
 
 export { safeNameFragment } from "@consultchimps/core";

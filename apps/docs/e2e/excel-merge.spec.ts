@@ -20,6 +20,26 @@ const NORTH = [
 ] as const;
 
 test.describe("/tools/excel-merge", () => {
+  test("merges a CSV file as one tab named after it", async ({ page }) => {
+    await page.goto("/tools/excel-merge");
+    await fileInput(page).setInputFiles([
+      await createWorkbookUpload("north.xlsx", NORTH),
+      {
+        name: "south orders.csv",
+        mimeType: "text/csv",
+        buffer: Buffer.from("Client;Amount\r\nBolt;20\r\n", "utf8"),
+      },
+    ]);
+    await expect(page.getByTestId("source-item")).toHaveCount(2);
+    await expect(page.getByTestId("csv-options")).toBeVisible();
+    await page.getByTestId("run-button").click();
+
+    await expect(resultsPanel(page)).toBeVisible();
+    await expect(page.getByTestId("result-message")).toContainText(
+      "from 1 Excel file and 1 CSV file into one workbook",
+    );
+  });
+
   test("combines two workbooks into one", async ({ page }) => {
     await page.goto("/tools/excel-merge");
     await expect(

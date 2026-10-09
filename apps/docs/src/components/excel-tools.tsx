@@ -388,12 +388,21 @@ export function ExcelSplitTool() {
   const [plan, setPlan] =
     useState<OperationPlan<SplitWorkbookByColumnPlanMetric> | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
+  const [csvChoices, setCsvChoice] = useCsvChoices();
+  // A CSV file has no workbook to keep, so it always splits compactly.
+  const isCsv = input !== null && isCsvFileName(input.name);
+  const csv = useMemo(
+    () => (isCsv ? csvReadOptionsFrom(csvChoices) : undefined),
+    [csvChoices, isCsv],
+  );
 
   const runState = useOperationRun();
   const isRunning = runState.status === "running";
-  const tableName = table.trim();
-  const rangeName = range.trim();
-  const sheetName = sheet.trim();
+  // A CSV file has no Excel Tables or named ranges, and its one worksheet is
+  // named after the file, so selectors typed for a workbook do not apply.
+  const tableName = isCsv ? "" : table.trim();
+  const rangeName = isCsv ? "" : range.trim();
+  const sheetName = isCsv ? "" : sheet.trim();
   // An Excel Table and a named range both carry their own headers, so the API
   // refuses a header row alongside either one.
   const headerRowAllowed = !tableName && !rangeName;
@@ -401,18 +410,19 @@ export function ExcelSplitTool() {
   // an Excel Table split. A named range or a named worksheet is always rebuilt
   // compactly, so the option would be a promise the API cannot keep.
   const preserveWorkbookAllowed =
-    Boolean(tableName) || (!rangeName && !sheetName);
+    !isCsv && (Boolean(tableName) || (!rangeName && !sheetName));
   // The API's dispatch rule, mirrored so the controls can tell the truth: no
   // source named and preservation left on means every worksheet is filtered
   // in place, which is also the only mode that ignores the blank and hidden
   // worksheet options.
   const allWorksheetMode =
-    !tableName && !rangeName && !sheetName && preserveWorkbook;
+    !isCsv && !tableName && !rangeName && !sheetName && preserveWorkbook;
 
   const options = useMemo<WorkbookSplitOptions>(() => {
     const parsedHeaderRow = Number.parseInt(headerRow, 10);
     return {
       column: column.trim(),
+      csv,
       filenamePrefix: prefix.trim() || undefined,
       headerRow:
         headerRowAllowed && Number.isFinite(parsedHeaderRow)
@@ -433,6 +443,7 @@ export function ExcelSplitTool() {
   }, [
     allWorksheetMode,
     column,
+    csv,
     headerRow,
     headerRowAllowed,
     includeBlank,
@@ -471,6 +482,7 @@ export function ExcelSplitTool() {
           {
             kind: "xlsx.columns",
             input: { file: input.file, name: input.name },
+            csv: options.csv,
             headerRow: options.headerRow,
             worksheet: options.sheet,
           },
@@ -490,7 +502,7 @@ export function ExcelSplitTool() {
       active = false;
       controller.abort();
     };
-  }, [input, options.headerRow, options.sheet]);
+  }, [input, options.csv, options.headerRow, options.sheet]);
 
   // Re-planning re-parses the workbook, so wait for a pause in typing first.
   // Clearing a stale preview waits for the same pause, which keeps every
@@ -547,7 +559,7 @@ export function ExcelSplitTool() {
 
   const detectedColumns = detected?.columns ?? [];
   const showManualField = isManualColumn || detectedColumns.length === 0;
-  const archiveName = `${(prefix.trim() || (input ? WORKBOOK_FILES.stripExtension(input.name) : "workbook")).replace(/[<>:"/\\|?*]+/gu, "-")}-split.zip`;
+  const archiveName = `${(prefix.trim() || (input ? SHEET_FILES.stripExtension(input.name) : "workbook")).replace(/[<>:"/\\|?*]+/gu, "-")}-split.zip`;
 
   return (
     <ToolShell
@@ -563,13 +575,13 @@ export function ExcelSplitTool() {
         </h2>
         <div className="mt-4">
           <FilePicker
-            accept={WORKBOOK_FILES.accept}
-            description={`Drag ${WORKBOOK_FILES.description} here, or pick one with the button below. Only the first workbook is used`}
+            accept={SHEET_FILES.accept}
+            description={`Drag ${SHEET_FILES.description} here, or pick one with the button below. Only the first file is used`}
             disabled={isRunning}
             label="Source workbook"
             multiple={false}
             onFiles={(files) => {
-              void readUploads(files, WORKBOOK_FILES.accepts).then((read) => {
+              void readUploads(files, SHEET_FILES.accepts).then((read) => {
                 const [first] = read;
                 if (first) {
                   setInput(first);
@@ -590,6 +602,13 @@ export function ExcelSplitTool() {
             <span className="shrink-0">{formatBytes(input.size)}</span>
           </p>
         ) : null}
+        {isCsv ? (
+          <CsvOptionsFields
+            choices={csvChoices}
+            disabled={isRunning}
+            onChange={setCsvChoice}
+          />
+        ) : null}
       </section>
 
       {/*
@@ -600,6 +619,7 @@ export function ExcelSplitTool() {
         them too.
       */}
       <WorkbookInspectorDisclosure
+        csv={csv}
         emptyMessage="Choose a workbook above to see the worksheets, header rows, and structures it holds"
         file={input}
         headerRow={options.headerRow}
@@ -735,7 +755,9 @@ export function ExcelSplitTool() {
               hint={
                 preserveWorkbookAllowed
                   ? "On by default. The source workbook's sheets, formatting, and supported workbook structure are kept, and only the rows that do not belong are removed. Pivot tables and their caches are removed, with a warning on the result. Turn it off to get small, plain workbooks holding just the matching rows of the source being split"
-                  : "Not offered for a named worksheet or a named range: those always produce small, plain workbooks holding just the matching rows"
+                  : isCsv
+                    ? "Not offered for a CSV file, which has no workbook to keep: each output is a small, plain workbook holding just the matching rows"
+                    : "Not offered for a named worksheet or a named range: those always produce small, plain workbooks holding just the matching rows"
               }
               label="Keep the whole workbook"
               onChange={setPreserveWorkbook}
@@ -911,6 +933,12 @@ export function ExcelMergeTool() {
   const { add, files } = uploads;
   const [outputName, setOutputName] = useState("");
   const [values, setValues] = useState(false);
+  const [csvChoices, setCsvChoice] = useCsvChoices();
+  const hasCsv = files.some((file) => isCsvFileName(file.name));
+  const csv = useMemo(
+    () => (hasCsv ? csvReadOptionsFrom(csvChoices) : undefined),
+    [csvChoices, hasCsv],
+  );
   const runState = useOperationRun();
   const isRunning = runState.status === "running";
   const consolidateHref = browserToolHref("spreadsheet-consolidate");
@@ -922,10 +950,11 @@ export function ExcelMergeTool() {
     void runState.run({
       kind: "xlsx.merge",
       inputs: files.map((file) => ({ file: file.file, name: file.name })),
+      csv,
       outputName: outputName.trim() || undefined,
       values,
     });
-  }, [files, outputName, runState, values]);
+  }, [csv, files, outputName, runState, values]);
 
   return (
     <ToolShell
@@ -956,13 +985,13 @@ export function ExcelMergeTool() {
         </h2>
         <div className="mt-4">
           <FilePicker
-            accept={WORKBOOK_FILES.accept}
-            description={`Drag one or more ${WORKBOOK_FILES.pluralDescription} here, or pick them with the button below. Added files keep the order shown`}
+            accept={SHEET_FILES.accept}
+            description={`Drag one or more ${SHEET_FILES.pluralDescription} here, or pick them with the button below. Added files keep the order shown, and each CSV file becomes one tab`}
             disabled={isRunning}
             label="Source workbooks"
             multiple
             onFiles={(chosen) => {
-              void readUploads(chosen, WORKBOOK_FILES.accepts).then((read) => {
+              void readUploads(chosen, SHEET_FILES.accepts).then((read) => {
                 if (read.length > 0) {
                   add(read);
                   runState.reset();
@@ -993,6 +1022,13 @@ export function ExcelMergeTool() {
             testId="values-checkbox"
           />
         </div>
+        {hasCsv ? (
+          <CsvOptionsFields
+            choices={csvChoices}
+            disabled={isRunning}
+            onChange={setCsvChoice}
+          />
+        ) : null}
       </section>
 
       <section className={sectionClass} data-testid="run-section">

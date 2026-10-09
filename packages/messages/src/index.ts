@@ -139,6 +139,24 @@ function metric(result: OperationResult, name: string): number {
   return result.metrics[name] ?? 0;
 }
 
+/**
+ * A sheets operation's inputs, counted by kind. A CSV file is read as one
+ * worksheet, so the files are named by kind only when some were CSV.
+ */
+function sheetInputFiles(result: OperationResult): string {
+  const csvFiles = metric(result, "csvInputFiles");
+  const excelFiles = metric(result, "inputFiles") - csvFiles;
+  if (csvFiles === 0) return quantity(excelFiles, "Excel file");
+  if (excelFiles === 0) return quantity(csvFiles, "CSV file");
+  return `${quantity(excelFiles, "Excel file")} and ${quantity(csvFiles, "CSV file")}`;
+}
+
+function sheetInputsUnchanged(result: OperationResult): string {
+  return metric(result, "csvInputFiles") === 0
+    ? "Your original Excel files were not changed."
+    : "Your original files were not changed.";
+}
+
 function formatNumber(value: number): string {
   return numberFormatter.format(value);
 }
@@ -262,9 +280,9 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
   "sheets.merge": {
     title: "Your Excel workbook merge is complete.",
     summary: (result) => [
-      `ConsultChimps copied ${quantity(metric(result, "outputSheets"), "worksheet")} from ${quantity(metric(result, "inputFiles"), "Excel file")} into one workbook.`,
+      `ConsultChimps copied ${quantity(metric(result, "outputSheets"), "worksheet")} from ${sheetInputFiles(result)} into one workbook.`,
       `${quantity(metric(result, "hiddenSheets"), "source worksheet")} ${metric(result, "hiddenSheets") === 1 ? "was" : "were"} hidden.`,
-      "Your original Excel files were not changed.",
+      sheetInputsUnchanged(result),
     ],
     nextSteps: (vocabulary) => [
       `Open the new Excel workbook ${vocabulary.artifactListReference} and review the copied worksheets.`,
@@ -274,18 +292,8 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
   "sheets.consolidate": {
     title: "Your Excel consolidation is complete.",
     summary: (result) => {
-      const csvFiles = metric(result, "csvInputFiles");
-      const excelFiles = metric(result, "inputFiles") - csvFiles;
-      // A CSV file is read as one worksheet, so the files are named by kind
-      // only when some of them were CSV.
-      const files =
-        csvFiles === 0
-          ? quantity(excelFiles, "Excel file")
-          : excelFiles === 0
-            ? quantity(csvFiles, "CSV file")
-            : `${quantity(excelFiles, "Excel file")} and ${quantity(csvFiles, "CSV file")}`;
       const lines = [
-        `ConsultChimps read ${files} and combined ${quantity(metric(result, "inputTables"), "visible worksheet")}.`,
+        `ConsultChimps read ${sheetInputFiles(result)} and combined ${quantity(metric(result, "inputTables"), "visible worksheet")}.`,
         `The finished workbook contains ${quantity(metric(result, "outputRows"), "data row")} arranged across ${quantity(metric(result, "outputColumns"), "column")}.`,
       ];
       // Title rows above a header and spacer columns between blocks are left
@@ -323,11 +331,7 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
             : `It also drafted a column mapping proposing ${quantity(metric(result, "suggestedColumns"), "canonical column")}, and applied none of them.`,
         );
       }
-      lines.push(
-        csvFiles === 0
-          ? "Your original Excel files were not changed."
-          : "Your original files were not changed.",
-      );
+      lines.push(sheetInputsUnchanged(result));
       return lines;
     },
     nextSteps: (vocabulary, result) => {
