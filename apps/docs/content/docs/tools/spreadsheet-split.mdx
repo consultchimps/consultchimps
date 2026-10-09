@@ -144,15 +144,16 @@ it splits into one CSV file per value, or into compact workbooks with
 `--output-format xlsx`. `--output-format csv` splits a workbook into CSV files
 the same compact way, from one source named with `--sheet`, `--table` or
 `--range` when it has several, and asking to keep the workbook with CSV output
-is refused. Fields stay text unless `--csv-numbers` or `--csv-dates` asks
-otherwise, and the encoding and delimiter are detected, with `--csv-encoding`
-and `--csv-delimiter` to override them; a byte order mark wins over a
-contradicting encoding. Each CSV output is UTF-8 with a byte order mark
-(`--csv-bom false` leaves it out), ends rows with CRLF, writes dates as ISO
-text, and puts an apostrophe before text that would start a formula. In the
-browser, "Output files" chooses CSV files or workbooks, and "Reading CSV files"
-appears for a CSV input. The CLI reference covers every flag under
-[CSV files](/docs/reference/cli#csv-files).
+is refused. On the command line, rows with a blank value get a file of their own
+unless `--skip-blank` is given; the browser skips them unless asked. Fields stay
+text unless `--csv-numbers` or `--csv-dates` asks otherwise, and the encoding
+and delimiter are detected, with `--csv-encoding` and `--csv-delimiter` to
+override them; a byte order mark wins over a contradicting encoding. Each CSV
+output is UTF-8 with a byte order mark (`--csv-bom false` leaves it out), ends
+rows with CRLF, writes dates as ISO text, and puts an apostrophe before text
+that would start a formula. In the browser, "Output files" chooses CSV files or
+workbooks, and "Reading CSV files" appears for a CSV input. The CLI reference
+covers every flag under [CSV files](/docs/reference/cli#csv-files).
 
 <Callout title="What the online tool does">
   The [in-browser splitter](/tools/excel-split) runs the same all-worksheet
