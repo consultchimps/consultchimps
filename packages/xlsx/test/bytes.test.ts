@@ -948,7 +948,7 @@ describe("byte-level workbook splitting", () => {
     await expect(
       splitWorkbookBytes({
         input: {
-          name: "clients.csv",
+          name: "clients.txt",
           bytes: await workbookBytes(clientRows()),
         },
         column: "Region",
@@ -1194,6 +1194,7 @@ describe("byte-level workbook merging", () => {
 
     expect(result.operation).toBe("sheets.merge");
     expect(result.metrics).toEqual({
+      csvInputFiles: 0,
       formulaCellsWithoutCachedValues: 0,
       hiddenSheets: 1,
       inputFiles: 2,

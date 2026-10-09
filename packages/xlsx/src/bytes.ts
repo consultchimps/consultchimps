@@ -6,6 +6,13 @@
  */
 import { openSheetBook } from "./operations/sheet-book.js";
 import { settleCsvOptions, type CsvReadOptions } from "./csv/options.js";
+import { isCsvName } from "./csv/reader.js";
+import { splitOptionsFor } from "./csv/split.js";
+import {
+  csvAsWorkbook,
+  memoryCsvScratch,
+  type CsvScratch,
+} from "./csv/workbook.js";
 import { uncachedFormulaWarnings } from "./uncached-formulas.js";
 export {
   uncachedFormulaHint,
@@ -288,6 +295,12 @@ export interface WorkbookInputBytes {
 export interface SplitWorkbookBytesOptions extends OperationControlOptions {
   input: WorkbookInputBytes;
   column: string;
+  /**
+   * How to read the input when its name ends in `.csv`: one worksheet named
+   * after the file, split compactly, since a CSV file has no workbook to keep
+   * (ADR 0007).
+   */
+  csv?: CsvReadOptions | undefined;
   filenamePrefix?: string | undefined;
   headerRow?: number | undefined;
   /** Only applies to a table, range, or worksheet selection. */
@@ -441,6 +454,11 @@ export interface ConsolidateWorkbookSourcesOutcome {
 
 export interface MergeWorkbooksBytesOptions extends OperationControlOptions {
   inputs: WorkbookInputBytes[];
+  /**
+   * How to read the inputs whose names end in `.csv`: each becomes one
+   * worksheet named after the file (ADR 0007).
+   */
+  csv?: CsvReadOptions | undefined;
   includeSheetIndex?: boolean | undefined;
   outputName?: string | undefined;
   values?: boolean | undefined;
@@ -592,8 +610,9 @@ export interface PlanSplitWorkbookSourceOptions extends SplitSelectionShape {
  * `File` through `blobSource`, so it is never held whole.
  */
 export async function planSplitWorkbookSource(
-  options: PlanSplitWorkbookSourceOptions,
+  requested: PlanSplitWorkbookSourceOptions,
 ): Promise<OperationPlan<SplitWorkbookByColumnPlanMetric>> {
+  const options = splitOptionsFor(requested.input.name, requested);
   const { input } = options;
   if (isAllWorksheetSplit(options)) {
     const resolved = await resolveAllWorksheetSplitSource(input, options);
@@ -634,6 +653,7 @@ export async function planSplitWorkbookSource(
       ? [skippedRowsWarning(resolved.skippedRows, resolved.column)]
       : []),
     ...uncached.warnings,
+    ...resolved.workbook.warnings,
   ];
 
   return {
@@ -715,9 +735,10 @@ export interface SplitWorkbookSourceOutcome {
  * `splitWorkbookBytes` returns.
  */
 export async function splitWorkbookSource(
-  options: SplitWorkbookSourceOptions,
+  requested: SplitWorkbookSourceOptions,
 ): Promise<SplitWorkbookSourceOutcome> {
-  throwIfAborted(options.signal, SPLIT_OPERATION, "memory");
+  throwIfAborted(requested.signal, SPLIT_OPERATION, "memory");
+  const options = splitOptionsFor(requested.input.name, requested);
   const opened: ByteSink[] = [];
   const open = async (name: string, mediaType: string): Promise<ByteSink> => {
     const sink = await options.output(name, mediaType);
@@ -798,6 +819,7 @@ async function splitRegionSource(
           ? [skippedRowsWarning(resolved.skippedRows, resolved.column)]
           : []),
         ...uncached.warnings,
+        ...resolved.workbook.warnings,
         ...(pivotTablesRemoved > 0
           ? [
               `Removed ${pivotTablesRemoved} pivot table${pivotTablesRemoved === 1 ? "" : "s"}: their caches contained rows from other groups, and a cache travels inside the workbook whether or not the pivot is opened. Rebuild the pivot in Excel from each output's own rows if it is required.`,
@@ -1166,6 +1188,11 @@ export interface MergeWorkbookSourcesOptions extends Omit<
   inputs: RandomAccessSource[];
   /** Receives the merged workbook as it is written. */
   output: ByteSink;
+  /**
+   * Where each CSV input's worksheet is written before it is merged, which
+   * the merge reads again as it writes. Kept in memory when absent.
+   */
+  scratch?: CsvScratch | undefined;
 }
 
 export interface MergeWorkbookSourcesOutcome {
@@ -1219,9 +1246,27 @@ async function mergeIntoSink(
     throwIfAborted(options.signal, MERGE_OPERATION, "memory");
   });
 
+  settleCsvOptions(options.csv);
+  const csvWarnings: string[] = [];
+  let csvInputs = 0;
   for (const [index, input] of options.inputs.entries()) {
     throwIfAborted(options.signal, MERGE_OPERATION, "memory");
-    await appendWorkbookSheets(state, input.name, input);
+    let workbook: RandomAccessSource = input;
+    if (isCsvName(input.name)) {
+      const converted = await csvAsWorkbook(
+        input,
+        options.csv,
+        options.scratch ?? memoryCsvScratch,
+        async () => {
+          await yieldToEventLoop();
+          throwIfAborted(options.signal, MERGE_OPERATION, "memory");
+        },
+      );
+      workbook = converted.workbook;
+      for (const warning of converted.warnings) csvWarnings.push(warning);
+      csvInputs += 1;
+    }
+    await appendWorkbookSheets(state, input.name, workbook);
     options.onProgress?.({
       operation: MERGE_OPERATION,
       stage: "merging-inputs",
@@ -1261,8 +1306,9 @@ async function mergeIntoSink(
           path: outputName,
         },
       ],
-      warnings: merged.warnings,
+      warnings: [...merged.warnings, ...csvWarnings],
       metrics: {
+        csvInputFiles: csvInputs,
         inputFiles: options.inputs.length,
         outputSheets: merged.outputSheets,
         hiddenSheets: merged.hiddenSheets,

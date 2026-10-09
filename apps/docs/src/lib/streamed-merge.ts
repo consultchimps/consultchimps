@@ -5,6 +5,7 @@
  */
 import type { OperationControlOptions } from "@consultchimps/core";
 import {
+  blobSource,
   mergeWorkbookSources,
   type MergeWorkbooksBytesOptions,
 } from "@consultchimps/xlsx/bytes";
@@ -49,6 +50,20 @@ export async function mergeFiles(
         ...controls,
         inputs: inputs.map((input) => reads.source(input)),
         output: target.sink,
+        // Each CSV input's worksheet is written to a file of its own that the
+        // merge reads as it writes, kept with this run's outputs and removed
+        // with them.
+        scratch: async (name) => {
+          const file = await openOutputTarget(
+            place,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            created,
+          );
+          return {
+            sink: file.sink,
+            finish: async () => blobSource(name, (await file.finish()).blob),
+          };
+        },
       }),
     );
   } catch (error) {

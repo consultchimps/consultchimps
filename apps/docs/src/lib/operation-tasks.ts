@@ -96,6 +96,8 @@ export interface PresentationPopulateOptions {
  */
 export interface WorkbookSplitOptions {
   readonly column: string;
+  /** How to read the input when it is a CSV file (ADR 0007). */
+  readonly csv?: CsvReadOptions | undefined;
   readonly filenamePrefix?: string | undefined;
   readonly headerRow?: number | undefined;
   readonly includeBlank?: boolean | undefined;
@@ -154,6 +156,8 @@ export type OperationTask =
   | {
       readonly kind: "xlsx.merge";
       readonly inputs: readonly NamedFile[];
+      // How to read the inputs that are CSV files (ADR 0007).
+      readonly csv?: CsvReadOptions | undefined;
       readonly outputName?: string | undefined;
       readonly values?: boolean | undefined;
     }
@@ -187,6 +191,7 @@ export type OperationTask =
   | {
       readonly kind: "xlsx.columns";
       readonly input: NamedFile;
+      readonly csv?: CsvReadOptions | undefined;
       readonly headerRow?: number | undefined;
       readonly worksheet?: string | undefined;
     }

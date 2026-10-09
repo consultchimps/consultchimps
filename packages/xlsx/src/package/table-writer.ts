@@ -88,6 +88,13 @@ export interface TableWorkbookWriterOptions {
   widths: readonly number[];
   /** Data rows that will be written, not counting the header. */
   rowCount: number;
+  /**
+   * Write `columns` as a header row with an AutoFilter over the table. Off,
+   * `columns` only says how many columns there are, every row is written
+   * through `writeRow` from row 1, and the sheet is a plain grid, as a CSV
+   * file's worksheet is in a merge. On by default.
+   */
+  header?: boolean | undefined;
   /** Receives the workbook's bytes in order as they are produced. */
   onChunk: (chunk: Uint8Array) => void;
 }
@@ -103,6 +110,7 @@ export class TableWorkbookWriter {
   readonly #zip: Zip;
   readonly #sheet: ZipDeflate;
   readonly #lastRef: string;
+  readonly #header: boolean;
   #pending = "";
   #written = 0;
   #error: Error | undefined;
@@ -117,8 +125,10 @@ export class TableWorkbookWriter {
     }
     this.#columns = columns.length;
     this.#rowCount = rowCount;
+    this.#header = options.header ?? true;
     this.#letters = columns.map((_, index) => columnLetters(index));
-    this.#lastRef = `${this.#letters.at(-1)}${rowCount + 1}`;
+    const lastRow = this.#header ? rowCount + 1 : Math.max(rowCount, 1);
+    this.#lastRef = `${this.#letters.at(-1)}${lastRow}`;
 
     this.#zip = new Zip((error, data) => {
       if (error) this.#error = error;
@@ -130,7 +140,7 @@ export class TableWorkbookWriter {
     this.#addPart("docProps/app.xml", appPropertiesXml(sheetName));
     this.#addPart(
       "xl/workbook.xml",
-      workbookXml(sheetName, this.#letters.at(-1)!, rowCount + 1),
+      workbookXml(sheetName, this.#letters.at(-1)!, lastRow, this.#header),
     );
     this.#addPart("xl/_rels/workbook.xml.rels", workbookRelsXml());
     this.#addPart("xl/styles.xml", STYLES_XML);
@@ -149,7 +159,7 @@ export class TableWorkbookWriter {
             `<col min="${index + 1}" max="${index + 1}" width="${width + 0.83203125}" customWidth="1"/>`,
         )
         .join("")}</cols><sheetData>`;
-    this.#appendRow(1, columns);
+    if (this.#header) this.#appendRow(1, columns);
   }
 
   writeRow(values: readonly WritableCellValue[]): void {
@@ -159,7 +169,7 @@ export class TableWorkbookWriter {
       );
     }
     this.#written += 1;
-    this.#appendRow(this.#written + 1, values);
+    this.#appendRow(this.#header ? this.#written + 1 : this.#written, values);
   }
 
   finish(): void {
@@ -170,7 +180,7 @@ export class TableWorkbookWriter {
     }
     const ref = `A1:${this.#lastRef}`;
     this.#pending +=
-      `</sheetData><autoFilter ref="${ref}"/>` +
+      `</sheetData>${this.#header ? `<autoFilter ref="${ref}"/>` : ""}` +
       `<ignoredErrors><ignoredError numberStoredAsText="1" sqref="${ref}"/></ignoredErrors>` +
       `</worksheet>`;
     this.#sheet.push(strToU8(this.#pending), true);
@@ -276,6 +286,7 @@ function workbookXml(
   sheetName: string,
   lastColumn: string,
   lastRow: number,
+  filter: boolean,
 ): string {
   // A defined name refers to its sheet in quotes, with any quote doubled, so a
   // name with spaces or punctuation still resolves.
@@ -285,7 +296,9 @@ function workbookXml(
     XML_HEADER +
     `<workbook xmlns="${MAIN_NS}" xmlns:r="${REL_NS}">` +
     `<sheets><sheet name="${escapeAttribute(sheetName)}" sheetId="1" r:id="rId1"/></sheets>` +
-    `<definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">${escapeCellText(`${quoted}!${absolute}`)}</definedName></definedNames>` +
+    (filter
+      ? `<definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">${escapeCellText(`${quoted}!${absolute}`)}</definedName></definedNames>`
+      : "") +
     `</workbook>`
   );
 }

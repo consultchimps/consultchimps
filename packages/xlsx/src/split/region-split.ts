@@ -34,12 +34,14 @@ import type { ExcelTableDefinition } from "../excel-tables.js";
 import { writableCellValue } from "../model/date-cells.js";
 import { decodeRange, type CellRectangle } from "../model/references.js";
 import { SheetProfile } from "../operations/consolidate/consolidate.js";
-import {
-  StreamedWorkbook,
-  type StreamedCell,
-  type StreamedSheet,
-  type WorksheetRead,
+import type { CsvReadOptions } from "../csv/options.js";
+import type {
+  SheetBook,
+  StreamedCell,
+  StreamedSheet,
+  WorksheetRead,
 } from "../operations/consolidate/reader.js";
+import { openSheetBook } from "../operations/sheet-book.js";
 import { tableValue } from "../operations/sheet-grid.js";
 import {
   readWorksheetPart,
@@ -88,6 +90,8 @@ export interface RegionSplitSelection {
   range?: string | undefined;
   sheet?: string | undefined;
   table?: string | undefined;
+  /** How to read the input when it is a CSV file (ADR 0007). */
+  csv?: CsvReadOptions | undefined;
 }
 
 export interface RegionSplitContext {
@@ -107,7 +111,7 @@ export interface RegionGroup {
 
 /** Everything a region split learned by reading its source. */
 export interface ResolvedRegionSplit {
-  readonly workbook: StreamedWorkbook;
+  readonly workbook: SheetBook;
   readonly sheet: StreamedSheet;
   /** Whether the region's worksheet had to be read whole, out of order. */
   readonly gathered: boolean;
@@ -157,7 +161,7 @@ function lowercaseSet(values: string[] | undefined): Set<string> | undefined {
     : undefined;
 }
 
-function isVisibleSheet(workbook: StreamedWorkbook, name: string): boolean {
+function isVisibleSheet(workbook: SheetBook, name: string): boolean {
   return workbook.sheets.find((sheet) => sheet.name === name)?.visible ?? true;
 }
 
@@ -229,7 +233,7 @@ function fanOut(
 
 /** The regions the selection names, in the order the table readers list them. */
 function candidatesOf(
-  workbook: StreamedWorkbook,
+  workbook: SheetBook,
   selection: RegionSplitSelection,
 ): Candidate[] {
   const selectedSheets = lowercaseSet(
@@ -348,7 +352,7 @@ function tableRectangle(definition: ExcelTableDefinition): {
  * candidates sit on it, and learn which candidates hold rows.
  */
 async function readCandidates(
-  workbook: StreamedWorkbook,
+  workbook: SheetBook,
   candidates: Candidate[],
   headerRow: number | undefined,
 ): Promise<void> {
@@ -418,7 +422,7 @@ async function readCandidates(
 
 /** The sheets' formulas with no cached value, for the refusal that names none. */
 async function uncachedOnSheets(
-  workbook: StreamedWorkbook,
+  workbook: SheetBook,
   sheetName: string | undefined,
   includeHiddenSheets: boolean | undefined,
 ): Promise<string[]> {
@@ -458,11 +462,15 @@ export async function resolveRegionSplit(
   selection: RegionSplitSelection,
   preserveWorkbook: boolean,
 ): Promise<ResolvedRegionSplit> {
-  const workbook = await StreamedWorkbook.open(source, {
-    file: context.file,
-    source: context.label,
-    details: context.details,
-  });
+  const workbook = await openSheetBook(
+    source,
+    {
+      file: context.file,
+      source: context.label,
+      details: context.details,
+    },
+    selection.csv,
+  );
   const candidates = candidatesOf(workbook, selection);
   await readCandidates(workbook, candidates, selection.headerRow);
   const requested = (selection.table ?? selection.range)?.toLocaleLowerCase();

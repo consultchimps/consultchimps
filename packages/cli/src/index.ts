@@ -59,7 +59,7 @@ interface ConsolidateOptions extends CsvCliOptions {
   values?: boolean;
 }
 
-interface SheetMergeOptions {
+interface SheetMergeOptions extends CsvCliOptions {
   force?: boolean;
   index: boolean;
   output: string;
@@ -73,7 +73,7 @@ interface SheetInspectOptions extends CsvCliOptions {
   sheet?: string[];
 }
 
-interface SheetSplitOptions {
+interface SheetSplitOptions extends CsvCliOptions {
   column: string;
   force?: boolean;
   headerRow?: number;
@@ -349,33 +349,38 @@ sheets
     },
   );
 
-sheets
-  .command("merge")
-  .description(
-    "copy every worksheet from multiple Excel workbooks into one workbook, keeping each sheet separate",
-  )
-  .argument(
-    "<inputs...>",
-    'Excel files, folders, or quoted patterns such as "inputs/*.xlsx"',
-  )
-  .requiredOption("-o, --output <path>", "where to save the new workbook")
-  .option("--no-index", "do not add the visible Sheet Index worksheet")
-  .option(
-    "--values",
-    "replace formulas with their stored values while preserving formatting",
-  )
-  .option(
-    "-f, --force",
-    "replace the output file if it already exists; use with care",
-  )
+withCsvOptions(
+  sheets
+    .command("merge")
+    .description(
+      "copy every worksheet from multiple Excel workbooks and CSV files into one workbook, keeping each sheet separate",
+    )
+    .argument(
+      "<inputs...>",
+      'Excel or CSV files, folders, or quoted patterns such as "inputs/*.xlsx"',
+    )
+    .requiredOption("-o, --output <path>", "where to save the new workbook")
+    .option("--no-index", "do not add the visible Sheet Index worksheet")
+    .option(
+      "--values",
+      "replace formulas with their stored values while preserving formatting",
+    )
+    .option(
+      "-f, --force",
+      "replace the output file if it already exists; use with care",
+    ),
+)
   .addHelpText(
     "after",
     `
 Examples:
   consultchimps sheets merge "inputs/*.xlsx" --values -o all-sheets.xlsx
   consultchimps sheets merge north.xlsx south.xlsx --output all-sheets.xlsx
+  consultchimps sheets merge north.xlsx exports/ --csv-numbers -o all-sheets.xlsx
 
-Every source worksheet remains a separate tab. Sheet Index records source names
+Every source worksheet remains a separate tab. Each CSV file becomes one tab
+named after the file, its rows as they are, every field text unless
+--csv-numbers or --csv-dates asks otherwise. Sheet Index records source names
 and hidden/visible status. Duplicate tab names receive a suffix. --values
 removes formulas but always retains cell and workbook formatting.
 
@@ -387,14 +392,16 @@ When you want one combined sheet instead of separate tabs:
   .action(async (inputs: string[], options: SheetMergeOptions) => {
     const inputPaths = await (
       await filesModule()
-    ).discoverFiles(inputs, { extensions: [".xlsx"] });
+    ).discoverFiles(inputs, { extensions: [".xlsx", ".csv"] });
     currentRecorder().recordInputs(inputPaths);
+    const csv = csvReadOptions(options);
     const progress = createCliProgress(
       program.opts<GlobalOptions>().json === true,
     );
     const result = await (
       await xlsxModule()
     ).mergeWorkbooks(inputPaths, options.output, {
+      csv,
       includeSheetIndex: options.index,
       onProgress: progress.report,
       overwrite: options.force === true,
@@ -530,67 +537,69 @@ When you want each worksheet kept as its own tab instead:
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
-sheets
-  .command("split")
-  .description(
-    "create one new Excel workbook for each distinct value in a selected column",
-  )
-  .argument("<input>", "the source .xlsx or .xlsm workbook to divide")
-  .requiredOption(
-    "-c, --column <name>",
-    "column whose values decide which rows go into each new workbook",
-  )
-  .option(
-    "-o, --output <directory>",
-    "folder where the new workbooks will be saved",
-  )
-  .option(
-    "--output-dir <directory>",
-    "folder where the new workbooks will be saved (alias for --output)",
-  )
-  .option("--sheet <name>", "exact name of the worksheet to divide")
-  .option(
-    "--table <name>",
-    "use this named Excel Table instead of the worksheet's full used range (preferred)",
-  )
-  .option(
-    "--range <name>",
-    "use this named range instead of the worksheet's full used range",
-  )
-  .option(
-    "--header-row <number>",
-    "row containing column names, counted from 1",
-    positiveInteger,
-  )
-  .option("--hidden", "allow the selected worksheet to be hidden")
-  .option(
-    "--preserve-workbook",
-    "keep the full workbook layout (default without a selector and for --table)",
-  )
-  .option(
-    "--no-preserve-workbook",
-    "write plain data-only workbooks using the single-source split mode",
-  )
-  .option(
-    "--values",
-    "replace formulas with their stored values while preserving formatting",
-  )
-  .option(
-    "--strict",
-    "match split values exactly, including case, whitespace, and value type",
-  )
-  .option(
-    "--skip-blank",
-    "do not create an output group for rows with a blank split-column value",
-  )
-  .option(
-    "--prefix <name>",
-    "text to place at the start of each output filename",
-  )
-  .option(
-    "-f, --force",
-    "replace matching output files that already exist; use with care",
-  )
+withCsvOptions(
+  sheets
+    .command("split")
+    .description(
+      "create one new Excel workbook for each distinct value in a selected column",
+    )
+    .argument("<input>", "the source .xlsx, .xlsm, or .csv file to divide")
+    .requiredOption(
+      "-c, --column <name>",
+      "column whose values decide which rows go into each new workbook",
+    )
+    .option(
+      "-o, --output <directory>",
+      "folder where the new workbooks will be saved",
+    )
+    .option(
+      "--output-dir <directory>",
+      "folder where the new workbooks will be saved (alias for --output)",
+    )
+    .option("--sheet <name>", "exact name of the worksheet to divide")
+    .option(
+      "--table <name>",
+      "use this named Excel Table instead of the worksheet's full used range (preferred)",
+    )
+    .option(
+      "--range <name>",
+      "use this named range instead of the worksheet's full used range",
+    )
+    .option(
+      "--header-row <number>",
+      "row containing column names, counted from 1",
+      positiveInteger,
+    )
+    .option("--hidden", "allow the selected worksheet to be hidden")
+    .option(
+      "--preserve-workbook",
+      "keep the full workbook layout (default without a selector and for --table)",
+    )
+    .option(
+      "--no-preserve-workbook",
+      "write plain data-only workbooks using the single-source split mode",
+    )
+    .option(
+      "--values",
+      "replace formulas with their stored values while preserving formatting",
+    )
+    .option(
+      "--strict",
+      "match split values exactly, including case, whitespace, and value type",
+    )
+    .option(
+      "--skip-blank",
+      "do not create an output group for rows with a blank split-column value",
+    )
+    .option(
+      "--prefix <name>",
+      "text to place at the start of each output filename",
+    )
+    .option(
+      "-f, --force",
+      "replace matching output files that already exist; use with care",
+    ),
+)
   .addHelpText(
     "after",
     `
@@ -613,6 +622,10 @@ numeric text like the equivalent number. Use --strict for exact matching.
 Use --sheet, --table, or --range for the legacy single-source split mode.
 Use --no-preserve-workbook only when a compact, data-only result is wanted.
 
+A CSV file has no workbook to keep, so it always splits into compact
+workbooks; every field stays text unless --csv-numbers or --csv-dates asks
+otherwise.
+
 --values removes formulas while retaining their stored results and all
 formatting in a preserved workbook. A formula without a stored result becomes
 a formatted blank cell and is reported as a warning.
@@ -633,7 +646,7 @@ Your original workbook is never changed.
     const inputPaths = await (
       await filesModule()
     ).discoverFiles([input], {
-      extensions: [".xlsx", ".xlsm"],
+      extensions: [".xlsx", ".xlsm", ".csv"],
     });
     currentRecorder().recordInputs(inputPaths);
     if (inputPaths.length !== 1) {
@@ -646,6 +659,7 @@ Your original workbook is never changed.
     if (!inputPath) {
       throw new Error("No input workbook was found.");
     }
+    const csv = csvReadOptions(options);
 
     const outputDirectory =
       options.outputDir ??
@@ -657,6 +671,7 @@ Your original workbook is never changed.
     const result = await (
       await xlsxModule()
     ).splitWorkbookByColumn({
+      csv,
       input: inputPath,
       outputDirectory,
       column: options.column,

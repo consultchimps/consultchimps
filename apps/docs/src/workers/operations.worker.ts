@@ -206,7 +206,7 @@ async function perform(
       const { mergeFiles } = await import("@/lib/streamed-merge");
       const { result, outputs } = await mergeFiles(
         task.inputs,
-        { outputName: task.outputName, values: task.values },
+        { csv: task.csv, outputName: task.outputName, values: task.values },
         controls,
         outputPlace,
         await nextOutputRun(),
@@ -249,6 +249,22 @@ async function perform(
       );
     }
     case "xlsx.columns": {
+      if (task.input.name.toLowerCase().endsWith(".csv")) {
+        // A CSV file's one worksheet, read in pieces; its header row's
+        // columns are what the inspection reports.
+        const { inspectFile } = await import("@/lib/streamed-inspection");
+        const outcome = await inspectFile(task.input, {
+          ...controls,
+          csv: task.csv,
+          headerRow: task.headerRow,
+          sampleValues: 0,
+        });
+        const sheet = outcome.description.sheets[0];
+        return answerWithValue({
+          columns: sheet?.columns.map((column) => column.header) ?? [],
+          worksheet: sheet?.name ?? "",
+        });
+      }
       const { readWorksheetRecordsBytes } =
         await import("@consultchimps/xlsx/bytes");
       const records = await readWorksheetRecordsBytes(

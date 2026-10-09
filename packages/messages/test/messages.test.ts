@@ -225,6 +225,21 @@ describe("human-readable CLI output", () => {
     expect(summary(1)).toContain("CSV files read, each as one worksheet: 1");
   });
 
+  it("names CSV files among a merge's inputs", () => {
+    const output = formatHumanResult(
+      result(
+        "sheets.merge",
+        { csvInputFiles: 1, hiddenSheets: 0, inputFiles: 2, outputSheets: 2 },
+        ["merged.xlsx"],
+      ),
+      cli,
+    );
+    expect(output).toContain(
+      "from 1 Excel file and 1 CSV file into one workbook",
+    );
+    expect(output).toContain("Your original files were not changed.");
+  });
+
   it("says what a consolidation left out, and nothing when it left out nothing", () => {
     const both = formatHumanResult(
       result(

@@ -221,12 +221,16 @@ run.
 
 ## CSV files
 
-`sheets consolidate` and `sheets inspect` read `.csv` files beside workbooks.
-Each CSV file is one worksheet named after the file, so `_source_sheet` names
-it. The encoding comes from a byte order mark, else UTF-8, else Windows-1252
-with a warning; the delimiter is guessed from the first rows. `--csv-delimiter`
-overrides the guess, and `--csv-encoding` the encoding, except that a byte order
-mark wins over a choice that contradicts it, with a warning.
+Every `sheets` command but `unprotect` reads `.csv` files beside workbooks. Each
+CSV file is one worksheet named after the file, so `_source_sheet` names it. A
+merge copies its rows as they are into a tab of that name. A split of a CSV file
+always writes compact workbooks, since there is no workbook to keep;
+`--preserve-workbook` with a CSV input is refused with
+`XLSX_SPLIT_CSV_PRESERVE`. The encoding comes from a byte order mark, else
+UTF-8, else Windows-1252 with a warning; the delimiter is guessed from the first
+rows. `--csv-delimiter` overrides the guess, and `--csv-encoding` the encoding,
+except that a byte order mark wins over a choice that contradicts it, with a
+warning.
 
 Every field stays text unless asked. `--csv-numbers` reads a field that is only
 a number, such as `1,234.50`; leading zeros, currency signs and more than 15
@@ -251,12 +255,22 @@ Options:
   --no-index                omit the visible Sheet Index worksheet
   --values                  replace formulas with stored values, preserving formatting
   -f, --force               replace an existing output file
+  --csv-delimiter <delimiter>  CSV delimiter: comma, semicolon, tab, pipe, or one
+                            character (default: guessed)
+  --csv-encoding <encoding> utf-8, utf-16le, utf-16be, or windows-1252
+                            (default: detected)
+  --csv-numbers             read CSV fields that hold only a number as numbers
+  --csv-decimal <separator> decimal separator for --csv-numbers (default: .)
+  --csv-thousands <separator>  thousands separator for --csv-numbers: , . space
+                            apostrophe or none (default: , or . after a , decimal)
+  --csv-dates <order>       read CSV dates: iso, dmy, mdy, or ymd
 ```
 
 The command copies every source worksheet into a separate tab in resolved input
 order. Duplicate worksheet names receive a numeric suffix. Source visibility is
 retained, and the default `Sheet Index` records each source file, original tab
-name, final tab name, and visibility.
+name, final tab name, and visibility. A `.csv` input becomes one tab named after
+the file; see [CSV files](#csv-files).
 
 ## Spreadsheet splitting
 
@@ -281,6 +295,15 @@ Options:
   --skip-blank              omit rows whose split-column value is blank
   --prefix <name>           output filename prefix
   -f, --force               replace existing output files
+  --csv-delimiter <delimiter>  CSV delimiter: comma, semicolon, tab, pipe, or one
+                            character (default: guessed)
+  --csv-encoding <encoding> utf-8, utf-16le, utf-16be, or windows-1252
+                            (default: detected)
+  --csv-numbers             read CSV fields that hold only a number as numbers
+  --csv-decimal <separator> decimal separator for --csv-numbers (default: .)
+  --csv-thousands <separator>  thousands separator for --csv-numbers: , . space
+                            apostrophe or none (default: , or . after a , decimal)
+  --csv-dates <order>       read CSV dates: iso, dmy, mdy, or ymd
 ```
 
 Without `--table`, `--range`, or `--sheet`, the command collects normalized,

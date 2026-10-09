@@ -915,6 +915,43 @@ describe("consultchimps CLI", () => {
     expect(refused.stderr).toContain("XLSX_CSV_INVALID_OPTION");
   });
 
+  it("splits and merges CSV files read with the CSV flags", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "orders.csv");
+    await writeFile(input, "Region;Amount\r\nNorth;1,5\r\nSouth;2\r\n", "utf8");
+
+    const split = await runCli([
+      "--json",
+      "sheets",
+      "split",
+      input,
+      "-c",
+      "Region",
+      "--csv-numbers",
+      "--csv-decimal",
+      ",",
+      "-o",
+      path.join(directory, "by-region"),
+    ]);
+    expect(parseJsonSuccess(split.stdout).metrics).toMatchObject({
+      groups: 2,
+      outputFiles: 2,
+    });
+
+    const merge = await runCli([
+      "--json",
+      "sheets",
+      "merge",
+      input,
+      "-o",
+      path.join(directory, "merged.xlsx"),
+    ]);
+    expect(parseJsonSuccess(merge.stdout).metrics).toMatchObject({
+      csvInputFiles: 1,
+      outputSheets: 1,
+    });
+  });
+
   it("reports the title rows and spacer columns a consolidation left out", async () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "titled.xlsx");

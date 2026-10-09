@@ -96,6 +96,39 @@ describe("mergeFiles", () => {
     ).toBe(true);
   }, 60_000);
 
+  it("merges a CSV file in pieces as the byte surface does", async () => {
+    const lines = ["Region;Amount"];
+    for (let row = 1; row <= 90_000; row += 1)
+      lines.push(`R-${row % 7};${row},5`);
+    const csv = new TextEncoder().encode(lines.join("\r\n"));
+    expect(csv.length).toBeGreaterThan(1024 * 1024);
+    const north = await workbook("N", 20);
+    const options = { csv: { numbers: true, decimalSeparator: "," } } as const;
+    const reference = await mergeWorkbooksBytes({
+      inputs: [
+        { name: "north.xlsx", bytes: north },
+        { name: "amounts.csv", bytes: csv },
+      ],
+      ...options,
+    });
+
+    const { result, outputs } = await mergeFiles(
+      [guardedFile("north.xlsx", north), guardedFile("amounts.csv", csv)],
+      options,
+      controls(),
+      inMemory,
+      new Set(),
+    );
+
+    expect(result).toEqual(reference.result);
+    expect(result.metrics.csvInputFiles).toBe(1);
+    expect(
+      Buffer.from(await outputs[0]!.blob.arrayBuffer()).equals(
+        Buffer.from(reference.outputs[0]!.bytes),
+      ),
+    ).toBe(true);
+  }, 60_000);
+
   it("fails as an unreadable file, not a damaged workbook", async () => {
     const bytes = await workbook("N", 20);
     const blob = new Blob([bytes.slice()]);
