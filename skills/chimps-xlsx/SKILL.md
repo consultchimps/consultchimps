@@ -180,11 +180,6 @@ any error, look at the output location before retrying:
 `FILES_PUBLICATION_CLEANUP_FAILED` means the output was published
 (`error.details.published` is `true`) and only a staging file was left behind.
 
-`"code": null` with `Maximum call stack size exceeded` from `sheets inspect`
-means a large worksheet without a stored used range. `sheets consolidate` reads
-the same file through a different reader and succeeds: skip the inspect for that
-file and count its rows from the consolidate output instead.
-
 ## Reference
 
 - [Column mapping document format](references/mapping.md)
