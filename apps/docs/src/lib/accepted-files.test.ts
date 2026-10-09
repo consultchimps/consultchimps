@@ -4,6 +4,7 @@ import {
   MAPPING_FILES,
   PDF_FILES,
   PRESENTATION_FILES,
+  SHEET_FILES,
   WORKBOOK_FILES,
   WORKSPACE_IMPORT_FILES,
   workspaceImportKind,
@@ -15,6 +16,7 @@ const KINDS: ReadonlyArray<readonly [string, AcceptedFileKind]> = [
   ["presentations", PRESENTATION_FILES],
   ["PDFs", PDF_FILES],
   ["column mappings", MAPPING_FILES],
+  ["workbooks and CSV files", SHEET_FILES],
 ];
 
 /**
@@ -121,6 +123,18 @@ describe("accepted workbooks", () => {
   it("does not accept a presentation or a PDF", () => {
     expect(WORKBOOK_FILES.accepts(pickedFile("deck.pptx"))).toBe(false);
     expect(WORKBOOK_FILES.accepts(pickedFile("report.pdf"))).toBe(false);
+  });
+});
+
+describe("accepted workbooks and CSV files", () => {
+  it("takes a CSV file by its name, as the reader recognises one", () => {
+    expect(SHEET_FILES.accepts(pickedFile("orders.CSV"))).toBe(true);
+    expect(SHEET_FILES.accepts(pickedFile("orders.csv", "text/csv"))).toBe(
+      true,
+    );
+    // Read by name, a file called "orders" would be opened as a workbook.
+    expect(SHEET_FILES.accepts(pickedFile("orders", "text/csv"))).toBe(false);
+    expect(SHEET_FILES.accepts(pickedFile("orders.xlsm"))).toBe(true);
   });
 });
 

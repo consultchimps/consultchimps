@@ -104,6 +104,22 @@ export const WORKBOOK_FILES = createAcceptedFileKind({
   pluralDescription: "Excel .xlsx or .xlsm workbooks",
 });
 
+/**
+ * Workbooks and CSV files, for the sheets operations that read both (ADR
+ * 0007). A CSV file is recognised by its name alone, as the library recognises
+ * it, so a file the browser calls `text/csv` under another name is not taken
+ * here only to be read as a workbook.
+ */
+export const SHEET_FILES = createAcceptedFileKind({
+  description: "an Excel .xlsx or .xlsm workbook, or a .csv file",
+  extensions: [".xlsx", ".xlsm", ".csv"],
+  mediaTypes: [
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel.sheet.macroEnabled.12",
+  ],
+  pluralDescription: "Excel .xlsx or .xlsm workbooks and .csv files",
+});
+
 /** PowerPoint presentations. The populate engine reads `.pptx` packages only. */
 export const PRESENTATION_FILES = createAcceptedFileKind({
   description: "a PowerPoint .pptx presentation",

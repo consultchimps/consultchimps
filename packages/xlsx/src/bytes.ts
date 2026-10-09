@@ -4,6 +4,8 @@
  * structured results carry portable output names. This module must stay free
  * of node:fs and node:path imports.
  */
+import { openSheetBook } from "./operations/sheet-book.js";
+import type { CsvReadOptions } from "./csv/options.js";
 import { uncachedFormulaWarnings } from "./uncached-formulas.js";
 export {
   uncachedFormulaHint,
@@ -41,7 +43,7 @@ import {
   type ConsolidationSettings,
   type ConsolidationSource,
 } from "./operations/consolidate/consolidate.js";
-import { StreamedWorkbook } from "./operations/consolidate/reader.js";
+import type { StreamedWorkbook } from "./operations/consolidate/reader.js";
 import { openWorkbookBytes } from "./operations/sheet-grid.js";
 import {
   openRegionPackage,
@@ -60,6 +62,7 @@ import {
   type DescribeWorkbookMetric,
   type DescribeWorkbookOptions,
   type WorkbookColumnDescription,
+  type WorkbookCsvDescription,
   type WorkbookDescription,
   type WorkbookDescriptionOutcome,
   type WorkbookExcelTableDescription,
@@ -337,6 +340,12 @@ export interface ConsolidateWorkbooksBytesOptions
   normalizeHeaders?: boolean | undefined;
   outputName?: string | undefined;
   outputSheetName?: string | undefined;
+  /**
+   * How to read the inputs whose names end in `.csv`: each is one worksheet
+   * named after the file, its cells text unless `csv` asks for numbers or
+   * dates (ADR 0007).
+   */
+  csv?: CsvReadOptions | undefined;
   /**
    * Draft a mapping from the headers that were read and offer it beside the
    * consolidated workbook, as `mapping-draft.json`. The draft is for review,
@@ -980,6 +989,7 @@ async function consolidateIntoSink(
     normalizeHeaders: options.normalizeHeaders,
     mapping,
     suggestMapping: options.suggestMapping === true,
+    csv: options.csv,
     signal: options.signal,
     onProgress: options.onProgress,
     outputContext: "memory",
@@ -1041,8 +1051,10 @@ async function consolidateIntoSink(
         ? [unmappedColumnsWarning([...unmappedColumns])]
         : []),
       ...uncachedFormulaWarnings(plan.uncachedFormulas, "they came out blank"),
+      ...plan.inputWarnings,
     ],
     metrics: {
+      csvInputFiles: plan.csvInputs,
       formulaCellsWithoutCachedValues: plan.uncachedFormulas.length,
       inputFiles: options.inputs.length,
       inputTables: plan.inputTables,
@@ -1324,20 +1336,30 @@ export async function describeWorkbookSource(
   options: DescribeWorkbookOptions = {},
 ): Promise<WorkbookDescriptionOutcome> {
   throwIfAborted(options.signal, INSPECT_OPERATION, "memory");
-  const workbook = await StreamedWorkbook.open(input, {
-    file: input.name,
-    source: input.name,
-    details: { source: input.name },
-  });
+  const workbook = await openSheetBook(
+    input,
+    {
+      file: input.name,
+      source: input.name,
+      details: { source: input.name },
+    },
+    options.csv,
+  );
   return describeStreamedWorkbook(workbook, input.name, options, "memory");
 }
 
 export { XLSX_ERRORS, type XlsxErrorCode } from "./errors.js";
+export type {
+  CsvDateOrder,
+  CsvEncoding,
+  CsvReadOptions,
+} from "./csv/options.js";
 export { MAX_COLUMN_SAMPLE_VALUES };
 export type {
   DescribeWorkbookMetric,
   DescribeWorkbookOptions,
   WorkbookColumnDescription,
+  WorkbookCsvDescription,
   WorkbookDescription,
   WorkbookDescriptionOutcome,
   WorkbookExcelTableDescription,

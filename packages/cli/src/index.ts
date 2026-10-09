@@ -14,6 +14,11 @@ import {
 } from "@consultchimps/messages";
 import { Command, CommanderError } from "commander";
 
+import {
+  csvReadOptions,
+  withCsvOptions,
+  type CsvCliOptions,
+} from "./csv-options.js";
 import { formatWorkbookDescription } from "./describe-report.js";
 import { filesModule, pdfModule, pptxModule, xlsxModule } from "./modules.js";
 import { registerDbCommands } from "./commands/db.js";
@@ -40,7 +45,7 @@ interface PackageMetadata {
   version: string;
 }
 
-interface ConsolidateOptions {
+interface ConsolidateOptions extends CsvCliOptions {
   force?: boolean;
   headerRow?: number;
   hidden?: boolean;
@@ -61,7 +66,7 @@ interface SheetMergeOptions {
   values?: boolean;
 }
 
-interface SheetInspectOptions {
+interface SheetInspectOptions extends CsvCliOptions {
   headerRow?: number;
   hidden?: boolean;
   samples?: number;
@@ -399,67 +404,70 @@ When you want one combined sheet instead of separate tabs:
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
-sheets
-  .command("consolidate")
-  .description(
-    "stack the rows from every worksheet into one combined sheet, matching columns by header",
-  )
-  .argument(
-    "<inputs...>",
-    'Excel files, folders, or quoted patterns such as "inputs/*.xlsx"',
-  )
-  .requiredOption(
-    "-o, --output <path>",
-    "where to save the new consolidated .xlsx workbook",
-  )
-  .option(
-    "--sheet <names...>",
-    "include only worksheets with these exact names",
-  )
-  .option(
-    "--header-row <number>",
-    "row containing column names, counted from 1",
-    positiveInteger,
-  )
-  .option("--hidden", "include hidden worksheets as well as visible ones")
-  .option(
-    "--normalize-headers",
-    'match columns whose headers differ only in case, spacing, or punctuation, such as "Failed Checks" and "Failed_Checks"',
-  )
-  .option(
-    "--map <file>",
-    "JSON column mapping that folds differently named columns into one column each",
-  )
-  .option(
-    "--suggest-map <file>",
-    "write a draft column mapping built from the headers found, for you to review",
-  )
-  .option(
-    "--no-source",
-    "leave out columns that identify each row's source file, worksheet, and row",
-  )
-  .option(
-    "--output-sheet <name>",
-    "name of the worksheet created in the new workbook",
-    "Consolidated",
-  )
-  .option(
-    "--values",
-    "write stored values instead of formulas while preserving output formatting",
-  )
-  .option(
-    "-f, --force",
-    "replace the output file if it already exists; use with care",
-  )
+withCsvOptions(
+  sheets
+    .command("consolidate")
+    .description(
+      "stack the rows from every worksheet and CSV file into one combined sheet, matching columns by header",
+    )
+    .argument(
+      "<inputs...>",
+      'Excel or CSV files, folders, or quoted patterns such as "inputs/*.xlsx"',
+    )
+    .requiredOption(
+      "-o, --output <path>",
+      "where to save the new consolidated .xlsx workbook",
+    )
+    .option(
+      "--sheet <names...>",
+      "include only worksheets with these exact names",
+    )
+    .option(
+      "--header-row <number>",
+      "row containing column names, counted from 1",
+      positiveInteger,
+    )
+    .option("--hidden", "include hidden worksheets as well as visible ones")
+    .option(
+      "--normalize-headers",
+      'match columns whose headers differ only in case, spacing, or punctuation, such as "Failed Checks" and "Failed_Checks"',
+    )
+    .option(
+      "--map <file>",
+      "JSON column mapping that folds differently named columns into one column each",
+    )
+    .option(
+      "--suggest-map <file>",
+      "write a draft column mapping built from the headers found, for you to review",
+    )
+    .option(
+      "--no-source",
+      "leave out columns that identify each row's source file, worksheet, and row",
+    )
+    .option(
+      "--output-sheet <name>",
+      "name of the worksheet created in the new workbook",
+      "Consolidated",
+    )
+    .option(
+      "--values",
+      "write stored values instead of formulas while preserving output formatting",
+    )
+    .option(
+      "-f, --force",
+      "replace the output file if it already exists; use with care",
+    ),
+)
   .addHelpText(
     "after",
     `
 Examples:
   consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
   consultchimps sheets consolidate north.xlsx south.xlsx --output combined.xlsx
+  consultchimps sheets consolidate north.xlsx exports/ --csv-numbers -o combined.xlsx
 
 What happens:
-  1. ConsultChimps finds the matching Excel files.
+  1. ConsultChimps finds the matching Excel and CSV files.
   2. It reads every selected, non-empty worksheet.
   3. It matches columns by header name and combines all data rows.
   4. It writes one new workbook and explains exactly what was created.
@@ -479,6 +487,12 @@ Matching columns that are named differently:
   warning. Two columns of one worksheet folding into one column stop the run
   rather than quietly losing a value. Use one option or the other, not both.
 
+CSV files:
+  Each CSV file is one worksheet named after the file. Its encoding and
+  delimiter are detected; --csv-encoding and --csv-delimiter override them.
+  Every field stays text unless --csv-numbers or --csv-dates asks otherwise,
+  and neither changes a field that is not wholly a number or a date.
+
 When you want each worksheet kept as its own tab instead:
   Use consultchimps sheets merge to copy every worksheet into one workbook
   without combining any rows.
@@ -487,8 +501,9 @@ When you want each worksheet kept as its own tab instead:
   .action(async (inputs: string[], options: ConsolidateOptions) => {
     const inputPaths = await (
       await filesModule()
-    ).discoverFiles(inputs, { extensions: [".xlsx"] });
+    ).discoverFiles(inputs, { extensions: [".xlsx", ".csv"] });
     currentRecorder().recordInputs(inputPaths);
+    const csv = csvReadOptions(options);
     const progress = createCliProgress(
       program.opts<GlobalOptions>().json === true,
     );
@@ -496,6 +511,7 @@ When you want each worksheet kept as its own tab instead:
       await xlsxModule()
     ).consolidateWorkbooks({
       inputs: inputPaths,
+      csv,
       output: options.output,
       addSourceColumns: options.source !== false,
       headerRow: options.headerRow,
@@ -660,28 +676,30 @@ Your original workbook is never changed.
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
-sheets
-  .command("inspect")
-  .description(
-    "describe what is in an Excel workbook, creating and changing nothing",
-  )
-  .argument("<input>", "the .xlsx or .xlsm workbook to describe")
-  .option(
-    "--sheet <name>",
-    "describe only the worksheet with this exact name; repeat for several",
-    collectName,
-  )
-  .option(
-    "--header-row <number>",
-    "row containing column names, counted from 1",
-    numericOption,
-  )
-  .option("--hidden", "describe hidden worksheets as well as visible ones")
-  .option(
-    "--samples <number>",
-    "distinct sample values to report per column, from 0 to 5 (default: 5)",
-    numericOption,
-  )
+withCsvOptions(
+  sheets
+    .command("inspect")
+    .description(
+      "describe what is in an Excel workbook or CSV file, creating and changing nothing",
+    )
+    .argument("<input>", "the .xlsx, .xlsm, or .csv file to describe")
+    .option(
+      "--sheet <name>",
+      "describe only the worksheet with this exact name; repeat for several",
+      collectName,
+    )
+    .option(
+      "--header-row <number>",
+      "row containing column names, counted from 1",
+      numericOption,
+    )
+    .option("--hidden", "describe hidden worksheets as well as visible ones")
+    .option(
+      "--samples <number>",
+      "distinct sample values to report per column, from 0 to 5 (default: 5)",
+      numericOption,
+    ),
+)
   .addHelpText(
     "after",
     `
@@ -689,6 +707,7 @@ Examples:
   consultchimps sheets inspect clients.xlsx
   consultchimps sheets inspect clients.xlsx --hidden --samples 2
   consultchimps sheets inspect --sheet North --sheet South clients.xlsx
+  consultchimps sheets inspect export.csv --csv-numbers
 
 What you get:
   1. Each described worksheet, with its visibility, the size of its used range,
@@ -710,7 +729,7 @@ rows, and column spellings those commands will match on.
     const inputPaths = await (
       await filesModule()
     ).discoverFiles([input], {
-      extensions: [".xlsx", ".xlsm"],
+      extensions: [".xlsx", ".xlsm", ".csv"],
     });
     currentRecorder().recordInputs(inputPaths);
     if (inputPaths.length !== 1) {
@@ -723,12 +742,14 @@ rows, and column spellings those commands will match on.
     if (!inputPath) {
       throw new Error("No input workbook was found.");
     }
+    const csv = csvReadOptions(options);
 
     const json = program.opts<GlobalOptions>().json === true;
     const progress = createCliProgress(json);
     const outcome = await (
       await xlsxModule()
     ).describeWorkbook(inputPath, {
+      csv,
       headerRow: options.headerRow,
       includeHiddenSheets: options.hidden === true,
       onProgress: progress.report,

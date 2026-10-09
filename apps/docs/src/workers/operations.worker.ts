@@ -220,6 +220,7 @@ async function perform(
         task.inputs,
         {
           addSourceColumns: task.addSourceColumns,
+          csv: task.csv,
           includeHiddenSheets: task.includeHiddenSheets,
           mapping: task.mapping,
           normalizeHeaders: task.normalizeHeaders,
@@ -243,6 +244,7 @@ async function perform(
           task.inputs,
           task.includeHiddenSheets,
           controls,
+          task.csv,
         ),
       );
     }

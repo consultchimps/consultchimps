@@ -31,6 +31,7 @@ import type {
 } from "@consultchimps/tabular";
 import type {
   ConsolidateWorkbooksMetric,
+  CsvReadOptions,
   MergeWorkbooksMetric,
   SplitWorkbookByColumnPlanMetric,
   SplitWorkbookBytesOutcome,
@@ -118,6 +119,8 @@ export interface WorkbookSplitOptions {
  * split page shows would make two views of one workbook disagree.
  */
 export interface WorkbookInspectOptions {
+  /** How to read the file when it is a CSV file. */
+  readonly csv?: CsvReadOptions | undefined;
   readonly headerRow?: number | undefined;
   readonly includeHiddenSheets?: boolean | undefined;
 }
@@ -160,6 +163,8 @@ export type OperationTask =
       readonly kind: "xlsx.consolidate";
       readonly inputs: readonly NamedFile[];
       readonly addSourceColumns?: boolean | undefined;
+      // How to read the inputs that are CSV files (ADR 0007).
+      readonly csv?: CsvReadOptions | undefined;
       readonly includeHiddenSheets?: boolean | undefined;
       // A parsed and validated version 1 mapping. This surface has no
       // filesystem, so the page reads the document and the operation validates
@@ -176,6 +181,7 @@ export type OperationTask =
       // living in the page. Nothing it returns is applied to anything.
       readonly kind: "xlsx.suggest-mapping";
       readonly inputs: readonly NamedFile[];
+      readonly csv?: CsvReadOptions | undefined;
       readonly includeHiddenSheets?: boolean | undefined;
     }
   | {

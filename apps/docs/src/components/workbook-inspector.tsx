@@ -44,6 +44,8 @@ import {
 } from "@/lib/workbook-inspection";
 // Type-only: the runtime module is loaded inside the worker.
 import type {
+  CsvEncoding,
+  CsvReadOptions,
   WorkbookColumnDescription,
   WorkbookDescriptionOutcome,
 } from "@consultchimps/xlsx/bytes";
@@ -84,13 +86,15 @@ export function useWorkbookDescription(
 ): WorkbookInspection {
   // Destructured to primitives so the effect below depends on values rather
   // than on the identity of an options object rebuilt on every render.
-  const { headerRow, includeHiddenSheets = true } = options;
+  const { csv, headerRow, includeHiddenSheets = true } = options;
+  // The CSV choices travel as one value, compared by what they say.
+  const csvKey = csv === undefined ? "" : JSON.stringify(csv);
   const [inspected, setInspected] = useState<InspectedWorkbook | null>(null);
 
   // Everything the answer depends on, in one comparable value. A stored
   // description is rendered only while its key still matches the page, so the
   // report can never describe the workbook that was just replaced.
-  const key = `${file?.id ?? ""}:${headerRow ?? ""}:${includeHiddenSheets}`;
+  const key = `${file?.id ?? ""}:${headerRow ?? ""}:${includeHiddenSheets}:${csvKey}`;
   const current = inspected?.key === key ? inspected : null;
 
   useEffect(() => {
@@ -110,7 +114,14 @@ export function useWorkbookDescription(
             {
               kind: "xlsx.inspect",
               input: { file: file.file, name: file.name },
-              options: { headerRow, includeHiddenSheets },
+              options: {
+                csv:
+                  csvKey === ""
+                    ? undefined
+                    : (JSON.parse(csvKey) as CsvReadOptions),
+                headerRow,
+                includeHiddenSheets,
+              },
             },
             { signal: controller.signal },
           );
@@ -141,7 +152,7 @@ export function useWorkbookDescription(
       // that no longer shows a document should not still be holding it.
       setInspected(null);
     };
-  }, [file, headerRow, includeHiddenSheets, key]);
+  }, [csvKey, file, headerRow, includeHiddenSheets, key]);
 
   return {
     error: current?.error ?? null,
@@ -163,6 +174,8 @@ export interface WorkbookInspectorProps {
   readonly emptyMessage?: string;
   /** The workbook to describe, or null while nothing is chosen. */
   readonly file: UploadedFile | null;
+  /** How to read the file when it is a CSV file. */
+  readonly csv?: CsvReadOptions | undefined;
   /** Optional one-based header row, as every workbook reader here takes it. */
   readonly headerRow?: number | undefined;
   /** The report's own heading. Left out when the host page supplies one. */
@@ -170,6 +183,20 @@ export interface WorkbookInspectorProps {
   /** Describe hidden and very hidden worksheets too. Defaults to true. */
   readonly includeHiddenSheets?: boolean | undefined;
 }
+
+const CSV_ENCODING_NAMES: Record<CsvEncoding, string> = {
+  "utf-8": "UTF-8",
+  "utf-16le": "UTF-16 LE",
+  "utf-16be": "UTF-16 BE",
+  "windows-1252": "Windows-1252",
+};
+
+const CSV_DELIMITER_NAMES: Record<string, string> = {
+  ",": "commas",
+  ";": "semicolons",
+  "\t": "tabs",
+  "|": "pipes",
+};
 
 const metricLabelClass =
   "font-mono text-xs uppercase tracking-[0.12em] text-fd-muted-foreground";
@@ -266,6 +293,7 @@ function ColumnList({
 export function WorkbookInspector({
   className = sectionClass,
   emptyMessage = "Choose a workbook to see the worksheets, header rows, and structures it holds",
+  csv,
   file,
   headerRow,
   heading,
@@ -273,6 +301,7 @@ export function WorkbookInspector({
 }: WorkbookInspectorProps) {
   const headingId = useId();
   const { error, outcome, pending } = useWorkbookDescription(file, {
+    csv,
     headerRow,
     includeHiddenSheets,
   });
@@ -358,6 +387,16 @@ export function WorkbookInspector({
           {hiddenCallout ? (
             <p className={noticeClass} data-testid="hidden-worksheets-callout">
               {hiddenCallout}
+            </p>
+          ) : null}
+
+          {description.csv ? (
+            <p className="mt-4 text-sm" data-testid="inspection-csv">
+              Read as {CSV_ENCODING_NAMES[description.csv.encoding]} text,
+              delimited by{" "}
+              {CSV_DELIMITER_NAMES[description.csv.delimiter] ??
+                `"${description.csv.delimiter}"`}
+              . A CSV file is one worksheet named after the file
             </p>
           ) : null}
 

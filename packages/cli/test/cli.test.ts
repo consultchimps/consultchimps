@@ -871,6 +871,50 @@ describe("consultchimps CLI", () => {
     expect(missingFile.stdout).toBe("");
   });
 
+  it("consolidates and inspects CSV files read with the CSV flags", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "orders.csv");
+    const output = path.join(directory, "outputs", "consolidated.xlsx");
+    await writeFile(input, "Region;Amount\r\nNorth;1.234,50\r\n", "utf8");
+
+    const machine = await runCli([
+      "--json",
+      "sheets",
+      "consolidate",
+      input,
+      "--csv-numbers",
+      "--csv-decimal",
+      ",",
+      "--output",
+      output,
+    ]);
+    expect(parseJsonSuccess(machine.stdout).metrics).toMatchObject({
+      csvInputFiles: 1,
+      inputFiles: 1,
+      outputRows: 1,
+    });
+
+    const report = await runCli([
+      "sheets",
+      "inspect",
+      input,
+      "--csv-numbers",
+      "--csv-decimal",
+      ",",
+    ]);
+    expect(report.stdout).toContain("CSV file inspection: orders.csv");
+    expect(report.stdout).toContain(
+      "Read as UTF-8 text, delimited by semicolons.",
+    );
+    expect(report.stdout).toContain("2. Amount: 1234.5");
+
+    const refused = await runCli(
+      ["sheets", "inspect", input, "--csv-decimal", ","],
+      1,
+    );
+    expect(refused.stderr).toContain("Add --csv-numbers");
+  });
+
   it("reports the title rows and spacer columns a consolidation left out", async () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "titled.xlsx");

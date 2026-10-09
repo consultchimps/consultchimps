@@ -129,17 +129,27 @@ Options:
   --header-row <number>     one-based header row
   --hidden                  describe hidden worksheets as well
   --samples <number>        sample values per column, 0 to 5 (default: 5)
+  --csv-delimiter <delimiter>  CSV delimiter: comma, semicolon, tab, pipe, or one
+                            character (default: guessed)
+  --csv-encoding <encoding> utf-8, utf-16le, utf-16be, or windows-1252
+                            (default: detected)
+  --csv-numbers             read CSV fields that hold only a number as numbers
+  --csv-decimal <separator> decimal separator for --csv-numbers (default: .)
+  --csv-thousands <separator>  thousands separator for --csv-numbers: , . space
+                            apostrophe or none (default: , or . after a , decimal)
+  --csv-dates <order>       read CSV dates: iso, dmy, mdy, or ymd
 ```
 
-The command describes an `.xlsx` or `.xlsm` workbook and writes nothing: no
-output file, no directory, and no change to the workbook it read. The report
-lists each described worksheet with its visibility, the size of its used range,
-the header row an operation would resolve, the number of data rows below it, and
-each header with a few of the values stored beneath it, followed by the Excel
-Tables and named ranges those worksheets contain. The result that closes the
-report has no artifacts, and its warnings name what a later operation would
-stumble on: hidden worksheets left out of the description, or a worksheet with
-no header row to match columns by.
+The command describes an `.xlsx` or `.xlsm` workbook, or a `.csv` file read as
+one worksheet (see [CSV files](#csv-files)), and writes nothing: no output file,
+no directory, and no change to the workbook it read. The report lists each
+described worksheet with its visibility, the size of its used range, the header
+row an operation would resolve, the number of data rows below it, and each
+header with a few of the values stored beneath it, followed by the Excel Tables
+and named ranges those worksheets contain. The result that closes the report has
+no artifacts, and its warnings name what a later operation would stumble on:
+hidden worksheets left out of the description, or a worksheet with no header row
+to match columns by.
 
 Sample values are the first few distinct non-empty values a column stores, at
 most five, reported as the workbook holds them. Text is quoted in the report so
@@ -184,7 +194,18 @@ Options:
   --output-sheet <name>     output worksheet name (default: Consolidated)
   --values                  write values instead of formulas, preserving formatting
   -f, --force               replace an existing output file
+  --csv-delimiter <delimiter>  CSV delimiter: comma, semicolon, tab, pipe, or one
+                            character (default: guessed)
+  --csv-encoding <encoding> utf-8, utf-16le, utf-16be, or windows-1252
+                            (default: detected)
+  --csv-numbers             read CSV fields that hold only a number as numbers
+  --csv-decimal <separator> decimal separator for --csv-numbers (default: .)
+  --csv-thousands <separator>  thousands separator for --csv-numbers: , . space
+                            apostrophe or none (default: , or . after a , decimal)
+  --csv-dates <order>       read CSV dates: iso, dmy, mdy, or ymd
 ```
+
+Inputs can mix `.xlsx` workbooks and `.csv` files; see [CSV files](#csv-files).
 
 `--map` folds columns that are named differently into one canonical column each,
 using the versioned JSON document described in
@@ -197,6 +218,25 @@ still writes the consolidated workbook. The draft is never applied; it goes
 through the same never-overwrite rule as any other output, so `--force` is
 needed to replace one. `--map` and `--suggest-map` cannot be combined in one
 run.
+
+## CSV files
+
+`sheets consolidate` and `sheets inspect` read `.csv` files beside workbooks.
+Each CSV file is one worksheet named after the file, so `_source_sheet` names
+it. The encoding comes from a byte order mark, else UTF-8, else Windows-1252
+with a warning; the delimiter is guessed from the first rows. `--csv-encoding`
+and `--csv-delimiter` override them.
+
+Every field stays text unless asked. `--csv-numbers` reads a field that is only
+a number, such as `1,234.50`; leading zeros, currency signs and more than 15
+digits stay text. `--csv-dates iso` reads `yyyy-mm-dd`, and `dmy`, `mdy` or
+`ymd` also read dates written in that order. Nothing guesses day and month
+order, and a field that is not wholly a number or a date is never changed. A
+converted date is a real Excel date in the output.
+
+A consolidated table larger than a worksheet holds is refused with
+`XLSX_OUTPUT_TOO_LARGE`. Malformed quoting is refused with `XLSX_CSV_MALFORMED`,
+naming the row.
 
 ## Spreadsheet worksheet merging
 

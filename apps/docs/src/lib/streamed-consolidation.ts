@@ -7,6 +7,7 @@ import type { OperationControlOptions } from "@consultchimps/core";
 import {
   consolidateWorkbookSources,
   type ConsolidateWorkbooksBytesOptions,
+  type CsvReadOptions,
   type ConsolidateWorkbooksBytesResult,
 } from "@consultchimps/xlsx/bytes";
 import type { ColumnMappingSuggestion } from "@consultchimps/tabular";
@@ -92,6 +93,7 @@ export async function suggestMappingFromFiles(
   inputs: readonly NamedFile[],
   includeHiddenSheets: boolean | undefined,
   controls: Required<OperationControlOptions>,
+  csv?: CsvReadOptions,
 ): Promise<ColumnMappingSuggestion | undefined> {
   const reads = new PieceReads(CONSOLIDATE_OPERATION, controls.signal);
   const { result } = await reads.run(() =>
@@ -99,6 +101,7 @@ export async function suggestMappingFromFiles(
       ...controls,
       inputs: inputs.map((input) => reads.source(input)),
       includeHiddenSheets,
+      csv,
       suggestMapping: true,
       output: {
         write: () => undefined,

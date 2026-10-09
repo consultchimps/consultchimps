@@ -67,8 +67,11 @@ import {
   uncachedFormulaHint,
   uncachedLocationsWithin,
 } from "../../uncached-formulas.js";
+import { settleCsvOptions, type CsvReadOptions } from "../../csv/options.js";
+import { isCsvName } from "../../csv/reader.js";
+import { openSheetBook } from "../sheet-book.js";
 import {
-  StreamedWorkbook,
+  type SheetBook,
   type StreamedCell,
   type StreamedSheet,
   type StreamedValue,
@@ -106,6 +109,8 @@ export interface ConsolidationSettings {
   /** A mapping already validated by `validateColumnMapping`. */
   readonly mapping?: ColumnMapping | undefined;
   readonly suggestMapping?: boolean | undefined;
+  /** How to read the inputs that are CSV files (ADR 0007). */
+  readonly csv?: CsvReadOptions | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly onProgress?: ProgressReporter | undefined;
   /** What a cancellation leaves behind: files on disk, or nothing in memory. */
@@ -179,6 +184,10 @@ export interface ConsolidationPlan {
    * every later read must match.
    */
   readonly inputVersions: readonly string[];
+  /** What opening the inputs noticed, such as a CSV file's encoding fallback. */
+  readonly inputWarnings: readonly string[];
+  /** How many inputs are CSV files. */
+  readonly csvInputs: number;
 }
 
 /** Where the output's bytes go, in order. */
@@ -443,15 +452,20 @@ function changedWhileRead(source: ConsolidationSource): ConsultChimpsError {
 async function withWorkbook<T>(
   source: ConsolidationSource,
   expectedVersion: string | undefined,
-  use: (workbook: StreamedWorkbook, version: string) => Promise<T>,
+  csv: CsvReadOptions | undefined,
+  use: (workbook: SheetBook, version: string) => Promise<T>,
 ): Promise<T> {
   const opened = await source.open();
   try {
-    const workbook = await StreamedWorkbook.open(opened, {
-      file: source.file,
-      source: source.source,
-      details: source.details,
-    });
+    const workbook = await openSheetBook(
+      opened,
+      {
+        file: source.file,
+        source: source.source,
+        details: source.details,
+      },
+      csv,
+    );
     // The directory lists every entry's size and CRC, so any change to the
     // workbook's contents between two reads changes this.
     const version = `${String(opened.size)}:${String(workbook.fingerprint)}`;
@@ -606,43 +620,55 @@ export async function planConsolidation(
   let skippedTitleRows = 0;
   let skippedSpacerColumns = 0;
   const uncachedFormulas: string[] = [];
+  const inputWarnings: string[] = [];
+  // Checked before any input is read, so unusable options cost no read.
+  settleCsvOptions(settings.csv);
 
   for (const [input, source] of sources.entries()) {
     throwIfAborted(signal, CONSOLIDATE_OPERATION, outputContext);
     const before = tables.length;
-    await withWorkbook(source, undefined, async (workbook, version) => {
-      inputVersions.push(version);
-      for (const { sheet, index } of selectedSheets(
-        workbook.sheets,
-        settings,
-      )) {
-        const profile = new SheetProfile(settings.headerRow, dateKeys.size > 0);
-        const read = await workbook.readWorksheet(sheet, profile);
-        const outcome = profile.finish(read, settings.headerRow);
-        skippedTitleRows += outcome.skippedTitleRows;
-        skippedSpacerColumns += outcome.skippedSpacerColumns;
-        // A worksheet that yielded no table is counted whole: its formulas
-        // may be why it looked empty.
-        for (const location of uncachedLocationsWithin(
-          // Excel's own spelling, `[file.xlsx]Sheet!B4`, once two inputs can
-          // share a sheet name.
-          sources.length > 1 ? `[${source.file}]${sheet.name}` : sheet.name,
-          read.uncachedFormulas,
-          outcome.table === undefined ? undefined : outcome.region,
+    await withWorkbook(
+      source,
+      undefined,
+      settings.csv,
+      async (workbook, version) => {
+        inputVersions.push(version);
+        for (const warning of workbook.warnings) inputWarnings.push(warning);
+        for (const { sheet, index } of selectedSheets(
+          workbook.sheets,
+          settings,
         )) {
-          uncachedFormulas.push(location);
+          const profile = new SheetProfile(
+            settings.headerRow,
+            dateKeys.size > 0,
+          );
+          const read = await workbook.readWorksheet(sheet, profile);
+          const outcome = profile.finish(read, settings.headerRow);
+          skippedTitleRows += outcome.skippedTitleRows;
+          skippedSpacerColumns += outcome.skippedSpacerColumns;
+          // A worksheet that yielded no table is counted whole: its formulas
+          // may be why it looked empty.
+          for (const location of uncachedLocationsWithin(
+            // Excel's own spelling, `[file.xlsx]Sheet!B4`, once two inputs can
+            // share a sheet name.
+            sources.length > 1 ? `[${source.file}]${sheet.name}` : sheet.name,
+            read.uncachedFormulas,
+            outcome.table === undefined ? undefined : outcome.region,
+          )) {
+            uncachedFormulas.push(location);
+          }
+          if (outcome.table !== undefined) {
+            tables.push({
+              ...outcome.table,
+              input,
+              sheetIndex: index,
+              sheet: sheet.name,
+              gathered: read.gathered,
+            });
+          }
         }
-        if (outcome.table !== undefined) {
-          tables.push({
-            ...outcome.table,
-            input,
-            sheetIndex: index,
-            sheet: sheet.name,
-            gathered: read.gathered,
-          });
-        }
-      }
-    });
+      },
+    );
     const read = tables.slice(before);
     settings.onProgress?.({
       operation: CONSOLIDATE_OPERATION,
@@ -773,6 +799,7 @@ export async function planConsolidation(
       await withWorkbook(
         source,
         inputVersions[table.input],
+        settings.csv,
         async (workbook) => {
           const rows = new TableRows(output, source, mapping, (values) => {
             values.forEach((value, position) => {
@@ -863,7 +890,28 @@ export async function planConsolidation(
     skippedSpacerColumns,
     uncachedFormulas,
     inputVersions,
+    inputWarnings,
+    csvInputs: sources.filter((source) => isCsvName(source.file)).length,
   };
+}
+
+/** The most rows and columns an Excel worksheet holds. */
+const WORKSHEET_ROWS = 1_048_576;
+const WORKSHEET_COLUMNS = 16_384;
+
+/**
+ * Refuse a consolidated table an Excel worksheet cannot hold, before anything
+ * is written. Workbooks rarely come near the limit; CSV files can pass it.
+ */
+function assertFitsWorksheet(plan: ConsolidationPlan): void {
+  const rows = plan.rowCount + 1;
+  const columns = plan.columns.length;
+  if (rows <= WORKSHEET_ROWS && columns <= WORKSHEET_COLUMNS) return;
+  throw new ConsultChimpsError(
+    XLSX_ERRORS.XLSX_OUTPUT_TOO_LARGE,
+    `The consolidated table would have ${rows.toLocaleString("en-US")} rows and ${columns.toLocaleString("en-US")} columns, more than an Excel worksheet holds (1,048,576 rows, header included, and 16,384 columns), so nothing was written. Consolidate fewer inputs at a time.`,
+    { details: { rows, columns } },
+  );
 }
 
 /**
@@ -880,6 +928,7 @@ export async function writeConsolidation(
   sheetName: string,
   sink: ConsolidationSink,
 ): Promise<void> {
+  assertFitsWorksheet(plan);
   let failure: { readonly error: unknown } | undefined;
   const guarded: ConsolidationSink = {
     write: (chunk) => {
@@ -937,35 +986,44 @@ async function copyTables(
     );
     if (outputs.length === 0) continue;
     throwIfAborted(signal, CONSOLIDATE_OPERATION, outputContext);
-    await withWorkbook(source, plan.inputVersions[input], async (workbook) => {
-      for (const output of outputs) {
-        const table = output.table;
-        const rows = new TableRows(
-          output,
-          source,
-          settings.mapping,
-          (values, rowNumber) => {
-            const row = new Array<WritableCellValue>(width).fill(null);
-            output.projection.forEach((position, outputIndex) => {
-              if (position >= 0) row[outputIndex] = values[position] ?? null;
-            });
-            if (plan.addSourceColumns) {
-              row[sourceBase] = source.file;
-              row[sourceBase + 1] = table.sheet;
-              row[sourceBase + 2] = rowNumber;
-            }
-            writer.writeRow(row.map((value) => writableCellValue(value)));
-          },
-        );
-        await workbook.readWorksheet(workbook.sheets[table.sheetIndex]!, rows, {
-          gather: table.gathered,
-          between,
-        });
-        rows.flush();
-        if (rows.rows !== table.rowCount) throw changedWhileRead(source);
-        await between();
-      }
-    });
+    await withWorkbook(
+      source,
+      plan.inputVersions[input],
+      settings.csv,
+      async (workbook) => {
+        for (const output of outputs) {
+          const table = output.table;
+          const rows = new TableRows(
+            output,
+            source,
+            settings.mapping,
+            (values, rowNumber) => {
+              const row = new Array<WritableCellValue>(width).fill(null);
+              output.projection.forEach((position, outputIndex) => {
+                if (position >= 0) row[outputIndex] = values[position] ?? null;
+              });
+              if (plan.addSourceColumns) {
+                row[sourceBase] = source.file;
+                row[sourceBase + 1] = table.sheet;
+                row[sourceBase + 2] = rowNumber;
+              }
+              writer.writeRow(row.map((value) => writableCellValue(value)));
+            },
+          );
+          await workbook.readWorksheet(
+            workbook.sheets[table.sheetIndex]!,
+            rows,
+            {
+              gather: table.gathered,
+              between,
+            },
+          );
+          rows.flush();
+          if (rows.rows !== table.rowCount) throw changedWhileRead(source);
+          await between();
+        }
+      },
+    );
   }
   writer.finish();
   await sink.flush();

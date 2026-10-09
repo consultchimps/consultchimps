@@ -274,8 +274,18 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
   "sheets.consolidate": {
     title: "Your Excel consolidation is complete.",
     summary: (result) => {
+      const csvFiles = metric(result, "csvInputFiles");
+      const excelFiles = metric(result, "inputFiles") - csvFiles;
+      // A CSV file is read as one worksheet, so the files are named by kind
+      // only when some of them were CSV.
+      const files =
+        csvFiles === 0
+          ? quantity(excelFiles, "Excel file")
+          : excelFiles === 0
+            ? quantity(csvFiles, "CSV file")
+            : `${quantity(excelFiles, "Excel file")} and ${quantity(csvFiles, "CSV file")}`;
       const lines = [
-        `ConsultChimps read ${quantity(metric(result, "inputFiles"), "Excel file")} and combined ${quantity(metric(result, "inputTables"), "visible worksheet")}.`,
+        `ConsultChimps read ${files} and combined ${quantity(metric(result, "inputTables"), "visible worksheet")}.`,
         `The finished workbook contains ${quantity(metric(result, "outputRows"), "data row")} arranged across ${quantity(metric(result, "outputColumns"), "column")}.`,
       ];
       // Title rows above a header and spacer columns between blocks are left
@@ -313,7 +323,11 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
             : `It also drafted a column mapping proposing ${quantity(metric(result, "suggestedColumns"), "canonical column")}, and applied none of them.`,
         );
       }
-      lines.push("Your original Excel files were not changed.");
+      lines.push(
+        csvFiles === 0
+          ? "Your original Excel files were not changed."
+          : "Your original files were not changed.",
+      );
       return lines;
     },
     nextSteps: (vocabulary, result) => {
@@ -502,6 +516,7 @@ const metricLabels: Readonly<Record<string, string>> = {
   headerColumns: "Columns described across worksheets",
   hiddenSheets: "Hidden source worksheets copied",
   hiddenWorksheets: "Hidden worksheets described",
+  csvInputFiles: "CSV files read, each as one worksheet",
   inputFiles: "Input files read",
   namedRanges: "Named ranges found",
   inputRows: "Source data rows read",

@@ -152,6 +152,38 @@ export interface StreamedDefinedName {
   readonly reference: string;
 }
 
+/** How a worksheet read goes; see `StreamedWorkbook.readWorksheet`. */
+export interface WorksheetReadOptions {
+  gather?: boolean;
+  clip?: boolean;
+  text?: boolean;
+  occupancy?: boolean;
+  between?: () => Promise<void>;
+}
+
+/**
+ * What the operations read worksheets from: a workbook, or a CSV file read as
+ * a workbook of one worksheet (ADR 0007).
+ */
+export interface SheetBook {
+  readonly sheets: readonly StreamedSheet[];
+  /** The Excel Tables the worksheets carry. */
+  readonly tables: readonly ExcelTableDefinition[];
+  /** The defined names, in workbook order. */
+  readonly names: readonly StreamedDefinedName[];
+  /** Changes whenever the contents change. */
+  readonly fingerprint: number;
+  /** What opening noticed that the caller should report, such as an encoding fallback. */
+  readonly warnings: readonly string[];
+  loadStrings(): Promise<void>;
+  releaseStrings(): void;
+  readWorksheet(
+    sheet: StreamedSheet,
+    consumer: WorksheetConsumer,
+    options?: WorksheetReadOptions,
+  ): Promise<WorksheetRead>;
+}
+
 /** How one workbook is named in errors and in the output. */
 export interface StreamedWorkbookContext extends WorkbookReadContext {
   /** The name a table records as its source file. */
@@ -307,12 +339,14 @@ class OutOfOrder extends Error {}
  * shared-string location are read up front; worksheets are read on request,
  * as many times as a caller asks.
  */
-export class StreamedWorkbook {
+export class StreamedWorkbook implements SheetBook {
   readonly sheets: readonly StreamedSheet[];
   /** The Excel Tables the worksheets carry, as the document model reads them. */
   readonly tables: readonly ExcelTableDefinition[];
   /** The defined names, in workbook order, built-in names included. */
   readonly names: readonly StreamedDefinedName[];
+  /** A workbook raises nothing on opening that it reports this way. */
+  readonly warnings: readonly string[] = [];
   readonly #zip: ZipReader;
 
   /** Changes whenever the package's contents change; see `ZipReader`. */
@@ -500,13 +534,7 @@ export class StreamedWorkbook {
   async readWorksheet(
     sheet: StreamedSheet,
     consumer: WorksheetConsumer,
-    options: {
-      gather?: boolean;
-      clip?: boolean;
-      text?: boolean;
-      occupancy?: boolean;
-      between?: () => Promise<void>;
-    } = {},
+    options: WorksheetReadOptions = {},
   ): Promise<WorksheetRead> {
     const file = this.#context.file;
     if (sheet.part === undefined) {

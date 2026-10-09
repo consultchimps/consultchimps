@@ -3,6 +3,8 @@ export {
   uncachedFormulaHint,
   uncachedFormulaWarnings,
 } from "./uncached-formulas.js";
+import { openSheetBook } from "./operations/sheet-book.js";
+import type { CsvReadOptions } from "./csv/options.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -60,7 +62,7 @@ import {
   type ConsolidationSource,
   type OpenedSource,
 } from "./operations/consolidate/consolidate.js";
-import { StreamedWorkbook } from "./operations/consolidate/reader.js";
+import type { StreamedWorkbook } from "./operations/consolidate/reader.js";
 import { openWorkbookBytes } from "./operations/sheet-grid.js";
 import {
   readWorksheetReports,
@@ -78,6 +80,7 @@ import {
   type DescribeWorkbookMetric,
   type DescribeWorkbookOptions,
   type WorkbookColumnDescription,
+  type WorkbookCsvDescription,
   type WorkbookDescription,
   type WorkbookDescriptionOutcome,
   type WorkbookExcelTableDescription,
@@ -151,6 +154,11 @@ import type {
 } from "./shared.js";
 
 export { XLSX_ERRORS, type XlsxErrorCode } from "./errors.js";
+export type {
+  CsvDateOrder,
+  CsvEncoding,
+  CsvReadOptions,
+} from "./csv/options.js";
 /**
  * The conformance contract: what this package promises to do to each tracked
  * workbook structure, per operation, with a recorded reason for every cell it
@@ -226,6 +234,7 @@ export type {
   DescribeWorkbookMetric,
   DescribeWorkbookOptions,
   WorkbookColumnDescription,
+  WorkbookCsvDescription,
   WorkbookDescription,
   WorkbookDescriptionOutcome,
   WorkbookExcelTableDescription,
@@ -261,6 +270,12 @@ export interface ConsolidateWorkbooksOptions
   normalizeHeaders?: boolean | undefined;
   outputSheetName?: string | undefined;
   overwrite?: boolean | undefined;
+  /**
+   * How to read the inputs that are `.csv` files: each is one worksheet named
+   * after the file, its cells text unless `csv` asks for numbers or dates
+   * (ADR 0007).
+   */
+  csv?: CsvReadOptions | undefined;
   /**
    * Where to write a drafted mapping built from the headers that were read.
    * The draft is written for review, never applied. Cannot be combined with
@@ -464,11 +479,15 @@ export async function describeWorkbook(
   // Read in pieces through a file handle (ADR 0006), never whole.
   const opened = await openWorkbookSource(absolutePath);
   try {
-    const workbook = await StreamedWorkbook.open(opened, {
-      file: path.basename(absolutePath),
-      source: absolutePath,
-      details: { filePath: absolutePath },
-    });
+    const workbook = await openSheetBook(
+      opened,
+      {
+        file: path.basename(absolutePath),
+        source: absolutePath,
+        details: { filePath: absolutePath },
+      },
+      options.csv,
+    );
     return await describeStreamedWorkbook(
       workbook,
       path.basename(absolutePath),
@@ -873,6 +892,7 @@ export async function consolidateWorkbooks(
     normalizeHeaders: options.normalizeHeaders,
     mapping,
     suggestMapping: absoluteSuggestOutput !== undefined,
+    csv: options.csv,
     signal: options.signal,
     onProgress: options.onProgress,
     outputContext: "files",
@@ -934,8 +954,10 @@ export async function consolidateWorkbooks(
         ? [unmappedColumnsWarning([...unmappedColumns])]
         : []),
       ...uncachedFormulaWarnings(plan.uncachedFormulas, "they came out blank"),
+      ...plan.inputWarnings,
     ],
     metrics: {
+      csvInputFiles: plan.csvInputs,
       formulaCellsWithoutCachedValues: plan.uncachedFormulas.length,
       inputFiles: absoluteInputs.length,
       inputTables: plan.inputTables,
