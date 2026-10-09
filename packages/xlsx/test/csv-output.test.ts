@@ -230,6 +230,17 @@ describe("splitting to CSV", () => {
     );
   });
 
+  it("writes a CSV split beyond a worksheet's limits", async () => {
+    const outcome = await splitWorkbookBytes({
+      input: {
+        name: "notes.csv",
+        bytes: utf8(`Region,Note\nNorth,${"x".repeat(40_000)}\n`),
+      },
+      column: "Region",
+    });
+    expect(text(outcome.outputs[0]!.bytes)).toContain("x".repeat(40_000));
+  });
+
   it("splits a workbook into CSV files when asked, and refuses to keep it", async () => {
     const book = await buildWorkbookFixture({
       sheets: [

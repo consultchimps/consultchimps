@@ -841,7 +841,8 @@ export async function writeCompactGroups(
   between: () => Promise<void>,
   format: TableOutputFormat = XLSX_TABLE_OUTPUT,
 ): Promise<void> {
-  assertGroupsFitWorksheet(resolved);
+  // A worksheet's limits bind a workbook only; a CSV file has none.
+  if (format.kind === "xlsx") assertGroupsFitWorksheet(resolved);
   for (let start = 0; start < resolved.groups.length; start += COMPACT_BATCH) {
     const indexes = resolved.groups
       .map((_, index) => index)

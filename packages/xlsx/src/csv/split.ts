@@ -19,6 +19,9 @@ export function splitOptionsFor<
     preserveWorkbook?: boolean | undefined;
     csv?: CsvReadOptions | undefined;
     outputFormat?: TableOutputFormatName | undefined;
+    table?: string | undefined;
+    range?: string | undefined;
+    sheet?: string | undefined;
   },
 >(
   name: string,
@@ -39,12 +42,17 @@ export function splitOptionsFor<
       { details: { source: name, outputFormat } },
     );
   }
-  // A CSV input's split is its default split, so it matches values the way
-  // the whole-workbook split does.
+  // A split that names no source is the default split, so it matches values
+  // the way the whole-workbook split does, written compactly or not.
+  const defaultSplit =
+    csvInput ||
+    (options.table === undefined &&
+      options.range === undefined &&
+      options.sheet === undefined);
   return {
     ...options,
     outputFormat,
     preserveWorkbook: false,
-    ...(csvInput ? { tolerantMatching: true } : {}),
+    ...(defaultSplit ? { tolerantMatching: true } : {}),
   };
 }
