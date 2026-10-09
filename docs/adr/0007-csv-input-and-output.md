@@ -79,9 +79,10 @@ path, so it has to be proven software, not new code of our own.
   - text starting with `=`, `+`, `-` or `@`, after any leading spaces, or with a
     tab or a carriage return, gets a leading `'`, so a spreadsheet does not run
     it as a formula. Text that is only a signed number such as `-12.5` is left
-    alone, because it cannot be a formula and CSV to CSV should not change it.
-    Papa's own guard would quote those numbers, so we pass it a pattern of our
-    own;
+    alone, because it cannot be a formula and CSV to CSV should not change it,
+    unless a spreadsheet would change it on reading: a leading zero such as
+    `+00123`, or more than 15 significant digits, keeps the apostrophe. Papa's
+    own guard would quote those numbers, so we pass it a pattern of our own;
   - dates as ISO text we format: `yyyy-mm-dd`, with `Thh:mm:ss` and any
     milliseconds when there is a time; numbers in JavaScript's shortest
     round-trip form; booleans as `TRUE` and `FALSE`; error cells as their text.
