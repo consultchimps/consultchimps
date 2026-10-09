@@ -6,6 +6,7 @@ import { ConsultChimpsError } from "@consultchimps/core";
 
 import { XLSX_ERRORS } from "../errors.js";
 import { settleCsvOptions, type CsvReadOptions } from "./options.js";
+import { resolveTableOutput, type TableOutputFormatName } from "./output.js";
 import { isCsvName } from "./reader.js";
 
 /**
@@ -17,18 +18,33 @@ export function splitOptionsFor<
   T extends {
     preserveWorkbook?: boolean | undefined;
     csv?: CsvReadOptions | undefined;
+    outputFormat?: TableOutputFormatName | undefined;
   },
->(name: string, options: T): T {
+>(
+  name: string,
+  options: T,
+): T & { outputFormat: TableOutputFormatName; tolerantMatching?: boolean } {
   settleCsvOptions(options.csv);
-  if (!isCsvName(name)) return options;
+  const csvInput = isCsvName(name);
+  // A CSV input splits into CSV files unless a workbook is asked for.
+  const outputFormat = options.outputFormat ?? (csvInput ? "csv" : "xlsx");
+  resolveTableOutput(undefined, outputFormat, undefined);
+  if (!csvInput && outputFormat !== "csv") return { ...options, outputFormat };
   if (options.preserveWorkbook === true) {
     throw new ConsultChimpsError(
       XLSX_ERRORS.XLSX_SPLIT_CSV_PRESERVE,
-      `${name} is a CSV file, so there is no workbook to keep. Leave out the request to keep the workbook, and each output is a new workbook holding its group's rows.`,
-      { details: { source: name } },
+      csvInput
+        ? `${name} is a CSV file, so there is no workbook to keep. Leave out the request to keep the workbook, and each output holds its group's rows.`
+        : `A CSV output holds a table's rows only, so the workbook cannot be kept. Leave out the request to keep the workbook, or ask for workbooks instead of CSV files.`,
+      { details: { source: name, outputFormat } },
     );
   }
   // A CSV input's split is its default split, so it matches values the way
   // the whole-workbook split does.
-  return { ...options, preserveWorkbook: false, tolerantMatching: true };
+  return {
+    ...options,
+    outputFormat,
+    preserveWorkbook: false,
+    ...(csvInput ? { tolerantMatching: true } : {}),
+  };
 }

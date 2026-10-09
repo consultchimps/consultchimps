@@ -44,6 +44,7 @@ describe("splitting a CSV file", () => {
     const outcome = await splitWorkbookBytes({
       input: { name: "orders.csv", bytes: ORDERS },
       column: "Region",
+      outputFormat: "xlsx",
       csv: { numbers: true, decimalSeparator: ",", dates: "iso" },
     });
     expect(outcome.outputs.map((output) => output.name)).toEqual([
@@ -68,6 +69,7 @@ describe("splitting a CSV file", () => {
     const outcome = await splitWorkbookBytes({
       input: { name: "orders.csv", bytes: ORDERS },
       column: "Region",
+      outputFormat: "xlsx",
     });
     expect((await sheetRows(outcome.outputs[1]!.bytes, "orders"))[1]).toEqual([
       "South",
@@ -233,11 +235,13 @@ describe("CSV files on the command line surface", () => {
       input,
       outputDirectory,
       column: "Region",
+      outputFormat: "xlsx",
       csv: { numbers: true, decimalSeparator: "," },
     });
     const bytes = await splitWorkbookBytes({
       input: { name: "orders.csv", bytes: ORDERS },
       column: "Region",
+      outputFormat: "xlsx",
       csv: { numbers: true, decimalSeparator: "," },
     });
     expect((await readdir(outputDirectory)).sort()).toEqual([

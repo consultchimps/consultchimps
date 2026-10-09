@@ -20,6 +20,12 @@
  * readers read it.
  */
 import {
+  openTableWriter,
+  XLSX_TABLE_OUTPUT,
+  type TableOutputFormat,
+  type TableRowWriter,
+} from "../table-output.js";
+import {
   ConsultChimpsError,
   type RandomAccessSource,
 } from "@consultchimps/core";
@@ -49,11 +55,7 @@ import {
 } from "../model/worksheet-stream.js";
 import { findElement } from "../model/xml.js";
 import { JsZipWriter } from "../package/jszip-writer.js";
-import {
-  cellWidthLength,
-  tableColumnWidth,
-  TableWorkbookWriter,
-} from "../package/table-writer.js";
+import { cellWidthLength, tableColumnWidth } from "../package/table-writer.js";
 import { ZipReader } from "../package/zip-reader.js";
 import {
   relocateTableRow,
@@ -837,6 +839,7 @@ export async function writeCompactGroups(
   resolved: ResolvedRegionSplit,
   open: (index: number) => Promise<RegionOutputTarget> | RegionOutputTarget,
   between: () => Promise<void>,
+  format: TableOutputFormat = XLSX_TABLE_OUTPUT,
 ): Promise<void> {
   assertGroupsFitWorksheet(resolved);
   for (let start = 0; start < resolved.groups.length; start += COMPACT_BATCH) {
@@ -845,7 +848,7 @@ export async function writeCompactGroups(
       .slice(start, start + COMPACT_BATCH);
     const queues = new Map<number, Uint8Array[]>();
     const targets = new Map<number, RegionOutputTarget>();
-    const writers = new Map<number, TableWorkbookWriter>();
+    const writers = new Map<number, TableRowWriter>();
     try {
       for (const index of indexes) {
         const group = resolved.groups[index]!;
@@ -854,7 +857,7 @@ export async function writeCompactGroups(
         targets.set(index, await open(index));
         writers.set(
           index,
-          new TableWorkbookWriter({
+          openTableWriter(format, {
             sheetName: resolved.sheetName,
             columns: resolved.names,
             widths: group.widths,
@@ -1160,9 +1163,11 @@ export async function writeRegionGroups(
   open: (index: number) => Promise<RegionOutputTarget> | RegionOutputTarget,
   between: () => Promise<void>,
   splitPackage?: StreamedSplitPackage,
+  format: TableOutputFormat = XLSX_TABLE_OUTPUT,
 ): Promise<number> {
-  if (!resolved.definition) {
-    await writeCompactGroups(resolved, open, between);
+  // A CSV output holds the rows only, so it is always written compactly.
+  if (!resolved.definition || format.kind === "csv") {
+    await writeCompactGroups(resolved, open, between, format);
     return 0;
   }
   const workbookPackage = splitPackage ?? (await openRegionPackage(source));

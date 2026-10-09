@@ -41,7 +41,15 @@ export async function consolidateFiles(
   place: OutputPlace,
   created: Set<string>,
 ): Promise<StreamedConsolidation> {
-  const target = await openOutputTarget(place, WORKBOOK_MEDIA_TYPE, created);
+  const csvOutput =
+    options.outputFormat === "csv" ||
+    (options.outputFormat === undefined &&
+      options.outputName?.toLowerCase().endsWith(".csv") === true);
+  const target = await openOutputTarget(
+    place,
+    csvOutput ? "text/csv" : WORKBOOK_MEDIA_TYPE,
+    created,
+  );
   const reads = new PieceReads(CONSOLIDATE_OPERATION, controls.signal);
   let consolidated: Awaited<ReturnType<typeof consolidateWorkbookSources>>;
   try {
@@ -70,7 +78,7 @@ export async function consolidateFiles(
     {
       name: outputName,
       blob: finished.blob,
-      mediaType: WORKBOOK_MEDIA_TYPE,
+      mediaType: result.artifacts[0]?.mediaType ?? WORKBOOK_MEDIA_TYPE,
       ...(finished.inMemory ? { inMemory: true } : {}),
     },
   ];

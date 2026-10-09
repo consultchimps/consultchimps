@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { consolidateWorkbooks } from "@consultchimps/xlsx";
+import { consolidateWorkbooksBytes } from "@consultchimps/xlsx/bytes";
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
@@ -229,6 +230,32 @@ describe("consolidateFiles", () => {
       await commandLineBytes(inputs),
     );
   }, 60_000);
+
+  it("writes a CSV file as text/csv with the byte surface's bytes", async () => {
+    const csv = new TextEncoder().encode("Region;Amount\nNorth;1,5\n");
+    const { place } = fakeStorage();
+    const { outputs, result } = await consolidateFiles(
+      [guardedFile("north.csv", csv)],
+      {
+        outputName: "all.csv",
+        csv: { numbers: true, decimalSeparator: "," },
+      },
+      controls(),
+      place,
+      new Set(),
+    );
+    const reference = await consolidateWorkbooksBytes({
+      inputs: [{ name: "north.csv", bytes: csv }],
+      outputName: "all.csv",
+      csv: { numbers: true, decimalSeparator: "," },
+    });
+    expect(result.artifacts[0]?.mediaType).toBe("text/csv");
+    expect(outputs[0]!.name).toBe("all.csv");
+    expect(outputs[0]!.mediaType).toBe("text/csv");
+    expect(Buffer.from(await outputs[0]!.blob.arrayBuffer())).toEqual(
+      Buffer.from(reference.outputs[0]!.bytes),
+    );
+  });
 
   it("collects the output in memory where OPFS refuses", async () => {
     const bytes = await workbook("N", 20);

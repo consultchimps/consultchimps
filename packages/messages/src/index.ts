@@ -151,6 +151,11 @@ function sheetInputFiles(result: OperationResult): string {
   return `${quantity(excelFiles, "Excel file")} and ${quantity(csvFiles, "CSV file")}`;
 }
 
+/** Whether a sheets operation wrote CSV files rather than workbooks. */
+function writesCsv(result: OperationResult): boolean {
+  return result.artifacts.some((artifact) => artifact.mediaType === "text/csv");
+}
+
 function sheetInputsUnchanged(result: OperationResult): string {
   return metric(result, "csvInputFiles") === 0
     ? "Your original Excel files were not changed."
@@ -294,7 +299,7 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
     summary: (result) => {
       const lines = [
         `ConsultChimps read ${sheetInputFiles(result)} and combined ${quantity(metric(result, "inputTables"), "visible worksheet")}.`,
-        `The finished workbook contains ${quantity(metric(result, "outputRows"), "data row")} arranged across ${quantity(metric(result, "outputColumns"), "column")}.`,
+        `The finished ${writesCsv(result) ? "CSV file" : "workbook"} contains ${quantity(metric(result, "outputRows"), "data row")} arranged across ${quantity(metric(result, "outputColumns"), "column")}.`,
       ];
       // Title rows above a header and spacer columns between blocks are left
       // out by design, so they are reported as a fact rather than a warning,
@@ -353,8 +358,8 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
       const splitSummary = workbookSplitSummary(result);
       const lines = [
         `ConsultChimps read ${quantity(metric(result, "inputRows"), "data row")} from the source workbook.`,
-        `It found ${quantity(metric(result, "groups"), "distinct group")} and created ${quantity(metric(result, "outputFiles"), "separate Excel workbook")}.`,
-        `${quantity(metric(result, "outputRows"), "data row")} ${metric(result, "outputRows") === 1 ? "was" : "were"} retained across the new workbooks, and ${quantity(metric(result, "skippedRows"), "row")} ${metric(result, "skippedRows") === 1 ? "was" : "were"} skipped.`,
+        `It found ${quantity(metric(result, "groups"), "distinct group")} and created ${quantity(metric(result, "outputFiles"), writesCsv(result) ? "separate CSV file" : "separate Excel workbook")}.`,
+        `${quantity(metric(result, "outputRows"), "data row")} ${metric(result, "outputRows") === 1 ? "was" : "were"} retained across the new ${writesCsv(result) ? "files" : "workbooks"}, and ${quantity(metric(result, "skippedRows"), "row")} ${metric(result, "skippedRows") === 1 ? "was" : "were"} skipped.`,
       ];
       if (Object.hasOwn(result.metrics, "sheetsFiltered")) {
         lines.push(
@@ -575,6 +580,7 @@ function artifactType(artifact: Artifact): string {
   if (artifact.mediaType === "application/pdf") {
     return "PDF document";
   }
+  if (artifact.mediaType === "text/csv") return "CSV file";
   // The drafted column mapping is the only JSON document any operation
   // produces, so the label names it rather than saying "JSON file", which
   // would tell a non-technical reader nothing. Revisit when a second one

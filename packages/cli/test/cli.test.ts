@@ -952,6 +952,45 @@ describe("consultchimps CLI", () => {
     });
   });
 
+  it("writes CSV output when the name or the flags ask for it", async () => {
+    const directory = await createTemporaryDirectory();
+    const input = path.join(directory, "orders.csv");
+    await writeFile(input, "Region,Amount\nNorth,=1+1\n", "utf8");
+    const output = path.join(directory, "all.csv");
+    await runCli([
+      "sheets",
+      "consolidate",
+      input,
+      "--no-source",
+      "--csv-bom",
+      "false",
+      "-o",
+      output,
+    ]);
+    expect(await readFile(output, "utf8")).toBe(
+      "Region,Amount\r\nNorth,'=1+1\r\n",
+    );
+
+    const refused = await runCli(
+      [
+        "sheets",
+        "consolidate",
+        input,
+        "--output-format",
+        "xlsx",
+        "-o",
+        path.join(directory, "other.csv"),
+      ],
+      1,
+    );
+    expect(refused.stderr).toContain("XLSX_OUTPUT_FORMAT_INVALID");
+    const merge = await runCli(
+      ["sheets", "merge", input, "-o", path.join(directory, "merged.csv")],
+      1,
+    );
+    expect(merge.stderr).toContain("XLSX_OUTPUT_FORMAT_INVALID");
+  });
+
   it("reports the title rows and spacer columns a consolidation left out", async () => {
     const directory = await createTemporaryDirectory();
     const input = path.join(directory, "titled.xlsx");

@@ -15,9 +15,12 @@ import {
 import { Command, CommanderError } from "commander";
 
 import {
+  csvOutputOptions,
   csvReadOptions,
   withCsvOptions,
+  withCsvOutputOptions,
   type CsvCliOptions,
+  type CsvOutputCliOptions,
 } from "./csv-options.js";
 import { formatWorkbookDescription } from "./describe-report.js";
 import { filesModule, pdfModule, pptxModule, xlsxModule } from "./modules.js";
@@ -45,7 +48,7 @@ interface PackageMetadata {
   version: string;
 }
 
-interface ConsolidateOptions extends CsvCliOptions {
+interface ConsolidateOptions extends CsvCliOptions, CsvOutputCliOptions {
   force?: boolean;
   headerRow?: number;
   hidden?: boolean;
@@ -73,7 +76,7 @@ interface SheetInspectOptions extends CsvCliOptions {
   sheet?: string[];
 }
 
-interface SheetSplitOptions extends CsvCliOptions {
+interface SheetSplitOptions extends CsvCliOptions, CsvOutputCliOptions {
   column: string;
   force?: boolean;
   headerRow?: number;
@@ -411,59 +414,61 @@ When you want one combined sheet instead of separate tabs:
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
-withCsvOptions(
-  sheets
-    .command("consolidate")
-    .description(
-      "stack the rows from every worksheet and CSV file into one combined sheet, matching columns by header",
-    )
-    .argument(
-      "<inputs...>",
-      'Excel or CSV files, folders, or quoted patterns such as "inputs/*.xlsx"',
-    )
-    .requiredOption(
-      "-o, --output <path>",
-      "where to save the new consolidated .xlsx workbook",
-    )
-    .option(
-      "--sheet <names...>",
-      "include only worksheets with these exact names",
-    )
-    .option(
-      "--header-row <number>",
-      "row containing column names, counted from 1",
-      positiveInteger,
-    )
-    .option("--hidden", "include hidden worksheets as well as visible ones")
-    .option(
-      "--normalize-headers",
-      'match columns whose headers differ only in case, spacing, or punctuation, such as "Failed Checks" and "Failed_Checks"',
-    )
-    .option(
-      "--map <file>",
-      "JSON column mapping that folds differently named columns into one column each",
-    )
-    .option(
-      "--suggest-map <file>",
-      "write a draft column mapping built from the headers found, for you to review",
-    )
-    .option(
-      "--no-source",
-      "leave out columns that identify each row's source file, worksheet, and row",
-    )
-    .option(
-      "--output-sheet <name>",
-      "name of the worksheet created in the new workbook",
-      "Consolidated",
-    )
-    .option(
-      "--values",
-      "write stored values instead of formulas while preserving output formatting",
-    )
-    .option(
-      "-f, --force",
-      "replace the output file if it already exists; use with care",
-    ),
+withCsvOutputOptions(
+  withCsvOptions(
+    sheets
+      .command("consolidate")
+      .description(
+        "stack the rows from every worksheet and CSV file into one combined sheet, matching columns by header",
+      )
+      .argument(
+        "<inputs...>",
+        'Excel or CSV files, folders, or quoted patterns such as "inputs/*.xlsx"',
+      )
+      .requiredOption(
+        "-o, --output <path>",
+        "where to save the new consolidated .xlsx workbook, or .csv file",
+      )
+      .option(
+        "--sheet <names...>",
+        "include only worksheets with these exact names",
+      )
+      .option(
+        "--header-row <number>",
+        "row containing column names, counted from 1",
+        positiveInteger,
+      )
+      .option("--hidden", "include hidden worksheets as well as visible ones")
+      .option(
+        "--normalize-headers",
+        'match columns whose headers differ only in case, spacing, or punctuation, such as "Failed Checks" and "Failed_Checks"',
+      )
+      .option(
+        "--map <file>",
+        "JSON column mapping that folds differently named columns into one column each",
+      )
+      .option(
+        "--suggest-map <file>",
+        "write a draft column mapping built from the headers found, for you to review",
+      )
+      .option(
+        "--no-source",
+        "leave out columns that identify each row's source file, worksheet, and row",
+      )
+      .option(
+        "--output-sheet <name>",
+        "name of the worksheet created in the new workbook",
+        "Consolidated",
+      )
+      .option(
+        "--values",
+        "write stored values instead of formulas while preserving output formatting",
+      )
+      .option(
+        "-f, --force",
+        "replace the output file if it already exists; use with care",
+      ),
+  ),
 )
   .addHelpText(
     "after",
@@ -472,6 +477,7 @@ Examples:
   consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
   consultchimps sheets consolidate north.xlsx south.xlsx --output combined.xlsx
   consultchimps sheets consolidate north.xlsx exports/ --csv-numbers -o combined.xlsx
+  consultchimps sheets consolidate "inputs/*.xlsx" -o combined.csv
 
 What happens:
   1. ConsultChimps finds the matching Excel and CSV files.
@@ -500,6 +506,9 @@ CSV files:
   though a byte order mark wins over a contradicting --csv-encoding.
   Every field stays text unless --csv-numbers or --csv-dates asks otherwise,
   and neither changes a field that is not wholly a number or a date.
+  Name the output .csv, or use --output-format csv, to write a CSV file:
+  UTF-8 with a byte order mark (--csv-bom false leaves it out), and text that
+  would start a formula prefixed with an apostrophe.
 
 When you want each worksheet kept as its own tab instead:
   Use consultchimps sheets merge to copy every worksheet into one workbook
@@ -520,6 +529,7 @@ When you want each worksheet kept as its own tab instead:
     ).consolidateWorkbooks({
       inputs: inputPaths,
       csv,
+      ...csvOutputOptions(options),
       output: options.output,
       addSourceColumns: options.source !== false,
       headerRow: options.headerRow,
@@ -537,68 +547,70 @@ When you want each worksheet kept as its own tab instead:
     printResult(result, program.opts<GlobalOptions>().json === true);
   });
 
-withCsvOptions(
-  sheets
-    .command("split")
-    .description(
-      "create one new Excel workbook for each distinct value in a selected column",
-    )
-    .argument("<input>", "the source .xlsx, .xlsm, or .csv file to divide")
-    .requiredOption(
-      "-c, --column <name>",
-      "column whose values decide which rows go into each new workbook",
-    )
-    .option(
-      "-o, --output <directory>",
-      "folder where the new workbooks will be saved",
-    )
-    .option(
-      "--output-dir <directory>",
-      "folder where the new workbooks will be saved (alias for --output)",
-    )
-    .option("--sheet <name>", "exact name of the worksheet to divide")
-    .option(
-      "--table <name>",
-      "use this named Excel Table instead of the worksheet's full used range (preferred)",
-    )
-    .option(
-      "--range <name>",
-      "use this named range instead of the worksheet's full used range",
-    )
-    .option(
-      "--header-row <number>",
-      "row containing column names, counted from 1",
-      positiveInteger,
-    )
-    .option("--hidden", "allow the selected worksheet to be hidden")
-    .option(
-      "--preserve-workbook",
-      "keep the full workbook layout (default without a selector and for --table)",
-    )
-    .option(
-      "--no-preserve-workbook",
-      "write plain data-only workbooks using the single-source split mode",
-    )
-    .option(
-      "--values",
-      "replace formulas with their stored values while preserving formatting",
-    )
-    .option(
-      "--strict",
-      "match split values exactly, including case, whitespace, and value type",
-    )
-    .option(
-      "--skip-blank",
-      "do not create an output group for rows with a blank split-column value",
-    )
-    .option(
-      "--prefix <name>",
-      "text to place at the start of each output filename",
-    )
-    .option(
-      "-f, --force",
-      "replace matching output files that already exist; use with care",
-    ),
+withCsvOutputOptions(
+  withCsvOptions(
+    sheets
+      .command("split")
+      .description(
+        "create one new Excel workbook for each distinct value in a selected column",
+      )
+      .argument("<input>", "the source .xlsx, .xlsm, or .csv file to divide")
+      .requiredOption(
+        "-c, --column <name>",
+        "column whose values decide which rows go into each new workbook",
+      )
+      .option(
+        "-o, --output <directory>",
+        "folder where the new workbooks will be saved",
+      )
+      .option(
+        "--output-dir <directory>",
+        "folder where the new workbooks will be saved (alias for --output)",
+      )
+      .option("--sheet <name>", "exact name of the worksheet to divide")
+      .option(
+        "--table <name>",
+        "use this named Excel Table instead of the worksheet's full used range (preferred)",
+      )
+      .option(
+        "--range <name>",
+        "use this named range instead of the worksheet's full used range",
+      )
+      .option(
+        "--header-row <number>",
+        "row containing column names, counted from 1",
+        positiveInteger,
+      )
+      .option("--hidden", "allow the selected worksheet to be hidden")
+      .option(
+        "--preserve-workbook",
+        "keep the full workbook layout (default without a selector and for --table)",
+      )
+      .option(
+        "--no-preserve-workbook",
+        "write plain data-only workbooks using the single-source split mode",
+      )
+      .option(
+        "--values",
+        "replace formulas with their stored values while preserving formatting",
+      )
+      .option(
+        "--strict",
+        "match split values exactly, including case, whitespace, and value type",
+      )
+      .option(
+        "--skip-blank",
+        "do not create an output group for rows with a blank split-column value",
+      )
+      .option(
+        "--prefix <name>",
+        "text to place at the start of each output filename",
+      )
+      .option(
+        "-f, --force",
+        "replace matching output files that already exist; use with care",
+      ),
+  ),
 )
   .addHelpText(
     "after",
@@ -622,9 +634,10 @@ numeric text like the equivalent number. Use --strict for exact matching.
 Use --sheet, --table, or --range for the legacy single-source split mode.
 Use --no-preserve-workbook only when a compact, data-only result is wanted.
 
-A CSV file has no workbook to keep, so it always splits into compact
-workbooks; every field stays text unless --csv-numbers or --csv-dates asks
-otherwise.
+A CSV file has no workbook to keep, so it splits into CSV files, or compact
+workbooks with --output-format xlsx; every field stays text unless
+--csv-numbers or --csv-dates asks otherwise. --output-format csv splits a
+workbook into CSV files.
 
 --values removes formulas while retaining their stored results and all
 formatting in a preserved workbook. A formula without a stored result becomes
@@ -672,6 +685,7 @@ Your original workbook is never changed.
       await xlsxModule()
     ).splitWorkbookByColumn({
       csv,
+      ...csvOutputOptions(options),
       input: inputPath,
       outputDirectory,
       column: options.column,
