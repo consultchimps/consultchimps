@@ -1050,7 +1050,7 @@ describe("corpus: byte surface", () => {
       column: CORPUS_SPLIT_COLUMN,
       headerRow: undefined,
       label: "a workbook name it cannot open",
-      name: "corpus.csv",
+      name: "corpus.txt",
     },
     {
       code: "XLSX_SPLIT_COLUMN_NOT_FOUND",
