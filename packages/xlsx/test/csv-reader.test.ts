@@ -187,10 +187,21 @@ describe("CSV structure", () => {
     ]);
   });
 
-  it("refuses a CR file with an LF in its first piece rather than join its rows", async () => {
-    const error = await failure(utf8('a,b\r1,"two\nlines"\r3,4\r'));
-    expect(error.code).toBe("XLSX_CSV_MALFORMED");
-    expect(error.message).toContain("row 1 ");
+  it("decides the line ending by the first one in the file", async () => {
+    // A CR file whose quoted text holds an LF, and an LF file whose first row
+    // runs past the first piece.
+    const crFile = await read(utf8('a,b\r1,"two\nlines"\r3,4\r'));
+    expect(crFile.values).toEqual([
+      ["a", "b"],
+      ["1", "two\nlines"],
+      ["3", "4"],
+    ]);
+    const long = "x".repeat(CSV_PIECE_BYTES + 10);
+    const lfFile = await read(utf8(`a,"${long}"\n1,2\n`));
+    expect(lfFile.values).toEqual([
+      ["a", long],
+      ["1", "2"],
+    ]);
   });
 
   it("refuses a CR on its own in a file split on LF", async () => {
@@ -200,10 +211,11 @@ describe("CSV structure", () => {
   });
 
   it("reads a CR ending a quoted last field as part of the line ending", async () => {
-    const { values } = await read(utf8('a,"x\r"\nb,c\n'));
+    const { values } = await read(utf8('a,b\nc,"x\r"\nd,e\n'));
     expect(values).toEqual([
-      ["a", "x"],
-      ["b", "c"],
+      ["a", "b"],
+      ["c", "x"],
+      ["d", "e"],
     ]);
   });
 
@@ -277,6 +289,12 @@ describe("CSV delimiters", () => {
   ])("guesses a %s delimiter", async (_name, text, delimiter) => {
     const { workbook } = await read(utf8(text));
     expect(workbook.delimiter).toBe(delimiter);
+  });
+
+  it("looks past title lines that hold no delimiter", async () => {
+    const titles = `Report title\n`.repeat(12);
+    const { workbook } = await read(utf8(`${titles}a;b\n1;2\n`));
+    expect(workbook.delimiter).toBe(";");
   });
 
   it("takes a chosen delimiter over the guess", async () => {
@@ -515,7 +533,12 @@ describe("CSV options", () => {
     [{ dates: "dym" }, "dates"],
     [{ decimalSeparator: ";" }, "decimalSeparator"],
     [{ thousandsSeparator: "_" }, "thousandsSeparator"],
-    [{ decimalSeparator: ",", thousandsSeparator: "," }, "thousandsSeparator"],
+    [
+      { numbers: true, decimalSeparator: ",", thousandsSeparator: "," },
+      "thousandsSeparator",
+    ],
+    [{ decimalSeparator: "," }, "decimalSeparator"],
+    [{ thousandsSeparator: "none" }, "thousandsSeparator"],
   ])("refuses %j before reading", (options, option) => {
     let caught: unknown;
     try {

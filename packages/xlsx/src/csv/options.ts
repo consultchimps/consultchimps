@@ -103,6 +103,18 @@ export function settleCsvOptions(
       "dates",
     );
   }
+  if (
+    options?.numbers !== true &&
+    (options?.decimalSeparator !== undefined ||
+      options?.thousandsSeparator !== undefined)
+  ) {
+    throw invalid(
+      "The decimal and thousands separators set how numbers are read, so they need numbers to be read. Ask for numbers, or leave the separators out to keep every field as text.",
+      options?.decimalSeparator !== undefined
+        ? "decimalSeparator"
+        : "thousandsSeparator",
+    );
+  }
   const decimal = options?.decimalSeparator ?? ".";
   if (!DECIMAL_SEPARATORS.has(decimal)) {
     throw invalid(

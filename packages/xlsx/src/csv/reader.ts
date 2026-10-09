@@ -168,6 +168,67 @@ class TextFeed {
   }
 }
 
+/**
+ * How a file's rows end: on LF, unless the first line ending in the file is a
+ * CR that no LF follows. The file is read as far as that first line ending, so
+ * a first row longer than a piece, or a CRLF split between two pieces, cannot
+ * mislead it. A CR file split on LF by mistake is refused, never read as one
+ * row, because its lone carriage returns are refused.
+ */
+async function firstLineEnding(
+  source: RandomAccessSource,
+  encoding: CsvEncoding,
+): Promise<"\n" | "\r"> {
+  const decoder = new TextDecoder(encoding);
+  let afterCarriageReturn = false;
+  for (let offset = 0; offset < source.size; offset += CSV_PIECE_BYTES) {
+    const text = decoder.decode(
+      await source.readAt(
+        offset,
+        Math.min(CSV_PIECE_BYTES, source.size - offset),
+      ),
+      { stream: true },
+    );
+    for (let index = 0; index < text.length; index += 1) {
+      const code = text.charCodeAt(index);
+      if (afterCarriageReturn) return code === 10 ? "\n" : "\r";
+      if (code === 10) return "\n";
+      if (code === 13) afterCarriageReturn = true;
+    }
+  }
+  return "\n";
+}
+
+/**
+ * Papa's guess between the candidate delimiters over the first ten rows that
+ * are not blank, or, when those hold none of the candidates, as title lines
+ * above a table may not, over the first ten rows that hold one.
+ */
+function guessDelimiter(sample: string, newline: "\n" | "\r"): string {
+  const guess = (text: string): string | undefined => {
+    const result = Papa.parse<string[]>(text, {
+      delimitersToGuess: GUESSED_DELIMITERS,
+      newline,
+      skipEmptyLines: "greedy",
+      preview: 10,
+    });
+    return result.errors.some((error) => error.code === "UndetectableDelimiter")
+      ? undefined
+      : result.meta.delimiter;
+  };
+  const first = guess(sample);
+  if (first !== undefined && GUESSED_DELIMITERS.includes(first)) return first;
+  const rows = sample
+    .split(newline)
+    .filter((row) =>
+      GUESSED_DELIMITERS.some((candidate) => row.includes(candidate)),
+    );
+  const second = rows.length === 0 ? undefined : guess(rows.join(newline));
+  return second !== undefined && GUESSED_DELIMITERS.includes(second)
+    ? second
+    : ",";
+}
+
 /** A CSV file opened for reading as one worksheet. */
 export class CsvWorkbook {
   readonly sheets: readonly StreamedSheet[];
@@ -317,31 +378,19 @@ export class CsvWorkbook {
       encodingSource = "fallback";
     }
 
-    // The first piece decides the line ending and, unless one was chosen, the
-    // delimiter, from its first ten rows that are not blank.
-    const sample = new TextDecoder(encoding).decode(
-      await source.readAt(0, Math.min(CSV_PIECE_BYTES, size)),
-      { stream: true },
-    );
-    // Split on LF unless the first piece holds none, so its rows end in CR
-    // alone. A guess weighing CR against LF can be swayed by the half row a
-    // piece ends inside; this rule cannot, and a CR file that is split on LF
-    // is refused below rather than read as one row.
-    const newline =
-      sample.includes("\n") || !sample.includes("\r") ? "\n" : "\r";
+    const newline = await firstLineEnding(source, encoding);
     let delimiter = options.delimiter;
     if (delimiter === undefined) {
+      // The first piece's first ten rows that are not blank decide it.
+      const sample = new TextDecoder(encoding).decode(
+        await source.readAt(0, Math.min(CSV_PIECE_BYTES, size)),
+        { stream: true },
+      );
       const end = sample.lastIndexOf(newline);
-      const guessed = Papa.parse<string[]>(
+      delimiter = guessDelimiter(
         end > 0 ? sample.slice(0, end + 1) : sample,
-        {
-          delimitersToGuess: GUESSED_DELIMITERS,
-          newline,
-          skipEmptyLines: "greedy",
-          preview: 10,
-        },
-      ).meta.delimiter;
-      delimiter = GUESSED_DELIMITERS.includes(guessed) ? guessed : ",";
+        newline,
+      );
     }
     return new CsvWorkbook(source, context, options, {
       encoding,
