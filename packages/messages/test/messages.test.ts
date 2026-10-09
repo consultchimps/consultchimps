@@ -125,6 +125,25 @@ describe("human-readable CLI output", () => {
     expect(output).not.toMatch(/^ {2}- [a-z]+[A-Z]\w*:/mu);
   });
 
+  it("claims formulas were replaced only when some were", () => {
+    const split = (formulaCellsConverted: number) =>
+      formatHumanResult(
+        result(
+          "sheets.split-by-column",
+          { formulaCellsConverted, valuesOnly: 1 },
+          ["North.xlsx"],
+        ),
+        cli,
+      );
+
+    expect(split(0)).toContain(
+      "Values-only mode was on, and there were no formulas to replace.",
+    );
+    expect(split(2)).toContain(
+      "Values-only mode replaced 2 formula cells with their stored values.",
+    );
+  });
+
   it("names a CSV input as a file, never a workbook", () => {
     const inspection = formatHumanResult(
       result(

@@ -67,9 +67,10 @@ errors, which have no stable code to depend on. The same object is repeated on
 stderr so failures remain visible there, but stdout alone is always valid JSON.
 
 Usage errors (an unknown option, an unknown command, a missing required option,
-an invalid option value, conflicting options, or a pattern that matches more
-than one file for a command that reads one) are reported the same way under
-`--json`, with the code `CLI_USAGE`:
+a value the CLI parses itself that is not valid, such as a number option given
+anything but a whole number from 1, conflicting options, or a pattern that
+matches more than one file for a command that reads one) are reported the same
+way under `--json`, with the code `CLI_USAGE`:
 
 ```json
 {
@@ -80,6 +81,9 @@ than one file for a command that reads one) are reported the same way under
   }
 }
 ```
+
+A value an operation checks itself, such as `sheets inspect --header-row 0`,
+keeps that operation's own code, for example `XLSX_INVALID_HEADER_ROW`.
 
 `--help` and `--version` are unaffected by `--json`. They print their usual text
 and exit 0.

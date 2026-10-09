@@ -382,8 +382,11 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
       // Values-only mode replaces formulas, which only a workbook has, so it is
       // worth a sentence only when it was asked for.
       if (metric(result, "valuesOnly") === 1) {
+        const converted = metric(result, "formulaCellsConverted");
         lines.push(
-          "Formulas were replaced with their stored values (values-only mode).",
+          converted > 0
+            ? `Values-only mode replaced ${quantity(converted, "formula cell")} with ${converted === 1 ? "its" : "their"} stored ${converted === 1 ? "value" : "values"}.`
+            : "Values-only mode was on, and there were no formulas to replace.",
         );
       }
       if (splitSummary) {

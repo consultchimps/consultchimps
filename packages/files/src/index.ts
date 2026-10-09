@@ -168,18 +168,21 @@ export async function discoverFiles(
         onlyFiles: true,
       });
     }
+    // Filtered before deduplicating, so an alias with another extension never
+    // stands in for the file it reaches.
     for (const match of matches
       .map((candidate) => path.resolve(candidate))
+      .filter(
+        (candidate) =>
+          !extensions || extensions.has(path.extname(candidate).toLowerCase()),
+      )
       .sort(comparePaths)) {
       const key = await fileIdentity(match);
       if (!discovered.has(key)) discovered.set(key, match);
     }
   }
 
-  const files = [...discovered.values()].filter(
-    (filePath) =>
-      !extensions || extensions.has(path.extname(filePath).toLowerCase()),
-  );
+  const files = [...discovered.values()];
   if (options.order !== "given") files.sort(comparePaths);
 
   if (files.length === 0) {
