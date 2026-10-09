@@ -36,9 +36,23 @@ const HARMLESS = /^(?:[+-]?[0-9][0-9.,]*|-+)$/u;
  * guard looks past leading spaces, which some spreadsheets trim first.
  */
 export function guardedCsvText(text: string): string {
-  return FORMULA_START.test(text) && !HARMLESS.test(text.trim())
-    ? `'${text}`
-    : text;
+  if (!FORMULA_START.test(text)) return text;
+  const trimmed = text.trim();
+  return HARMLESS.test(trimmed) && unchangedAsNumber(trimmed)
+    ? text
+    : `'${text}`;
+}
+
+/**
+ * Whether a spreadsheet reading signed numeric text as a number keeps every
+ * digit: no leading zero before another digit, and at most 15 significant
+ * digits. Otherwise the apostrophe keeps it as written.
+ */
+function unchangedAsNumber(text: string): boolean {
+  if (/^-+$/u.test(text)) return true;
+  const digits = text.replace(/[^0-9]/gu, "");
+  if (/^[+-]?0[0-9]/u.test(text)) return false;
+  return digits.replace(/^0+/u, "").length <= 15;
 }
 
 /**
