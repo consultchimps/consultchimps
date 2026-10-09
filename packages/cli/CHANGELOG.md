@@ -1,5 +1,39 @@
 # consultchimps
 
+## 0.14.1
+
+### Patch Changes
+
+- 465c8a4: `sheets inspect`, `sheets split` and `sheets merge` now read each
+  workbook in pieces and write outputs as they go (ADR 0006), so large workbooks
+  use far less memory. Splitting a workbook of 150,000 rows no longer fails with
+  "Maximum call stack size exceeded". A failed CRC check or malformed XML in a
+  part a command reads is now refused, as the other readers already did, instead
+  of being described, split or merged. `sheets inspect` decodes `_x000D_` and
+  similar escapes, leaves phonetic text out of headers, and lists sample values
+  in row order, as the other commands already did.
+- 47b2661: Splitting a workbook now reads it in pieces and writes each output as
+  it is produced, in every mode (ADR 0006), and no longer fails with "Maximum
+  call stack size exceeded" on large worksheets. Splitting 150,000 rows by a
+  column, keeping the workbook, finishes at 335 MB instead of failing after 1.9
+  GB. Outputs are byte for byte what they were.
+
+  Add `splitWorkbookSource` and `planSplitWorkbookSource`, which split a
+  workbook read from a random-access source such as `blobSource` into outputs
+  written as they are produced.
+
+  A damaged workbook the readers refuse is now refused by splitting too: a
+  failed CRC check, or a malformed row or cell reference, which gave an error
+  with no code before. A package JSZip read as empty is now read.
+
+- Updated dependencies [c688e0b]
+- Updated dependencies [bdf145b]
+- Updated dependencies [3693e97]
+- Updated dependencies [47b2661]
+  - @consultchimps/xlsx@0.21.0
+  - @consultchimps/pptx@0.8.1
+  - @consultchimps/db@0.2.3
+
 ## 0.14.0
 
 ### Minor Changes
