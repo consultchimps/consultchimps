@@ -782,6 +782,8 @@ export async function planConsolidateWorkbooks(
 ): Promise<OperationPlan<ConsolidateWorkbooksPlanMetric>> {
   const { absoluteInputs, absoluteOutput, absoluteSuggestOutput } =
     resolveConsolidateWorkbooks(options);
+  // The options a run would refuse, a plan refuses too.
+  settleCsvOptions(options.csv);
 
   // A plan promises the run's destinations, so an unusable mapping has to fail
   // here too rather than surviving until the workbooks are read.

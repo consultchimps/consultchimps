@@ -73,7 +73,11 @@ const SHEET_NAME_LIMIT = 31;
 
 /** `text` without the apostrophes at either end, which a sheet name cannot hold. */
 function withoutOuterApostrophes(text: string): string {
-  return text.replace(/^'+|'+$/gu, "");
+  let start = 0;
+  let end = text.length;
+  while (start < end && text[start] === "'") start += 1;
+  while (end > start && text[end - 1] === "'") end -= 1;
+  return text.slice(start, end);
 }
 
 /**
