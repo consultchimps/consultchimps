@@ -42,6 +42,7 @@
     "jszip": "3.10.1",
     "numfmt": "3.2.6",
     "pako": "1.0.11",
+    "papaparse": "5.7.0",
     "saxes": "6.0.0"
   },
   "engines": {
@@ -52,6 +53,7 @@
     "provenance": true
   },
   "devDependencies": {
+    "@types/papaparse": "5.5.2",
     "typescript": "7.0.2"
   }
 }
