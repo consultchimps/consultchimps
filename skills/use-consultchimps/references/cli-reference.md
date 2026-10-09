@@ -2,7 +2,7 @@
 
 # ConsultChimps CLI reference
 
-The document commands of `consultchimps` 0.14.0, as the CLI itself
+The document commands of `consultchimps` 0.14.1, as the CLI itself
 prints them. A flag absent here does not exist in that version.
 
 The `db` commands are left out: they need
