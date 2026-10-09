@@ -1501,6 +1501,11 @@ export type {
   CsvEncoding,
   CsvReadOptions,
 } from "./csv/options.js";
+export {
+  resolveTableOutput,
+  type ResolvedTableOutput,
+  type TableOutputFormatName,
+} from "./csv/output.js";
 export { MAX_COLUMN_SAMPLE_VALUES };
 export type {
   DescribeWorkbookMetric,

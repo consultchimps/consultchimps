@@ -817,9 +817,27 @@ function resolveConsolidateWorkbooks(
   return { absoluteInputs, absoluteOutput, absoluteSuggestOutput };
 }
 
-export async function planConsolidateWorkbooks(
+/**
+ * The options with the output named as the byte surface names it: a name with
+ * no workbook or CSV extension takes the asked format's.
+ */
+function withOutputExtension(
   options: ConsolidateWorkbooksOptions,
+): ConsolidateWorkbooksOptions {
+  if (options.outputFormat === undefined) return options;
+  if (/\.(?:csv|xls[xm])$/iu.test(options.output)) return options;
+  const { extension } = resolveTableOutput(
+    undefined,
+    options.outputFormat,
+    options.csvBom,
+  );
+  return { ...options, output: `${options.output}${extension}` };
+}
+
+export async function planConsolidateWorkbooks(
+  requested: ConsolidateWorkbooksOptions,
 ): Promise<OperationPlan<ConsolidateWorkbooksPlanMetric>> {
+  const options = withOutputExtension(requested);
   const { absoluteInputs, absoluteOutput, absoluteSuggestOutput } =
     resolveConsolidateWorkbooks(options);
   // The options a run would refuse, a plan refuses too.
@@ -896,8 +914,9 @@ export async function planConsolidateWorkbooks(
 }
 
 export async function consolidateWorkbooks(
-  options: ConsolidateWorkbooksOptions,
+  requested: ConsolidateWorkbooksOptions,
 ): Promise<ConsolidateWorkbooksResult> {
+  const options = withOutputExtension(requested);
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
   const { absoluteInputs, absoluteOutput, absoluteSuggestOutput } =
     resolveConsolidateWorkbooks(options);

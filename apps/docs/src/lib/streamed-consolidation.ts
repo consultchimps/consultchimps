@@ -6,6 +6,7 @@
 import type { OperationControlOptions } from "@consultchimps/core";
 import {
   consolidateWorkbookSources,
+  resolveTableOutput,
   suggestColumnMappingSources,
   type ConsolidateWorkbooksBytesOptions,
   type CsvReadOptions,
@@ -41,15 +42,14 @@ export async function consolidateFiles(
   place: OutputPlace,
   created: Set<string>,
 ): Promise<StreamedConsolidation> {
-  const csvOutput =
-    options.outputFormat === "csv" ||
-    (options.outputFormat === undefined &&
-      options.outputName?.toLowerCase().endsWith(".csv") === true);
-  const target = await openOutputTarget(
-    place,
-    csvOutput ? "text/csv" : WORKBOOK_MEDIA_TYPE,
-    created,
+  // Settled as the operation settles it, so a format the name contradicts
+  // is refused before any file is made.
+  const { mediaType } = resolveTableOutput(
+    options.outputName,
+    options.outputFormat,
+    options.csvBom,
   );
+  const target = await openOutputTarget(place, mediaType, created);
   const reads = new PieceReads(CONSOLIDATE_OPERATION, controls.signal);
   let consolidated: Awaited<ReturnType<typeof consolidateWorkbookSources>>;
   try {

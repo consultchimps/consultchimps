@@ -12,6 +12,7 @@
  */
 import Papa from "papaparse";
 
+import { calendarIsoParts } from "../model/calendar.js";
 import { CellDate } from "../package/cell-date.js";
 import { CellError } from "../package/cell-error.js";
 import type { WritableCellValue } from "../package/table-writer.js";
@@ -27,21 +28,28 @@ const BATCH_ROWS = 1000;
  * a tab or a carriage return. Text that is only a signed number, or only
  * dashes, cannot run anything and is left as it is, so CSV to CSV keeps it.
  */
-const FORMULA_START = /^[=+\-@\t\r]/u;
+const FORMULA_START = /^\s*[=+\-@]|^[\t\r]/u;
 const HARMLESS = /^(?:[+-]?[0-9][0-9.,]*|-+)$/u;
 
-/** A text value as CSV output writes it, with the formula guard applied. */
+/**
+ * A text value as CSV output writes it, with the formula guard applied. The
+ * guard looks past leading spaces, which some spreadsheets trim first.
+ */
 export function guardedCsvText(text: string): string {
-  return FORMULA_START.test(text) && !HARMLESS.test(text) ? `'${text}` : text;
+  return FORMULA_START.test(text) && !HARMLESS.test(text.trim())
+    ? `'${text}`
+    : text;
 }
 
-/** A date as ISO text: the day alone at midnight, else with its time. */
-function isoDate(date: CellDate): string {
-  // The table text is the workbook date spelling, yyyy-mm-ddThh:mm:ss.sssZ.
-  const day = date.text.slice(0, 10);
-  if (!date.time) return day;
-  const time = date.text.slice(11, 19);
-  const milliseconds = date.text.slice(20, 23);
+/**
+ * A date in the workbook date spelling, yyyy-mm-ddThh:mm:ss.sssZ, as ISO
+ * text: the day alone at midnight, else with its time.
+ */
+function isoDate(text: string): string {
+  const day = text.slice(0, 10);
+  const time = text.slice(11, 19);
+  const milliseconds = text.slice(20, 23);
+  if (time === "00:00:00" && milliseconds === "000") return day;
   return milliseconds === "000"
     ? `${day}T${time}`
     : `${day}T${time}.${milliseconds}`;
@@ -50,12 +58,14 @@ function isoDate(date: CellDate): string {
 /** One value as CSV text. */
 export function csvCellText(value: WritableCellValue): string {
   if (value === null) return "";
-  if (value instanceof CellDate) return isoDate(value);
+  if (value instanceof CellDate) return isoDate(value.text);
   if (value instanceof CellError) return value.text;
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
   if (typeof value === "number") {
     return Number.isFinite(value) ? String(value) : "";
   }
+  // A date a workbook cannot count, before 1900, stays in the date spelling.
+  if (calendarIsoParts(value) !== undefined) return isoDate(value);
   return guardedCsvText(value);
 }
 
@@ -112,7 +122,9 @@ export class CsvTableWriter {
       quoteChar: '"',
       escapeChar: '"',
       header: false,
-      quotes: false,
+      // A lone empty field is quoted, so a one-column row is not a blank
+      // line, which many readers skip.
+      quotes: this.#columns === 1 ? (value: unknown) => value === "" : false,
       // The guard is applied above, so Papa's own, which would also quote
       // signed numbers, stays off.
       escapeFormulae: false,

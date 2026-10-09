@@ -14,7 +14,9 @@ import {
   mergeWorkbooksBytes,
   splitWorkbookBytes,
 } from "../src/bytes.js";
+import { CsvWorkbook } from "../src/csv/reader.js";
 import { CsvTableWriter, guardedCsvText } from "../src/csv/writer.js";
+import { bytesSource } from "../src/package/index.js";
 import {
   consolidateWorkbooks,
   mergeWorkbooks,
@@ -116,6 +118,48 @@ describe("the CSV writer", () => {
     expect(written(["=x"], [["=1+1"]], { bom: false })).toBe(
       "'=x\r\n'=1+1\r\n",
     );
+  });
+});
+
+describe("the CSV writer at scale", () => {
+  it("joins batches and reads back to the same values", async () => {
+    const rows: WritableCellValue[][] = [];
+    for (let row = 0; row < 2_500; row += 1) {
+      rows.push([
+        `r\r\n${row}`,
+        `a,b "${row}"`,
+        row % 3 === 0 ? "" : `line\nbreak`,
+      ]);
+    }
+    const csv = written(["x", "y", "z"], rows);
+    const book = await CsvWorkbook.open(
+      bytesSource("back.csv", new TextEncoder().encode(csv)),
+      { file: "back.csv", source: "back.csv", details: {} },
+    );
+    const back: unknown[][] = [];
+    await book.readWorksheet(book.sheets[0]!, {
+      begin: () => undefined,
+      row: (row, cells) => {
+        const dense: unknown[] = [null, null, null];
+        for (const cell of cells) dense[cell.column] = cell.value;
+        back[row] = dense;
+      },
+    });
+    expect(back.length).toBe(2_501);
+    expect(back.slice(1)).toEqual(
+      rows.map((row) => row.map((value) => (value === "" ? null : value))),
+    );
+  });
+
+  it("quotes a lone empty field and dates a workbook cannot count", () => {
+    expect(written(["a"], [[""], ["x"]], { bom: false })).toBe(
+      `a\r\n""\r\nx\r\n`,
+    );
+    expect(written(["d"], [["1850-01-01T00:00:00.000Z"]], { bom: false })).toBe(
+      `d\r\n1850-01-01\r\n`,
+    );
+    expect(guardedCsvText(" =HYPERLINK()")).toBe("' =HYPERLINK()");
+    expect(guardedCsvText(" -12")).toBe(" -12");
   });
 });
 
