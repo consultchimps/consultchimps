@@ -900,10 +900,11 @@ const WORKSHEET_ROWS = 1_048_576;
 const WORKSHEET_COLUMNS = 16_384;
 
 /**
- * Refuse a consolidated table an Excel worksheet cannot hold, before anything
- * is written. Workbooks rarely come near the limit; CSV files can pass it.
+ * Refuse a consolidated table an Excel worksheet cannot hold. Each surface calls
+ * this once the plan is settled and before it creates or writes anything.
+ * Workbooks rarely come near the limit; CSV files can pass it.
  */
-function assertFitsWorksheet(plan: ConsolidationPlan): void {
+export function assertFitsWorksheet(plan: ConsolidationPlan): void {
   const rows = plan.rowCount + 1;
   const columns = plan.columns.length;
   if (rows <= WORKSHEET_ROWS && columns <= WORKSHEET_COLUMNS) return;
@@ -928,7 +929,6 @@ export async function writeConsolidation(
   sheetName: string,
   sink: ConsolidationSink,
 ): Promise<void> {
-  assertFitsWorksheet(plan);
   let failure: { readonly error: unknown } | undefined;
   const guarded: ConsolidationSink = {
     write: (chunk) => {

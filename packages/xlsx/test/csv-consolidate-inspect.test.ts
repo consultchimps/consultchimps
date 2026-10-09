@@ -16,12 +16,18 @@ import {
   consolidateWorkbooksBytes,
   describeWorkbookBytes,
   describeWorkbookSource,
+  suggestColumnMappingSources,
 } from "../src/bytes.js";
 import { consolidateWorkbooks, describeWorkbook } from "../src/index.js";
+import {
+  assertFitsWorksheet,
+  type ConsolidationPlan,
+} from "../src/operations/consolidate/consolidate.js";
 import { sheetRows, sheetXml } from "./support/read-workbook.js";
 import { buildWorkbookFixture } from "./support/workbook-fixture.js";
 
-const utf8 = (text: string): Uint8Array => new TextEncoder().encode(text);
+const utf8 = (text: string): Uint8Array<ArrayBuffer> =>
+  new TextEncoder().encode(text);
 
 async function workbook(): Promise<Uint8Array> {
   return buildWorkbookFixture({
@@ -188,16 +194,47 @@ describe("consolidating CSV files", () => {
     expect(reads).toBe(0);
   });
 
-  it("refuses a table no worksheet can hold, before writing", async () => {
+  it("refuses a table no worksheet can hold, before writing a byte", async () => {
+    let writes = 0;
+    const tall = utf8(`n\n${"1\n".repeat(1_048_576)}`);
     const error = await failure(() =>
-      consolidateWorkbooksBytes({
-        inputs: [
-          { name: "tall.csv", bytes: utf8(`n\n${"1\n".repeat(1_048_576)}`) },
-        ],
+      consolidateWorkbookSources({
+        inputs: [blobSource("tall.csv", new Blob([tall]))],
+        output: {
+          write: () => {
+            writes += 1;
+          },
+          flush: () => Promise.resolve(),
+          abort: () => Promise.resolve(),
+        },
       }),
     );
     expect(error.code).toBe("XLSX_OUTPUT_TOO_LARGE");
     expect(error.details).toEqual({ rows: 1_048_577, columns: 4 });
+    expect(writes).toBe(0);
+
+    // A draft needs no worksheet, so it is still offered.
+    const suggestion = await suggestColumnMappingSources({
+      inputs: [blobSource("tall.csv", new Blob([tall]))],
+    });
+    expect(suggestion?.mapping.columns).toEqual([]);
+  });
+
+  it("holds exactly what a worksheet holds", () => {
+    const plan = (rowCount: number, columns: number) =>
+      ({
+        rowCount,
+        columns: new Array<string>(columns).fill("c"),
+      }) as unknown as ConsolidationPlan;
+    expect(() => {
+      assertFitsWorksheet(plan(1_048_575, 16_384));
+    }).not.toThrow();
+    expect(() => {
+      assertFitsWorksheet(plan(1_048_576, 1));
+    }).toThrow(/1,048,577 rows/u);
+    expect(() => {
+      assertFitsWorksheet(plan(1, 16_385));
+    }).toThrow(/16,385 columns/u);
   });
 });
 
@@ -228,7 +265,7 @@ describe("CSV files on the command line surface", () => {
     const chunks: Uint8Array[] = [];
     await consolidateWorkbookSources({
       inputs: [
-        blobSource("north.xlsx", new Blob([book])),
+        blobSource("north.xlsx", new Blob([book as Uint8Array<ArrayBuffer>])),
         blobSource("west.csv", new Blob([csv])),
       ],
       csv: { numbers: true },
@@ -290,6 +327,16 @@ describe("inspecting CSV files", () => {
       { header: "b", index: 1, sampleValues: ["1"] },
     ]);
     expect(outcome.result.warnings).toHaveLength(1);
+  });
+
+  it("refuses unusable CSV options whatever the input is", async () => {
+    const error = await failure(async () =>
+      describeWorkbookBytes(
+        { name: "north.xlsx", bytes: await workbook() },
+        { csv: { decimalSeparator: "," } },
+      ),
+    );
+    expect(error.code).toBe("XLSX_CSV_INVALID_OPTION");
   });
 
   it("describes a workbook without a csv entry", async () => {

@@ -4,7 +4,7 @@ export {
   uncachedFormulaWarnings,
 } from "./uncached-formulas.js";
 import { openSheetBook } from "./operations/sheet-book.js";
-import type { CsvReadOptions } from "./csv/options.js";
+import { settleCsvOptions, type CsvReadOptions } from "./csv/options.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -55,6 +55,7 @@ import {
 
 import { XLSX_ERRORS } from "./errors.js";
 import {
+  assertFitsWorksheet,
   planConsolidation,
   writeConsolidation,
   type ConsolidationSettings,
@@ -475,6 +476,8 @@ export async function describeWorkbook(
   // otherwise answer XLSX_READ_FAILED to a caller who had already stopped
   // caring, and a large valid workbook would be loaded in full for nothing.
   throwIfAborted(options.signal, INSPECT_OPERATION);
+  // Checked whatever the input is, as consolidation checks them.
+  settleCsvOptions(options.csv);
   const absolutePath = path.resolve(filePath);
   // Read in pieces through a file handle (ADR 0006), never whole.
   const opened = await openWorkbookSource(absolutePath);
@@ -900,6 +903,8 @@ export async function consolidateWorkbooks(
   };
   const plan = await planConsolidation(sources, settings);
   const { suggestion, unmappedColumns } = plan;
+  // Before the staging file or its folder is made.
+  assertFitsWorksheet(plan);
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
   const sheetName = options.outputSheetName ?? CONSOLIDATED_SHEET_NAME;
   assertSheetName(sheetName);

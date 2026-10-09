@@ -1164,7 +1164,12 @@ export function ExcelConsolidateTool() {
   const [inspectedId, setInspectedId] = useState("");
   const [csvChoices, setCsvChoice] = useCsvChoices();
   const hasCsv = files.some((file) => isCsvFileName(file.name));
-  const csv = hasCsv ? csvReadOptionsFrom(csvChoices) : undefined;
+  // Kept as one value per set of choices, so the callbacks below are not
+  // rebuilt on every render.
+  const csv = useMemo(
+    () => (hasCsv ? csvReadOptionsFrom(csvChoices) : undefined),
+    [csvChoices, hasCsv],
+  );
   const csvKey = csv === undefined ? "" : JSON.stringify(csv);
   const mappingSelection = useFileSelection(
     MAPPING_FILES.accepts,
@@ -1409,7 +1414,9 @@ export function ExcelConsolidateTool() {
         worksheets this run would actually read.
       */}
       <WorkbookInspectorDisclosure
-        csv={csv}
+        csv={
+          inspected !== null && isCsvFileName(inspected.name) ? csv : undefined
+        }
         emptyMessage="Choose one of the workbooks above to see the worksheets, header rows, and structures it holds"
         file={inspected}
         hint="See the worksheets, header rows, columns, and sample values one of these workbooks holds, and which spellings its headers carry before you map them"

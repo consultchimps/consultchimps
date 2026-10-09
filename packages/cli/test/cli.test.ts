@@ -912,7 +912,7 @@ describe("consultchimps CLI", () => {
       ["sheets", "inspect", input, "--csv-decimal", ","],
       1,
     );
-    expect(refused.stderr).toContain("Add --csv-numbers");
+    expect(refused.stderr).toContain("XLSX_CSV_INVALID_OPTION");
   });
 
   it("reports the title rows and spacer columns a consolidation left out", async () => {

@@ -5,7 +5,7 @@
  * of node:fs and node:path imports.
  */
 import { openSheetBook } from "./operations/sheet-book.js";
-import type { CsvReadOptions } from "./csv/options.js";
+import { settleCsvOptions, type CsvReadOptions } from "./csv/options.js";
 import { uncachedFormulaWarnings } from "./uncached-formulas.js";
 export {
   uncachedFormulaHint,
@@ -38,6 +38,7 @@ import {
 } from "./package/index.js";
 import { bytesSource } from "./package/index.js";
 import {
+  assertFitsWorksheet,
   planConsolidation,
   writeConsolidation,
   type ConsolidationSettings,
@@ -923,6 +924,66 @@ export async function consolidateWorkbooksBytes(
   return { result, outputs };
 }
 
+/** Each input read in pieces, as consolidation opens one. */
+function consolidationSources(
+  inputs: readonly RandomAccessSource[],
+): ConsolidationSource[] {
+  return inputs.map((input) => ({
+    file: input.name,
+    source: input.name,
+    details: { source: input.name },
+    open: () =>
+      Promise.resolve({
+        name: input.name,
+        size: input.size,
+        readAt: (offset, length, signal) =>
+          input.readAt(offset, length, signal),
+        close: () => Promise.resolve(),
+      }),
+  }));
+}
+
+export type SuggestColumnMappingSourcesOptions = Omit<
+  ConsolidateWorkbookSourcesOptions,
+  | "addSourceColumns"
+  | "mapping"
+  | "output"
+  | "outputName"
+  | "outputSheetName"
+  | "suggestMapping"
+>;
+
+/**
+ * The mapping draft a consolidation of `inputs` would offer, from its first
+ * pass alone: the headers are read and nothing is written, so a draft is
+ * available for a table no worksheet could hold, which a mapping may be what
+ * brings under the limit.
+ */
+export async function suggestColumnMappingSources(
+  options: SuggestColumnMappingSourcesOptions,
+): Promise<ColumnMappingSuggestion | undefined> {
+  throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
+  if (options.inputs.length === 0) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_NO_INPUTS,
+      "At least one workbook is required.",
+    );
+  }
+  const plan = await planConsolidation(consolidationSources(options.inputs), {
+    headerRow: options.headerRow,
+    includeHiddenSheets: options.includeHiddenSheets,
+    sheets: options.sheets,
+    normalizeHeaders: options.normalizeHeaders,
+    suggestMapping: true,
+    csv: options.csv,
+    signal: options.signal,
+    onProgress: options.onProgress,
+    outputContext: "memory",
+    yieldControl: true,
+  });
+  return plan.suggestion;
+}
+
 /**
  * `consolidateWorkbooksBytes` over workbooks read in pieces and an output
  * written as it is produced, so neither is held whole: a browser reads each
@@ -968,19 +1029,7 @@ async function consolidateIntoSink(
     "consolidated",
   )}${WORKBOOK_EXTENSION}`;
 
-  const sources: ConsolidationSource[] = options.inputs.map((input) => ({
-    file: input.name,
-    source: input.name,
-    details: { source: input.name },
-    open: () =>
-      Promise.resolve({
-        name: input.name,
-        size: input.size,
-        readAt: (offset, length, signal) =>
-          input.readAt(offset, length, signal),
-        close: () => Promise.resolve(),
-      }),
-  }));
+  const sources = consolidationSources(options.inputs);
   const settings: ConsolidationSettings = {
     headerRow: options.headerRow,
     includeHiddenSheets: options.includeHiddenSheets,
@@ -997,6 +1046,7 @@ async function consolidateIntoSink(
   };
   const plan = await planConsolidation(sources, settings);
   const { suggestion, unmappedColumns } = plan;
+  assertFitsWorksheet(plan);
   await yieldToEventLoop();
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
   const sheetName = options.outputSheetName ?? CONSOLIDATED_SHEET_NAME;
@@ -1336,6 +1386,8 @@ export async function describeWorkbookSource(
   options: DescribeWorkbookOptions = {},
 ): Promise<WorkbookDescriptionOutcome> {
   throwIfAborted(options.signal, INSPECT_OPERATION, "memory");
+  // Checked whatever the input is, as consolidation checks them.
+  settleCsvOptions(options.csv);
   const workbook = await openSheetBook(
     input,
     {

@@ -20,6 +20,8 @@ const DELIMITERS: Record<string, string> = {
   semicolon: ";",
   tab: "\t",
   pipe: "|",
+  // A tab typed as a backslash and a t, as shells pass it.
+  "\\t": "\t",
 };
 
 const THOUSANDS: Record<string, string> = {
@@ -68,14 +70,8 @@ export function withCsvOptions(command: Command): Command {
 export function csvReadOptions(
   options: CsvCliOptions,
 ): CsvReadOptions | undefined {
-  if (
-    (options.csvDecimal !== undefined || options.csvThousands !== undefined) &&
-    options.csvNumbers !== true
-  ) {
-    throw new Error(
-      "--csv-decimal and --csv-thousands set how --csv-numbers reads numbers. Add --csv-numbers, or leave them out to keep every field as text.",
-    );
-  }
+  // Checked by the library, which refuses separators without numbers with a
+  // stable code, as it does for every surface.
   const read: CsvReadOptions = {};
   if (options.csvDelimiter !== undefined) {
     read.delimiter =
