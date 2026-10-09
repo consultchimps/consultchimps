@@ -13,25 +13,30 @@ path, so it has to be proven software, not new code of our own.
 - **Papa Parse** parses, pinned exactly in `@consultchimps/xlsx`. It is MIT, has
   no dependencies, is 20 KB minified, and runs unchanged in Node and a Web
   Worker. We decode the bytes ourselves with `TextDecoder` in streaming mode and
-  hand Papa the text, 64 KB at a time, through its readable-stream input. The
-  bytes come from the same random-access sources as workbooks: a file handle on
-  the command line, `Blob.slice` in the worker. Nothing reads a whole file.
-- **Opening a CSV reads it once**, in pieces, before any row is used:
+  hand Papa the text, 64 KB at a time, through its readable-stream input. Papa
+  documents that input for Node, but it is plain JavaScript that reads any
+  object with `read`, `on` and `removeListener`, so the worker hands it one too;
+  the pinned version and a browser test hold that in place. The bytes come from
+  the same random-access sources as workbooks: a file handle on the command
+  line, `Blob.slice` in the worker. Nothing reads a whole file into memory.
+- **Opening a CSV reads it once**, in pieces and keeping nothing, before any row
+  is used, so the encoding is settled before the first row is decoded:
   - the encoding is the byte order mark's (UTF-8, UTF-16 LE or BE), else UTF-8
     when every byte is valid UTF-8, else Windows-1252, with a warning naming it;
     `--csv-encoding` overrides, except that a byte order mark wins over a choice
     that contradicts it, with a warning. A file with a zero byte and no byte
     order mark is refused, since it is most likely UTF-16 without one;
   - Papa guesses the delimiter (comma, semicolon, tab or pipe) from the first
-    ten non-blank rows; `--csv-delimiter` overrides it.
+    ten non-blank rows, or, when those hold no candidate, such as title lines,
+    from the first ten that hold one; `--csv-delimiter` overrides it.
 - **Line endings.** Papa splits rows on one kind of line ending per file, and
   joined the rows of a file mixing CRLF and LF silently. So rows are split on
-  LF, or on CR when the first 64 KB holds no LF, and a carriage return ending a
-  row's last field is read as part of its line ending. CRLF, LF and files mixing
-  the two read correctly; the one value this changes is a quoted last field
-  whose text itself ends in a carriage return. A carriage return on its own
-  anywhere else in a row split on LF could be a line ending or text, so it is
-  refused rather than risk joining two rows.
+  LF, or on CR when the first line ending in the file is a CR not followed by an
+  LF, and a carriage return ending a row's last field is read as part of its
+  line ending. CRLF, LF and files mixing the two read correctly; the one value
+  this changes is a quoted last field whose text itself ends in a carriage
+  return. A carriage return on its own anywhere else in a row split on LF could
+  be a line ending or text, so it is refused rather than risk joining two rows.
 - **Malformed quoting is refused**, naming the row: any quote error Papa
   reports, or a row still open after 16 MB of text, which is an opening quote
   never closed. Papa would otherwise carry the rest of the file into one field.
@@ -80,7 +85,8 @@ path, so it has to be proven software, not new code of our own.
     round-trip form; booleans as `TRUE` and `FALSE`; error cells as their text.
 - **Per operation:**
   - consolidate writes CSV when `-o` ends in `.csv`, or with
-    `--output-format csv`; one combined table is a natural CSV;
+    `--output-format csv`; one combined table is a natural CSV. An `-o`
+    extension that contradicts `--output-format` is refused;
   - split writes one CSV per value with `--output-format csv`, and does so by
     default for a CSV input. A CSV output holds the data only, so it uses the
     compact split; keeping the workbook is refused with CSV output;
