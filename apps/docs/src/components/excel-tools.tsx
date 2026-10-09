@@ -1385,7 +1385,11 @@ export function ExcelConsolidateTool() {
       inputs: files.map((file) => ({ file: file.file, name: file.name })),
       addSourceColumns,
       csv,
-      ...(csvOutput ? { csvBom, outputFormat: "csv" as const } : {}),
+      // Always explicit, so a name ending in .csv cannot override the choice;
+      // a name that contradicts it is refused.
+      ...(csvOutput
+        ? { csvBom, outputFormat: "csv" as const }
+        : { outputFormat: "xlsx" as const }),
       includeHiddenSheets,
       mapping: mapping ?? undefined,
       normalizeHeaders,

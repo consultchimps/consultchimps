@@ -1113,7 +1113,8 @@ async function consolidateIntoSink(
   await yieldToEventLoop();
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
   const sheetName = options.outputSheetName ?? CONSOLIDATED_SHEET_NAME;
-  assertSheetName(sheetName);
+  // A CSV file has no worksheet to name.
+  if (output.format.kind === "xlsx") assertSheetName(sheetName);
   await writeConsolidation(
     sources,
     plan,

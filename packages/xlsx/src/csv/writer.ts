@@ -20,8 +20,9 @@ import type { WritableCellValue } from "../package/table-writer.js";
 export const CSV_MEDIA_TYPE = "text/csv";
 export const CSV_EXTENSION = ".csv";
 
-/** The rows formatted before Papa quotes them as one batch. */
+/** The rows, or characters, formatted before Papa quotes them as one batch. */
 const BATCH_ROWS = 1000;
+const BATCH_CHARACTERS = 1024 * 1024;
 
 /**
  * Text a spreadsheet would read as the start of a formula: `=`, `+`, `-`, `@`,
@@ -90,6 +91,12 @@ export interface CsvTableWriterOptions {
   header?: boolean | undefined;
   /** Start with a UTF-8 byte order mark. On by default. */
   bom?: boolean | undefined;
+  /**
+   * The data rows that will be written, not counting the header; checked as
+   * the workbook writer checks it, so a source that changed between reads
+   * fails rather than giving a short file. Unchecked when absent.
+   */
+  rowCount?: number | undefined;
   /** Receives the file's bytes in order as they are produced. */
   onChunk: (chunk: Uint8Array) => void;
 }
@@ -99,12 +106,16 @@ export class CsvTableWriter {
   readonly #columns: number;
   readonly #onChunk: (chunk: Uint8Array) => void;
   readonly #encoder = new TextEncoder();
+  readonly #rowCount: number | undefined;
   #batch: string[][] = [];
+  #batchCharacters = 0;
+  #written = 0;
   #finished = false;
 
   constructor(options: CsvTableWriterOptions) {
     this.#columns = options.columns.length;
     this.#onChunk = options.onChunk;
+    this.#rowCount = options.rowCount;
     if (options.bom ?? true) {
       this.#onChunk(Uint8Array.from([0xef, 0xbb, 0xbf]));
     }
@@ -115,15 +126,33 @@ export class CsvTableWriter {
 
   writeRow(values: readonly WritableCellValue[]): void {
     if (this.#finished) throw new Error("The CSV file is already finished.");
+    if (this.#rowCount !== undefined && this.#written >= this.#rowCount) {
+      throw new Error(
+        `More rows were written than the ${this.#rowCount} declared.`,
+      );
+    }
+    this.#written += 1;
     const row: string[] = [];
     for (let index = 0; index < this.#columns; index += 1) {
-      row.push(csvCellText(values[index] ?? null));
+      const text = csvCellText(values[index] ?? null);
+      this.#batchCharacters += text.length;
+      row.push(text);
     }
     this.#batch.push(row);
-    if (this.#batch.length >= BATCH_ROWS) this.#flush();
+    if (
+      this.#batch.length >= BATCH_ROWS ||
+      this.#batchCharacters >= BATCH_CHARACTERS
+    ) {
+      this.#flush();
+    }
   }
 
   finish(): void {
+    if (this.#rowCount !== undefined && this.#written !== this.#rowCount) {
+      throw new Error(
+        `${this.#written} rows were written but ${this.#rowCount} were declared.`,
+      );
+    }
     this.#flush();
     this.#finished = true;
   }
@@ -144,6 +173,7 @@ export class CsvTableWriter {
       escapeFormulae: false,
     });
     this.#batch = [];
+    this.#batchCharacters = 0;
     this.#onChunk(this.#encoder.encode(`${text}\r\n`));
   }
 }

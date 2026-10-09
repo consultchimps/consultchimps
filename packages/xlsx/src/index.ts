@@ -876,7 +876,7 @@ export async function planConsolidateWorkbooks(
   const warnings =
     exists && options.overwrite !== true
       ? [
-          "The planned output workbook already exists; executing without overwrite will fail.",
+          `The planned output ${output.format.kind === "csv" ? "file" : "workbook"} already exists; executing without overwrite will fail.`,
         ]
       : [];
 
@@ -983,7 +983,8 @@ export async function consolidateWorkbooks(
   }
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
   const sheetName = options.outputSheetName ?? CONSOLIDATED_SHEET_NAME;
-  assertSheetName(sheetName);
+  // A CSV file has no worksheet to name.
+  if (output.format.kind === "xlsx") assertSheetName(sheetName);
   const written = await writeStagedFile(
     absoluteOutput,
     { overwrite: options.overwrite },

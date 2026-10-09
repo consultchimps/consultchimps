@@ -340,10 +340,15 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
       return lines;
     },
     nextSteps: (vocabulary, result) => {
-      const steps = [
-        `Open the new Excel workbook ${vocabulary.artifactListReference} and review the consolidated worksheet.`,
-        "Keep the source columns in the workbook if you need to trace a row back to its original file and worksheet.",
-      ];
+      const steps = writesCsv(result)
+        ? [
+            `Open the new CSV file ${vocabulary.artifactListReference} and review the consolidated rows.`,
+            "Keep the source columns in the file if you need to trace a row back to its original file and worksheet.",
+          ]
+        : [
+            `Open the new Excel workbook ${vocabulary.artifactListReference} and review the consolidated worksheet.`,
+            "Keep the source columns in the workbook if you need to trace a row back to its original file and worksheet.",
+          ];
       if (hasMappingDraft(result)) {
         steps.push(
           `Review and edit the drafted column mapping ${vocabulary.artifactListReference} before you use it: a draft groups headers that are spelled differently, which is evidence rather than a decision, and nothing was applied for you.`,
@@ -357,7 +362,7 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
     summary: (result) => {
       const splitSummary = workbookSplitSummary(result);
       const lines = [
-        `ConsultChimps read ${quantity(metric(result, "inputRows"), "data row")} from the source workbook.`,
+        `ConsultChimps read ${quantity(metric(result, "inputRows"), "data row")} from the source ${writesCsv(result) ? "file" : "workbook"}.`,
         `It found ${quantity(metric(result, "groups"), "distinct group")} and created ${quantity(metric(result, "outputFiles"), writesCsv(result) ? "separate CSV file" : "separate Excel workbook")}.`,
         `${quantity(metric(result, "outputRows"), "data row")} ${metric(result, "outputRows") === 1 ? "was" : "were"} retained across the new ${writesCsv(result) ? "files" : "workbooks"}, and ${quantity(metric(result, "skippedRows"), "row")} ${metric(result, "skippedRows") === 1 ? "was" : "were"} skipped.`,
       ];
@@ -377,11 +382,15 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
           `Output directory: ${splitSummary.outputDirectory}`,
         );
       }
-      lines.push("Your original Excel workbook was not changed.");
+      lines.push(
+        writesCsv(result)
+          ? "Your original file was not changed."
+          : "Your original Excel workbook was not changed.",
+      );
       return lines;
     },
-    nextSteps: (vocabulary) => [
-      `Open the new workbooks ${vocabulary.artifactListReference} and confirm that each file contains the expected group.`,
+    nextSteps: (vocabulary, result) => [
+      `Open the new ${writesCsv(result) ? "files" : "workbooks"} ${vocabulary.artifactListReference} and confirm that each file contains the expected group.`,
       "If rows were skipped, review the warning section to understand why.",
     ],
   },

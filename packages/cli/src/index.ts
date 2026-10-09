@@ -552,7 +552,7 @@ withCsvOutputOptions(
     sheets
       .command("split")
       .description(
-        "create one new Excel workbook for each distinct value in a selected column",
+        "create one new Excel workbook or CSV file for each distinct value in a selected column",
       )
       .argument("<input>", "the source .xlsx, .xlsm, or .csv file to divide")
       .requiredOption(

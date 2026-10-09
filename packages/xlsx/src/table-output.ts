@@ -34,6 +34,7 @@ export function openTableWriter(
     columns: options.columns,
     header: options.header ?? true,
     bom: format.bom,
+    rowCount: options.rowCount,
     onChunk: options.onChunk,
   });
 }

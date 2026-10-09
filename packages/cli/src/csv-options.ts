@@ -2,7 +2,7 @@
  * The options every sheets command that reads CSV files takes (ADR 0007), and
  * their translation into the library's `CsvReadOptions`.
  */
-import type { Command } from "commander";
+import { InvalidArgumentError, type Command } from "commander";
 import type { CsvReadOptions } from "@consultchimps/xlsx";
 
 /** The CSV flags as Commander collects them. */
@@ -111,6 +111,13 @@ export function withCsvOutputOptions(command: Command): Command {
     .option(
       "--csv-bom <true|false>",
       "start a CSV output with a UTF-8 byte order mark so Excel opens it as UTF-8 (default: true)",
+      (value: string) => {
+        const lower = value.toLowerCase();
+        if (lower !== "true" && lower !== "false") {
+          throw new InvalidArgumentError("Use true or false.");
+        }
+        return lower;
+      },
     );
 }
 

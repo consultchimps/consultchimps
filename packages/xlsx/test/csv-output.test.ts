@@ -166,6 +166,22 @@ describe("the CSV writer at scale", () => {
   });
 });
 
+describe("the CSV writer's row count", () => {
+  it("refuses fewer or more rows than declared", () => {
+    const writer = () =>
+      new CsvTableWriter({
+        columns: ["a"],
+        rowCount: 1,
+        onChunk: () => undefined,
+      });
+    const short = writer();
+    expect(() => short.finish()).toThrow(/0 rows were written but 1/u);
+    const long = writer();
+    long.writeRow(["x"]);
+    expect(() => long.writeRow(["y"])).toThrow(/More rows/u);
+  });
+});
+
 describe("consolidating to CSV", () => {
   const north = utf8("Region;Amount;Placed\nNorth;1,5;31/01/2025\n");
 
@@ -187,6 +203,15 @@ describe("consolidating to CSV", () => {
     });
     expect(asked.outputs[0]!.name).toBe("consolidated.csv");
     expect(text(asked.outputs[0]!.bytes).startsWith("Region")).toBe(true);
+  });
+
+  it("needs no legal worksheet name for a CSV output", async () => {
+    const outcome = await consolidateWorkbooksBytes({
+      inputs: [{ name: "north.csv", bytes: north }],
+      outputFormat: "csv",
+      outputSheetName: "History",
+    });
+    expect(outcome.outputs[0]!.name).toBe("consolidated.csv");
   });
 
   it("refuses a format that contradicts the output's name", async () => {
