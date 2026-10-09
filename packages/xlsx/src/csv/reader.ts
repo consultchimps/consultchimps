@@ -532,6 +532,15 @@ export class CsvWorkbook {
             "Save the file again with one kind of line ending, and run again.",
           );
         }
+        if (!stripCarriageReturn && field.includes("\n")) {
+          // In a file split on CR, an LF is the same question the other way
+          // round: a CRLF row ending, or text inside quotes.
+          throw malformed(
+            index + 1,
+            "holds a line feed in a file whose rows end in carriage returns, which cannot be told apart from a line ending",
+            "Save the file again with one kind of line ending, and run again.",
+          );
+        }
         (cells ??= []).push(cellOf(column, field));
       }
       if (cells === undefined) return;

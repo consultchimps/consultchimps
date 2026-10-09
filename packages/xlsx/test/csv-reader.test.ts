@@ -188,20 +188,23 @@ describe("CSV structure", () => {
   });
 
   it("decides the line ending by the first one in the file", async () => {
-    // A CR file whose quoted text holds an LF, and an LF file whose first row
-    // runs past the first piece.
-    const crFile = await read(utf8('a,b\r1,"two\nlines"\r3,4\r'));
-    expect(crFile.values).toEqual([
-      ["a", "b"],
-      ["1", "two\nlines"],
-      ["3", "4"],
-    ]);
+    // A CR file whose quoted text holds an LF is split on CR, and that LF is
+    // refused rather than guessed at; an LF file whose first row runs past the
+    // first piece is split on LF.
+    const crFile = await failure(utf8('a,b\r1,"two\nlines"\r3,4\r'));
+    expect(crFile.message).toContain("row 2 holds a line feed");
     const long = "x".repeat(CSV_PIECE_BYTES + 10);
     const lfFile = await read(utf8(`a,"${long}"\n1,2\n`));
     expect(lfFile.values).toEqual([
       ["a", long],
       ["1", "2"],
     ]);
+  });
+
+  it("refuses an LF in a file split on CR", async () => {
+    const error = await failure(utf8("a,b\r1,2\r\n3,4\r"));
+    expect(error.code).toBe("XLSX_CSV_MALFORMED");
+    expect(error.message).toContain("row 3 holds a line feed");
   });
 
   it("refuses a CR on its own in a file split on LF", async () => {
