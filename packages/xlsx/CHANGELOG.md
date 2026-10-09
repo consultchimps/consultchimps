@@ -1,5 +1,57 @@
 # @consultchimps/xlsx
 
+## 0.21.0
+
+### Minor Changes
+
+- c688e0b: `describeWorkbook` and `describeWorkbookBytes` now read through the
+  streaming reader the table readers and consolidation use (ADR 0006), one
+  worksheet at a time, keeping only the rows the header rule needs and a bounded
+  sample. The command line reads the file in pieces. Inspecting 150,000 rows
+  peaks at 185 MB instead of 2.3 GB.
+
+  Descriptions are unchanged for ordinary workbooks. Where inspection read a
+  cell differently from the readers, it now reads it as they do: `_x000D_` and
+  other escapes are decoded, phonetic text is left out of a header, and samples
+  follow row order. A damaged package the readers refuse, such as a failed CRC
+  check or malformed XML, is now refused by inspection too, instead of
+  described.
+
+  An Excel Table on a worksheet whose name holds an escape is now found on that
+  worksheet, by inspection and by `readWorkbookExcelTables`.
+
+- bdf145b: Add `describeWorkbookSource`, which describes a workbook read in
+  pieces from a random-access source such as `blobSource`, so a browser `File`
+  is never held whole. It gives the description `describeWorkbookBytes` gives
+  for the same bytes.
+- 3693e97: Merging workbooks now reads each input in pieces and writes the
+  merged workbook as it is produced (ADR 0006). Merging two workbooks of 150,000
+  rows peaks at 320 MB instead of 938 MB. The merged workbook is byte for byte
+  what it was.
+
+  Add `mergeWorkbookSources`, which merges workbooks read from random-access
+  sources, such as `blobSource`, into an output written as it is produced.
+
+  A damaged input the readers refuse is now refused by merging too, with
+  `XLSX_READ_FAILED`: a failed CRC check, or a package without its workbook
+  part, which gave an error with no code before. Merging and splitting refuse a
+  part compressed with a method they cannot read when the workbook is opened. A
+  package JSZip read as empty is now read.
+
+- 47b2661: Splitting a workbook now reads it in pieces and writes each output as
+  it is produced, in every mode (ADR 0006), and no longer fails with "Maximum
+  call stack size exceeded" on large worksheets. Splitting 150,000 rows by a
+  column, keeping the workbook, finishes at 335 MB instead of failing after 1.9
+  GB. Outputs are byte for byte what they were.
+
+  Add `splitWorkbookSource` and `planSplitWorkbookSource`, which split a
+  workbook read from a random-access source such as `blobSource` into outputs
+  written as they are produced.
+
+  A damaged workbook the readers refuse is now refused by splitting too: a
+  failed CRC check, or a malformed row or cell reference, which gave an error
+  with no code before. A package JSZip read as empty is now read.
+
 ## 0.20.0
 
 ### Minor Changes
