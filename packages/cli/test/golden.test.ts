@@ -53,8 +53,10 @@ const environment: NodeJS.ProcessEnv = {
   ),
   CONSULTCHIMPS_LOG: "off",
   COLUMNS: "100",
-  LANG: "C",
-  LC_ALL: "C",
+  // Not C: on Linux, ICU reads C as a POSIX locale that sorts unlike the en-US
+  // of a Windows runner, and input discovery sorts with localeCompare.
+  LANG: "en_US.UTF-8",
+  LC_ALL: "en_US.UTF-8",
   NO_COLOR: "1",
   TZ: "UTC",
 };
@@ -115,7 +117,11 @@ function normalise(text: string, directories: string[]): string {
       "<tmp>",
     );
   }
-  return windows ? result.replace(/\\/gu, "/") : result;
+  // Only inside the temporary folder's paths, so a backslash anywhere else
+  // still shows up as a difference between platforms.
+  return windows
+    ? result.replace(/<tmp>[^\s"']*/gu, (found) => found.replace(/\\/gu, "/"))
+    : result;
 }
 
 function commandLine(args: string[]): string {
@@ -161,18 +167,24 @@ const helpCwd = await mkdtemp(path.join(tmpdir(), "consultchimps-golden-"));
 temporaryDirectories.push(helpCwd);
 const helpPages = new Map<string, CliRun>();
 let level: string[][] = [[]];
-while (level.length > 0) {
-  const runs = await Promise.all(
-    level.map((names) => runCli([...names, "--help"], helpCwd)),
-  );
-  level = [];
-  for (const run of runs) {
-    const names = run.args.slice(0, -1);
-    helpPages.set(names.join(" "), run);
-    for (const child of listedCommands(run.stdout)) {
-      level.push([...names, child]);
+try {
+  while (level.length > 0) {
+    const runs = await Promise.all(
+      level.map((names) => runCli([...names, "--help"], helpCwd)),
+    );
+    level = [];
+    for (const run of runs) {
+      const names = run.args.slice(0, -1);
+      helpPages.set(names.join(" "), run);
+      for (const child of listedCommands(run.stdout)) {
+        level.push([...names, child]);
+      }
     }
   }
+} catch (error) {
+  // afterAll never runs when the file fails to load.
+  await rm(helpCwd, { force: true, recursive: true });
+  throw error;
 }
 
 function helpGoldenName(command: string): string {
@@ -566,7 +578,8 @@ describe("run goldens", () => {
   });
 });
 
-// Runs after both suites, so a first `-u` pass has written every golden.
+// Runs after both suites. Vitest writes new goldens only as the file ends, so
+// after adding a command or case, run `-u` twice (see the README).
 describe("golden coverage", () => {
   it("has one help golden for every command and no others", async () => {
     const expected = [...helpPages.keys()].map(helpGoldenName).sort();
@@ -577,21 +590,32 @@ describe("golden coverage", () => {
   });
 
   it("finds every registered command in the help tree", async () => {
-    const listed = new Set(
-      [...helpPages.keys()].flatMap((command) => command.split(" ")),
-    );
-    const registered = new Set<string>();
+    // Names repeat across groups (sheets merge, pdf merge), so each name is
+    // counted: a hidden pdf merge must not pass because sheets merge is listed.
+    const count = (names: string[]) => {
+      const counts = new Map<string, number>();
+      for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);
+      return Object.fromEntries([...counts].sort());
+    };
+    const listed = [...helpPages.keys()]
+      .filter((command) => command !== "")
+      .map((command) => command.split(" ").at(-1)!);
+    const registered: string[] = [];
     for (const entry of await readdir(sourceDirectory, {
       recursive: true,
     })) {
       if (!entry.endsWith(".ts") || entry.endsWith(".test.ts")) continue;
       const source = await readFile(path.join(sourceDirectory, entry), "utf8");
       for (const match of source.matchAll(/\.command\(\s*"([^"\s]+)/gu)) {
-        registered.add(match[1]!);
+        registered.push(match[1]!);
       }
+      // A command built apart and attached, or a hidden one, would dodge it.
+      expect(source, entry).not.toMatch(
+        /addCommand\(|hidden:\s*true|hideHelp\(/u,
+      );
     }
-    expect(registered.size).toBeGreaterThan(10);
-    expect([...registered].filter((name) => !listed.has(name))).toEqual([]);
+    expect(registered.length).toBeGreaterThan(10);
+    expect(count(listed)).toEqual(count(registered));
   });
 
   it("has one run golden for every case and no others", async () => {
