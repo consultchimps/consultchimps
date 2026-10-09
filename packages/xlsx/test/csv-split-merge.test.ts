@@ -76,6 +76,38 @@ describe("splitting a CSV file", () => {
     ]);
   });
 
+  it("matches values as the default split does, unless strict", async () => {
+    const input = {
+      name: "regions.csv",
+      bytes: utf8("Region,N\nNorth,1\n north ,2\nNORTH,3\nSouth,4\n"),
+    };
+    const tolerant = await splitWorkbookBytes({ input, column: "Region" });
+    expect(tolerant.outputs.map((output) => output.name)).toEqual([
+      "regions-North.xlsx",
+      "regions-South.xlsx",
+    ]);
+    const strict = await splitWorkbookBytes({
+      input,
+      column: "Region",
+      strict: true,
+    });
+    expect(strict.outputs).toHaveLength(4);
+  });
+
+  it("refuses more columns than a worksheet holds, before writing", async () => {
+    const header = Array.from(
+      { length: 16_385 },
+      (_, index) => `c${index}`,
+    ).join(",");
+    const error = await failure(() =>
+      splitWorkbookBytes({
+        input: { name: "wide.csv", bytes: utf8(`${header}\nNorth\n`) },
+        column: "c0",
+      }),
+    );
+    expect(error.code).toBe("XLSX_OUTPUT_TOO_LARGE");
+  });
+
   it("refuses to keep a workbook a CSV file does not have", async () => {
     const error = await failure(() =>
       splitWorkbookBytes({

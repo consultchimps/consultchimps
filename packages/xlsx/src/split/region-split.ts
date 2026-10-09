@@ -65,6 +65,7 @@ import {
   filterWholeWorksheetRows,
 } from "../preserve-table-split.js";
 import { isBlankValue } from "../region/header-detection.js";
+import { normalizeSplitValue } from "../region/values.js";
 import { stripPivotPartsIn } from "../tier1/pivot.js";
 import {
   uncachedFormulaHint,
@@ -92,6 +93,13 @@ export interface RegionSplitSelection {
   table?: string | undefined;
   /** How to read the input when it is a CSV file (ADR 0007). */
   csv?: CsvReadOptions | undefined;
+  /**
+   * Group by the default split matching (trimmed, case folded, numeric text
+   * as numbers) unless `strict`, as the whole-workbook split does. A CSV
+   * input's split asks for it, since that is its default split.
+   */
+  tolerantMatching?: boolean | undefined;
+  strict?: boolean | undefined;
 }
 
 export interface RegionSplitContext {
@@ -128,6 +136,11 @@ export interface ResolvedRegionSplit {
   /** Per row from `first`, the group index, or -1. */
   readonly groupOfRow: Int32Array;
   readonly groups: readonly RegionGroup[];
+  /** The most characters any one cell of the region holds. */
+  readonly longestCell: number;
+  /** How the input is named in messages, and its error details. */
+  readonly label: string;
+  readonly details: Record<string, unknown>;
   readonly inputRows: number;
   readonly skippedRows: number;
   /** `Sheet!B4` of every formula with no cached value inside the region. */
@@ -670,7 +683,12 @@ export async function resolveRegionSplit(
           return;
         }
         const key =
-          value === null ? "null" : `${typeof value}:${String(value)}`;
+          value === null
+            ? "null"
+            : selection.tolerantMatching === true
+              ? (normalizeSplitValue(value, selection.strict === true)?.key ??
+                "null")
+              : `${typeof value}:${String(value)}`;
         let group = groupIndex.get(key);
         if (group === undefined) {
           group = groups.length;
@@ -695,19 +713,13 @@ export async function resolveRegionSplit(
     { clip: chosen.kind === "worksheet", gather: read.gathered },
   );
   if (matched < 0) settleNames(headerCells);
-  // A CSV field can be longer than a cell holds; a workbook's cannot.
+  // A CSV field can be longer than a cell holds; a workbook's cannot. The
+  // writer refuses it before it opens any output.
   let longestCell = 0;
   for (const group of groups) {
     for (const width of group.widths) {
       longestCell = Math.max(longestCell, width);
     }
-  }
-  if (longestCell > 32_767) {
-    throw new ConsultChimpsError(
-      XLSX_ERRORS.XLSX_OUTPUT_TOO_LARGE,
-      `${context.label} has a cell of ${longestCell.toLocaleString("en-US")} characters, more than the 32,767 an Excel cell holds, so nothing was written.`,
-      { details: { ...context.details, longestCell } },
-    );
   }
 
   if (groups.length === 0) {
@@ -765,6 +777,9 @@ export async function resolveRegionSplit(
       rows: group.rows,
       widths: group.widths.map(tableColumnWidth),
     })),
+    longestCell,
+    label: context.label,
+    details: context.details,
     inputRows,
     skippedRows,
     uncachedFormulas,
@@ -787,11 +802,43 @@ const COMPACT_BATCH = 16;
  * Write each group as a compact workbook of the region's values, in batches,
  * one read of the region per batch. The bytes are `buildTableWorkbookBytes`'s.
  */
+/**
+ * Refuse groups an Excel worksheet cannot hold, before any output is opened.
+ * Workbook input always fits; a CSV file need not.
+ */
+export function assertGroupsFitWorksheet(resolved: ResolvedRegionSplit): void {
+  let rows = 0;
+  for (const group of resolved.groups) rows = Math.max(rows, group.rows + 1);
+  const columns = resolved.names.length;
+  const problem =
+    resolved.longestCell > 32_767
+      ? `a cell of ${resolved.longestCell.toLocaleString("en-US")} characters, more than the 32,767 an Excel cell holds`
+      : rows > 1_048_576
+        ? `a group of ${rows.toLocaleString("en-US")} rows with its header, more than the 1,048,576 a worksheet holds`
+        : columns > 16_384
+          ? `${columns.toLocaleString("en-US")} columns, more than the 16,384 a worksheet holds`
+          : undefined;
+  if (problem === undefined) return;
+  throw new ConsultChimpsError(
+    XLSX_ERRORS.XLSX_OUTPUT_TOO_LARGE,
+    `${resolved.label} has ${problem}, so nothing was written.`,
+    {
+      details: {
+        ...resolved.details,
+        longestCell: resolved.longestCell,
+        rows,
+        columns,
+      },
+    },
+  );
+}
+
 export async function writeCompactGroups(
   resolved: ResolvedRegionSplit,
   open: (index: number) => Promise<RegionOutputTarget> | RegionOutputTarget,
   between: () => Promise<void>,
 ): Promise<void> {
+  assertGroupsFitWorksheet(resolved);
   for (let start = 0; start < resolved.groups.length; start += COMPACT_BATCH) {
     const indexes = resolved.groups
       .map((_, index) => index)

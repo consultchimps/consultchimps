@@ -28,5 +28,7 @@ export function splitOptionsFor<
       { details: { source: name } },
     );
   }
-  return { ...options, preserveWorkbook: false };
+  // A CSV input's split is its default split, so it matches values the way
+  // the whole-workbook split does.
+  return { ...options, preserveWorkbook: false, tolerantMatching: true };
 }

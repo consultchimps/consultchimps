@@ -398,9 +398,11 @@ export function ExcelSplitTool() {
 
   const runState = useOperationRun();
   const isRunning = runState.status === "running";
-  const tableName = table.trim();
-  const rangeName = range.trim();
-  const sheetName = sheet.trim();
+  // A CSV file has no Excel Tables or named ranges, and its one worksheet is
+  // named after the file, so selectors typed for a workbook do not apply.
+  const tableName = isCsv ? "" : table.trim();
+  const rangeName = isCsv ? "" : range.trim();
+  const sheetName = isCsv ? "" : sheet.trim();
   // An Excel Table and a named range both carry their own headers, so the API
   // refuses a header row alongside either one.
   const headerRowAllowed = !tableName && !rangeName;
