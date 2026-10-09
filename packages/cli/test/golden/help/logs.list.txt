@@ -1,0 +1,14 @@
+$ consultchimps logs list --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps logs list [options]
+
+list recent runs, newest first
+
+Options:
+  --limit <count>  how many runs to list (default: 20)
+  -h, --help       display help for command
+
+--- stderr ---
+(empty)

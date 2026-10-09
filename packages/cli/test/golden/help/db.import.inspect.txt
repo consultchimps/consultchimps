@@ -1,0 +1,22 @@
+$ consultchimps db import inspect --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps db import inspect [options] <batch>
+
+Inspect a saved batch without reading Excel
+
+Arguments:
+  batch                    saved batch file
+
+Options:
+  --limit <number>         maximum preview rows (default: 20)
+  --cursor <cursor>        preview cursor returned by a prior batch inspection
+  --route-limit <number>   maximum routes (default: 50)
+  --route-cursor <cursor>  route cursor returned by a prior batch inspection
+  --database <file>        target database containing reused rows for a saved
+                           batch preview
+  -h, --help               display help for command
+
+--- stderr ---
+(empty)

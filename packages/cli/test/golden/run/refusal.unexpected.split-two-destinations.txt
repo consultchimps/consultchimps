@@ -1,0 +1,16 @@
+$ consultchimps sheets split inputs/orders.xlsx -c Region -o first --output-dir second
+exit code: 1
+
+--- stdout ---
+(empty)
+
+--- stderr ---
+ERROR: ConsultChimps could not finish your task.
+
+What went wrong:
+  Choose either --output or --output-dir; they name the same destination option.
+
+What you can do:
+  - Read the message above and check the supplied files, folders, and command options.
+  - Run the command again with --help if you need examples.
+  - If the problem continues, keep the error reference below when asking for support.

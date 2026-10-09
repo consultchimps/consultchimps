@@ -1,0 +1,13 @@
+$ consultchimps logs path --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps logs path [options]
+
+print the folder that holds run records
+
+Options:
+  -h, --help  display help for command
+
+--- stderr ---
+(empty)

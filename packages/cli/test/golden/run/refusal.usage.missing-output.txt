@@ -1,0 +1,8 @@
+$ consultchimps sheets consolidate inputs/north.xlsx
+exit code: 1
+
+--- stdout ---
+(empty)
+
+--- stderr ---
+error: required option '-o, --output <path>' not specified

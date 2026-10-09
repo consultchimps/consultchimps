@@ -1,0 +1,30 @@
+$ consultchimps db --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps db [options] [command]
+
+Create persistent local databases, manage schemas, and import workbook
+submissions
+
+Options:
+  -h, --help                   display help for command
+
+Commands:
+  create [options]             Create a persistent SQLite or DuckDB file
+  inspect <database>           Inspect a database without changing it
+  schema                       Manage database table definitions
+  import                       Prepare, review, apply, and audit workbook
+                               batches
+  export [options] <database>  Create a validated database copy or convert its
+                               storage format
+  help [command]               display help for command
+
+Start with: consultchimps db create -o inventory.duckdb
+Then: consultchimps db import prepare inventory.duckdb --input inventory.xlsx -o review.ccplan
+Review: consultchimps db import inspect review.ccplan
+Apply: consultchimps db import apply inventory.duckdb --batch review.ccplan
+
+
+--- stderr ---
+(empty)

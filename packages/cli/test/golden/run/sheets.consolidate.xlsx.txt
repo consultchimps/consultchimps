@@ -1,0 +1,40 @@
+$ consultchimps sheets consolidate inputs/north.xlsx inputs/south.xlsx -o combined.xlsx
+exit code: 0
+
+--- stdout ---
+SUCCESS: ConsultChimps finished your task.
+
+Your Excel consolidation is complete.
+
+What ConsultChimps did:
+  - ConsultChimps read 2 Excel files and combined 2 visible worksheets.
+  - The finished workbook contains 4 data rows arranged across 6 columns.
+  - Your original Excel files were not changed.
+
+Detailed results:
+  - CSV files read, each as one worksheet: 0
+  - Formula cells missing cached values: 0
+  - Input files read: 2
+  - Visible worksheets combined: 2
+  - Columns in the finished spreadsheet: 6
+  - Data rows written: 4
+  - Empty spacer columns left out: 0
+  - Title rows above the column headers left out: 0
+  - Canonical columns proposed in the drafted mapping: 0
+  - Columns that did not match the column mapping: 0
+
+Files created:
+  1. <tmp>/combined.xlsx
+     Type: Excel workbook
+
+Warnings:
+  - None. ConsultChimps did not detect any recoverable problems during this task.
+
+What you can do next:
+  - Open the new Excel workbook listed below and review the consolidated worksheet.
+  - Keep the source columns in the workbook if you need to trace a row back to its original file and worksheet.
+
+--- stderr ---
+Reading workbooks 1/2: north.xlsx
+Reading workbooks 2/2: south.xlsx
+Writing output 1/1: combined.xlsx

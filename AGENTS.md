@@ -301,6 +301,9 @@ exit status, stdout, and stderr are all part of that interface.
 - Test the built CLI rather than importing its source entry point.
 - CLI tests execute `packages/cli/dist/index.js`, so run `pnpm build` before
   running them; without it they exercise a stale build.
+- Help and human-readable output are pinned by goldens in
+  `packages/cli/test/golden/`; update them with `vitest -u` and review the diff
+  (see its README).
 
 When changing a command, verify at least:
 

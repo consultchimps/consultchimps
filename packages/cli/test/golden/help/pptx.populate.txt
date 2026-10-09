@@ -1,0 +1,34 @@
+$ consultchimps pptx populate --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps pptx populate [options]
+
+create one populated PowerPoint slide for every nonempty Excel data row
+
+Options:
+  --template <path>          source .pptx file containing {{field_name}}
+                             placeholders
+  --data <path>              source .xlsx workbook containing the data
+  --sheet <name>             exact worksheet name containing the data (default:
+                             first worksheet)
+  --template-slide <number>  template slide number, counted from 1 (default: 1)
+  -o, --output <path>        where to save the new populated .pptx presentation
+  --header-row <number>      row containing field names, counted from 1
+  -f, --force                replace the output presentation if it already
+                             exists; use with care
+  -h, --help                 display help for command
+
+Example:
+  consultchimps pptx populate --template profile.pptx --data clients.xlsx --output profiles.pptx
+
+Put placeholders such as {{client_name}} or Revenue: {{revenue}} in ordinary
+text shapes on the template slide. Each nonempty row below the Excel header
+creates one slide, in worksheet order. The first worksheet and first slide are
+used unless you select them. Empty cells become empty text.
+
+The output contains only the generated slides. Source files are never changed.
+
+
+--- stderr ---
+(empty)

@@ -1,0 +1,24 @@
+$ consultchimps db import run --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps db import run [options] <database>
+
+Prepare and apply a workbook batch with one profile
+
+Options:
+  --input <source>       workbook path or alias=path; existing paths are used as
+                         written
+  --profile <file>       reusable JSON table routing and column mapping
+  --sheet <name>         select one worksheet from one workbook
+  --table <name>         select one named Excel Table
+  --range <reference>    select one named range or worksheet A1 rectangle
+  --header-row <number>  worksheet header row, starting at 1 (default: 1)
+  --hidden               include hidden worksheets in default sheet selection
+  --into <table>         destination name for one selected region
+  --context <file>       batch label, scope, and reported attributes as JSON
+  --request-id <id>      retry key for this application
+  -h, --help             display help for command
+
+--- stderr ---
+(empty)

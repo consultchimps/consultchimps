@@ -1,0 +1,20 @@
+$ consultchimps pdf merge inputs/report.pdf inputs/appendix.pdf -o inputs/existing.pdf
+exit code: 1
+
+--- stdout ---
+(empty)
+
+--- stderr ---
+ERROR: ConsultChimps could not finish your task.
+
+What went wrong:
+  Output already exists: <tmp>/inputs/existing.pdf
+
+What you can do:
+  - Choose a different output filename or output folder and run the command again.
+  - If you intentionally want to replace the existing output, rerun the command with --force.
+  - Use --force only after confirming that the existing output is safe to replace.
+
+Error reference:
+  FILES_OUTPUT_EXISTS
+  This reference can help a developer or support person identify the exact type of problem.

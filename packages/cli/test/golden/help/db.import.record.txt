@@ -1,0 +1,16 @@
+$ consultchimps db import record --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps db import record [options] <database>
+
+Record another batch without importing row values again
+
+Options:
+  --capture <id>     capture ID, repeat for additional captures
+  --context <file>   batch context JSON
+  --request-id <id>  stable key used to retry this batch record safely
+  -h, --help         display help for command
+
+--- stderr ---
+(empty)

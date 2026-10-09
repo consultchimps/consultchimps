@@ -1,0 +1,57 @@
+$ consultchimps sheets split inputs/orders.xlsx -c Region -o by-region
+exit code: 0
+
+--- stdout ---
+SUCCESS: ConsultChimps finished your task.
+
+Your Excel workbook split is complete.
+
+What ConsultChimps did:
+  - ConsultChimps read 3 data rows from the source workbook.
+  - It found 2 distinct groups and created 2 separate Excel workbooks.
+  - 3 data rows were retained across the new workbooks, and 0 rows were skipped.
+  - 1 worksheet contained the split column and was filtered.
+  - 0 worksheets did not contain the split column and were copied unchanged.
+  - Values-only mode was disabled.
+  - Input workbook: <tmp>/inputs/orders.xlsx
+  - Split column: Region
+  - Worksheets filtered: Orders
+  - Worksheets copied unchanged: None
+  - Output directory: <tmp>/by-region
+  - Your original Excel workbook was not changed.
+
+Detailed results:
+  - calcChainEntriesRemoved: 0
+  - formulaCellsBlankedForRemovedRows: 0
+  - Formula cells converted to cached values: 0
+  - Formula cells missing cached values: 0
+  - Distinct groups found: 2
+  - Input files read: 1
+  - Source data rows read: 3
+  - New files created: 2
+  - Data rows written: 3
+  - pivotTablesRemoved: 0
+  - Rows deleted across output workbooks: 3
+  - Worksheets copied without filtering: 0
+  - Worksheets filtered: 1
+  - Rows skipped: 0
+  - Values-only mode (1 enabled, 0 disabled): 0
+
+Files created:
+  1. <tmp>/by-region/North.xlsx
+     Type: Excel workbook
+  2. <tmp>/by-region/South.xlsx
+     Type: Excel workbook
+
+Warnings:
+  - None. ConsultChimps did not detect any recoverable problems during this task.
+
+What you can do next:
+  - Open the new workbooks listed below and confirm that each file contains the expected group.
+  - If rows were skipped, review the warning section to understand why.
+
+--- stderr ---
+Staging workbooks 1/2: North.xlsx (Orders: kept 2, deleted 1)
+Staging workbooks 2/2: South.xlsx (Orders: kept 1, deleted 2)
+Committing outputs 1/2: North.xlsx
+Committing outputs 2/2: South.xlsx

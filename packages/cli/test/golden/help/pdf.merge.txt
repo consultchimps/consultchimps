@@ -1,0 +1,30 @@
+$ consultchimps pdf merge --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps pdf merge [options] <inputs...>
+
+combine several PDF documents into one new PDF
+
+Arguments:
+  inputs               PDF files, folders, or quoted patterns such as
+                       "inputs/*.pdf"
+
+Options:
+  -o, --output <path>  where to save the new combined PDF document
+  -f, --force          replace the output PDF if it already exists; use with
+                       care
+  -h, --help           display help for command
+
+Examples:
+  consultchimps pdf merge "inputs/*.pdf" -o combined.pdf
+  consultchimps pdf merge first.pdf second.pdf --output combined.pdf
+
+What happens:
+  ConsultChimps reads the matching PDFs in their resolved order, copies every
+  page into one new document, reports the final page count, and leaves every
+  source PDF unchanged.
+
+
+--- stderr ---
+(empty)

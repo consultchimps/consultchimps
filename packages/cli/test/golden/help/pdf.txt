@@ -1,0 +1,30 @@
+$ consultchimps pdf --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps pdf [options] [command]
+
+split or combine PDF documents without changing the originals
+
+Options:
+  -h, --help                   display help for command
+
+Commands:
+  split [options] <input>      create one new PDF file for every page in a
+                               source PDF
+  merge [options] <inputs...>  combine several PDF documents into one new PDF
+  help [command]               display help for command
+
+Examples:
+  consultchimps pdf split report.pdf -o pages
+  consultchimps pdf merge "inputs/*.pdf" -o combined.pdf
+
+Safety:
+  Your original PDF documents are not changed. ConsultChimps creates new output
+  files and refuses to replace existing outputs unless you use --force.
+
+Run consultchimps pdf help <command> for all command options.
+
+
+--- stderr ---
+(empty)

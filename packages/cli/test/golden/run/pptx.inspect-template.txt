@@ -1,0 +1,15 @@
+$ consultchimps pptx inspect-template inputs/profile.pptx
+exit code: 0
+
+--- stdout ---
+PowerPoint template slide 1
+Placeholder occurrences: 2
+Placeholders:
+  - company: 1
+  - revenue: 1
+Malformed placeholder locations: 0
+Unsupported split-run placeholders: None
+Unsupported placeholder placements: None
+
+--- stderr ---
+(empty)

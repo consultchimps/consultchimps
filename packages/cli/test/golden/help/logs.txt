@@ -1,0 +1,27 @@
+$ consultchimps logs --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps logs [options] [command]
+
+list and read the local records of earlier runs
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  list [options]  list recent runs, newest first
+  show [run]      summarise one run: stages, slowest steps, memory, and outcome
+  path            print the folder that holds run records
+  help [command]  display help for command
+
+Examples:
+  consultchimps logs
+  consultchimps logs show
+  consultchimps logs path
+
+Records stay on this machine. They hold counts, sizes, and timings, and names only for runs made with --log-names.
+
+
+--- stderr ---
+(empty)

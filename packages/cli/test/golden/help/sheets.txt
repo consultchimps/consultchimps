@@ -1,0 +1,42 @@
+$ consultchimps sheets --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps sheets [options] [command]
+
+inspect, combine, or divide Excel workbooks without changing the original files
+
+Options:
+  -h, --help                         display help for command
+
+Commands:
+  unprotect [options] <input>        remove ordinary worksheet and
+                                     workbook-structure protection
+  merge [options] <inputs...>        copy every worksheet from multiple Excel
+                                     workbooks and CSV files into one workbook,
+                                     keeping each sheet separate
+  consolidate [options] <inputs...>  stack the rows from every worksheet and CSV
+                                     file into one combined sheet, matching
+                                     columns by header
+  split [options] <input>            create one new Excel workbook or CSV file
+                                     for each distinct value in a selected
+                                     column
+  inspect [options] <input>          describe what is in an Excel workbook or
+                                     CSV file, creating and changing nothing
+  help [command]                     display help for command
+
+Examples:
+  consultchimps sheets inspect clients.xlsx
+  consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
+  consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx
+  consultchimps sheets split clients.xlsx -c Region -o by-region
+
+Safety:
+  Your original Excel workbooks are not changed. ConsultChimps creates new
+  output files and refuses to replace existing outputs unless you use --force.
+
+Run consultchimps sheets help <command> for all command options.
+
+
+--- stderr ---
+(empty)

@@ -1,0 +1,24 @@
+$ consultchimps sheets unprotect --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps sheets unprotect [options] <input>
+
+remove ordinary worksheet and workbook-structure protection
+
+Arguments:
+  input                the source .xlsx or .xlsm workbook
+
+Options:
+  -o, --output <path>  where to save the unprotected workbook
+  -f, --force          replace the output file if it already exists
+  -h, --help           display help for command
+
+Examples:
+  consultchimps sheets unprotect protected.xlsx -o unprotected.xlsx
+
+This removes worksheet and workbook-structure protection without changing the source file. Office files encrypted to require a password to open are not supported.
+
+
+--- stderr ---
+(empty)

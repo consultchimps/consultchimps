@@ -1,0 +1,24 @@
+$ consultchimps db import prepare --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps db import prepare [options] <database>
+
+Capture workbook data into a durable, reviewable batch
+
+Options:
+  --input <source>       workbook path or alias=path; existing paths are used as
+                         written
+  --profile <file>       reusable JSON table routing and column mapping
+  --sheet <name>         select one worksheet from one workbook
+  --table <name>         select one named Excel Table
+  --range <reference>    select one named range or worksheet A1 rectangle
+  --header-row <number>  worksheet header row, starting at 1 (default: 1)
+  --hidden               include hidden worksheets in default sheet selection
+  --into <table>         destination name for one selected region
+  -o, --output <file>    private saved batch file
+  -f, --force            allow replacing an existing batch output
+  -h, --help             display help for command
+
+--- stderr ---
+(empty)

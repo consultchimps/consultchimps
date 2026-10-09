@@ -1,0 +1,15 @@
+$ consultchimps db schema apply --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps db schema apply [options] <database>
+
+Review or apply additive schema changes
+
+Options:
+  --file <schema>  versioned JSON schema
+  --dry-run        report proposed changes without applying them
+  -h, --help       display help for command
+
+--- stderr ---
+(empty)

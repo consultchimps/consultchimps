@@ -1,0 +1,30 @@
+$ consultchimps sheets unprotect inputs/protected.xlsx -o unprotected.xlsx
+exit code: 0
+
+--- stdout ---
+SUCCESS: ConsultChimps finished your task.
+
+Your Excel workbook is unprotected.
+
+What ConsultChimps did:
+  - ConsultChimps removed protection from 1 worksheet and 1 workbook-structure lock.
+  - Formulas, formatting, hidden worksheets, and any macros were carried across unchanged.
+  - Your original Excel workbook was not changed.
+
+Detailed results:
+  - Worksheet protections removed: 1
+  - Workbook-structure protections removed: 1
+
+Files created:
+  1. <tmp>/unprotected.xlsx
+     Type: Excel workbook
+
+Warnings:
+  - None. ConsultChimps did not detect any recoverable problems during this task.
+
+What you can do next:
+  - Open the new Excel workbook listed below and confirm that you can edit the worksheets and workbook structure.
+  - This removes ordinary worksheet and workbook-structure protection only; a workbook encrypted to require a password to open is not affected.
+
+--- stderr ---
+(empty)

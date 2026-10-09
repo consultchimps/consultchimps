@@ -1,0 +1,20 @@
+$ consultchimps pptx populate --template inputs/profile.pptx --data inputs/companies.xlsx --template-slide 4 -o profiles.pptx
+exit code: 1
+
+--- stdout ---
+(empty)
+
+--- stderr ---
+ERROR: ConsultChimps could not finish your task.
+
+What went wrong:
+  Template slide 4 does not exist.
+
+What you can do:
+  - Check the PowerPoint template slide, placeholder spelling, Excel headers, and output path mentioned above.
+  - Run consultchimps pptx inspect-template to review placeholders before populating the presentation.
+  - Run consultchimps pptx populate --help for a complete example.
+
+Error reference:
+  PPTX_TEMPLATE_SLIDE_NOT_FOUND
+  This reference can help a developer or support person identify the exact type of problem.

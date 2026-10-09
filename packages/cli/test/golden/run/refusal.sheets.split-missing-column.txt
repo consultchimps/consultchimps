@@ -1,0 +1,19 @@
+$ consultchimps sheets split inputs/orders.xlsx -c Country -o by-country
+exit code: 1
+
+--- stdout ---
+(empty)
+
+--- stderr ---
+ERROR: ConsultChimps could not finish your task.
+
+What went wrong:
+  Column "Country" was not found in any worksheet. Check the header text or provide the correct header row.
+
+What you can do:
+  - Check the workbook, worksheet, table, column name, and command options mentioned in the message above.
+  - Run the command with --help to review the available spreadsheet options and examples.
+
+Error reference:
+  XLSX_SPLIT_COLUMN_NOT_FOUND
+  This reference can help a developer or support person identify the exact type of problem.

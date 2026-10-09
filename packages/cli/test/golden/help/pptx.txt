@@ -1,0 +1,28 @@
+$ consultchimps pptx --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps pptx [options] [command]
+
+inspect or populate PowerPoint templates without changing the source files
+
+Options:
+  -h, --help                             display help for command
+
+Commands:
+  inspect-template [options] <template>  list text placeholders on one PowerPoint template slide without creating a file
+  populate [options]                     create one populated PowerPoint slide for every nonempty Excel data row
+  help [command]                         display help for command
+
+Examples:
+  consultchimps pptx inspect-template profile.pptx
+  consultchimps pptx populate --template profile.pptx --data clients.xlsx -o profiles.pptx
+
+Safety:
+  Your source PowerPoint template and Excel workbook are not changed.
+  ConsultChimps creates one new presentation and refuses to replace an existing
+  output unless you use --force.
+
+
+--- stderr ---
+(empty)
