@@ -1,0 +1,28 @@
+$ consultchimps pdf split --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps pdf split [options] <input>
+
+create one new PDF file for every page in a source PDF
+
+Arguments:
+  input                     the source PDF document to divide
+
+Options:
+  -o, --output <directory>  folder where the separate page files will be saved
+  --prefix <name>           text to place at the start of each output filename
+  -f, --force               replace matching output files that already exist;
+                            use with care
+  -h, --help                display help for command
+
+Example:
+  consultchimps pdf split report.pdf -o pages
+
+What happens:
+  ConsultChimps creates one clearly numbered PDF for every page, lists every
+  new file, and leaves the source PDF unchanged.
+
+
+--- stderr ---
+(empty)

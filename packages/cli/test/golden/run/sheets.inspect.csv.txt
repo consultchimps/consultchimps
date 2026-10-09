@@ -1,0 +1,55 @@
+$ consultchimps sheets inspect inputs/orders.csv
+exit code: 0
+
+--- stdout ---
+CSV file inspection: orders.csv
+Read as UTF-8 text, delimited by commas. Each CSV file is one worksheet named after the file.
+
+Worksheets:
+  1. orders (visible)
+     Used range: 4 rows by 3 columns
+     Header row: 1
+     Data rows below the header: 3
+     Columns and their sample values:
+       1. Region: "North", "South"
+       2. Product: "Widgets", "Gadgets"
+       3. Amount: "120", "80", "45"
+
+Excel Tables:
+  - None found in the described worksheets.
+
+Named ranges:
+  - None found in the described worksheets.
+
+SUCCESS: ConsultChimps finished your task.
+
+Your Excel workbook inspection is complete.
+
+What ConsultChimps did:
+  - ConsultChimps described 1 worksheet, holding 3 columns and 3 data rows in total.
+  - It also found 0 Excel Tables and 0 named ranges.
+  - Nothing was created or changed. An inspection only reads the workbook.
+
+Detailed results:
+  - Data rows described: 3
+  - Excel Tables found: 0
+  - Formula cells missing cached values: 0
+  - Columns described across worksheets: 3
+  - Hidden worksheets described: 0
+  - Named ranges found: 0
+  - Worksheets described: 1
+
+Files created:
+  - No files were created. Review the result details above for more information.
+
+Warnings:
+  - None. ConsultChimps did not detect any recoverable problems during this task.
+
+What you can do next:
+  - Read the worksheet names, column headers, and sample values from the description that accompanies this result, and confirm they are the ones you expected before consolidating, merging, or splitting the workbook.
+  - Check the header row of every worksheet: a report title above the real headers is skipped when it can be told from a header, and you can name the correct row when the guess is wrong.
+  - Run the command with --help to review the available spreadsheet options and examples.
+
+--- stderr ---
+Describing worksheets 1/1: orders
+Describing structures 1/1

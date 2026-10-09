@@ -1,0 +1,16 @@
+$ consultchimps db import update --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps db import update [options] <database>
+
+Update a saved batch's table routing and column mapping
+
+Options:
+  --batch <file>    saved batch file
+  --profile <file>  replacement import profile; omitted routes stop table
+                    loading; omit this option to re-review captured data
+  -h, --help        display help for command
+
+--- stderr ---
+(empty)

@@ -1,0 +1,15 @@
+$ consultchimps db import history --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps db import history [options] <database>
+
+List recorded batches and their source captures
+
+Options:
+  --limit <number>   maximum batch records (default: 50)
+  --cursor <cursor>  pagination cursor from a prior response
+  -h, --help         display help for command
+
+--- stderr ---
+(empty)

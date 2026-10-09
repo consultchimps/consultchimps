@@ -1,0 +1,19 @@
+$ consultchimps pdf split inputs/not-a-pdf.pdf -o pages
+exit code: 1
+
+--- stdout ---
+(empty)
+
+--- stderr ---
+ERROR: ConsultChimps could not finish your task.
+
+What went wrong:
+  Could not read PDF: <tmp>/inputs/not-a-pdf.pdf
+
+What you can do:
+  - Confirm that every source file is a readable PDF and that the output location is available.
+  - Run the command with --help to review the available PDF options and examples.
+
+Error reference:
+  PDF_READ_FAILED
+  This reference can help a developer or support person identify the exact type of problem.

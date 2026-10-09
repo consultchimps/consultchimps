@@ -1,0 +1,16 @@
+$ consultchimps db import apply --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps db import apply [options] <database>
+
+Apply a reviewed saved batch
+
+Options:
+  --batch <file>     saved batch file
+  --context <file>   batch context JSON
+  --request-id <id>  retry key for this application
+  -h, --help         display help for command
+
+--- stderr ---
+(empty)

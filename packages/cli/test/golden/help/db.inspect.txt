@@ -1,0 +1,16 @@
+$ consultchimps db inspect --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps db inspect [options] <database>
+
+Inspect a database without changing it
+
+Arguments:
+  database    SQLite or DuckDB database file
+
+Options:
+  -h, --help  display help for command
+
+--- stderr ---
+(empty)

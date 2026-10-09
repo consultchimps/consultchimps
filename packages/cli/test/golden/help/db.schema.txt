@@ -1,0 +1,17 @@
+$ consultchimps db schema --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps db schema [options] [command]
+
+Manage database table definitions
+
+Options:
+  -h, --help                  display help for command
+
+Commands:
+  apply [options] <database>  Review or apply additive schema changes
+  help [command]              display help for command
+
+--- stderr ---
+(empty)

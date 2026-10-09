@@ -1,0 +1,32 @@
+$ consultchimps pdf merge inputs/report.pdf inputs/appendix.pdf -o combined.pdf
+exit code: 0
+
+--- stdout ---
+SUCCESS: ConsultChimps finished your task.
+
+Your PDF merge is complete.
+
+What ConsultChimps did:
+  - ConsultChimps combined 2 PDF files in the resolved input order.
+  - The new PDF contains 4 pages.
+  - Your original PDF files were not changed.
+
+Detailed results:
+  - Input files read: 2
+  - New files created: 1
+  - PDF pages processed: 4
+
+Files created:
+  1. <tmp>/combined.pdf
+     Type: PDF document
+
+Warnings:
+  - None. ConsultChimps did not detect any recoverable problems during this task.
+
+What you can do next:
+  - Open the new PDF listed below and check that the documents appear in the intended order.
+  - Keep the original PDFs until you have confirmed the merged file is complete.
+
+--- stderr ---
+Merging inputs 1/2: appendix.pdf
+Merging inputs 2/2: report.pdf

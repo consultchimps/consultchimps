@@ -1,0 +1,22 @@
+$ consultchimps db export --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps db export [options] <database>
+
+Create a validated database copy or convert its storage format
+
+Options:
+  -o, --output <file>  independent database output file
+  --format <format>    output storage format (choices: "sqlite", "duckdb")
+  --dry-run            review format changes and unsupported objects without
+                       writing
+  -f, --force          allow replacing an existing output
+  -h, --help           display help for command
+
+Example: consultchimps db export inventory.sqlite -o inventory.duckdb
+Review first: consultchimps db export inventory.sqlite -o inventory.duckdb --dry-run
+
+
+--- stderr ---
+(empty)

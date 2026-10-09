@@ -1,0 +1,16 @@
+$ consultchimps logs show --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps logs show [options] [run]
+
+summarise one run: stages, slowest steps, memory, and outcome
+
+Arguments:
+  run         a run id or its start, or latest (default: "latest")
+
+Options:
+  -h, --help  display help for command
+
+--- stderr ---
+(empty)

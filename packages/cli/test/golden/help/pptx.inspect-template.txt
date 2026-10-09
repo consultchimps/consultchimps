@@ -1,0 +1,25 @@
+$ consultchimps pptx inspect-template --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps pptx inspect-template [options] <template>
+
+list text placeholders on one PowerPoint template slide without creating a file
+
+Arguments:
+  template                   the source .pptx template to inspect
+
+Options:
+  --template-slide <number>  template slide number, counted from 1 (default: 1)
+  -h, --help                 display help for command
+
+Example:
+  consultchimps pptx inspect-template profile.pptx
+
+The report identifies valid {{field_name}} placeholders, malformed placeholder
+braces, and unsupported placeholder placements. Split-run placeholders are
+supported.
+
+
+--- stderr ---
+(empty)

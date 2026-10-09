@@ -1,0 +1,20 @@
+$ consultchimps db create --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps db create [options]
+
+Create a persistent SQLite or DuckDB file
+
+Options:
+  -o, --output <file>  new database file
+  --format <format>    database storage format (choices: "sqlite", "duckdb")
+  --schema <file>      versioned JSON table definitions
+  -f, --force          allow replacement of an existing output
+  -h, --help           display help for command
+
+Example: consultchimps db create -o inventory.sqlite --schema schema.json
+
+
+--- stderr ---
+(empty)

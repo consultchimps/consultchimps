@@ -1,0 +1,39 @@
+$ consultchimps pptx populate --template inputs/profile.pptx --data inputs/companies.xlsx -o profiles.pptx
+exit code: 0
+
+--- stdout ---
+SUCCESS: ConsultChimps finished your task.
+
+Your PowerPoint presentation is complete.
+
+What ConsultChimps did:
+  - ConsultChimps read 2 nonempty Excel records and created 2 populated slides in worksheet order.
+  - It replaced 4 placeholder occurrences across the generated slides.
+  - Your source PowerPoint template and Excel workbook were not changed.
+
+Detailed results:
+  - Formula cells missing cached values: 0
+  - PowerPoint slides generated: 2
+  - Source data rows read: 2
+  - New files created: 1
+  - Distinct placeholder fields: 2
+  - Placeholder occurrences per template slide: 2
+  - Placeholder replacements made: 4
+  - Rows skipped: 0
+  - Warnings reported: 0
+
+Files created:
+  1. <tmp>/profiles.pptx
+     Type: PowerPoint presentation
+
+Warnings:
+  - None. ConsultChimps did not detect any recoverable problems during this task.
+
+What you can do next:
+  - Open the new PowerPoint presentation listed below and review every generated slide.
+  - Check longer replacement values for fit because this version does not shrink or truncate text automatically.
+
+--- stderr ---
+Generating slides 1/2: slide2.xml
+Generating slides 2/2: slide3.xml
+Writing output 1/1: profiles.pptx

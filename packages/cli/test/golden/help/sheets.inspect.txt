@@ -1,0 +1,59 @@
+$ consultchimps sheets inspect --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps sheets inspect [options] <input>
+
+describe what is in an Excel workbook or CSV file, creating and changing nothing
+
+Arguments:
+  input                        the .xlsx, .xlsm, or .csv file to describe
+
+Options:
+  --sheet <name>               describe only the worksheet with this exact name;
+                               repeat for several
+  --header-row <number>        row containing column names, counted from 1
+  --hidden                     describe hidden worksheets as well as visible
+                               ones
+  --samples <number>           distinct sample values to report per column, from
+                               0 to 5 (default: 5)
+  --csv-delimiter <delimiter>  CSV field delimiter: comma, semicolon, tab, pipe,
+                               or one character (default: guessed from the file)
+  --csv-encoding <encoding>    CSV text encoding: utf-8, utf-16le, utf-16be, or
+                               windows-1252 (default: detected from the file; a
+                               byte order mark wins)
+  --csv-numbers                read CSV fields that hold only a number as
+                               numbers; every field is text otherwise
+  --csv-decimal <separator>    decimal separator --csv-numbers reads: "." or ","
+                               (default: ".")
+  --csv-thousands <separator>  thousands separator --csv-numbers reads: ",",
+                               ".", space, apostrophe, or none (default: ",", or
+                               "." when the decimal is ",")
+  --csv-dates <order>          read CSV dates: iso reads yyyy-mm-dd only; dmy,
+                               mdy, or ymd also read dates in that order
+  -h, --help                   display help for command
+
+Examples:
+  consultchimps sheets inspect clients.xlsx
+  consultchimps sheets inspect clients.xlsx --hidden --samples 2
+  consultchimps sheets inspect --sheet North --sheet South clients.xlsx
+  consultchimps sheets inspect export.csv --csv-numbers
+
+What you get:
+  1. Each described worksheet, with its visibility, the size of its used range,
+     and how many data rows sit below its header row.
+  2. The header row an operation would actually use, and every column on it
+     with a few of the values stored beneath it.
+  3. The Excel Tables and named ranges the described worksheets contain.
+
+Sample values are the first few distinct non-empty values a column stores, at
+most five, reported exactly as the workbook holds them: text is quoted, so the
+number 1 and the text "1" stay apart. Use --samples 0 for headers only.
+
+No file is created and nothing in the workbook is changed. Run this before
+consolidating, merging, or splitting to confirm the worksheet names, header
+rows, and column spellings those commands will match on.
+
+
+--- stderr ---
+(empty)

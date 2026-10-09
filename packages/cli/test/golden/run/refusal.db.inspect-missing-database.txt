@@ -1,0 +1,20 @@
+$ consultchimps db inspect missing.duckdb
+exit code: 1
+
+--- stdout ---
+(empty)
+
+--- stderr ---
+ERROR: ConsultChimps could not finish your task.
+
+What went wrong:
+  The input file could not be opened. Check that it exists and that you can read it.
+
+What you can do:
+  - Read the message above and check the supplied files, folders, and command options.
+  - Run the command again with --help if you need examples.
+  - If the problem continues, keep the error reference below when asking for support.
+
+Error reference:
+  FILES_INPUT_UNREADABLE
+  This reference can help a developer or support person identify the exact type of problem.

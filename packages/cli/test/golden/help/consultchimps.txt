@@ -1,0 +1,55 @@
+$ consultchimps --help
+exit code: 0
+
+--- stdout ---
+Usage: consultchimps [options] [command]
+
+Local-first tools for spreadsheets, persistent databases, presentations, and
+PDFs.
+
+Options:
+  -V, --version   output the version number
+  --json          print one line of machine-readable JSON for automation instead
+                  of the detailed explanation
+  --no-log        do not keep a local record of this run
+  --log-names     keep input file names, progress details, and error messages in
+                  the run record
+  --cpu-profile   save a CPU profile of this run beside its record
+  -h, --help      display help for command
+
+Commands:
+  sheets          inspect, combine, or divide Excel workbooks without changing
+                  the original files
+  pptx            inspect or populate PowerPoint templates without changing the
+                  source files
+  pdf             split or combine PDF documents without changing the originals
+  logs            list and read the local records of earlier runs
+  db              Create persistent local databases, manage schemas, and import
+                  workbook submissions
+  help [command]  display help for command
+
+Quick start:
+  consultchimps db create -o inventory.duckdb
+  consultchimps db import prepare inventory.duckdb --input inventory.xlsx -o review.ccplan
+  consultchimps sheets inspect clients.xlsx
+  consultchimps sheets consolidate "inputs/*.xlsx" -o combined.xlsx
+  consultchimps sheets merge "inputs/*.xlsx" -o all-sheets.xlsx
+  consultchimps sheets split clients.xlsx -c Region -o by-region
+  consultchimps pptx populate --template profile.pptx --data clients.xlsx --sheet Clients --template-slide 1 -o profiles.pptx
+  consultchimps pdf split report.pdf -o pages
+  consultchimps pdf merge "inputs/*.pdf" -o combined.pdf
+
+Automation with --json:
+  Place --json before the command to replace the explanation with one line of
+  JSON on stdout. Success prints {"ok":true,"result":...} and failure prints
+  {"ok":false,"error":{"message":...,"code":...}} while keeping the nonzero
+  exit code. Nothing else is written to stdout, so the output can be piped
+  straight into a JSON parser.
+
+  consultchimps --json pdf split report.pdf -o pages
+
+Run consultchimps help <command> or append --help to a command for all options.
+
+
+--- stderr ---
+(empty)
