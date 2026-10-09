@@ -117,6 +117,9 @@ describe("the CSV writer", () => {
     expect(guardedCsvText("+00123")).toBe("'+00123");
     expect(guardedCsvText("-1234567890123456")).toBe("'-1234567890123456");
     expect(guardedCsvText("-0.5")).toBe("-0.5");
+    expect(guardedCsvText("+1,2,3")).toBe("'+1,2,3");
+    expect(guardedCsvText("-1..2")).toBe("'-1..2");
+    expect(guardedCsvText("-1.234,5")).toBe("-1.234,5");
     expect(guardedCsvText("a=b")).toBe("a=b");
     expect(written(["=x"], [["=1+1"]], { bom: false })).toBe(
       "'=x\r\n'=1+1\r\n",

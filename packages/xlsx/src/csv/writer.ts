@@ -30,7 +30,8 @@ const BATCH_CHARACTERS = 1024 * 1024;
  * dashes, cannot run anything and is left as it is, so CSV to CSV keeps it.
  */
 const FORMULA_START = /^\s*[=+\-@]|^[\t\r]/u;
-const HARMLESS = /^(?:[+-]?[0-9][0-9.,]*|-+)$/u;
+const HARMLESS =
+  /^(?:[+-]?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?|[+-]?(?:[0-9]{1,3}(?:\.[0-9]{3})+|[0-9]+)(?:,[0-9]+)?|-+)$/u;
 
 /**
  * A text value as CSV output writes it, with the formula guard applied. The

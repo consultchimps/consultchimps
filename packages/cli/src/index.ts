@@ -637,7 +637,8 @@ Use --no-preserve-workbook only when a compact, data-only result is wanted.
 A CSV file has no workbook to keep, so it splits into CSV files, or compact
 workbooks with --output-format xlsx; every field stays text unless
 --csv-numbers or --csv-dates asks otherwise. --output-format csv splits a
-workbook into CSV files.
+workbook into CSV files from one source, so name it with --sheet, --table, or
+--range when the workbook has several.
 
 --values removes formulas while retaining their stored results and all
 formatting in a preserved workbook. A formula without a stored result becomes
