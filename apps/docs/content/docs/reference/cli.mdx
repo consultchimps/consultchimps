@@ -224,8 +224,9 @@ run.
 `sheets consolidate` and `sheets inspect` read `.csv` files beside workbooks.
 Each CSV file is one worksheet named after the file, so `_source_sheet` names
 it. The encoding comes from a byte order mark, else UTF-8, else Windows-1252
-with a warning; the delimiter is guessed from the first rows. `--csv-encoding`
-and `--csv-delimiter` override them.
+with a warning; the delimiter is guessed from the first rows. `--csv-delimiter`
+overrides the guess, and `--csv-encoding` the encoding, except that a byte order
+mark wins over a choice that contradicts it, with a warning.
 
 Every field stays text unless asked. `--csv-numbers` reads a field that is only
 a number, such as `1,234.50`; leading zeros, currency signs and more than 15

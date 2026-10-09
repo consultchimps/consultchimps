@@ -489,7 +489,8 @@ Matching columns that are named differently:
 
 CSV files:
   Each CSV file is one worksheet named after the file. Its encoding and
-  delimiter are detected; --csv-encoding and --csv-delimiter override them.
+  delimiter are detected; --csv-encoding and --csv-delimiter override them,
+  though a byte order mark wins over a contradicting --csv-encoding.
   Every field stays text unless --csv-numbers or --csv-dates asks otherwise,
   and neither changes a field that is not wholly a number or a date.
 

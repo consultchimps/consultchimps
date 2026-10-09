@@ -46,7 +46,7 @@ export function withCsvOptions(command: Command): Command {
     )
     .option(
       "--csv-encoding <encoding>",
-      "CSV text encoding: utf-8, utf-16le, utf-16be, or windows-1252 (default: detected from the file)",
+      "CSV text encoding: utf-8, utf-16le, utf-16be, or windows-1252 (default: detected from the file; a byte order mark wins)",
     )
     .option(
       "--csv-numbers",
