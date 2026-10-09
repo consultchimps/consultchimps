@@ -2,7 +2,7 @@
  * The options every sheets command that reads CSV files takes (ADR 0007), and
  * their translation into the library's `CsvReadOptions`.
  */
-import type { Command } from "commander";
+import { InvalidArgumentError, type Command } from "commander";
 import type { CsvReadOptions } from "@consultchimps/xlsx";
 
 /** The CSV flags as Commander collects them. */
@@ -93,4 +93,51 @@ export function csvReadOptions(
     read.dates = options.csvDates.toLowerCase() as CsvReadOptions["dates"];
   }
   return Object.keys(read).length === 0 ? undefined : read;
+}
+
+/** The output flags as Commander collects them. */
+export interface CsvOutputCliOptions {
+  outputFormat?: string;
+  csvBom?: string;
+}
+
+/** Add the flags that choose CSV output to a command. */
+export function withCsvOutputOptions(command: Command): Command {
+  return command
+    .option(
+      "--output-format <format>",
+      "write xlsx or csv; an output name ending in .csv or .xlsx decides it too, and the two must agree",
+    )
+    .option(
+      "--csv-bom <true|false>",
+      "start a CSV output with a UTF-8 byte order mark so Excel opens it as UTF-8 (default: true)",
+      (value: string) => {
+        const lower = value.toLowerCase();
+        if (lower !== "true" && lower !== "false") {
+          throw new InvalidArgumentError("Use true or false.");
+        }
+        return lower;
+      },
+    );
+}
+
+/** The library's output options the flags ask for. */
+export function csvOutputOptions(options: CsvOutputCliOptions): {
+  outputFormat?: "xlsx" | "csv";
+  csvBom?: boolean;
+} {
+  const chosen: { outputFormat?: "xlsx" | "csv"; csvBom?: boolean } = {};
+  if (options.outputFormat !== undefined) {
+    chosen.outputFormat = options.outputFormat.toLowerCase() as "xlsx" | "csv";
+  }
+  if (options.csvBom !== undefined) {
+    const value = options.csvBom.toLowerCase();
+    if (value !== "true" && value !== "false") {
+      throw new Error(
+        `--csv-bom takes true or false, not "${options.csvBom}".`,
+      );
+    }
+    chosen.csvBom = value === "true";
+  }
+  return chosen;
 }

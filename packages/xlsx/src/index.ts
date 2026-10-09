@@ -58,6 +58,12 @@ import {
 
 import { settleCsvOptions, type CsvReadOptions } from "./csv/options.js";
 import { isCsvName } from "./csv/reader.js";
+import type { TableOutputFormat } from "./table-output.js";
+import {
+  refuseCsvOutputName,
+  resolveTableOutput,
+  type TableOutputFormatName,
+} from "./csv/output.js";
 import { splitOptionsFor } from "./csv/split.js";
 import { csvAsWorkbook, type CsvScratch } from "./csv/workbook.js";
 import { XLSX_ERRORS } from "./errors.js";
@@ -139,7 +145,6 @@ import {
   splitOutputFileNames,
   SPLIT_OPERATION,
   unmappedColumnsWarning,
-  WORKBOOK_EXTENSION,
   WORKBOOK_MEDIA_TYPE,
   workbookExcelTables,
   workbookNamedRanges,
@@ -286,6 +291,14 @@ export interface ConsolidateWorkbooksOptions
    */
   csv?: CsvReadOptions | undefined;
   /**
+   * Write the table as `csv` or as an `xlsx` workbook. An `output` ending
+   * in `.csv` or `.xlsx` decides it too, and the two must agree. Default
+   * `xlsx`.
+   */
+  outputFormat?: TableOutputFormatName | undefined;
+  /** Start a CSV output with a UTF-8 byte order mark. Default true. */
+  csvBom?: boolean | undefined;
+  /**
    * Where to write a drafted mapping built from the headers that were read.
    * The draft is written for review, never applied. Cannot be combined with
    * `mappingFile`.
@@ -317,6 +330,14 @@ export interface SplitWorkbookByColumnOptions extends OperationControlOptions {
   input: string;
   outputDirectory: string;
   column: string;
+  /**
+   * Write each group as `csv` or as an `xlsx` workbook. Default `csv` for a
+   * `.csv` input and `xlsx` otherwise. A CSV output holds the rows only, so
+   * it is written compactly and keeping the workbook is refused.
+   */
+  outputFormat?: TableOutputFormatName | undefined;
+  /** Start each CSV output with a UTF-8 byte order mark. Default true. */
+  csvBom?: boolean | undefined;
   /**
    * How to read the input when it is a `.csv` file: one worksheet named after
    * the file, split compactly, since a CSV file has no workbook to keep (ADR
@@ -796,9 +817,27 @@ function resolveConsolidateWorkbooks(
   return { absoluteInputs, absoluteOutput, absoluteSuggestOutput };
 }
 
-export async function planConsolidateWorkbooks(
+/**
+ * The options with the output named as the byte surface names it: a name with
+ * no workbook or CSV extension takes the asked format's.
+ */
+function withOutputExtension(
   options: ConsolidateWorkbooksOptions,
+): ConsolidateWorkbooksOptions {
+  if (options.outputFormat === undefined) return options;
+  if (/\.(?:csv|xls[xm])$/iu.test(options.output)) return options;
+  const { extension } = resolveTableOutput(
+    undefined,
+    options.outputFormat,
+    options.csvBom,
+  );
+  return { ...options, output: `${options.output}${extension}` };
+}
+
+export async function planConsolidateWorkbooks(
+  requested: ConsolidateWorkbooksOptions,
 ): Promise<OperationPlan<ConsolidateWorkbooksPlanMetric>> {
+  const options = withOutputExtension(requested);
   const { absoluteInputs, absoluteOutput, absoluteSuggestOutput } =
     resolveConsolidateWorkbooks(options);
   // The options a run would refuse, a plan refuses too.
@@ -820,11 +859,16 @@ export async function planConsolidateWorkbooks(
     }
   }
 
+  const output = resolveTableOutput(
+    absoluteOutput,
+    options.outputFormat,
+    options.csvBom,
+  );
   const exists = await pathExists(absoluteOutput);
   const outputs: PlannedOutput[] = [
     {
       kind: "file",
-      mediaType: WORKBOOK_MEDIA_TYPE,
+      mediaType: output.mediaType,
       path: absoluteOutput,
       exists,
     },
@@ -832,7 +876,7 @@ export async function planConsolidateWorkbooks(
   const warnings =
     exists && options.overwrite !== true
       ? [
-          "The planned output workbook already exists; executing without overwrite will fail.",
+          `The planned output ${output.format.kind === "csv" ? "file" : "workbook"} already exists; executing without overwrite will fail.`,
         ]
       : [];
 
@@ -870,13 +914,19 @@ export async function planConsolidateWorkbooks(
 }
 
 export async function consolidateWorkbooks(
-  options: ConsolidateWorkbooksOptions,
+  requested: ConsolidateWorkbooksOptions,
 ): Promise<ConsolidateWorkbooksResult> {
+  const options = withOutputExtension(requested);
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
   const { absoluteInputs, absoluteOutput, absoluteSuggestOutput } =
     resolveConsolidateWorkbooks(options);
   // Before anything is created, as every other refusal of options is.
   settleCsvOptions(options.csv);
+  const output = resolveTableOutput(
+    absoluteOutput,
+    options.outputFormat,
+    options.csvBom,
+  );
 
   // Both the mapping and the draft's destination are settled before a single
   // workbook is opened, so an unusable mapping or an occupied destination
@@ -920,8 +970,9 @@ export async function consolidateWorkbooks(
   };
   const plan = await planConsolidation(sources, settings);
   const { suggestion, unmappedColumns } = plan;
-  // Before the staging file or any folder is made.
-  assertFitsWorksheet(plan);
+  // Before the staging file or any folder is made. A worksheet's limits bind
+  // a workbook only; a CSV file has none.
+  if (output.format.kind === "xlsx") assertFitsWorksheet(plan);
   if (absoluteSuggestOutput !== undefined) {
     // The draft's folder is made before the workbook is written, because a
     // parent that cannot be a folder - a plain file already standing where one
@@ -932,25 +983,34 @@ export async function consolidateWorkbooks(
   }
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION);
   const sheetName = options.outputSheetName ?? CONSOLIDATED_SHEET_NAME;
-  assertSheetName(sheetName);
-  const output = await writeStagedFile(
+  // A CSV file has no worksheet to name.
+  if (output.format.kind === "xlsx") assertSheetName(sheetName);
+  const written = await writeStagedFile(
     absoluteOutput,
     { overwrite: options.overwrite },
-    (sink) => writeConsolidation(sources, plan, settings, sheetName, sink),
+    (sink) =>
+      writeConsolidation(
+        sources,
+        plan,
+        settings,
+        sheetName,
+        sink,
+        output.format,
+      ),
   );
   options.onProgress?.({
     operation: CONSOLIDATE_OPERATION,
     stage: "writing-output",
     completed: 1,
     total: 1,
-    detail: path.basename(output),
+    detail: path.basename(written),
   });
 
   const artifacts: Artifact[] = [
     {
       kind: "file",
-      mediaType: WORKBOOK_MEDIA_TYPE,
-      path: output,
+      mediaType: output.mediaType,
+      path: written,
     },
   ];
   if (absoluteSuggestOutput !== undefined && suggestion) {
@@ -1019,6 +1079,7 @@ export async function mergeWorkbooks(
   }
   const absoluteInputs = inputPaths.map((inputPath) => path.resolve(inputPath));
   const absoluteOutput = path.resolve(outputPath);
+  refuseCsvOutputName(absoluteOutput, "merge");
   refuseInputOverwrite(absoluteOutput, absoluteInputs);
   await ensureOutputAvailable(absoluteOutput, { overwrite: options.overwrite });
 
@@ -1200,6 +1261,8 @@ interface ResolvedSplit {
   existingOutputs: Set<string>;
   /** The media type every output of this split carries. */
   mediaType: string;
+  /** How each output is written when the workbook is not kept. */
+  format: TableOutputFormat;
   outputPaths: string[];
   preserveWorkbook: boolean;
   resolved: ResolvedRegionSplit;
@@ -1241,12 +1304,18 @@ async function resolveSplitWorkbookByColumn(
     // A preserved split hands back the source package, so its outputs have
     // to be named and typed after that package; a rebuilding split writes a
     // fresh ordinary workbook and stays .xlsx.
-    const extension = preserveWorkbook
+    const output = resolveTableOutput(
+      undefined,
+      options.outputFormat,
+      options.csvBom,
+    );
+    const preserved = preserveWorkbook
       ? await preservedSplitExtensionOf(source, absoluteInput, {
           details,
           label: absoluteInput,
         })
-      : WORKBOOK_EXTENSION;
+      : undefined;
+    const extension = preserved ?? output.extension;
 
     const absoluteOutputDirectory = path.resolve(options.outputDirectory);
     const filenamePrefix = safeNameFragment(
@@ -1287,9 +1356,9 @@ async function resolveSplitWorkbookByColumn(
       absoluteInput,
       absoluteOutputDirectory,
       existingOutputs,
-      mediaType: preserveWorkbook
-        ? splitMediaType(extension)
-        : WORKBOOK_MEDIA_TYPE,
+      format: output.format,
+      mediaType:
+        preserved === undefined ? output.mediaType : splitMediaType(preserved),
       outputPaths,
       preserveWorkbook,
       resolved,
@@ -1474,6 +1543,7 @@ async function splitResolvedRegion(
         throwIfAborted(options.signal, SPLIT_OPERATION);
       },
       splitPackage,
+      split.format,
     );
 
     for (const [index, outputPath] of outputPaths.entries()) {

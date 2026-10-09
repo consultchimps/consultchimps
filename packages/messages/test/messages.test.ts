@@ -240,6 +240,25 @@ describe("human-readable CLI output", () => {
     expect(output).toContain("Your original files were not changed.");
   });
 
+  it("names CSV outputs as CSV files", () => {
+    const output = formatHumanResult(
+      {
+        operation: "sheets.consolidate",
+        artifacts: [{ kind: "file", path: "all.csv", mediaType: "text/csv" }],
+        metrics: {
+          inputFiles: 1,
+          inputTables: 1,
+          outputColumns: 2,
+          outputRows: 3,
+        },
+        warnings: [],
+      },
+      cli,
+    );
+    expect(output).toContain("The finished CSV file contains 3 data rows");
+    expect(output).toContain("Type: CSV file");
+  });
+
   it("says what a consolidation left out, and nothing when it left out nothing", () => {
     const both = formatHumanResult(
       result(

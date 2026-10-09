@@ -7,6 +7,12 @@
 import { openSheetBook } from "./operations/sheet-book.js";
 import { settleCsvOptions, type CsvReadOptions } from "./csv/options.js";
 import { isCsvName } from "./csv/reader.js";
+import type { TableOutputFormat } from "./table-output.js";
+import {
+  refuseCsvOutputName,
+  resolveTableOutput,
+  type TableOutputFormatName,
+} from "./csv/output.js";
 import { splitOptionsFor } from "./csv/split.js";
 import {
   csvAsWorkbook,
@@ -296,6 +302,14 @@ export interface SplitWorkbookBytesOptions extends OperationControlOptions {
   input: WorkbookInputBytes;
   column: string;
   /**
+   * Write each group as `csv` or as an `xlsx` workbook. Default `csv` for a
+   * CSV input and `xlsx` otherwise. A CSV output holds the rows only, so it
+   * is written compactly and keeping the workbook is refused.
+   */
+  outputFormat?: TableOutputFormatName | undefined;
+  /** Start each CSV output with a UTF-8 byte order mark. Default true. */
+  csvBom?: boolean | undefined;
+  /**
    * How to read the input when its name ends in `.csv`: one worksheet named
    * after the file, split compactly, since a CSV file has no workbook to keep
    * (ADR 0007).
@@ -360,6 +374,14 @@ export interface ConsolidateWorkbooksBytesOptions
    * dates (ADR 0007).
    */
   csv?: CsvReadOptions | undefined;
+  /**
+   * Write the table as `csv` or as an `xlsx` workbook. An `outputName`
+   * ending in `.csv` or `.xlsx` decides it too, and the two must agree.
+   * Default `xlsx`.
+   */
+  outputFormat?: TableOutputFormatName | undefined;
+  /** Start a CSV output with a UTF-8 byte order mark. Default true. */
+  csvBom?: boolean | undefined;
   /**
    * Draft a mapping from the headers that were read and offer it beside the
    * consolidated workbook, as `mapping-draft.json`. The draft is for review,
@@ -553,6 +575,8 @@ async function resolveAllWorksheetSplitSource(
 interface ResolvedRegionSplitSource {
   resolved: ResolvedRegionSplit;
   preserveWorkbook: boolean;
+  /** How each output is written when the workbook is not kept. */
+  format: TableOutputFormat;
   mediaType: string;
   outputNames: string[];
 }
@@ -573,15 +597,21 @@ async function resolveRegionSplitSource(
     options,
     preserveWorkbook,
   );
-  const extension = preserveWorkbook
+  const output = resolveTableOutput(
+    undefined,
+    options.outputFormat,
+    options.csvBom,
+  );
+  const preserved = preserveWorkbook
     ? await preservedSplitExtensionOf(input, input.name, context)
-    : WORKBOOK_EXTENSION;
+    : undefined;
+  const extension = preserved ?? output.extension;
   return {
     resolved,
     preserveWorkbook,
-    mediaType: preserveWorkbook
-      ? splitMediaType(extension)
-      : WORKBOOK_MEDIA_TYPE,
+    format: output.format,
+    mediaType:
+      preserved === undefined ? output.mediaType : splitMediaType(preserved),
     outputNames: splitOutputFileNames(
       splitFilenamePrefix(options, input.name),
       resolved.groups.map((group) => group.value),
@@ -760,7 +790,7 @@ async function splitRegionSource(
   open: (name: string, mediaType: string) => Promise<ByteSink>,
 ): Promise<SplitWorkbookSourceOutcome> {
   const { input } = options;
-  const { resolved, preserveWorkbook, mediaType, outputNames } =
+  const { resolved, preserveWorkbook, mediaType, outputNames, format } =
     await resolveRegionSplitSource(input, options);
   const splitPackage =
     preserveWorkbook && options.values === true
@@ -803,6 +833,7 @@ async function splitRegionSource(
     },
     between,
     splitPackage,
+    format,
   );
   throwIfAborted(options.signal, SPLIT_OPERATION, "memory");
 
@@ -940,7 +971,11 @@ export async function consolidateWorkbooksBytes(
     offset += chunk.length;
   }
   const outputs: ByteArtifact[] = [
-    { name: outputName, bytes, mediaType: WORKBOOK_MEDIA_TYPE },
+    {
+      name: outputName,
+      bytes,
+      mediaType: result.artifacts[0]?.mediaType ?? WORKBOOK_MEDIA_TYPE,
+    },
   ];
   if (mappingDraft) outputs.push(mappingDraft);
   return { result, outputs };
@@ -1046,10 +1081,15 @@ async function consolidateIntoSink(
       ? undefined
       : validateColumnMapping(options.mapping);
 
+  const output = resolveTableOutput(
+    options.outputName,
+    options.outputFormat,
+    options.csvBom,
+  );
   const outputName = `${safeNameFragment(
     withoutWorkbookExtension(options.outputName ?? "consolidated"),
     "consolidated",
-  )}${WORKBOOK_EXTENSION}`;
+  )}${output.extension}`;
 
   const sources = consolidationSources(options.inputs);
   const settings: ConsolidationSettings = {
@@ -1068,12 +1108,21 @@ async function consolidateIntoSink(
   };
   const plan = await planConsolidation(sources, settings);
   const { suggestion, unmappedColumns } = plan;
-  assertFitsWorksheet(plan);
+  // A worksheet's limits bind a workbook only; a CSV file has none.
+  if (output.format.kind === "xlsx") assertFitsWorksheet(plan);
   await yieldToEventLoop();
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
   const sheetName = options.outputSheetName ?? CONSOLIDATED_SHEET_NAME;
-  assertSheetName(sheetName);
-  await writeConsolidation(sources, plan, settings, sheetName, options.output);
+  // A CSV file has no worksheet to name.
+  if (output.format.kind === "xlsx") assertSheetName(sheetName);
+  await writeConsolidation(
+    sources,
+    plan,
+    settings,
+    sheetName,
+    options.output,
+    output.format,
+  );
   // A cancellation during the last write or flush still cancels: the caller
   // asked to stop before the output was complete.
   throwIfAborted(options.signal, CONSOLIDATE_OPERATION, "memory");
@@ -1088,7 +1137,7 @@ async function consolidateIntoSink(
   const artifacts: Artifact[] = [
     {
       kind: "file",
-      mediaType: WORKBOOK_MEDIA_TYPE,
+      mediaType: output.mediaType,
       path: outputName,
     },
   ];
@@ -1230,6 +1279,7 @@ async function mergeIntoSink(
     );
   }
 
+  refuseCsvOutputName(options.outputName, "merge");
   const requested = options.outputName ?? `merged${WORKBOOK_EXTENSION}`;
   // A caller that asks for a macro-enabled name keeps it, because that is what
   // decides whether a single input's macro project may travel (see the merge
@@ -1452,6 +1502,11 @@ export type {
   CsvEncoding,
   CsvReadOptions,
 } from "./csv/options.js";
+export {
+  resolveTableOutput,
+  type ResolvedTableOutput,
+  type TableOutputFormatName,
+} from "./csv/output.js";
 export { MAX_COLUMN_SAMPLE_VALUES };
 export type {
   DescribeWorkbookMetric,

@@ -44,6 +44,7 @@ describe("splitting a CSV file", () => {
     const outcome = await splitWorkbookBytes({
       input: { name: "orders.csv", bytes: ORDERS },
       column: "Region",
+      outputFormat: "xlsx",
       csv: { numbers: true, decimalSeparator: ",", dates: "iso" },
     });
     expect(outcome.outputs.map((output) => output.name)).toEqual([
@@ -68,6 +69,7 @@ describe("splitting a CSV file", () => {
     const outcome = await splitWorkbookBytes({
       input: { name: "orders.csv", bytes: ORDERS },
       column: "Region",
+      outputFormat: "xlsx",
     });
     expect((await sheetRows(outcome.outputs[1]!.bytes, "orders"))[1]).toEqual([
       "South",
@@ -81,7 +83,11 @@ describe("splitting a CSV file", () => {
       name: "regions.csv",
       bytes: utf8("Region,N\nNorth,1\n north ,2\nNORTH,3\nSouth,4\n"),
     };
-    const tolerant = await splitWorkbookBytes({ input, column: "Region" });
+    const tolerant = await splitWorkbookBytes({
+      input,
+      column: "Region",
+      outputFormat: "xlsx",
+    });
     expect(tolerant.outputs.map((output) => output.name)).toEqual([
       "regions-North.xlsx",
       "regions-South.xlsx",
@@ -90,6 +96,7 @@ describe("splitting a CSV file", () => {
       input,
       column: "Region",
       strict: true,
+      outputFormat: "xlsx",
     });
     expect(strict.outputs).toHaveLength(4);
   });
@@ -103,6 +110,7 @@ describe("splitting a CSV file", () => {
       splitWorkbookBytes({
         input: { name: "wide.csv", bytes: utf8(`${header}\nNorth\n`) },
         column: "c0",
+        outputFormat: "xlsx",
       }),
     );
     expect(error.code).toBe("XLSX_OUTPUT_TOO_LARGE");
@@ -167,6 +175,7 @@ describe("merging CSV files", () => {
       splitWorkbookBytes({
         input: { name: "notes.csv", bytes: long },
         column: "Region",
+        outputFormat: "xlsx",
       }),
     );
     expect(split.code).toBe("XLSX_OUTPUT_TOO_LARGE");
@@ -233,11 +242,13 @@ describe("CSV files on the command line surface", () => {
       input,
       outputDirectory,
       column: "Region",
+      outputFormat: "xlsx",
       csv: { numbers: true, decimalSeparator: "," },
     });
     const bytes = await splitWorkbookBytes({
       input: { name: "orders.csv", bytes: ORDERS },
       column: "Region",
+      outputFormat: "xlsx",
       csv: { numbers: true, decimalSeparator: "," },
     });
     expect((await readdir(outputDirectory)).sort()).toEqual([

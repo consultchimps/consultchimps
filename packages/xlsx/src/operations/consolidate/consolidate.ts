@@ -42,9 +42,13 @@ import { XLSX_ERRORS } from "../../errors.js";
 import {
   cellWidthLength,
   tableColumnWidth,
-  TableWorkbookWriter,
   type WritableCellValue,
 } from "../../package/table-writer.js";
+import {
+  openTableWriter,
+  XLSX_TABLE_OUTPUT,
+  type TableOutputFormat,
+} from "../../table-output.js";
 import {
   cellKey,
   countTitleRows,
@@ -942,6 +946,7 @@ export async function writeConsolidation(
   settings: ConsolidationSettings,
   sheetName: string,
   sink: ConsolidationSink,
+  format: TableOutputFormat = XLSX_TABLE_OUTPUT,
 ): Promise<void> {
   let failure: { readonly error: unknown } | undefined;
   const guarded: ConsolidationSink = {
@@ -963,7 +968,7 @@ export async function writeConsolidation(
     },
   };
   try {
-    await copyTables(sources, plan, settings, sheetName, guarded);
+    await copyTables(sources, plan, settings, sheetName, guarded, format);
   } catch (error) {
     throw failure === undefined ? error : failure.error;
   }
@@ -975,9 +980,10 @@ async function copyTables(
   settings: ConsolidationSettings,
   sheetName: string,
   sink: ConsolidationSink,
+  format: TableOutputFormat,
 ): Promise<void> {
   const { signal, outputContext } = settings;
-  const writer = new TableWorkbookWriter({
+  const writer = openTableWriter(format, {
     sheetName,
     columns: plan.columns,
     widths: plan.widths,

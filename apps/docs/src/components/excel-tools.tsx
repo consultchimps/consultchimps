@@ -366,6 +366,7 @@ function SourceWorkbookList({ disabled, uploads }: SourceWorkbookListProps) {
 
 export function ExcelSplitTool() {
   const columnSelectId = useId();
+  const splitFormatId = useId();
   const headerRowId = useId();
   const previewHeadingId = useId();
 
@@ -389,8 +390,12 @@ export function ExcelSplitTool() {
     useState<OperationPlan<SplitWorkbookByColumnPlanMetric> | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
   const [csvChoices, setCsvChoice] = useCsvChoices();
-  // A CSV file has no workbook to keep, so it always splits compactly.
+  const [splitFormat, setSplitFormat] = useState<"" | "xlsx" | "csv">("");
+  const [splitBom, setSplitBom] = useState(true);
+  // A CSV file has no workbook to keep, so it always splits compactly, and
+  // into CSV files unless workbooks are asked for.
   const isCsv = input !== null && isCsvFileName(input.name);
+  const csvOutput = splitFormat === "csv" || (splitFormat === "" && isCsv);
   const csv = useMemo(
     () => (isCsv ? csvReadOptionsFrom(csvChoices) : undefined),
     [csvChoices, isCsv],
@@ -410,19 +415,26 @@ export function ExcelSplitTool() {
   // an Excel Table split. A named range or a named worksheet is always rebuilt
   // compactly, so the option would be a promise the API cannot keep.
   const preserveWorkbookAllowed =
-    !isCsv && (Boolean(tableName) || (!rangeName && !sheetName));
+    !isCsv && !csvOutput && (Boolean(tableName) || (!rangeName && !sheetName));
   // The API's dispatch rule, mirrored so the controls can tell the truth: no
   // source named and preservation left on means every worksheet is filtered
   // in place, which is also the only mode that ignores the blank and hidden
   // worksheet options.
   const allWorksheetMode =
-    !isCsv && !tableName && !rangeName && !sheetName && preserveWorkbook;
+    !isCsv &&
+    !csvOutput &&
+    !tableName &&
+    !rangeName &&
+    !sheetName &&
+    preserveWorkbook;
 
   const options = useMemo<WorkbookSplitOptions>(() => {
     const parsedHeaderRow = Number.parseInt(headerRow, 10);
     return {
       column: column.trim(),
       csv,
+      csvBom: csvOutput ? splitBom : undefined,
+      outputFormat: splitFormat === "" ? undefined : splitFormat,
       filenamePrefix: prefix.trim() || undefined,
       headerRow:
         headerRowAllowed && Number.isFinite(parsedHeaderRow)
@@ -444,7 +456,10 @@ export function ExcelSplitTool() {
     allWorksheetMode,
     column,
     csv,
+    csvOutput,
     headerRow,
+    splitBom,
+    splitFormat,
     headerRowAllowed,
     includeBlank,
     includeHiddenSheets,
@@ -749,14 +764,47 @@ export function ExcelSplitTool() {
                 value={headerRowAllowed ? headerRow : ""}
               />
             </div>
+            <div>
+              <label className={fieldLabelClass} htmlFor={splitFormatId}>
+                Output files
+              </label>
+              <select
+                className={`${inputClass} mt-2`}
+                data-testid="output-format-select"
+                disabled={isRunning}
+                id={splitFormatId}
+                onChange={(event) =>
+                  setSplitFormat(event.target.value as "" | "xlsx" | "csv")
+                }
+                value={splitFormat}
+              >
+                <option value="">
+                  {isCsv
+                    ? "CSV files, as the input"
+                    : "Excel workbooks, as the input"}
+                </option>
+                <option value="xlsx">Excel workbooks (.xlsx)</option>
+                <option value="csv">CSV files (.csv)</option>
+              </select>
+            </div>
+            {csvOutput ? (
+              <CheckboxField
+                checked={splitBom}
+                disabled={isRunning}
+                hint="On by default, so Excel opens the files as UTF-8 and accented letters show correctly"
+                label="Start each CSV file with a byte order mark"
+                onChange={setSplitBom}
+                testId="csv-bom-checkbox"
+              />
+            ) : null}
             <CheckboxField
               checked={preserveWorkbookAllowed && preserveWorkbook}
               disabled={isRunning || !preserveWorkbookAllowed}
               hint={
                 preserveWorkbookAllowed
                   ? "On by default. The source workbook's sheets, formatting, and supported workbook structure are kept, and only the rows that do not belong are removed. Pivot tables and their caches are removed, with a warning on the result. Turn it off to get small, plain workbooks holding just the matching rows of the source being split"
-                  : isCsv
-                    ? "Not offered for a CSV file, which has no workbook to keep: each output is a small, plain workbook holding just the matching rows"
+                  : isCsv || csvOutput
+                    ? "Not offered for a CSV input or CSV output: each output holds just the matching rows"
                     : "Not offered for a named worksheet or a named range: those always produce small, plain workbooks holding just the matching rows"
               }
               label="Keep the whole workbook"
@@ -1199,6 +1247,8 @@ export function ExcelConsolidateTool() {
   const [includeHiddenSheets, setIncludeHiddenSheets] = useState(false);
   const [inspectedId, setInspectedId] = useState("");
   const [csvChoices, setCsvChoice] = useCsvChoices();
+  const [csvOutput, setCsvOutput] = useState(false);
+  const [csvBom, setCsvBom] = useState(true);
   const hasCsv = files.some((file) => isCsvFileName(file.name));
   // Kept as one value per set of choices, so the callbacks below are not
   // rebuilt on every render.
@@ -1335,6 +1385,11 @@ export function ExcelConsolidateTool() {
       inputs: files.map((file) => ({ file: file.file, name: file.name })),
       addSourceColumns,
       csv,
+      // Always explicit, so a name ending in .csv cannot override the choice;
+      // a name that contradicts it is refused.
+      ...(csvOutput
+        ? { csvBom, outputFormat: "csv" as const }
+        : { outputFormat: "xlsx" as const }),
       includeHiddenSheets,
       mapping: mapping ?? undefined,
       normalizeHeaders,
@@ -1343,6 +1398,8 @@ export function ExcelConsolidateTool() {
   }, [
     addSourceColumns,
     csv,
+    csvBom,
+    csvOutput,
     files,
     includeHiddenSheets,
     mapping,
@@ -1402,13 +1459,35 @@ export function ExcelConsolidateTool() {
         <div className="mt-6 flex flex-col gap-5">
           <TextField
             disabled={isRunning}
-            hint="Optional. Defaults to `consolidated.xlsx`. The `.xlsx` extension is added for you"
+            hint={
+              csvOutput
+                ? "Optional. Defaults to `consolidated.csv`. The `.csv` extension is added for you"
+                : "Optional. Defaults to `consolidated.xlsx`. The `.xlsx` extension is added for you"
+            }
             label="Output filename"
             onChange={setOutputName}
             placeholder="all-rows"
             testId="output-name-input"
             value={outputName}
           />
+          <CheckboxField
+            checked={csvOutput}
+            disabled={isRunning}
+            hint="Write one CSV file instead of a workbook: UTF-8, commas, and an apostrophe before any text that would start a formula"
+            label="Write a CSV file"
+            onChange={setCsvOutput}
+            testId="csv-output-checkbox"
+          />
+          {csvOutput ? (
+            <CheckboxField
+              checked={csvBom}
+              disabled={isRunning}
+              hint="On by default, so Excel opens the file as UTF-8 and accented letters show correctly"
+              label="Start the file with a byte order mark"
+              onChange={setCsvBom}
+              testId="csv-bom-checkbox"
+            />
+          ) : null}
           <CheckboxField
             checked={normalizeHeaders}
             disabled={isRunning}

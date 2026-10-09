@@ -221,6 +221,8 @@ async function perform(
         {
           addSourceColumns: task.addSourceColumns,
           csv: task.csv,
+          csvBom: task.csvBom,
+          outputFormat: task.outputFormat,
           includeHiddenSheets: task.includeHiddenSheets,
           mapping: task.mapping,
           normalizeHeaders: task.normalizeHeaders,

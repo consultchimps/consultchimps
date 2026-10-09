@@ -180,7 +180,7 @@ a `result` object holding the operation result with its metrics and warnings.
 consultchimps sheets consolidate [options] <inputs...>
 
 Required:
-  -o, --output <path>       output .xlsx file
+  -o, --output <path>       output .xlsx or .csv file
 
 Options:
   --sheet <names...>        include only these worksheet names
@@ -203,6 +203,9 @@ Options:
   --csv-thousands <separator>  thousands separator for --csv-numbers: , . space
                             apostrophe or none (default: , or . after a , decimal)
   --csv-dates <order>       read CSV dates: iso, dmy, mdy, or ymd
+  --output-format <format>  xlsx or csv; must agree with the output name's extension
+  --csv-bom <true|false>    start a CSV output with a UTF-8 byte order mark
+                            (default: true)
 ```
 
 Inputs can mix `.xlsx` workbooks and `.csv` files; see [CSV files](#csv-files).
@@ -224,8 +227,8 @@ run.
 Every `sheets` command but `unprotect` reads `.csv` files beside workbooks. Each
 CSV file is one worksheet named after the file, so `_source_sheet` names it. A
 merge copies its rows as they are into a tab of that name. A split of a CSV file
-always writes compact workbooks, since there is no workbook to keep;
-`--preserve-workbook` with a CSV input is refused with
+writes CSV files, or compact workbooks with `--output-format xlsx`, since there
+is no workbook to keep; `--preserve-workbook` with a CSV input is refused with
 `XLSX_SPLIT_CSV_PRESERVE`. The encoding comes from a byte order mark, else
 UTF-8, else Windows-1252 with a warning; the delimiter is guessed from the first
 rows. `--csv-delimiter` overrides the guess, and `--csv-encoding` the encoding,
@@ -239,9 +242,19 @@ digits stay text. `--csv-dates iso` reads `yyyy-mm-dd`, and `dmy`, `mdy` or
 order, and a field that is not wholly a number or a date is never changed. A
 converted date is a real Excel date in the output.
 
-A consolidated table larger than a worksheet holds is refused with
-`XLSX_OUTPUT_TOO_LARGE`. Malformed quoting is refused with `XLSX_CSV_MALFORMED`,
-naming the row.
+`sheets consolidate` writes CSV when `-o` ends in `.csv` or with
+`--output-format csv`, and `sheets split` writes CSV files for a CSV input, or
+with `--output-format csv`, which splits compactly. A CSV output uses RFC 4180
+quoting, commas and CRLF, is UTF-8 with a byte order mark unless
+`--csv-bom false`, writes dates as ISO text, and prefixes an apostrophe to text
+that would start a formula (`=`, `+`, `-`, `@`), except text that is only a
+signed number. A merge cannot write CSV, since its tabs cannot be one file. A
+name that contradicts `--output-format` is refused with
+`XLSX_OUTPUT_FORMAT_INVALID`.
+
+An `.xlsx` table larger than a worksheet holds, or with a cell longer than
+32,767 characters, is refused with `XLSX_OUTPUT_TOO_LARGE`. Malformed quoting is
+refused with `XLSX_CSV_MALFORMED`, naming the row.
 
 ## Spreadsheet worksheet merging
 
@@ -304,6 +317,9 @@ Options:
   --csv-thousands <separator>  thousands separator for --csv-numbers: , . space
                             apostrophe or none (default: , or . after a , decimal)
   --csv-dates <order>       read CSV dates: iso, dmy, mdy, or ymd
+  --output-format <format>  xlsx or csv; must agree with the output name's extension
+  --csv-bom <true|false>    start a CSV output with a UTF-8 byte order mark
+                            (default: true)
 ```
 
 Without `--table`, `--range`, or `--sheet`, the command collects normalized,
