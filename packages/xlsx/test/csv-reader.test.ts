@@ -391,6 +391,38 @@ describe("CSV encodings", () => {
     }
   });
 
+  it("refuses bytes a declared Unicode encoding cannot read", async () => {
+    const marked = await failure(
+      Uint8Array.from([0xef, 0xbb, 0xbf, 0x61, 0x0a, 0xff, 0x0a]),
+    );
+    expect(marked.code).toBe("XLSX_CSV_ENCODING_UNKNOWN");
+    expect(marked.message).toContain("byte order mark");
+    const chosen = await failure(Uint8Array.from([0x61, 0x0a, 0xe9, 0x0a]), {
+      encoding: "utf-8",
+    });
+    expect(chosen.code).toBe("XLSX_CSV_ENCODING_UNKNOWN");
+  });
+
+  it("fails a read of a file changed since it was opened", async () => {
+    const bytes = utf8("a,b\n1,2\n");
+    const workbook = await CsvWorkbook.open(bytesSource("data.csv", bytes), {
+      file: "data.csv",
+      source: "data.csv",
+      details: {},
+    });
+    bytes[4] = 0x39;
+    let caught: unknown;
+    try {
+      await workbook.readWorksheet(workbook.sheets[0]!, {
+        begin: () => undefined,
+        row: () => undefined,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as ConsultChimpsError).code).toBe("XLSX_READ_FAILED");
+  });
+
   it("refuses zero bytes without a byte order mark", async () => {
     const bytes = utf16(text, true).subarray(2);
     const error = await failure(bytes);

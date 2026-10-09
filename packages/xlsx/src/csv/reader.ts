@@ -332,10 +332,19 @@ export class CsvWorkbook {
       );
     }
     const marked = mark;
+    // Every byte is checked against the encoding the file will be read in, so
+    // a malformed sequence is refused rather than read as a replacement
+    // character: the mark's, else a chosen Unicode encoding, else UTF-8 to
+    // detect it. Windows-1252 gives every byte a character.
+    const declared =
+      marked ??
+      (options.encoding === "windows-1252" ? undefined : options.encoding);
     const validator =
-      options.encoding === undefined && marked === undefined
-        ? new TextDecoder("utf-8", { fatal: true })
-        : undefined;
+      declared !== undefined
+        ? new TextDecoder(declared, { fatal: true })
+        : options.encoding === undefined
+          ? new TextDecoder("utf-8", { fatal: true })
+          : undefined;
     let valid = true;
     let zero = false;
     // FNV-1a over every byte: cheap, and any change to the bytes changes it.
@@ -365,6 +374,13 @@ export class CsvWorkbook {
       }
     }
 
+    if (declared !== undefined && !valid) {
+      throw new ConsultChimpsError(
+        XLSX_ERRORS.XLSX_CSV_ENCODING_UNKNOWN,
+        `${context.source} ${marked === undefined ? "was to be read" : "starts with a byte order mark saying it is"} ${csvEncodingName(declared)}, but holds bytes that are not ${csvEncodingName(declared)}, so its text cannot be read without changing it. ${marked === undefined ? "Choose its encoding" : "Save it again as UTF-8"} and run again.`,
+        { details: context.details },
+      );
+    }
     let encoding: CsvEncoding;
     let encodingSource: CsvEncodingSource;
     // A byte order mark says what the file is, so it wins over a choice that
@@ -617,11 +633,17 @@ export class CsvWorkbook {
 
     const decoder = new TextDecoder(this.encoding);
     const size = this.#source.size;
+    // The bytes are fingerprinted again as they are read, so a file changed
+    // since it was opened fails the read rather than giving other rows.
+    let fingerprint = 0x811c9dc5;
     for (let offset = 0; offset < size; offset += CSV_PIECE_BYTES) {
       const bytes = await this.#source.readAt(
         offset,
         Math.min(CSV_PIECE_BYTES, size - offset),
       );
+      for (const byte of bytes) {
+        fingerprint = Math.imul(fingerprint ^ byte, 0x01000193) >>> 0;
+      }
       const text = decoder.decode(bytes, { stream: true });
       if (text !== "") take(text);
       if (failure !== undefined) throw failure;
@@ -631,6 +653,13 @@ export class CsvWorkbook {
     if (tail !== "") take(tail);
     if (failure === undefined) feed.end();
     if (failure !== undefined) throw failure;
+    if (fingerprint !== this.fingerprint) {
+      throw new ConsultChimpsError(
+        XLSX_ERRORS.XLSX_READ_FAILED,
+        `${this.#context.source} changed while it was being read, so nothing read from it was used. Run again once the file is no longer being changed.`,
+        { details: this.#context.details },
+      );
+    }
 
     return {
       range,
