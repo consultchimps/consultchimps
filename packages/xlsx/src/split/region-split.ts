@@ -695,6 +695,20 @@ export async function resolveRegionSplit(
     { clip: chosen.kind === "worksheet", gather: read.gathered },
   );
   if (matched < 0) settleNames(headerCells);
+  // A CSV field can be longer than a cell holds; a workbook's cannot.
+  let longestCell = 0;
+  for (const group of groups) {
+    for (const width of group.widths) {
+      longestCell = Math.max(longestCell, width);
+    }
+  }
+  if (longestCell > 32_767) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_OUTPUT_TOO_LARGE,
+      `${context.label} has a cell of ${longestCell.toLocaleString("en-US")} characters, more than the 32,767 an Excel cell holds, so nothing was written.`,
+      { details: { ...context.details, longestCell } },
+    );
+  }
 
   if (groups.length === 0) {
     throw new ConsultChimpsError(

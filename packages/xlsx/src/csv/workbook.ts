@@ -69,6 +69,7 @@ export const memoryCsvScratch: CsvScratch = (name) => {
 
 const WORKSHEET_ROWS = 1_048_576;
 const WORKSHEET_COLUMNS = 16_384;
+const CELL_CHARACTERS = 32_767;
 
 export interface CsvAsWorkbook {
   /** The workbook, named as the CSV file is so the operation reports it so. */
@@ -131,6 +132,18 @@ export async function csvAsWorkbook(
           columns: lengths.length,
         },
       },
+    );
+  }
+
+  const longest = lengths.reduce(
+    (most, length) => Math.max(most, length ?? 0),
+    0,
+  );
+  if (longest > CELL_CHARACTERS) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_OUTPUT_TOO_LARGE,
+      `${source.name} has a field of ${longest.toLocaleString("en-US")} characters, more than the 32,767 an Excel cell holds, so it cannot become a worksheet.`,
+      { details: { source: source.name, longestCell: longest } },
     );
   }
 

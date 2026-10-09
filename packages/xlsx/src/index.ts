@@ -28,6 +28,7 @@ import {
   type OperationPlan,
   type OperationResult,
   type PlannedOutput,
+  type RandomAccessFile,
   type RandomAccessSource,
 } from "@consultchimps/core";
 import {
@@ -1040,13 +1041,17 @@ export async function mergeWorkbooks(
   settleCsvOptions(options.csv);
   const csvWarnings: string[] = [];
   let csvInputs = 0;
-  // Each CSV input's worksheet is written to a temporary file the merge reads
-  // as it writes, removed when the merge ends.
+  // Every CSV input's worksheet is written, one after another, into one
+  // temporary file the merge reads as it writes, so the CSV inputs hold one
+  // handle between them; it is removed when the merge ends.
   let scratchDirectory: ScratchDirectory | undefined;
+  let scratchFile: RandomAccessFile | undefined;
+  let scratchEnd = 0;
   const scratch: CsvScratch = async (name) => {
     scratchDirectory ??= await createScratchDirectory(tmpdir());
-    const file = await scratchDirectory.create();
-    let size = 0;
+    scratchFile ??= await scratchDirectory.create();
+    const file = scratchFile;
+    const start = scratchEnd;
     let pending: Uint8Array[] = [];
     return {
       sink: {
@@ -1057,8 +1062,8 @@ export async function mergeWorkbooks(
           const chunks = pending;
           pending = [];
           for (const chunk of chunks) {
-            await file.writeAt(size, chunk);
-            size += chunk.length;
+            await file.writeAt(scratchEnd, chunk);
+            scratchEnd += chunk.length;
           }
         },
         abort: () => {
@@ -1066,13 +1071,15 @@ export async function mergeWorkbooks(
           return Promise.resolve();
         },
       },
-      finish: () =>
-        Promise.resolve({
+      finish: () => {
+        const size = scratchEnd - start;
+        return Promise.resolve({
           name,
           size,
           readAt: (offset: number, length: number) =>
-            file.readAt(offset, length),
-        }),
+            file.readAt(start + offset, length),
+        });
+      },
     };
   };
   try {
@@ -1099,6 +1106,10 @@ export async function mergeWorkbooks(
           },
           options.csv,
           scratch,
+          async () => {
+            await yieldToEventLoop();
+            throwIfAborted(options.signal, MERGE_OPERATION);
+          },
         );
         workbook = converted.workbook;
         for (const warning of converted.warnings) csvWarnings.push(warning);
@@ -1136,10 +1147,23 @@ export async function mergeWorkbooks(
         throwIfAborted(options.signal, MERGE_OPERATION);
       },
     );
-  } finally {
-    await inputs.close();
-    await scratchDirectory?.close();
+  } catch (error) {
+    // The merge's own failure is what the caller needs to hear about.
+    await Promise.allSettled([inputs.close(), scratchDirectory?.close()]);
+    throw error;
   }
+  const [closedInputs, closedScratch] = await Promise.allSettled([
+    inputs.close(),
+    scratchDirectory?.close(),
+  ]);
+  // The merged workbook is already saved, so a temporary file that would not
+  // go away is reported rather than turned into a failure.
+  if (closedScratch.status === "rejected") {
+    csvWarnings.push(
+      "A temporary copy of a CSV input could not be removed from the system's temporary folder. Delete folders there named cc-scratch- followed by letters once nothing is using them.",
+    );
+  }
+  if (closedInputs.status === "rejected") throw closedInputs.reason;
   options.onProgress?.({
     operation: MERGE_OPERATION,
     stage: "writing-output",

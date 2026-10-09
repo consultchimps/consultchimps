@@ -342,7 +342,7 @@ describe("consultchimps CLI", () => {
     const mergeHelp = await runCli(["sheets", "merge", "--help"]);
     const mergeHelpText = mergeHelp.stdout.replace(/\s+/g, " ");
     expect(mergeHelpText).toContain(
-      "copy every worksheet from multiple Excel workbooks into one workbook, keeping each sheet separate",
+      "copy every worksheet from multiple Excel workbooks and CSV files into one workbook, keeping each sheet separate",
     );
     expect(mergeHelp.stdout).toContain(
       "When you want one combined sheet instead of separate tabs:",

@@ -97,6 +97,7 @@ describe("corpus: merge", () => {
     const result = await mergeWorkbooks([first, second], output);
 
     expect(result.metrics).toEqual({
+      csvInputFiles: 0,
       formulaCellsWithoutCachedValues: 0,
       hiddenSheets: 4,
       inputFiles: 2,
@@ -609,6 +610,7 @@ describe("corpus: merge", () => {
 
     expect(outcome.outputs[0]!.name).toBe("merged.xlsx");
     expect(outcome.result.metrics).toEqual({
+      csvInputFiles: 0,
       formulaCellsWithoutCachedValues: 0,
       hiddenSheets: 4,
       inputFiles: 2,

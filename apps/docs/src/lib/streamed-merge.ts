@@ -11,7 +11,11 @@ import {
 } from "@consultchimps/xlsx/bytes";
 
 import type { NamedFile, OutputFile } from "./operation-tasks";
-import { openOutputTarget, type OutputPlace } from "./output-storage";
+import {
+  openOutputTarget,
+  removeOutputs,
+  type OutputPlace,
+} from "./output-storage";
 import { PieceReads } from "./piece-source";
 
 /** The operation's name, as the library reports a cancellation. */
@@ -41,6 +45,7 @@ export async function mergeFiles(
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     created,
   );
+  const scratchNames = new Set<string>();
   const reads = new PieceReads(MERGE_OPERATION, controls.signal);
   let merged: Awaited<ReturnType<typeof mergeWorkbookSources>>;
   try {
@@ -51,13 +56,12 @@ export async function mergeFiles(
         inputs: inputs.map((input) => reads.source(input)),
         output: target.sink,
         // Each CSV input's worksheet is written to a file of its own that the
-        // merge reads as it writes, kept with this run's outputs and removed
-        // with them.
+        // merge reads as it writes, removed as soon as the merge ends.
         scratch: async (name) => {
           const file = await openOutputTarget(
             place,
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            created,
+            scratchNames,
           );
           return {
             sink: file.sink,
@@ -69,6 +73,11 @@ export async function mergeFiles(
   } catch (error) {
     await target.sink.abort().catch(() => undefined);
     throw error;
+  } finally {
+    await removeOutputs(place, scratchNames).catch(() => undefined);
+    // One still open somewhere is left to the sweeps that clear this run's
+    // outputs.
+    for (const name of scratchNames) created.add(name);
   }
   let finished: Awaited<ReturnType<typeof target.finish>>;
   try {
