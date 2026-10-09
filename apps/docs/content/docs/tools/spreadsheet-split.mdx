@@ -142,8 +142,9 @@ consultchimps sheets split export.csv --column Region --output-dir outputs/by-re
 A CSV file is one worksheet named after the file, with no workbook to keep, so
 it splits into one CSV file per value, or into compact workbooks with
 `--output-format xlsx`. `--output-format csv` splits a workbook into CSV files
-the same compact way, and asking to keep the workbook with CSV output is
-refused. Fields stay text unless `--csv-numbers` or `--csv-dates` asks
+the same compact way, from one source named with `--sheet`, `--table` or
+`--range` when it has several, and asking to keep the workbook with CSV output
+is refused. Fields stay text unless `--csv-numbers` or `--csv-dates` asks
 otherwise, and the encoding and delimiter are detected, with `--csv-encoding`
 and `--csv-delimiter` to override them; a byte order mark wins over a
 contradicting encoding. Each CSV output is UTF-8 with a byte order mark
