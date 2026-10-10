@@ -127,6 +127,26 @@ test.describe("/tools/pptx-populate", () => {
     );
   });
 
+  test("writes one populated slide per row of a CSV file", async ({ page }) => {
+    await page.goto("/tools/pptx-populate");
+    await templateInput(page).setInputFiles(
+      await createPresentationUpload("review-template.pptx", REVIEW_TEMPLATE),
+    );
+    await recordsInput(page).setInputFiles({
+      name: "records.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(
+        "title,region\r\nQuarterly review,North\r\nQuarterly review,South\r\n",
+        "utf8",
+      ),
+    });
+    await expect(page.getByTestId("csv-options")).toBeVisible();
+    await page.getByTestId("run-button").click();
+    await expect(page.getByTestId("result-message")).toContainText(
+      "ConsultChimps read 2 nonempty CSV records and created 2 populated slides in file order.",
+    );
+  });
+
   test("reports a placeholder the workbook has no column for", async ({
     page,
   }) => {

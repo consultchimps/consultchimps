@@ -393,15 +393,21 @@ consultchimps pptx populate [options]
 
 Required:
   --template <path>          source .pptx template
-  --data <path>              source .xlsx workbook
+  --data <path>              source .xlsx workbook or .csv file
   -o, --output <path>        output .pptx presentation
 
 Options:
-  --sheet <name>             worksheet containing the records (default: first)
+  --sheet <name>             worksheet containing the records (default: first;
+                             refused for a CSV file)
   --template-slide <number>  one-based template slide (default: 1)
   --header-row <number>      one-based row containing field names
   -f, --force                replace an existing output presentation
+  --csv-*                    read a CSV file as described in [CSV files](#csv-files)
 ```
+
+A `.csv` data file is one worksheet, read with the `--csv-*` flags. A number
+read by `--csv-numbers` shows as General would show it, and a date read by
+`--csv-dates` as `yyyy-mm-dd`, as in a workbook ConsultChimps writes.
 
 Place the global `--json` option before `pptx` to receive the structured
 inspection or operation result.

@@ -15,6 +15,7 @@ import {
 } from "@consultchimps/core";
 import {
   readWorksheetRecordsBytes,
+  type CsvReadOptions,
   type WorkbookInputBytes,
 } from "@consultchimps/xlsx/bytes";
 
@@ -61,8 +62,13 @@ export interface PopulatePresentationBytesOptions extends OperationControlOption
    * or a workbook, never both.
    */
   records?: readonly PresentationRecord[] | undefined;
-  /** The workbook whose worksheet rows become the records. */
+  /**
+   * The workbook whose worksheet rows become the records, or a CSV file,
+   * recognised by a name ending in `.csv` and read with `csv`.
+   */
   workbook?: WorkbookInputBytes | undefined;
+  /** How to read a CSV `workbook`: every field text unless asked (ADR 0007). */
+  csv?: CsvReadOptions | undefined;
   headerRow?: number | undefined;
   outputName?: string | undefined;
   templateSlide?: number | undefined;
@@ -128,6 +134,7 @@ async function resolveRecords(
   // slide XML was being awaited must stop the task here.
   throwIfAborted(options.signal, POPULATE_OPERATION, "memory");
   const worksheetRecords = await readWorksheetRecordsBytes(workbook, {
+    csv: options.csv,
     headerRow: options.headerRow,
     worksheet: options.worksheet,
   });
@@ -137,6 +144,10 @@ async function resolveRecords(
     rows: worksheetRecords.rows,
     skippedEmptyRows: worksheetRecords.skippedEmptyRows,
     uncachedFormulas: worksheetRecords.uncachedFormulas,
+    ...(worksheetRecords.warnings === undefined
+      ? {}
+      : { sourceWarnings: worksheetRecords.warnings }),
+    csvSource: workbook.name.toLowerCase().endsWith(".csv"),
   };
 }
 
@@ -276,6 +287,7 @@ export async function planPopulatePresentationBytes(
     ],
     warnings: recordsWarnings(resolved.records),
     metrics: {
+      csvInputFiles: resolved.records.csvSource === true ? 1 : 0,
       formulaCellsWithoutCachedValues: resolved.records.uncachedFormulas.length,
       generatedSlides: resolved.records.rows.length,
       inputRows: resolved.records.rows.length,
@@ -325,6 +337,7 @@ export async function populatePresentationBytes(
       ],
       warnings,
       metrics: {
+        csvInputFiles: records.csvSource === true ? 1 : 0,
         formulaCellsWithoutCachedValues: records.uncachedFormulas.length,
         generatedSlides: records.rows.length,
         inputRows: records.rows.length,

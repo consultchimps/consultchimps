@@ -174,6 +174,7 @@ describe("byte-level presentation population", () => {
 
     expect(result.operation).toBe("pptx.populate");
     expect(result.metrics).toEqual({
+      csvInputFiles: 0,
       formulaCellsWithoutCachedValues: 0,
       generatedSlides: 2,
       inputRows: 2,
@@ -268,6 +269,7 @@ describe("byte-level presentation population", () => {
     ]);
     expect(plan.warnings).toEqual(["Skipped 1 empty worksheet row."]);
     expect(plan.metrics).toEqual({
+      csvInputFiles: 0,
       formulaCellsWithoutCachedValues: 0,
       generatedSlides: 1,
       inputRows: 1,
@@ -708,5 +710,69 @@ describe("byte entry point packaging", () => {
     }
 
     expect(visited.size).toBeGreaterThan(0);
+  });
+});
+
+describe("CSV records", () => {
+  const csv = (text: string) => ({
+    name: "clients.csv",
+    bytes: new TextEncoder().encode(text),
+  });
+
+  it("populates from a CSV file, typed values shown as a written workbook shows them", async () => {
+    const template = {
+      name: "t.pptx",
+      bytes: await singlePlaceholderTemplate(),
+    };
+    const data = csv(
+      "client;amount\nNorth;1.234,5\nSouth;2025-01-31\n",
+    );
+    const plain = await populatePresentationBytes({ template, workbook: data });
+    const plainSlides = await outputSlides(plain.outputs[0]!.bytes);
+    expect(plainSlides[0]).toContain("1.234,5");
+
+    const typed = await populatePresentationBytes({
+      template,
+      workbook: data,
+      csv: { numbers: true, decimalSeparator: ",", dates: "iso" },
+    });
+    const slides = await outputSlides(typed.outputs[0]!.bytes);
+    expect(slides).toHaveLength(2);
+    expect(slides[0]).toContain("North");
+    expect(slides[0]).toContain("1234.5");
+    expect(slides[1]).toContain("2025-01-31");
+
+    const plan = await planPopulatePresentationBytes({
+      template,
+      workbook: data,
+    });
+    expect(plan.metrics).toMatchObject({ generatedSlides: 2, inputRows: 2 });
+  });
+
+  it("refuses a worksheet name for a CSV file", async () => {
+    await expect(
+      populatePresentationBytes({
+        template: { name: "t.pptx", bytes: await singlePlaceholderTemplate() },
+        workbook: csv("client,amount\nNorth,1\n"),
+        worksheet: "clients",
+      }),
+    ).rejects.toMatchObject({ code: "XLSX_CSV_INVALID_OPTION" });
+  });
+
+  it("reports a CSV file read as Windows-1252", async () => {
+    const outcome = await populatePresentationBytes({
+      template: { name: "t.pptx", bytes: await singlePlaceholderTemplate() },
+      workbook: {
+        name: "clients.csv",
+        bytes: Uint8Array.from([
+          ...new TextEncoder().encode("client,amount\nCaf"),
+          0xe9,
+          0x2c,
+          0x31,
+          0x0a,
+        ]),
+      },
+    });
+    expect(outcome.result.warnings.join(" ")).toContain("Windows-1252");
   });
 });

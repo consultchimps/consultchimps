@@ -446,9 +446,11 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
   "pptx.populate": {
     title: "Your PowerPoint presentation is complete.",
     summary: (result) => [
-      `ConsultChimps read ${quantity(metric(result, "inputRows"), "nonempty Excel record")} and created ${quantity(metric(result, "generatedSlides"), "populated slide")} in worksheet order.`,
+      `ConsultChimps read ${quantity(metric(result, "inputRows"), metric(result, "csvInputFiles") > 0 ? "nonempty CSV record" : "nonempty Excel record")} and created ${quantity(metric(result, "generatedSlides"), "populated slide")} in ${metric(result, "csvInputFiles") > 0 ? "file" : "worksheet"} order.`,
       `It replaced ${quantity(metric(result, "replacements"), "placeholder occurrence")} across the generated slides.`,
-      "Your source PowerPoint template and Excel workbook were not changed.",
+      metric(result, "csvInputFiles") > 0
+        ? "Your source PowerPoint template and CSV file were not changed."
+        : "Your source PowerPoint template and Excel workbook were not changed.",
     ],
     nextSteps: (vocabulary) => [
       `Open the new PowerPoint presentation ${vocabulary.artifactListReference} and review every generated slide.`,

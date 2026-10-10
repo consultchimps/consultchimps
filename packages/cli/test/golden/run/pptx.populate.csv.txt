@@ -1,4 +1,4 @@
-$ consultchimps pptx populate --template inputs/profile.pptx --data inputs/companies.xlsx -o profiles.pptx
+$ consultchimps pptx populate --template inputs/profile.pptx --data inputs/companies.csv --csv-numbers --csv-decimal "," -o profiles.pptx
 exit code: 0
 
 --- stdout ---
@@ -7,12 +7,12 @@ SUCCESS: ConsultChimps finished your task.
 Your PowerPoint presentation is complete.
 
 What ConsultChimps did:
-  - ConsultChimps read 2 nonempty Excel records and created 2 populated slides in worksheet order.
+  - ConsultChimps read 2 nonempty CSV records and created 2 populated slides in file order.
   - It replaced 4 placeholder occurrences across the generated slides.
-  - Your source PowerPoint template and Excel workbook were not changed.
+  - Your source PowerPoint template and CSV file were not changed.
 
 Detailed results:
-  - CSV files read, each as one worksheet: 0
+  - CSV files read, each as one worksheet: 1
   - Formula cells missing cached values: 0
   - PowerPoint slides generated: 2
   - Source data rows read: 2

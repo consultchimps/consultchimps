@@ -68,6 +68,7 @@ export const PPTX_ERRORS = {
 export type PptxErrorCode = (typeof PPTX_ERRORS)[keyof typeof PPTX_ERRORS];
 
 export type PopulatePowerPointTemplateMetric =
+  | "csvInputFiles"
   | "formulaCellsWithoutCachedValues"
   | "generatedSlides"
   | "inputRows"
@@ -125,6 +126,10 @@ export interface PopulationRecords {
   skippedEmptyRows: number;
   /** `Sheet!B4` of each formula cell with no cached value the rows read as empty. */
   uncachedFormulas: string[];
+  /** What reading the data noticed, such as a CSV file's encoding fallback. */
+  sourceWarnings?: string[];
+  /** Whether the records came from a CSV file. */
+  csvSource?: boolean;
 }
 
 interface ShapeInspection {
@@ -665,6 +670,7 @@ export function recordsWarnings(records: PopulationRecords): string[] {
       records.uncachedFormulas,
       "they read as empty text, and a row holding nothing else is skipped",
     ),
+    ...(records.sourceWarnings ?? []),
   ];
 }
 

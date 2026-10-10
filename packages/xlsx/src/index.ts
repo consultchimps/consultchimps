@@ -466,10 +466,29 @@ export async function readWorksheetRecords(
   options: ReadWorksheetRecordsOptions,
 ): Promise<WorksheetRecords> {
   const absolutePath = path.resolve(filePath);
-  return workbookWorksheetRecords(
-    await openWorkbookFile(absolutePath),
-    options,
-  );
+  settleCsvOptions(options.csv);
+  if (!isCsvName(absolutePath)) {
+    return workbookWorksheetRecords(
+      await openWorkbookFile(absolutePath),
+      options,
+    );
+  }
+  // A CSV file is read in pieces through a file handle, never whole.
+  const opened = await openWorkbookSource(absolutePath);
+  try {
+    const book = await openSheetBook(
+      opened,
+      {
+        file: path.basename(absolutePath),
+        source: absolutePath,
+        details: { filePath: absolutePath },
+      },
+      options.csv,
+    );
+    return await workbookWorksheetRecords(book, options);
+  } finally {
+    await opened.close();
+  }
 }
 
 export async function readWorkbookExcelTables(

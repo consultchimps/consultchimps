@@ -1,0 +1,19 @@
+$ consultchimps pptx populate --template inputs/profile.pptx --data inputs/companies.csv --sheet Companies -o profiles.pptx
+exit code: 1
+
+--- stdout ---
+(empty)
+
+--- stderr ---
+ERROR: ConsultChimps could not finish your task.
+
+What went wrong:
+  A CSV file has one worksheet, named after the file, so a worksheet cannot be chosen. Leave out the worksheet, "Companies", and run again.
+
+What you can do:
+  - Check the workbook, worksheet, table, column name, and command options mentioned in the message above.
+  - Run the command with --help to review the available spreadsheet options and examples.
+
+Error reference:
+  XLSX_CSV_INVALID_OPTION
+  This reference can help a developer or support person identify the exact type of problem.

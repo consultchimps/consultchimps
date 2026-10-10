@@ -10,6 +10,7 @@ import { CellError } from "../package/cell-error.js";
 import { bytesSource } from "../package/index.js";
 import {
   StreamedWorkbook,
+  type SheetBook,
   type CellPosition,
   type CellRectangle,
   type StreamedCell,
@@ -56,7 +57,7 @@ export function openWorkbookBytes(
  * Excel Table or a named range declares its own rectangle.
  */
 export async function readSheetGrid(
-  workbook: StreamedWorkbook,
+  workbook: SheetBook,
   sheet: StreamedSheet,
   options: { text?: boolean } = {},
 ): Promise<SheetGrid> {

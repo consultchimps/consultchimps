@@ -11,7 +11,7 @@ Options:
 
 Commands:
   inspect-template [options] <template>  list text placeholders on one PowerPoint template slide without creating a file
-  populate [options]                     create one populated PowerPoint slide for every nonempty Excel data row
+  populate [options]                     create one populated PowerPoint slide for every nonempty data row of an Excel workbook or CSV file
   help [command]                         display help for command
 
 Examples:
