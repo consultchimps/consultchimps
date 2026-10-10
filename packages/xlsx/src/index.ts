@@ -1352,6 +1352,7 @@ async function resolveSplitWorkbookByColumn(
           filenamePrefixFor,
           resolveTableOutput(undefined, options.outputFormat, options.csvBom)
             .extension,
+          { signal: options.signal, outputContext: "files" },
         )
       : undefined;
     const resolved =

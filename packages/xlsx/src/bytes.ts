@@ -638,6 +638,7 @@ async function resolveRegionSplitSource(
       options,
       splitFilenamePrefix(options, input.name),
       output.extension,
+      { signal: options.signal, outputContext: "memory" },
     );
     return {
       resolved: each.parts[0]!,

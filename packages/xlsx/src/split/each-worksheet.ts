@@ -5,11 +5,14 @@
  */
 import {
   ConsultChimpsError,
+  throwIfAborted,
+  type AbortOutputContext,
   type RandomAccessSource,
 } from "@consultchimps/core";
 
 import { XLSX_ERRORS } from "../errors.js";
 import { openSheetBook } from "../operations/sheet-book.js";
+import { SPLIT_OPERATION } from "./all-worksheet.js";
 import { splitOutputFilenames, splitSheetOutputFilenames } from "./names.js";
 import {
   resolveRegionSplit,
@@ -59,6 +62,11 @@ export async function resolveEachWorksheetSplit(
   selection: RegionSplitSelection,
   filenamePrefix: string,
   extension: string,
+  /** Checked before each worksheet, so a cancel stops before the next one. */
+  abort: {
+    signal: AbortSignal | undefined;
+    outputContext: AbortOutputContext;
+  },
 ): Promise<EachWorksheetSplit> {
   const book = await openSheetBook(source, {
     file: context.file,
@@ -78,6 +86,7 @@ export async function resolveEachWorksheetSplit(
   let leftOutSkippedRows = 0;
   for (const sheet of book.sheets) {
     if (sheet.part === undefined) continue;
+    throwIfAborted(abort.signal, SPLIT_OPERATION, abort.outputContext);
     try {
       // One open workbook for every sheet, so its parts and strings are held
       // once however many worksheets the split writes.

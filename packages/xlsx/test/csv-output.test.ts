@@ -524,6 +524,20 @@ describe("splitting every worksheet to CSV", () => {
     expect(error.code).toBe("XLSX_SPLIT_NO_GROUPS");
   });
 
+  it("stops before the next worksheet once cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const error = await failure(async () =>
+      planSplitWorkbookBytes({
+        input: { name: "orders.xlsx", bytes: await book() },
+        column: "Region",
+        outputFormat: "csv",
+        signal: controller.signal,
+      }),
+    );
+    expect(error.code).toBe("OPERATION_ABORTED");
+  });
+
   it("refuses a column no worksheet carries", async () => {
     const error = await failure(async () =>
       splitWorkbookBytes({
