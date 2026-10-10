@@ -879,3 +879,24 @@ export function formatHumanError(
     "",
   ].join("\n");
 }
+
+// Stage identifiers that name workbooks for a stage that also reads or writes
+// CSV files. The identifiers stay, since run records pair them with inputs; the
+// words a reader sees name what is true for both.
+const STAGE_LABELS: ReadonlyMap<string, string> = new Map([
+  ["building-workbooks", "Building outputs"],
+  ["reading-workbooks", "Reading inputs"],
+  ["staging-workbooks", "Staging outputs"],
+]);
+
+/**
+ * The words for a progress stage identifier, such as "reading-workbooks", as
+ * every interface shows them: a known stage by its label, any other with its
+ * hyphens as spaces and a capital first letter.
+ */
+export function progressStageLabel(stage: string): string {
+  const label = STAGE_LABELS.get(stage);
+  if (label !== undefined) return label;
+  const spaced = stage.replaceAll("-", " ");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}

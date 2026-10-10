@@ -307,7 +307,7 @@ function SourceWorkbookList({ disabled, uploads }: SourceWorkbookListProps) {
   if (files.length === 0) {
     return (
       <p className="mt-4 text-sm text-fd-muted-foreground">
-        No workbooks added yet
+        No files added yet
       </p>
     );
   }
@@ -578,7 +578,7 @@ export function ExcelSplitTool() {
 
   return (
     <ToolShell
-      description="Choose a workbook and a column, and get one workbook per distinct value in that column. By default each new workbook keeps the source workbook's sheets, formatting, and supported workbook structure, removing only the rows that belong to other values. Pivot tables and their caches are removed and reported, so review complex workbooks (pivots, external links, charts, ActiveX controls) in Excel before you deliver them. Everything runs in this page using the same operation the ConsultChimps library uses"
+      description="Choose a workbook or CSV file and a column, and get one file per distinct value in that column. By default each new workbook keeps the source workbook's sheets, formatting, and supported workbook structure, removing only the rows that belong to other values; a CSV file splits into CSV files unless you choose workbooks. Pivot tables and their caches are removed and reported, so review complex workbooks (pivots, external links, charts, ActiveX controls) in Excel before you deliver them. Everything runs in this page using the same operation the ConsultChimps library uses"
       guideHref="/docs/tools/spreadsheet-split"
       guideLabel="Read the split guide"
       kicker="Online tool · Excel split"
@@ -586,14 +586,14 @@ export function ExcelSplitTool() {
     >
       <section className={sectionClass} data-testid="source-section">
         <h2 className="text-xl font-bold tracking-[-0.03em]">
-          1. Choose a workbook
+          1. Choose a workbook or CSV file
         </h2>
         <div className="mt-4">
           <FilePicker
             accept={SHEET_FILES.accept}
             description={`Drag ${SHEET_FILES.description} here, or pick one with the button below. Only the first file is used`}
             disabled={isRunning}
-            label="Source workbook"
+            label="Source file"
             multiple={false}
             onFiles={(files) => {
               void readUploads(files, SHEET_FILES.accepts).then((read) => {
@@ -635,11 +635,17 @@ export function ExcelSplitTool() {
       */}
       <WorkbookInspectorDisclosure
         csv={csv}
-        emptyMessage="Choose a workbook above to see the worksheets, header rows, and structures it holds"
+        emptyMessage="Choose a workbook or CSV file above to see the worksheets, header rows, and structures it holds"
         file={input}
         headerRow={options.headerRow}
-        hint="See the worksheets, header rows, columns, and sample values this workbook holds, including hidden worksheets, which the default split filters too"
-        label="Look inside this workbook"
+        hint={
+          isCsv
+            ? "See the header row, columns, and sample values this CSV file holds"
+            : "See the worksheets, header rows, columns, and sample values this workbook holds, including hidden worksheets, which the default split filters too"
+        }
+        label={
+          isCsv ? "Look inside this CSV file" : "Look inside this workbook"
+        }
       />
 
       <section className={sectionClass} data-testid="column-section">
@@ -703,9 +709,9 @@ export function ExcelSplitTool() {
             Advanced options
           </summary>
           <p className={`${fieldHintClass} mt-3`}>
-            Leave the worksheet, table, and range fields empty to split every
-            worksheet that contains your column and keep the rest of the
-            workbook in each new file
+            For a workbook, leave the worksheet, table, and range fields empty
+            to split every worksheet that contains your column and keep the rest
+            of the workbook in each new file
           </p>
           <div className="mt-5 flex flex-col gap-5">
             <TextField
@@ -817,7 +823,9 @@ export function ExcelSplitTool() {
               hint={
                 allWorksheetMode
                   ? "Only applies when you name a worksheet, table, or range, or turn off keeping the whole workbook. Otherwise rows with a blank value never get a workbook of their own"
-                  : "Write a workbook for rows whose split value is blank"
+                  : csvOutput
+                    ? "Write a file for rows whose split value is blank"
+                    : "Write a workbook for rows whose split value is blank"
               }
               label="Include blank values"
               onChange={setIncludeBlank}
@@ -868,8 +876,8 @@ export function ExcelSplitTool() {
         </h2>
         {!input || !options.column ? (
           <p className="mt-3 text-sm text-fd-muted-foreground">
-            Choose a workbook and a column to see the workbooks this task will
-            create
+            Choose a workbook or CSV file and a column to see the files this
+            task will create
           </p>
         ) : null}
         {planError ? (
@@ -954,14 +962,18 @@ export function ExcelSplitTool() {
         <p className="mt-3 text-sm text-fd-muted-foreground">
           {preserveWorkbookAllowed && preserveWorkbook
             ? "Each new workbook keeps your file's sheets, formatting, and supported workbook structure, holding only the rows for one value. Pivot tables and their caches are removed and reported; review complex workbooks in Excel before delivery"
-            : "Each new workbook is a small, plain file holding only the matching rows from the source you chose"}
+            : csvOutput
+              ? "Each new CSV file holds only the matching rows from the source you chose"
+              : "Each new workbook is a small, plain file holding only the matching rows from the source you chose"}
         </p>
         <RunControls
           busyLabel="Splitting…"
           disabled={!input || !options.column}
           onCancel={runState.cancel}
           onRun={start}
-          readingLabel="Reading the workbook…"
+          readingLabel={
+            isCsv ? "Reading the CSV file…" : "Reading the workbook…"
+          }
           runLabel="Run split"
           state={runState}
         />
@@ -1006,7 +1018,7 @@ export function ExcelMergeTool() {
 
   return (
     <ToolShell
-      description="Add the workbooks you want to combine, arrange them in the order their tabs should appear, and merge them without uploading anything. Every source worksheet stays its own separate tab. No rows are stacked into one sheet"
+      description="Add the workbooks and CSV files you want to combine, arrange them in the order their tabs should appear, and merge them without uploading anything. Every source worksheet, and every CSV file, stays its own separate tab. No rows are stacked into one sheet"
       guideHref="/docs/tools/workbook-merge"
       guideLabel="Read the merge guide"
       kicker="Online tool · Excel merge"
@@ -1029,14 +1041,14 @@ export function ExcelMergeTool() {
       ) : null}
       <section className={sectionClass} data-testid="source-section">
         <h2 className="text-xl font-bold tracking-[-0.03em]">
-          1. Add workbooks
+          1. Add workbooks or CSV files
         </h2>
         <div className="mt-4">
           <FilePicker
             accept={SHEET_FILES.accept}
             description={`Drag one or more ${SHEET_FILES.pluralDescription} here, or pick them with the button below. Added files keep the order shown, and each CSV file becomes one tab`}
             disabled={isRunning}
-            label="Source workbooks"
+            label="Source files"
             multiple
             onFiles={(chosen) => {
               void readUploads(chosen, SHEET_FILES.accepts).then((read) => {
@@ -1083,9 +1095,9 @@ export function ExcelMergeTool() {
         <h2 className="text-xl font-bold tracking-[-0.03em]">2. Run</h2>
         <p className="mt-3 text-sm text-fd-muted-foreground">
           {files.length === 0
-            ? "Add at least one workbook to merge"
+            ? "Add at least one workbook or CSV file to merge"
             : `Every worksheet from ${files.length} ${
-                files.length === 1 ? "workbook" : "workbooks"
+                files.length === 1 ? "file" : "files"
               } will become its own tab, in the order listed above, alongside a Sheet Index tab`}
         </p>
         <RunControls
@@ -1093,7 +1105,7 @@ export function ExcelMergeTool() {
           disabled={files.length === 0}
           onCancel={runState.cancel}
           onRun={start}
-          readingLabel="Reading the workbooks…"
+          readingLabel="Reading the files…"
           runLabel="Run merge"
           state={runState}
         />
@@ -1133,7 +1145,7 @@ export function ExcelInspectTool() {
 
   return (
     <ToolShell
-      description="Choose a workbook and see what an operation would find in it: every worksheet with its visibility, the header row that would be used, the Excel Tables and named ranges it declares, and a few sample values from each column. Nothing is created and nothing is uploaded, because the workbook is read in this browser tab"
+      description="Choose a workbook or CSV file and see what an operation would find in it: every worksheet with its visibility, the header row that would be used, the Excel Tables and named ranges a workbook declares, and a few sample values from each column. Nothing is created and nothing is uploaded, because the file is read in this browser tab"
       guideHref="/docs/tools/workbook-inspect"
       guideLabel="Read the inspection guide"
       kicker="Online tool · Excel inspect"
@@ -1141,14 +1153,14 @@ export function ExcelInspectTool() {
     >
       <section className={sectionClass} data-testid="source-section">
         <h2 className="text-xl font-bold tracking-[-0.03em]">
-          1. Choose a workbook
+          1. Choose a workbook or CSV file
         </h2>
         <div className="mt-4">
           <FilePicker
             accept={SHEET_FILES.accept}
             description={`Drag ${SHEET_FILES.description} here, or pick one with the button below. Only the first file is used, and it is only ever read`}
             disabled={false}
-            label="Workbook to inspect"
+            label="File to inspect"
             multiple={false}
             onFiles={(files) => {
               selection.choose(files);
@@ -1187,7 +1199,9 @@ export function ExcelInspectTool() {
       <WorkbookInspector
         csv={isCsv ? csvReadOptionsFrom(csvChoices) : undefined}
         file={workbook}
-        heading="2. What is in the workbook"
+        heading={
+          isCsv ? "2. What is in the CSV file" : "2. What is in the workbook"
+        }
         includeHiddenSheets={includeHiddenSheets}
       />
     </ToolShell>
@@ -1250,6 +1264,15 @@ export function ExcelConsolidateTool() {
   const [csvOutput, setCsvOutput] = useState(false);
   const [csvBom, setCsvBom] = useState(true);
   const hasCsv = files.some((file) => isCsvFileName(file.name));
+  // The run summary names the kinds of file actually chosen.
+  const csvCount = files.filter((file) => isCsvFileName(file.name)).length;
+  const sheetScope = `every ${includeHiddenSheets ? "" : "visible "}worksheet`;
+  const stackedSources =
+    csvCount === files.length
+      ? `${files.length} CSV ${files.length === 1 ? "file" : "files"}`
+      : csvCount === 0
+        ? `${sheetScope} that holds data in ${files.length} ${files.length === 1 ? "workbook" : "workbooks"}`
+        : `${sheetScope} that holds data in ${files.length - csvCount} ${files.length - csvCount === 1 ? "workbook" : "workbooks"}, and ${csvCount} CSV ${csvCount === 1 ? "file" : "files"}`;
   // Kept as one value per set of choices, so the callbacks below are not
   // rebuilt on every render.
   const csv = useMemo(
@@ -1411,7 +1434,7 @@ export function ExcelConsolidateTool() {
 
   return (
     <ToolShell
-      description="Add the workbooks you want to stack, arrange them in the order the rows should follow, and get one table holding every row from every visible worksheet that holds data. Hidden worksheets are skipped unless you ask for them. Nothing is uploaded: the whole task runs in this browser tab"
+      description="Add the workbooks and CSV files you want to stack, arrange them in the order the rows should follow, and get one table holding every row from every visible worksheet and CSV file that holds data. Hidden worksheets are skipped unless you ask for them. Nothing is uploaded: the whole task runs in this browser tab"
       guideHref="/docs/tools/spreadsheet-consolidate"
       guideLabel="Read the consolidate guide"
       kicker="Online tool · Excel consolidate"
@@ -1434,14 +1457,14 @@ export function ExcelConsolidateTool() {
       ) : null}
       <section className={sectionClass} data-testid="source-section">
         <h2 className="text-xl font-bold tracking-[-0.03em]">
-          1. Add workbooks
+          1. Add workbooks or CSV files
         </h2>
         <div className="mt-4">
           <FilePicker
             accept={SHEET_FILES.accept}
             description={`Drag one or more ${SHEET_FILES.pluralDescription} here, or pick them with the button below. Rows are stacked in the order shown`}
             disabled={isRunning}
-            label="Source workbooks"
+            label="Source files"
             multiple
             onFiles={(chosen) => {
               void readUploads(chosen, SHEET_FILES.accepts).then((read) => {
@@ -1532,15 +1555,15 @@ export function ExcelConsolidateTool() {
         csv={
           inspected !== null && isCsvFileName(inspected.name) ? csv : undefined
         }
-        emptyMessage="Choose one of the workbooks above to see the worksheets, header rows, and structures it holds"
+        emptyMessage="Choose one of the files above to see the worksheets, header rows, and structures it holds"
         file={inspected}
-        hint="See the worksheets, header rows, columns, and sample values one of these workbooks holds, and which spellings its headers carry before you map them"
+        hint="See the worksheets, header rows, columns, and sample values one of these files holds, and which spellings its headers carry before you map them"
         includeHiddenSheets={includeHiddenSheets}
-        label="Look inside a workbook"
+        label="Look inside a file"
       >
         <div className="mt-4">
           <label className={fieldLabelClass} htmlFor={inspectSelectId}>
-            Workbook to inspect
+            File to inspect
           </label>
           <select
             className={`${inputClass} mt-2`}
@@ -1549,7 +1572,7 @@ export function ExcelConsolidateTool() {
             onChange={(event) => setInspectedId(event.target.value)}
             value={inspected ? inspectedId : ""}
           >
-            <option value="">Choose a workbook…</option>
+            <option value="">Choose a file…</option>
             {files.map((file, index) => (
               <option key={file.id} value={file.id}>
                 {`${String(index + 1).padStart(2, "0")} ${file.name}`}
@@ -1640,7 +1663,7 @@ export function ExcelConsolidateTool() {
             onClick={suggest}
             type="button"
           >
-            {suggesting ? "Reading the workbooks…" : "Suggest a mapping"}
+            {suggesting ? "Reading the files…" : "Suggest a mapping"}
           </button>
         </div>
         {currentDraft?.error ? (
@@ -1655,9 +1678,9 @@ export function ExcelConsolidateTool() {
               data-testid="suggestion-empty"
             >
               Each header is spelled the same way wherever it appears in these
-              workbooks, so there is nothing to fold together. Headers that
-              differ in their words, such as “Reference” and “Case ID”, are a
-              mapping entry you write by hand
+              files, so there is nothing to fold together. Headers that differ
+              in their words, such as “Reference” and “Case ID”, are a mapping
+              entry you write by hand
             </p>
           ) : (
             <>
@@ -1734,16 +1757,12 @@ export function ExcelConsolidateTool() {
         <h2 className="text-xl font-bold tracking-[-0.03em]">3. Run</h2>
         <p className="mt-3 text-sm text-fd-muted-foreground">
           {files.length === 0
-            ? "Add at least one workbook to consolidate"
+            ? "Add at least one workbook or CSV file to consolidate"
             : mappingSelection.reading
               ? "The column mapping you added is still being read, so Run waits until it is ready"
               : mappingUnusable
                 ? "The column mapping you added could not be read, so nothing will run until you replace it or remove it"
-                : `Rows from every ${
-                    includeHiddenSheets ? "" : "visible "
-                  }worksheet that holds data in ${files.length} ${
-                    files.length === 1 ? "workbook" : "workbooks"
-                  } will be stacked into one table, in the order listed above${
+                : `Rows from ${stackedSources} will be stacked into one table, in the order listed above${
                     mapping
                       ? ", with your column mapping applied and any column it does not claim kept under its own name and named in a warning"
                       : ""
@@ -1758,7 +1777,7 @@ export function ExcelConsolidateTool() {
           disabled={files.length === 0 || mappingUnusable || suggesting}
           onCancel={runState.cancel}
           onRun={start}
-          readingLabel="Reading the workbooks…"
+          readingLabel="Reading the files…"
           runLabel="Run consolidate"
           state={runState}
         />
