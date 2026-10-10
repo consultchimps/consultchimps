@@ -23,6 +23,7 @@
  * superseded by another pick is actually cancelled rather than merely ignored.
  */
 
+import { isCsvFileName } from "@/components/csv-options";
 import {
   compactButtonClass,
   describeFailure,
@@ -333,7 +334,9 @@ export function WorkbookInspector({
           className="mt-3 text-sm text-fd-muted-foreground"
           data-testid="inspection-pending"
         >
-          Reading the workbook…
+          {file !== null && isCsvFileName(file.name)
+            ? "Reading the CSV file…"
+            : "Reading the workbook…"}
         </p>
       ) : null}
 
@@ -447,8 +450,15 @@ export function WorkbookInspector({
             </ul>
           )}
 
-          <p className={subheadingClass}>Excel Tables</p>
-          {description.excelTables.length === 0 ? (
+          {description.csv ? (
+            <p className={emptyListClass} data-testid="csv-no-structures">
+              A CSV file holds no Excel Tables or named ranges
+            </p>
+          ) : null}
+          {description.csv ? null : (
+            <p className={subheadingClass}>Excel Tables</p>
+          )}
+          {description.csv ? null : description.excelTables.length === 0 ? (
             <p className={emptyListClass} data-testid="no-excel-tables">
               None in this workbook
             </p>
@@ -484,8 +494,10 @@ export function WorkbookInspector({
             </ul>
           )}
 
-          <p className={subheadingClass}>Named ranges</p>
-          {description.namedRanges.length === 0 ? (
+          {description.csv ? null : (
+            <p className={subheadingClass}>Named ranges</p>
+          )}
+          {description.csv ? null : description.namedRanges.length === 0 ? (
             <p className={emptyListClass} data-testid="no-named-ranges">
               None in this workbook
             </p>

@@ -203,9 +203,7 @@ export function PdfSplitTool() {
                 <dt className="font-mono text-xs uppercase tracking-[0.12em] text-fd-muted-foreground">
                   Operation
                 </dt>
-                <dd className="font-mono text-sm leading-9">
-                  {plan.operation}
-                </dd>
+                <dd className="text-sm leading-9">Split a PDF</dd>
               </div>
             </dl>
             <p className="mt-5 text-sm font-semibold">Planned output names</p>

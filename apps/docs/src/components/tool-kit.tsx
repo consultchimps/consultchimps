@@ -26,6 +26,7 @@ import {
   formatHumanError,
   formatHumanResult,
   GENERIC_VOCABULARY,
+  progressStageLabel,
   type MessageVocabulary,
 } from "@consultchimps/messages";
 import { releaseOutputs, runOperation } from "@/lib/operation-worker";
@@ -643,7 +644,8 @@ export function ProgressReport({
     <div className="mt-4" data-testid="progress-report">
       <div className="flex items-center justify-between font-mono text-xs uppercase tracking-[0.12em] text-fd-muted-foreground">
         <span>
-          {progress.stage} · {progress.completed} of {progress.total}
+          {progressStageLabel(progress.stage)} · {progress.completed} of{" "}
+          {progress.total}
         </span>
         <span>{percent}%</span>
       </div>
