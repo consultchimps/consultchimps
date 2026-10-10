@@ -70,6 +70,17 @@ test.describe("/tools/excel-inspect", () => {
     await expect(report(page).getByTestId("worksheet-name")).toHaveText([
       "cases",
     ]);
+    // A CSV file is named as one, with no workbook structures to list.
+    await expect(
+      page.getByRole("heading", { name: "2. What is in the CSV file" }),
+    ).toBeVisible();
+    await expect(report(page).getByTestId("csv-no-structures")).toBeVisible();
+    await expect(
+      report(page).getByTestId("inspection-excel-tables"),
+    ).toHaveCount(0);
+    await expect(
+      report(page).getByTestId("inspection-named-ranges"),
+    ).toHaveCount(0);
   });
 
   test("describes the worksheets, structures, and sample values", async ({
