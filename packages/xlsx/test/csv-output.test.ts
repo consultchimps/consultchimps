@@ -417,6 +417,7 @@ describe("splitting every worksheet to CSV", () => {
       column: "Region",
       outputFormat: "csv",
       csvBom: false,
+      includeHiddenSheets: true,
     });
     expect(outcome.outputs.map((output) => output.name)).toEqual([
       "orders-North - Orders.csv",
@@ -438,10 +439,23 @@ describe("splitting every worksheet to CSV", () => {
       input,
       column: "Region",
       outputFormat: "csv",
+      includeHiddenSheets: true,
     });
     expect(plan.outputs.map((output) => output.path)).toEqual(
       outcome.outputs.map((output) => output.name),
     );
+  });
+
+  it("leaves a hidden worksheet out unless asked for", async () => {
+    const outcome = await splitWorkbookBytes({
+      input: { name: "orders.xlsx", bytes: await book() },
+      column: "Region",
+      outputFormat: "csv",
+    });
+    expect(outcome.outputs.map((output) => output.name)).toEqual([
+      "orders-North.csv",
+      "orders-South.csv",
+    ]);
   });
 
   it("keeps one-source names when one worksheet carries the column", async () => {

@@ -11,6 +11,5 @@ Each worksheet gives one CSV file per value, named
 value and sheet name each made safe and a `-2` suffix for any name that would
 repeat. A worksheet without the column is left out with a warning, the plan
 lists every file, and keeping the workbook stays refused with
-`XLSX_SPLIT_CSV_PRESERVE`. A workbook whose hidden worksheet also carries the
-column now gives that worksheet's files too, so its files are named for their
-worksheets.
+`XLSX_SPLIT_CSV_PRESERVE`. Hidden worksheets are included only with `--hidden`
+(`includeHiddenSheets`).

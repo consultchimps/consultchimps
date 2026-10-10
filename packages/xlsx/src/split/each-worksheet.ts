@@ -51,8 +51,8 @@ export interface LeftOutRows {
 export const NO_LEFT_OUT_ROWS: LeftOutRows = { inputRows: 0, skippedRows: 0 };
 
 /**
- * Resolve a split of every worksheet, hidden ones included as the
- * whole-workbook split includes them. One worksheet split keeps the names a
+ * Resolve a split of every visible worksheet, hidden ones too when
+ * `includeHiddenSheets` asks, since each becomes files of its own. One worksheet split keeps the names a
  * one-source split gives, `<prefix>-<value>.csv`; several are named
  * `<prefix>-<value> - <sheet>.csv` so each worksheet's files stay apart.
  */
@@ -86,6 +86,8 @@ export async function resolveEachWorksheetSplit(
   let leftOutSkippedRows = 0;
   for (const sheet of book.sheets) {
     if (sheet.part === undefined) continue;
+    // A hidden worksheet's rows leave the workbook only when asked for.
+    if (!sheet.visible && selection.includeHiddenSheets !== true) continue;
     throwIfAborted(abort.signal, SPLIT_OPERATION, abort.outputContext);
     try {
       // One open workbook for every sheet, so its parts and strings are held
