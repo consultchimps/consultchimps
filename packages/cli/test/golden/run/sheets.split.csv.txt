@@ -11,7 +11,6 @@ What ConsultChimps did:
   - It found 2 distinct groups and created 2 separate CSV files.
   - 3 data rows were retained across the new files, and 0 rows were skipped.
   - 1 sheet contained the split column and was filtered.
-  - 0 sheets did not contain the split column and were copied unchanged.
   - Your original file was not changed.
 
 Detailed results:
@@ -21,7 +20,6 @@ Detailed results:
   - New files created: 2
   - Data rows written: 3
   - Rows removed across the new files: 0
-  - Sheets copied without filtering: 0
   - Sheets filtered: 1
   - Rows skipped: 0
 

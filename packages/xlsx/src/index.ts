@@ -65,6 +65,13 @@ import {
   type TableOutputFormatName,
 } from "./csv/output.js";
 import { splitOptionsFor } from "./csv/split.js";
+import {
+  type LeftOutRows,
+  NO_LEFT_OUT_ROWS,
+  regionSplitSummary,
+  resolveEachWorksheetSplit,
+  skippedSheetsWarning,
+} from "./split/each-worksheet.js";
 import { csvAsWorkbook, type CsvScratch } from "./csv/workbook.js";
 import { XLSX_ERRORS } from "./errors.js";
 import { openSheetBook } from "./operations/sheet-book.js";
@@ -1286,6 +1293,14 @@ interface ResolvedSplit {
   mediaType: string;
   /** How each output is written when the workbook is not kept. */
   format: TableOutputFormat;
+  /**
+   * Every region the split writes: the one region, or each worksheet of a
+   * workbook split to CSV files (`resolved` is then the first).
+   */
+  parts: readonly ResolvedRegionSplit[];
+  /** Worksheets a split of every worksheet left out. */
+  skippedSheets: readonly string[];
+  leftOutRows: LeftOutRows;
   outputPaths: string[];
   preserveWorkbook: boolean;
   resolved: ResolvedRegionSplit;
@@ -1317,12 +1332,32 @@ async function resolveSplitWorkbookByColumn(
       label: absoluteInput,
     };
     const preserveWorkbook = resolvePreserveWorkbook(options);
-    const resolved = await resolveRegionSplit(
-      source,
-      context,
-      options,
-      preserveWorkbook,
+    // A workbook split to CSV files with no source named splits every
+    // worksheet that carries the column, one file per worksheet and value.
+    const eachWorksheet =
+      options.outputFormat === "csv" &&
+      !isCsvName(absoluteInput) &&
+      !options.table &&
+      !options.range &&
+      !options.sheet;
+    const filenamePrefixFor = safeNameFragment(
+      options.filenamePrefix ?? path.parse(absoluteInput).name,
+      "split",
     );
+    const each = eachWorksheet
+      ? await resolveEachWorksheetSplit(
+          source,
+          context,
+          options,
+          filenamePrefixFor,
+          resolveTableOutput(undefined, options.outputFormat, options.csvBom)
+            .extension,
+          { signal: options.signal, outputContext: "files" },
+        )
+      : undefined;
+    const resolved =
+      each?.parts[0] ??
+      (await resolveRegionSplit(source, context, options, preserveWorkbook));
 
     // A preserved split hands back the source package, so its outputs have
     // to be named and typed after that package; a rebuilding split writes a
@@ -1345,10 +1380,13 @@ async function resolveSplitWorkbookByColumn(
       options.filenamePrefix ?? path.parse(absoluteInput).name,
       "split",
     );
-    const outputPaths = splitOutputFileNames(
-      filenamePrefix,
-      resolved.groups.map((group) => group.value),
-      extension,
+    const outputPaths = (
+      each?.outputNames ??
+      splitOutputFileNames(
+        filenamePrefix,
+        resolved.groups.map((group) => group.value),
+        extension,
+      )
     ).map((filename) => path.join(absoluteOutputDirectory, filename));
 
     outputPaths.forEach((outputPath) =>
@@ -1383,6 +1421,9 @@ async function resolveSplitWorkbookByColumn(
       mediaType:
         preserved === undefined ? output.mediaType : splitMediaType(preserved),
       outputPaths,
+      parts: each?.parts ?? [resolved],
+      skippedSheets: each?.skippedSheets ?? [],
+      leftOutRows: each?.leftOutRows ?? NO_LEFT_OUT_ROWS,
       preserveWorkbook,
       resolved,
       source,
@@ -1407,7 +1448,7 @@ export async function planSplitWorkbookByColumn(
   }
   const split = await resolveSplitWorkbookByColumn(options);
   await split.source.close();
-  const { resolved } = split;
+  const resolved = regionSplitSummary(split.parts, split.leftOutRows);
   const outputs: PlannedOutput[] = split.outputPaths.map((outputPath) => ({
     kind: "file",
     mediaType: split.mediaType,
@@ -1420,6 +1461,12 @@ export async function planSplitWorkbookByColumn(
     warnings.push(skippedRowsWarning(resolved.skippedRows, resolved.column));
   }
   for (const warning of resolved.workbook.warnings) warnings.push(warning);
+  for (const warning of skippedSheetsWarning(
+    split.skippedSheets,
+    resolved.column,
+  )) {
+    warnings.push(warning);
+  }
   // What the plan read; a values-only preserved run also counts what its
   // conversion loses, which only the run can see.
   const uncached = singleSourceUncachedFormulas(
@@ -1448,13 +1495,13 @@ export async function planSplitWorkbookByColumn(
       formulaCellsConverted: 0,
       formulaCellsWithoutCachedValues: uncached.count,
       pivotTablesRemoved: 0,
-      groups: resolved.groups.length,
+      groups: resolved.distinctGroups,
       inputFiles: 1,
       inputRows: resolved.inputRows,
       outputFiles: split.outputPaths.length,
       rowsDeleted: 0,
       sheetsCopiedUnchanged: 0,
-      sheetsFiltered: 1,
+      sheetsFiltered: resolved.sheets,
       skippedRows: resolved.skippedRows,
       valuesOnly: options.values === true ? 1 : 0,
     },
@@ -1503,9 +1550,10 @@ async function splitResolvedRegion(
     mediaType,
     outputPaths,
     preserveWorkbook,
-    resolved,
+    parts,
     source,
   } = split;
+  const resolved = regionSplitSummary(parts, split.leftOutRows);
 
   await Promise.all(
     outputPaths.map((outputPath) =>
@@ -1534,40 +1582,47 @@ async function splitResolvedRegion(
       options.values === true,
       splitPackage ? await uncachedForValues(splitPackage) : [],
     );
-    pivotTablesRemoved = await writeRegionGroups(
-      source,
-      resolved,
-      options.values === true,
-      async (index) => {
-        throwIfAborted(options.signal, SPLIT_OPERATION);
-        const stagedOutput = path.join(
-          transactionDirectory,
-          `output-${String(index + 1).padStart(6, "0")}.xlsx`,
-        );
-        const file = await stagedFile(stagedOutput);
-        return {
-          write: (chunk) => file.write(chunk),
-          abort: () => file.abort(),
-          close: async () => {
-            await file.close();
-            stagedOutputs[index] = stagedOutput;
-            options.onProgress?.({
-              operation: SPLIT_OPERATION,
-              stage: "staging-workbooks",
-              completed: index + 1,
-              total: resolved.groups.length,
-              detail: path.basename(outputPaths[index] ?? stagedOutput),
-            });
-          },
-        };
-      },
-      async () => {
-        await yieldToEventLoop();
-        throwIfAborted(options.signal, SPLIT_OPERATION);
-      },
-      splitPackage,
-      split.format,
-    );
+    pivotTablesRemoved = 0;
+    let offset = 0;
+    for (const part of parts) {
+      const base = offset;
+      offset += part.groups.length;
+      pivotTablesRemoved += await writeRegionGroups(
+        source,
+        part,
+        options.values === true,
+        async (partIndex) => {
+          const index = base + partIndex;
+          throwIfAborted(options.signal, SPLIT_OPERATION);
+          const stagedOutput = path.join(
+            transactionDirectory,
+            `output-${String(index + 1).padStart(6, "0")}.xlsx`,
+          );
+          const file = await stagedFile(stagedOutput);
+          return {
+            write: (chunk) => file.write(chunk),
+            abort: () => file.abort(),
+            close: async () => {
+              await file.close();
+              stagedOutputs[index] = stagedOutput;
+              options.onProgress?.({
+                operation: SPLIT_OPERATION,
+                stage: "staging-workbooks",
+                completed: index + 1,
+                total: resolved.groups.length,
+                detail: path.basename(outputPaths[index] ?? stagedOutput),
+              });
+            },
+          };
+        },
+        async () => {
+          await yieldToEventLoop();
+          throwIfAborted(options.signal, SPLIT_OPERATION);
+        },
+        splitPackage,
+        split.format,
+      );
+    }
 
     for (const [index, outputPath] of outputPaths.entries()) {
       const stagedOutput = stagedOutputs[index];
@@ -1649,6 +1704,12 @@ async function splitResolvedRegion(
       : [];
   for (const warning of uncached.warnings) warnings.push(warning);
   for (const warning of resolved.workbook.warnings) warnings.push(warning);
+  for (const warning of skippedSheetsWarning(
+    split.skippedSheets,
+    resolved.column,
+  )) {
+    warnings.push(warning);
+  }
   if (pivotTablesRemoved > 0) {
     warnings.push(
       `Removed ${pivotTablesRemoved} pivot table${pivotTablesRemoved === 1 ? "" : "s"}: their caches contained rows from other groups, and a cache travels inside the workbook whether or not the pivot is opened. Rebuild the pivot in Excel from each output's own rows if it is required.`,
@@ -1669,7 +1730,7 @@ async function splitResolvedRegion(
       formulaCellsConverted: 0,
       formulaCellsWithoutCachedValues: uncached.count,
       pivotTablesRemoved,
-      groups: resolved.groups.length,
+      groups: resolved.distinctGroups,
       inputFiles: 1,
       inputRows: resolved.inputRows,
       outputFiles: outputPaths.length,
@@ -1679,7 +1740,7 @@ async function splitResolvedRegion(
       ),
       rowsDeleted: 0,
       sheetsCopiedUnchanged: 0,
-      sheetsFiltered: 1,
+      sheetsFiltered: resolved.sheets,
       skippedRows: resolved.skippedRows,
       valuesOnly: options.values === true ? 1 : 0,
     },

@@ -92,7 +92,11 @@ path, so it has to be proven software, not new code of our own.
     extension that contradicts `--output-format` is refused;
   - split writes one CSV per value with `--output-format csv`, and does so by
     default for a CSV input. A CSV output holds the data only, so it uses the
-    compact split; keeping the workbook is refused with CSV output;
+    compact split; keeping the workbook is refused with CSV output. A workbook
+    split to CSV with no source named writes every visible worksheet (hidden
+    ones with `--hidden`) that carries the column, one file per worksheet and
+    value, named `<prefix>-<value> - <sheet>.csv` when more than one worksheet
+    does;
   - merge takes CSV inputs, each becoming a tab named after its stem, but has no
     CSV output: its result is many tabs, which a CSV cannot hold;
   - inspect describes a CSV as its one worksheet and reports the encoding and
