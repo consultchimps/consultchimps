@@ -1,5 +1,6 @@
 ---
 "@consultchimps/xlsx": minor
+"@consultchimps/messages": minor
 "consultchimps": minor
 ---
 

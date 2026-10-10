@@ -490,6 +490,11 @@ describe("splitting every worksheet to CSV", () => {
       "orders-a-b - Returns.csv",
     ]);
     expect(outcome.result.warnings.join(" ")).toContain('Worksheet "Blank"');
+    // The blank sheet's row was read and skipped, so the metrics count it.
+    expect(outcome.result.metrics).toMatchObject({
+      inputRows: 4,
+      skippedRows: 1,
+    });
   });
 
   it("refuses for no groups when every sheet with the column is blank", async () => {

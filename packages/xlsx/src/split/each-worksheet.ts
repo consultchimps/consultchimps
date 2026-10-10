@@ -34,7 +34,18 @@ export interface EachWorksheetSplit {
   readonly outputNames: readonly string[];
   /** The worksheets left out because they do not carry the column. */
   readonly skippedSheets: readonly string[];
+  /** Rows read in worksheets left out for having no group, all skipped. */
+  readonly leftOutRows: LeftOutRows;
 }
+
+/** The rows a split read in worksheets it left out, counted in its metrics. */
+export interface LeftOutRows {
+  readonly inputRows: number;
+  readonly skippedRows: number;
+}
+
+/** No rows left out, for a split of one region. */
+export const NO_LEFT_OUT_ROWS: LeftOutRows = { inputRows: 0, skippedRows: 0 };
 
 /**
  * Resolve a split of every worksheet, hidden ones included as the
@@ -63,6 +74,8 @@ export async function resolveEachWorksheetSplit(
   let columnMissing = false;
   let noGroups: ConsultChimpsError | undefined;
   let lastSkip: ConsultChimpsError | undefined;
+  let leftOutInputRows = 0;
+  let leftOutSkippedRows = 0;
   for (const sheet of book.sheets) {
     if (sheet.part === undefined) continue;
     try {
@@ -93,8 +106,14 @@ export async function resolveEachWorksheetSplit(
       ) {
         skippedSheets.push(sheet.name);
         lastSkip = error;
-        if (error.code === XLSX_ERRORS.XLSX_SPLIT_NO_GROUPS) noGroups ??= error;
-        else if (error.code !== XLSX_ERRORS.XLSX_SPLIT_NO_TABLE)
+        if (error.code === XLSX_ERRORS.XLSX_SPLIT_NO_GROUPS) {
+          noGroups ??= error;
+          // Its rows were read and skipped as blank, so the metrics count them.
+          const counts = error.details as
+            { inputRows?: number; skippedRows?: number } | undefined;
+          leftOutInputRows += counts?.inputRows ?? 0;
+          leftOutSkippedRows += counts?.skippedRows ?? 0;
+        } else if (error.code !== XLSX_ERRORS.XLSX_SPLIT_NO_TABLE)
           columnMissing = true;
         continue;
       }
@@ -136,7 +155,15 @@ export async function resolveEachWorksheetSplit(
           ),
           extension,
         );
-  return { parts, outputNames, skippedSheets };
+  return {
+    parts,
+    outputNames,
+    skippedSheets,
+    leftOutRows: {
+      inputRows: leftOutInputRows,
+      skippedRows: leftOutSkippedRows,
+    },
+  };
 }
 
 /** The warning naming the worksheets a split left out. */
@@ -167,10 +194,11 @@ export interface RegionSplitSummary {
 
 export function regionSplitSummary(
   parts: readonly ResolvedRegionSplit[],
+  leftOutRows: LeftOutRows = NO_LEFT_OUT_ROWS,
 ): RegionSplitSummary {
   const first = parts[0]!;
-  let inputRows = 0;
-  let skippedRows = 0;
+  let inputRows = leftOutRows.inputRows;
+  let skippedRows = leftOutRows.skippedRows;
   const groups: ResolvedRegionSplit["groups"][number][] = [];
   const uncachedFormulas: string[] = [];
   for (const part of parts) {

@@ -66,6 +66,8 @@ import {
 } from "./csv/output.js";
 import { splitOptionsFor } from "./csv/split.js";
 import {
+  type LeftOutRows,
+  NO_LEFT_OUT_ROWS,
   regionSplitSummary,
   resolveEachWorksheetSplit,
   skippedSheetsWarning,
@@ -1298,6 +1300,7 @@ interface ResolvedSplit {
   parts: readonly ResolvedRegionSplit[];
   /** Worksheets a split of every worksheet left out. */
   skippedSheets: readonly string[];
+  leftOutRows: LeftOutRows;
   outputPaths: string[];
   preserveWorkbook: boolean;
   resolved: ResolvedRegionSplit;
@@ -1419,6 +1422,7 @@ async function resolveSplitWorkbookByColumn(
       outputPaths,
       parts: each?.parts ?? [resolved],
       skippedSheets: each?.skippedSheets ?? [],
+      leftOutRows: each?.leftOutRows ?? NO_LEFT_OUT_ROWS,
       preserveWorkbook,
       resolved,
       source,
@@ -1443,7 +1447,7 @@ export async function planSplitWorkbookByColumn(
   }
   const split = await resolveSplitWorkbookByColumn(options);
   await split.source.close();
-  const resolved = regionSplitSummary(split.parts);
+  const resolved = regionSplitSummary(split.parts, split.leftOutRows);
   const outputs: PlannedOutput[] = split.outputPaths.map((outputPath) => ({
     kind: "file",
     mediaType: split.mediaType,
@@ -1548,7 +1552,7 @@ async function splitResolvedRegion(
     parts,
     source,
   } = split;
-  const resolved = regionSplitSummary(parts);
+  const resolved = regionSplitSummary(parts, split.leftOutRows);
 
   await Promise.all(
     outputPaths.map((outputPath) =>

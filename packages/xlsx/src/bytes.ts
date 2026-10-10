@@ -15,6 +15,8 @@ import {
 } from "./csv/output.js";
 import { splitOptionsFor } from "./csv/split.js";
 import {
+  type LeftOutRows,
+  NO_LEFT_OUT_ROWS,
   regionSplitSummary,
   resolveEachWorksheetSplit,
   skippedSheetsWarning,
@@ -606,6 +608,7 @@ interface ResolvedRegionSplitSource {
   parts: readonly ResolvedRegionSplit[];
   /** Worksheets a split of every worksheet left out. */
   skippedSheets: readonly string[];
+  leftOutRows: LeftOutRows;
   preserveWorkbook: boolean;
   /** How each output is written when the workbook is not kept. */
   format: TableOutputFormat;
@@ -640,6 +643,7 @@ async function resolveRegionSplitSource(
       resolved: each.parts[0]!,
       parts: each.parts,
       skippedSheets: each.skippedSheets,
+      leftOutRows: each.leftOutRows,
       preserveWorkbook: false,
       format: output.format,
       mediaType: output.mediaType,
@@ -660,6 +664,7 @@ async function resolveRegionSplitSource(
     resolved,
     parts: [resolved],
     skippedSheets: [],
+    leftOutRows: NO_LEFT_OUT_ROWS,
     preserveWorkbook,
     format: output.format,
     mediaType:
@@ -723,9 +728,15 @@ export async function planSplitWorkbookSource(
     };
   }
 
-  const { parts, skippedSheets, preserveWorkbook, mediaType, outputNames } =
-    await resolveRegionSplitSource(input, options);
-  const resolved = regionSplitSummary(parts);
+  const {
+    parts,
+    skippedSheets,
+    leftOutRows,
+    preserveWorkbook,
+    mediaType,
+    outputNames,
+  } = await resolveRegionSplitSource(input, options);
+  const resolved = regionSplitSummary(parts, leftOutRows);
   const uncached = singleSourceUncachedFormulas(
     resolved.uncachedFormulas,
     preserveWorkbook,
@@ -847,12 +858,13 @@ async function splitRegionSource(
   const {
     parts,
     skippedSheets,
+    leftOutRows,
     preserveWorkbook,
     mediaType,
     outputNames,
     format,
   } = await resolveRegionSplitSource(input, options);
-  const resolved = regionSplitSummary(parts);
+  const resolved = regionSplitSummary(parts, leftOutRows);
   const splitPackage =
     preserveWorkbook && options.values === true
       ? await openRegionPackage(input)

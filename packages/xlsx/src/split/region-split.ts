@@ -737,6 +737,8 @@ export async function resolveRegionSplit(
           uncachedFormulas: [...uncachedFormulas],
           column,
           includeBlank: selection.includeBlank ?? true,
+          inputRows,
+          skippedRows,
           ...context.details,
         },
       },
