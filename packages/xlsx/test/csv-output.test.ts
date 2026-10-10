@@ -492,6 +492,32 @@ describe("splitting every worksheet to CSV", () => {
     expect(outcome.result.warnings.join(" ")).toContain('Worksheet "Blank"');
   });
 
+  it("refuses for no groups when every sheet with the column is blank", async () => {
+    const error = await failure(async () =>
+      splitWorkbookBytes({
+        input: {
+          name: "orders.xlsx",
+          bytes: (await buildWorkbookFixture({
+            sheets: [
+              { name: "Notes", rows: [["Text"], ["x"]] },
+              {
+                name: "Blank",
+                rows: [
+                  ["Region", "N"],
+                  [null, 1],
+                ],
+              },
+            ],
+          })) as Uint8Array<ArrayBuffer>,
+        },
+        column: "Region",
+        outputFormat: "csv",
+        includeBlank: false,
+      }),
+    );
+    expect(error.code).toBe("XLSX_SPLIT_NO_GROUPS");
+  });
+
   it("refuses a column no worksheet carries", async () => {
     const error = await failure(async () =>
       splitWorkbookBytes({

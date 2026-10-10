@@ -58,7 +58,10 @@ export async function resolveEachWorksheetSplit(
   const skippedSheets: string[] = [];
   // Why the sheets were left out, by kind, so a workbook with nothing to split
   // is refused for the reason its sheets gave.
+  // A sheet that holds the column but no group is closest to splitting, so its
+  // reason wins over the others.
   let columnMissing = false;
+  let noGroups: ConsultChimpsError | undefined;
   let lastSkip: ConsultChimpsError | undefined;
   for (const sheet of book.sheets) {
     if (sheet.part === undefined) continue;
@@ -90,13 +93,15 @@ export async function resolveEachWorksheetSplit(
       ) {
         skippedSheets.push(sheet.name);
         lastSkip = error;
-        if (error.code !== XLSX_ERRORS.XLSX_SPLIT_NO_TABLE)
+        if (error.code === XLSX_ERRORS.XLSX_SPLIT_NO_GROUPS) noGroups ??= error;
+        else if (error.code !== XLSX_ERRORS.XLSX_SPLIT_NO_TABLE)
           columnMissing = true;
         continue;
       }
       throw error;
     }
   }
+  if (parts.length === 0 && noGroups !== undefined) throw noGroups;
   if (parts.length === 0 && !columnMissing && lastSkip !== undefined) {
     throw lastSkip;
   }
