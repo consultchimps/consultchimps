@@ -476,16 +476,20 @@ export async function resolveRegionSplit(
   context: RegionSplitContext,
   selection: RegionSplitSelection,
   preserveWorkbook: boolean,
+  /** A workbook already open, shared by the regions of one split. */
+  opened?: SheetBook,
 ): Promise<ResolvedRegionSplit> {
-  const workbook = await openSheetBook(
-    source,
-    {
-      file: context.file,
-      source: context.label,
-      details: context.details,
-    },
-    selection.csv,
-  );
+  const workbook =
+    opened ??
+    (await openSheetBook(
+      source,
+      {
+        file: context.file,
+        source: context.label,
+        details: context.details,
+      },
+      selection.csv,
+    ));
   const candidates = candidatesOf(workbook, selection);
   await readCandidates(workbook, candidates, selection.headerRow);
   const requested = (selection.table ?? selection.range)?.toLocaleLowerCase();

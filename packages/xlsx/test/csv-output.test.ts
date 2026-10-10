@@ -462,6 +462,36 @@ describe("splitting every worksheet to CSV", () => {
     ]);
   });
 
+  it("tells apart names that come out the same, and leaves out a sheet with no groups", async () => {
+    const outcome = await splitWorkbookBytes({
+      input: {
+        name: "orders.xlsx",
+        bytes: (await buildWorkbookFixture({
+          sheets: [
+            { name: "Orders", rows: [["Region"], ["a/b"], ["a-b"]] },
+            {
+              name: "Blank",
+              rows: [
+                ["Region", "N"],
+                [null, 1],
+              ],
+            },
+            { name: "Re:turns".replace(":", ""), rows: [["Region"], ["a/b"]] },
+          ],
+        })) as Uint8Array<ArrayBuffer>,
+      },
+      column: "Region",
+      outputFormat: "csv",
+      includeBlank: false,
+    });
+    expect(outcome.outputs.map((output) => output.name)).toEqual([
+      "orders-a-b - Orders.csv",
+      "orders-a-b - Orders-2.csv",
+      "orders-a-b - Returns.csv",
+    ]);
+    expect(outcome.result.warnings.join(" ")).toContain('Worksheet "Blank"');
+  });
+
   it("refuses a column no worksheet carries", async () => {
     const error = await failure(async () =>
       splitWorkbookBytes({

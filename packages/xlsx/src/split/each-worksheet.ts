@@ -18,10 +18,11 @@ import {
   type ResolvedRegionSplit,
 } from "./region-split.js";
 
-/** A worksheet a split leaves out, because it has no rows under the column. */
+/** A worksheet a split leaves out, because it gives no rows under the column. */
 const SKIPPED = new Set<string>([
   XLSX_ERRORS.XLSX_SPLIT_COLUMN_NOT_FOUND,
   XLSX_ERRORS.XLSX_SPLIT_NO_TABLE,
+  XLSX_ERRORS.XLSX_SPLIT_NO_GROUPS,
   // The table reader's own refusal of a column the header row does not name.
   "TABLE_COLUMN_NOT_FOUND",
 ]);
@@ -55,24 +56,49 @@ export async function resolveEachWorksheetSplit(
   });
   const parts: ResolvedRegionSplit[] = [];
   const skippedSheets: string[] = [];
+  // Why the sheets were left out, by kind, so a workbook with nothing to split
+  // is refused for the reason its sheets gave.
+  let columnMissing = false;
+  let lastSkip: ConsultChimpsError | undefined;
   for (const sheet of book.sheets) {
     if (sheet.part === undefined) continue;
     try {
+      // One open workbook for every sheet, so its parts and strings are held
+      // once however many worksheets the split writes.
       parts.push(
         await resolveRegionSplit(
           source,
           context,
           { ...selection, sheet: sheet.name, includeHiddenSheets: true },
           false,
+          book,
         ),
       );
     } catch (error) {
-      if (error instanceof ConsultChimpsError && SKIPPED.has(error.code)) {
+      const uncached = (
+        error instanceof ConsultChimpsError
+          ? (error.details as { uncachedFormulas?: unknown } | undefined)
+              ?.uncachedFormulas
+          : undefined
+      ) as readonly unknown[] | undefined;
+      // A sheet that looks empty because Excel never calculated its formulas
+      // is refused with that reason rather than left out.
+      if (
+        error instanceof ConsultChimpsError &&
+        SKIPPED.has(error.code) &&
+        (uncached === undefined || uncached.length === 0)
+      ) {
         skippedSheets.push(sheet.name);
+        lastSkip = error;
+        if (error.code !== XLSX_ERRORS.XLSX_SPLIT_NO_TABLE)
+          columnMissing = true;
         continue;
       }
       throw error;
     }
+  }
+  if (parts.length === 0 && !columnMissing && lastSkip !== undefined) {
+    throw lastSkip;
   }
   if (parts.length === 0) {
     throw new ConsultChimpsError(
