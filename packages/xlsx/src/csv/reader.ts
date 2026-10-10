@@ -46,13 +46,10 @@ import { calendarIsoParts, serial1900 } from "../model/calendar.js";
 import { formatDisplayText } from "../operations/display-text.js";
 
 /**
- * The text a typed CSV value shows. A number shows every digit it was read
- * with, with `.` as the decimal mark and no grouping, so nothing a field
- * held is lost to General's rounding or exponents. A date shows in the
- * formats the workbook a CSV operation writes uses.
+ * The text a typed CSV date shows: the formats the workbook a CSV operation
+ * writes uses. A typed number shows as `CsvNumberReader.display` gives it.
  */
-function csvDisplayText(value: number | string): string {
-  if (typeof value === "number") return String(value);
+function csvDisplayText(value: string): string {
   const parts = calendarIsoParts(value);
   const serial = parts === undefined ? undefined : serial1900(parts);
   if (parts === undefined || serial === undefined) return value;
@@ -518,7 +515,7 @@ export class CsvWorkbook implements SheetBook {
       const number = numbers?.read(field);
       if (number !== undefined) {
         value = number;
-        if (withText) display = csvDisplayText(number);
+        if (withText) display = numbers!.display(field);
       } else if (dates !== undefined) {
         const date = csvDate(field, dates);
         if (date !== undefined) {

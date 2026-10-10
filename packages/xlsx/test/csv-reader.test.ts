@@ -510,6 +510,11 @@ describe("CSV typing", () => {
     const reader = new CsvNumberReader(".", "");
     expect(reader.read("1234.5")).toBe(1234.5);
     expect(reader.read("1,234")).toBeUndefined();
+    const grouped = new CsvNumberReader(".", ",");
+    expect(grouped.display("0.0000001")).toBe("0.0000001");
+    expect(grouped.display("+1,234.50")).toBe("1234.50");
+    expect(grouped.display("-0.0")).toBe("0.0");
+    expect(grouped.display("x")).toBeUndefined();
     expect(reader.read(`0.${"0".repeat(400)}1`)).toBeUndefined();
     expect(reader.read("0.000")).toBe(0);
   });

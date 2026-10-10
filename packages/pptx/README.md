@@ -16,6 +16,8 @@ const result = await populatePowerPointTemplate({
 The operation reads `{{field_name}}` placeholders from ordinary text shapes on
 one selected template slide. It creates one populated slide for every nonempty
 Excel row below the header and returns a ConsultChimps `OperationResult`.
+`workbookPath` may also name a `.csv` file, its one worksheet read with a `csv`
+option (`{ numbers: true }`, `{ dates: "iso" }`); a `worksheet` is then refused.
 `overwrite: true` is required to replace an existing output. Neither input file
 is changed.
 
