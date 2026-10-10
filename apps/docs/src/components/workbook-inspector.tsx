@@ -293,7 +293,7 @@ function ColumnList({
 
 export function WorkbookInspector({
   className = sectionClass,
-  emptyMessage = "Choose a workbook to see the worksheets, header rows, and structures it holds",
+  emptyMessage = "Choose a workbook or CSV file to see the worksheets, header rows, and structures it holds",
   csv,
   file,
   headerRow,
@@ -367,24 +367,28 @@ export function WorkbookInspector({
                 {outcome.result.metrics.dataRows}
               </dd>
             </div>
-            <div>
-              <dt className={metricLabelClass}>Excel Tables</dt>
-              <dd
-                className="text-2xl font-bold"
-                data-testid="inspection-excel-tables"
-              >
-                {outcome.result.metrics.excelTables}
-              </dd>
-            </div>
-            <div>
-              <dt className={metricLabelClass}>Named ranges</dt>
-              <dd
-                className="text-2xl font-bold"
-                data-testid="inspection-named-ranges"
-              >
-                {outcome.result.metrics.namedRanges}
-              </dd>
-            </div>
+            {description?.csv ? null : (
+              <>
+                <div>
+                  <dt className={metricLabelClass}>Excel Tables</dt>
+                  <dd
+                    className="text-2xl font-bold"
+                    data-testid="inspection-excel-tables"
+                  >
+                    {outcome.result.metrics.excelTables}
+                  </dd>
+                </div>
+                <div>
+                  <dt className={metricLabelClass}>Named ranges</dt>
+                  <dd
+                    className="text-2xl font-bold"
+                    data-testid="inspection-named-ranges"
+                  >
+                    {outcome.result.metrics.namedRanges}
+                  </dd>
+                </div>
+              </>
+            )}
           </dl>
 
           {hiddenCallout ? (

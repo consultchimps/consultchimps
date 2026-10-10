@@ -307,7 +307,7 @@ function SourceWorkbookList({ disabled, uploads }: SourceWorkbookListProps) {
   if (files.length === 0) {
     return (
       <p className="mt-4 text-sm text-fd-muted-foreground">
-        No workbooks added yet
+        No files added yet
       </p>
     );
   }
@@ -578,7 +578,7 @@ export function ExcelSplitTool() {
 
   return (
     <ToolShell
-      description="Choose a workbook or CSV file and a column, and get one file per distinct value in that column. By default each new workbook keeps the source workbook's sheets, formatting, and supported workbook structure, removing only the rows that belong to other values; a CSV file splits into CSV files. Pivot tables and their caches are removed and reported, so review complex workbooks (pivots, external links, charts, ActiveX controls) in Excel before you deliver them. Everything runs in this page using the same operation the ConsultChimps library uses"
+      description="Choose a workbook or CSV file and a column, and get one file per distinct value in that column. By default each new workbook keeps the source workbook's sheets, formatting, and supported workbook structure, removing only the rows that belong to other values; a CSV file splits into CSV files unless you choose workbooks. Pivot tables and their caches are removed and reported, so review complex workbooks (pivots, external links, charts, ActiveX controls) in Excel before you deliver them. Everything runs in this page using the same operation the ConsultChimps library uses"
       guideHref="/docs/tools/spreadsheet-split"
       guideLabel="Read the split guide"
       kicker="Online tool · Excel split"
@@ -709,9 +709,9 @@ export function ExcelSplitTool() {
             Advanced options
           </summary>
           <p className={`${fieldHintClass} mt-3`}>
-            Leave the worksheet, table, and range fields empty to split every
-            worksheet that contains your column and keep the rest of the
-            workbook in each new file
+            For a workbook, leave the worksheet, table, and range fields empty
+            to split every worksheet that contains your column and keep the rest
+            of the workbook in each new file
           </p>
           <div className="mt-5 flex flex-col gap-5">
             <TextField
@@ -823,7 +823,9 @@ export function ExcelSplitTool() {
               hint={
                 allWorksheetMode
                   ? "Only applies when you name a worksheet, table, or range, or turn off keeping the whole workbook. Otherwise rows with a blank value never get a workbook of their own"
-                  : "Write a workbook for rows whose split value is blank"
+                  : csvOutput
+                    ? "Write a file for rows whose split value is blank"
+                    : "Write a workbook for rows whose split value is blank"
               }
               label="Include blank values"
               onChange={setIncludeBlank}
@@ -1093,9 +1095,9 @@ export function ExcelMergeTool() {
         <h2 className="text-xl font-bold tracking-[-0.03em]">2. Run</h2>
         <p className="mt-3 text-sm text-fd-muted-foreground">
           {files.length === 0
-            ? "Add at least one workbook to merge"
+            ? "Add at least one workbook or CSV file to merge"
             : `Every worksheet from ${files.length} ${
-                files.length === 1 ? "workbook" : "workbooks"
+                files.length === 1 ? "file" : "files"
               } will become its own tab, in the order listed above, alongside a Sheet Index tab`}
         </p>
         <RunControls
@@ -1103,7 +1105,7 @@ export function ExcelMergeTool() {
           disabled={files.length === 0}
           onCancel={runState.cancel}
           onRun={start}
-          readingLabel="Reading the workbooks…"
+          readingLabel="Reading the files…"
           runLabel="Run merge"
           state={runState}
         />
@@ -1546,13 +1548,13 @@ export function ExcelConsolidateTool() {
         }
         emptyMessage="Choose one of the files above to see the worksheets, header rows, and structures it holds"
         file={inspected}
-        hint="See the worksheets, header rows, columns, and sample values one of these workbooks holds, and which spellings its headers carry before you map them"
+        hint="See the worksheets, header rows, columns, and sample values one of these files holds, and which spellings its headers carry before you map them"
         includeHiddenSheets={includeHiddenSheets}
-        label="Look inside a workbook"
+        label="Look inside a file"
       >
         <div className="mt-4">
           <label className={fieldLabelClass} htmlFor={inspectSelectId}>
-            Workbook to inspect
+            File to inspect
           </label>
           <select
             className={`${inputClass} mt-2`}
@@ -1561,7 +1563,7 @@ export function ExcelConsolidateTool() {
             onChange={(event) => setInspectedId(event.target.value)}
             value={inspected ? inspectedId : ""}
           >
-            <option value="">Choose a workbook…</option>
+            <option value="">Choose a file…</option>
             {files.map((file, index) => (
               <option key={file.id} value={file.id}>
                 {`${String(index + 1).padStart(2, "0")} ${file.name}`}
@@ -1652,7 +1654,7 @@ export function ExcelConsolidateTool() {
             onClick={suggest}
             type="button"
           >
-            {suggesting ? "Reading the workbooks…" : "Suggest a mapping"}
+            {suggesting ? "Reading the files…" : "Suggest a mapping"}
           </button>
         </div>
         {currentDraft?.error ? (
@@ -1667,9 +1669,9 @@ export function ExcelConsolidateTool() {
               data-testid="suggestion-empty"
             >
               Each header is spelled the same way wherever it appears in these
-              workbooks, so there is nothing to fold together. Headers that
-              differ in their words, such as “Reference” and “Case ID”, are a
-              mapping entry you write by hand
+              files, so there is nothing to fold together. Headers that differ
+              in their words, such as “Reference” and “Case ID”, are a mapping
+              entry you write by hand
             </p>
           ) : (
             <>
@@ -1746,15 +1748,15 @@ export function ExcelConsolidateTool() {
         <h2 className="text-xl font-bold tracking-[-0.03em]">3. Run</h2>
         <p className="mt-3 text-sm text-fd-muted-foreground">
           {files.length === 0
-            ? "Add at least one workbook to consolidate"
+            ? "Add at least one workbook or CSV file to consolidate"
             : mappingSelection.reading
               ? "The column mapping you added is still being read, so Run waits until it is ready"
               : mappingUnusable
                 ? "The column mapping you added could not be read, so nothing will run until you replace it or remove it"
                 : `Rows from every ${
                     includeHiddenSheets ? "" : "visible "
-                  }worksheet that holds data in ${files.length} ${
-                    files.length === 1 ? "workbook" : "workbooks"
+                  }worksheet and CSV file that holds data in ${files.length} ${
+                    files.length === 1 ? "file" : "files"
                   } will be stacked into one table, in the order listed above${
                     mapping
                       ? ", with your column mapping applied and any column it does not claim kept under its own name and named in a warning"
@@ -1770,7 +1772,7 @@ export function ExcelConsolidateTool() {
           disabled={files.length === 0 || mappingUnusable || suggesting}
           onCancel={runState.cancel}
           onRun={start}
-          readingLabel="Reading the workbooks…"
+          readingLabel="Reading the files…"
           runLabel="Run consolidate"
           state={runState}
         />
