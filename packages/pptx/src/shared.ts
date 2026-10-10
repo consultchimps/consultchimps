@@ -645,7 +645,7 @@ export function validateRecordsForTemplate(
   if (missingColumns.length > 0) {
     throw new ConsultChimpsError(
       PPTX_ERRORS.PPTX_MISSING_EXCEL_COLUMN,
-      `Template placeholder "${missingColumns[0]}" does not match any Excel column.`,
+      `Template placeholder "${missingColumns[0]}" does not match any ${records.csvSource === true ? "CSV" : "Excel"} column.`,
       {
         details: {
           availableColumns: records.columns,
@@ -661,7 +661,7 @@ export function recordsWarnings(records: PopulationRecords): string[] {
   return [
     ...(records.skippedEmptyRows > 0
       ? [
-          `Skipped ${records.skippedEmptyRows} empty worksheet row${
+          `Skipped ${records.skippedEmptyRows} empty ${records.csvSource === true ? "CSV" : "worksheet"} row${
             records.skippedEmptyRows === 1 ? "" : "s"
           }.`,
         ]

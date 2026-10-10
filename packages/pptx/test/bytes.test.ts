@@ -724,9 +724,7 @@ describe("CSV records", () => {
       name: "t.pptx",
       bytes: await singlePlaceholderTemplate(),
     };
-    const data = csv(
-      "client;amount\nNorth;1.234,5\nSouth;2025-01-31\n",
-    );
+    const data = csv("client;amount\nNorth;1.234,5\nSouth;2025-01-31\n");
     const plain = await populatePresentationBytes({ template, workbook: data });
     const plainSlides = await outputSlides(plain.outputs[0]!.bytes);
     expect(plainSlides[0]).toContain("1.234,5");
@@ -747,6 +745,22 @@ describe("CSV records", () => {
       workbook: data,
     });
     expect(plan.metrics).toMatchObject({ generatedSlides: 2, inputRows: 2 });
+  });
+
+  it("keeps header names as written and every digit of a number", async () => {
+    const outcome = await populatePresentationBytes({
+      template: {
+        name: "t.pptx",
+        bytes: await templateBytes([
+          slideXml(["{{1,000}}", " ", "{{amount}}"]),
+        ]),
+      },
+      workbook: csv("1,000;amount\nNorth;1234567890123\n"),
+      csv: { numbers: true, delimiter: ";" },
+    });
+    const slides = await outputSlides(outcome.outputs[0]!.bytes);
+    expect(slides[0]).toContain("North");
+    expect(slides[0]).toContain("1234567890123");
   });
 
   it("refuses a worksheet name for a CSV file", async () => {

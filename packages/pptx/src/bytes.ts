@@ -140,7 +140,9 @@ async function resolveRecords(
   });
   return {
     columns: worksheetRecords.columns,
-    noDataMessage: `Worksheet "${worksheetRecords.worksheet}" does not contain any nonempty data rows below the header.`,
+    noDataMessage: workbook.name.toLowerCase().endsWith(".csv")
+      ? `CSV file "${worksheetRecords.worksheet}" does not contain any nonempty data rows below the header.`
+      : `Worksheet "${worksheetRecords.worksheet}" does not contain any nonempty data rows below the header.`,
     rows: worksheetRecords.rows,
     skippedEmptyRows: worksheetRecords.skippedEmptyRows,
     uncachedFormulas: worksheetRecords.uncachedFormulas,

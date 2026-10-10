@@ -12,7 +12,6 @@ What ConsultChimps did:
   - Your source PowerPoint template and Excel workbook were not changed.
 
 Detailed results:
-  - CSV files read, each as one worksheet: 0
   - Formula cells missing cached values: 0
   - PowerPoint slides generated: 2
   - Source data rows read: 2

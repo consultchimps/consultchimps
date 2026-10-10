@@ -445,6 +445,11 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
   },
   "pptx.populate": {
     title: "Your PowerPoint presentation is complete.",
+    // A CSV file has no formulas, and a workbook run reads no CSV file.
+    omittedMetrics: (result) =>
+      metric(result, "csvInputFiles") > 0
+        ? ["formulaCellsWithoutCachedValues"]
+        : ["csvInputFiles"],
     summary: (result) => [
       `ConsultChimps read ${quantity(metric(result, "inputRows"), metric(result, "csvInputFiles") > 0 ? "nonempty CSV record" : "nonempty Excel record")} and created ${quantity(metric(result, "generatedSlides"), "populated slide")} in ${metric(result, "csvInputFiles") > 0 ? "file" : "worksheet"} order.`,
       `It replaced ${quantity(metric(result, "replacements"), "placeholder occurrence")} across the generated slides.`,

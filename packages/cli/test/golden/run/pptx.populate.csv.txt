@@ -13,7 +13,6 @@ What ConsultChimps did:
 
 Detailed results:
   - CSV files read, each as one worksheet: 1
-  - Formula cells missing cached values: 0
   - PowerPoint slides generated: 2
   - Source data rows read: 2
   - New files created: 1

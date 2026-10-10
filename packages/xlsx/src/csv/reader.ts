@@ -46,14 +46,13 @@ import { calendarIsoParts, serial1900 } from "../model/calendar.js";
 import { formatDisplayText } from "../operations/display-text.js";
 
 /**
- * The text a typed CSV value shows: what the workbook a CSV operation writes
- * shows for it, so placeholders read the same from a CSV file as from that
- * workbook. A number shows in General, a date in the writer's own formats.
+ * The text a typed CSV value shows. A number shows every digit it was read
+ * with, with `.` as the decimal mark and no grouping, so nothing a field
+ * held is lost to General's rounding or exponents. A date shows in the
+ * formats the workbook a CSV operation writes uses.
  */
 function csvDisplayText(value: number | string): string {
-  if (typeof value === "number") {
-    return formatDisplayText("General", value, false) ?? String(value);
-  }
+  if (typeof value === "number") return String(value);
   const parts = calendarIsoParts(value);
   const serial = parts === undefined ? undefined : serial1900(parts);
   if (parts === undefined || serial === undefined) return value;
@@ -515,23 +514,24 @@ export class CsvWorkbook implements SheetBook {
     const cellOf = (column: number, field: string): StreamedCell => {
       let value: StreamedValue = field;
       let stored: StreamedValue | undefined;
-      let text = field;
+      let display: string | undefined;
       const number = numbers?.read(field);
       if (number !== undefined) {
         value = number;
-        if (withText) text = csvDisplayText(number);
+        if (withText) display = csvDisplayText(number);
       } else if (dates !== undefined) {
         const date = csvDate(field, dates);
         if (date !== undefined) {
           value = date;
           stored = field;
-          if (withText) text = csvDisplayText(date);
+          if (withText) display = csvDisplayText(date);
         }
       }
+      const shown = display === undefined ? {} : { display };
       if (withText && occupancy && stored !== undefined) {
-        return { column, value, text, stored };
+        return { column, value, text: field, ...shown, stored };
       }
-      if (withText) return { column, value, text };
+      if (withText) return { column, value, text: field, ...shown };
       if (occupancy && stored !== undefined) return { column, value, stored };
       return { column, value };
     };

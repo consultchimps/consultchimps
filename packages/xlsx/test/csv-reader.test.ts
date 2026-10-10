@@ -559,12 +559,13 @@ describe("CSV typing", () => {
       [
         0,
         [
-          { column: 0, value: 1, text: "1" },
-          { column: 1, value: 234, text: "234" },
+          { column: 0, value: 1, text: "1", display: "1" },
+          { column: 1, value: 234, text: "234", display: "234" },
           {
             column: 2,
             value: "2025-01-31T00:00:00.000Z",
             text: "2025-01-31",
+            display: "2025-01-31",
             stored: "2025-01-31",
           },
         ],

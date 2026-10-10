@@ -1202,7 +1202,7 @@ export async function workbookWorksheetRecords(
     }
     const row: Record<string, string> = {};
     columns.forEach((column, position) => {
-      row[column] = grid.text(
+      row[column] = grid.display(
         rowIndex,
         range.startColumn + keptOffsets[position]!,
       );

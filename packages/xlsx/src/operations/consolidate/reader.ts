@@ -71,6 +71,11 @@ export interface StreamedCell {
   /** The text the worksheet shows, when the read asked for it. */
   readonly text?: string;
   /**
+   * How a value read from text, such as a CSV field read as a number, is
+   * shown in place of that text; absent when the text is the display.
+   */
+  readonly display?: string;
+  /**
    * What the cell stores, when the read asked for occupancy and that differs
    * from `value`: a number a style formats as a date stores the number, and
    * a declared date stores its own text.

@@ -290,7 +290,9 @@ async function resolvePopulatePowerPointTemplate(
   });
   const records: PopulationRecords = {
     columns: worksheetRecords.columns,
-    noDataMessage: `Worksheet "${worksheetRecords.worksheet}" does not contain any nonempty data rows below the header.`,
+    noDataMessage: absoluteWorkbook.toLowerCase().endsWith(".csv")
+      ? `CSV file "${worksheetRecords.worksheet}" does not contain any nonempty data rows below the header.`
+      : `Worksheet "${worksheetRecords.worksheet}" does not contain any nonempty data rows below the header.`,
     rows: worksheetRecords.rows,
     skippedEmptyRows: worksheetRecords.skippedEmptyRows,
     uncachedFormulas: worksheetRecords.uncachedFormulas,
