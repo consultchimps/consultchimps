@@ -1,5 +1,75 @@
 # @consultchimps/messages
 
+## 0.8.0
+
+### Minor Changes
+
+- 17b3b5c: Merge keeps the order you give. `sheets merge` and `pdf merge` use
+  named files in the order given, and a folder or pattern adds its matches
+  alphabetically at its place; `discoverFiles` takes `order: "given"` for this,
+  and sorts paths with a fixed English collation so Linux and Windows agree.
+
+  Output names what was read. CSV inputs and outputs are no longer called Excel
+  workbooks in summaries, progress lines or help; `describeWorkbook` reports a
+  `csvInputFiles` metric; every metric has a plain-language label; the next
+  steps point at the files listed above them; `pptx populate` progress names
+  slides as "slide 1" rather than part names; `pptx inspect-template` drops the
+  always-empty split-run line, since split-run placeholders are supported.
+
+  Usage mistakes report `CLI_USAGE` rather than no code: a number option given
+  anything but a whole number from 1 (`--header-row 1.5` used to read row 1, and
+  the db `--limit` options accepted any text), `-o` with `--output-dir`, and a
+  pattern matching several files for a one-file command (which `pdf split` and
+  `sheets unprotect` used to resolve silently to the first match). A file named
+  in one letter case and matched by a pattern in another is used once. `db` help
+  descriptions are lowercase like the others.
+
+- 4b33f76: Consolidate and inspect take CSV files beside workbooks (ADR 0007).
+  Each CSV file is one worksheet named after the file, read in pieces with its
+  encoding and delimiter detected, and every field stays text unless `csv`
+  options (`--csv-numbers`, `--csv-decimal`, `--csv-thousands`, `--csv-dates`)
+  ask for numbers or dates; `--csv-delimiter` overrides the guess and
+  `--csv-encoding` the encoding, except that a byte order mark wins over a
+  contradicting choice, with a warning. Consolidation reports a `csvInputFiles`
+  metric and refuses a table larger than a worksheet holds with
+  `XLSX_OUTPUT_TOO_LARGE`. An inspection of a CSV file reports the encoding and
+  delimiter it used.
+- 6631088: Write CSV (ADR 0007). Consolidate writes a CSV file when the output
+  is named `.csv` or with `--output-format csv`, and split writes CSV files for
+  a CSV input or with `--output-format csv`, splitting compactly. A CSV output
+  uses RFC 4180 quoting, commas and CRLF, is UTF-8 with a byte order mark unless
+  `--csv-bom false`, writes dates as ISO text, and prefixes an apostrophe to
+  text that would start a formula, leaving signed numbers alone. A merge named
+  `.csv`, or a format that contradicts the output's name, is refused with
+  `XLSX_OUTPUT_FORMAT_INVALID`.
+- c150fae: PowerPoint population reads a `.csv` data file (ADR 0007). The file
+  is one worksheet read by the shared header rule, with the same `csv` options
+  (`--csv-*` flags) as the sheets commands. A number read by `--csv-numbers`
+  shows every digit with a point as its decimal mark, a date read by
+  `--csv-dates` shows as `yyyy-mm-dd` (`yyyy-mm-dd hh:mm:ss` with a time), and
+  header names stay as written. A worksheet name is refused for a CSV file with
+  `XLSX_CSV_INVALID_OPTION`. `readWorksheetRecords` and
+  `readWorksheetRecordsBytes` take CSV, and population reports a `csvInputFiles`
+  metric.
+- 2a99d7f: Split and merge take CSV files (ADR 0007). A CSV file splits into
+  compact workbooks, since it has no workbook to keep; asking to keep the
+  workbook is refused with `XLSX_SPLIT_CSV_PRESERVE`. A merge makes each CSV
+  file one tab named after the file, its rows copied as they are, with dates
+  read by `--csv-dates` stored as Excel dates. Merges report a `csvInputFiles`
+  metric. The `--csv-*` options apply to `sheets split` and `sheets merge`.
+- 6295573: A workbook split to CSV with no table, range or worksheet named now
+  splits every worksheet that carries the column, instead of refusing a workbook
+  with several. Each worksheet gives one CSV file per value, named
+  `<prefix>-<value> - <sheet>.csv` when more than one worksheet is split, with
+  the value and sheet name each made safe and a `-2` suffix for any name that
+  would repeat. A worksheet without the column is left out with a warning, the
+  plan lists every file, and keeping the workbook stays refused with
+  `XLSX_SPLIT_CSV_PRESERVE`. Hidden worksheets are included only with `--hidden`
+  (`includeHiddenSheets`).
+- 043304b: `progressStageLabel` gives the words a progress stage reads as, so
+  the browser tools show "Reading inputs" where they showed `reading-workbooks`;
+  the CLI uses it too.
+
 ## 0.7.0
 
 ### Minor Changes
