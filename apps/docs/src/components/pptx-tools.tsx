@@ -5,12 +5,12 @@
  * `@consultchimps/pptx/bytes`.
  *
  * As with the PDF and workbook pages, the components hold state and render;
- * reading the template package, parsing the records workbook, and rewriting
+ * reading the template package, parsing the records file, and rewriting
  * the presentation all happen in the shared operation worker. A deck with one
  * slide per record is the heaviest thing either tool does, so keeping it off
  * the main thread is what keeps the tab responsive on a long record set.
  *
- * Neither page uploads anything. The template and the records workbook are
+ * Neither page uploads anything. The template and the records file are
  * read with the File API, populated in the worker, and handed back as a
  * download, which is the same operation the `pptx populate` command runs.
  */
@@ -30,7 +30,13 @@ import {
   useFileSelection,
   useOperationRun,
 } from "@/components/tool-kit";
-import { PRESENTATION_FILES, WORKBOOK_FILES } from "@/lib/accepted-files";
+import {
+  CsvOptionsFields,
+  csvReadOptionsFrom,
+  isCsvFileName,
+  useCsvChoices,
+} from "@/components/csv-options";
+import { SHEET_FILES, PRESENTATION_FILES } from "@/lib/accepted-files";
 import type { PresentationPopulateOptions } from "@/lib/operation-tasks";
 import { runOperation } from "@/lib/operation-worker";
 import type { OperationPlan } from "@consultchimps/core";
@@ -234,12 +240,19 @@ export function PptxPopulateTool() {
     PRESENTATION_FILES.description,
   );
   const recordsSelection = useFileSelection(
-    WORKBOOK_FILES.accepts,
-    WORKBOOK_FILES.description,
+    SHEET_FILES.accepts,
+    SHEET_FILES.description,
   );
   const template = templateSelection.file;
   const workbook = recordsSelection.file;
   const [worksheet, setWorksheet] = useState("");
+  const [csvChoices, setCsvChoice] = useCsvChoices();
+  // A CSV file is one worksheet, so a worksheet name does not apply to it.
+  const isCsv = workbook !== null && isCsvFileName(workbook.name);
+  const csv = useMemo(
+    () => (isCsv ? csvReadOptionsFrom(csvChoices) : undefined),
+    [csvChoices, isCsv],
+  );
   const [headerRow, setHeaderRow] = useState("");
   const [templateSlide, setTemplateSlide] = useState("");
   const [outputName, setOutputName] = useState("");
@@ -262,14 +275,15 @@ export function PptxPopulateTool() {
   // every dependency here is a plain string straight from useState.
   const options = useMemo<PresentationPopulateOptions>(
     () => ({
+      csv,
       headerRow: suppliedNumber(positiveIntegerField(headerRow, "Header row")),
       outputName: outputName.trim() || undefined,
       templateSlide: suppliedNumber(
         positiveIntegerField(templateSlide, "Template slide"),
       ),
-      worksheet: worksheet.trim() || undefined,
+      worksheet: isCsv ? undefined : worksheet.trim() || undefined,
     }),
-    [headerRow, outputName, templateSlide, worksheet],
+    [csv, headerRow, isCsv, outputName, templateSlide, worksheet],
   );
 
   // Everything a plan depends on, in one comparable value. A stored plan is
@@ -282,7 +296,8 @@ export function PptxPopulateTool() {
   const previewKey = JSON.stringify([
     template?.id ?? null,
     workbook?.id ?? null,
-    worksheet.trim(),
+    isCsv ? "" : worksheet.trim(),
+    csv ?? null,
     headerRow.trim(),
     templateSlide.trim(),
     outputName.trim(),
@@ -364,7 +379,7 @@ export function PptxPopulateTool() {
 
   return (
     <ToolShell
-      description="Choose a designed template slide and a workbook of records, and get one populated slide per record. Everything runs in this page using the same operation the ConsultChimps command line uses"
+      description="Choose a designed template slide and a workbook or CSV file of records, and get one populated slide per record. Everything runs in this page using the same operation the ConsultChimps command line uses"
       guideHref="/docs/tools/powerpoint-populate"
       guideLabel="Read the PowerPoint guide"
       kicker="Online tool · PowerPoint populate"
@@ -418,10 +433,10 @@ export function PptxPopulateTool() {
         </p>
         <div className="mt-4">
           <FilePicker
-            accept={WORKBOOK_FILES.accept}
-            description={`Drag ${WORKBOOK_FILES.description} here, or pick one with the button below. Only the first workbook is used`}
+            accept={SHEET_FILES.accept}
+            description={`Drag ${SHEET_FILES.description} here, or pick one with the button below. Only the first file is used`}
             disabled={isRunning}
-            label="Records workbook"
+            label="Records file"
             multiple={false}
             onFiles={(files) => {
               recordsSelection.choose(files, () => {
@@ -446,6 +461,13 @@ export function PptxPopulateTool() {
             {recordsSelection.rejected}
           </p>
         ) : null}
+        {isCsv ? (
+          <CsvOptionsFields
+            choices={csvChoices}
+            disabled={isRunning}
+            onChange={setCsvChoice}
+          />
+        ) : null}
 
         <div className="mt-6 flex flex-col gap-5">
           <TextField
@@ -464,15 +486,17 @@ export function PptxPopulateTool() {
             Advanced options
           </summary>
           <div className="mt-5 flex flex-col gap-5">
-            <TextField
-              disabled={isRunning}
-              hint="Optional. Reads the records from one worksheet by name. Defaults to the first worksheet"
-              label="Worksheet"
-              onChange={setWorksheet}
-              placeholder="Records"
-              testId="worksheet-input"
-              value={worksheet}
-            />
+            {isCsv ? null : (
+              <TextField
+                disabled={isRunning}
+                hint="Optional. Reads the records from one worksheet by name. Defaults to the first worksheet"
+                label="Worksheet"
+                onChange={setWorksheet}
+                placeholder="Records"
+                testId="worksheet-input"
+                value={worksheet}
+              />
+            )}
             <NumberField
               disabled={isRunning}
               error={fieldMessage(headerRowField)}
@@ -510,8 +534,8 @@ export function PptxPopulateTool() {
         </h2>
         {!template || !workbook ? (
           <p className="mt-3 text-sm text-fd-muted-foreground">
-            Choose a template and a records workbook to see the presentation
-            this task will create
+            Choose a template and a records file to see the presentation this
+            task will create
           </p>
         ) : null}
         {/*

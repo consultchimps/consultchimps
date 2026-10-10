@@ -700,11 +700,14 @@ Columns that hold nothing in the header row or under it are left out as spacers,
 and `readWorkbookWorksheets` reports both counts per worksheet as
 `skippedTitleRows` and `skippedSpacerColumns`. `readWorkbookTablesBytes` is its
 byte-level twin, for a browser that holds the workbook's bytes rather than a
-path. `readWorksheetRecords` selects one `worksheet` and a `headerRow`, and
-returns `uncachedFormulas`, the `Sheet!B4` cells it read as empty because Excel
-never calculated them; the Excel Table and named-range readers filter by
-`sheets` plus `tables` or `names`. The `writeTable` counterpart writes one
-in-memory `Table` to a new formatted workbook.
+path. `readWorksheetRecords` and `readWorksheetRecordsBytes` also read a `.csv`
+file as its one worksheet, with a `csv` option for numbers and dates (see
+[CSV files](/docs/reference/cli#csv-files)), and refuse a `worksheet` for one.
+`readWorksheetRecords` selects one `worksheet` and a `headerRow`, and returns
+`uncachedFormulas`, the `Sheet!B4` cells it read as empty because Excel never
+calculated them; the Excel Table and named-range readers filter by `sheets` plus
+`tables` or `names`. The `writeTable` counterpart writes one in-memory `Table`
+to a new formatted workbook.
 
 ## Inspect a workbook before operating on it
 
@@ -1287,5 +1290,7 @@ const result = await populatePowerPointTemplate({
 
 Set `overwrite: true` only when an existing output presentation should be
 replaced. The first worksheet and first template slide are used by default; set
-`worksheet` or `templateSlide` to select another one. The source template and
-workbook remain unchanged.
+`worksheet` or `templateSlide` to select another one. `workbookPath` may also
+name a `.csv` file, read with a `csv` option as `readWorksheetRecords` reads
+one; `worksheet` is then refused. The source template and data file remain
+unchanged.

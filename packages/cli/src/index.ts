@@ -106,7 +106,7 @@ interface MergeOptions {
   output: string;
 }
 
-interface PptxPopulateOptions {
+interface PptxPopulateOptions extends CsvCliOptions {
   data: string;
   force?: boolean;
   headerRow?: number;
@@ -818,7 +818,7 @@ Examples:
   consultchimps pptx populate --template profile.pptx --data clients.xlsx -o profiles.pptx
 
 Safety:
-  Your source PowerPoint template and Excel workbook are not changed.
+  Your source PowerPoint template and data file are not changed.
   ConsultChimps creates one new presentation and refuses to replace an existing
   output unless you use --force.
 `,
@@ -877,48 +877,60 @@ supported.
     process.stdout.write(lines.join("\n"));
   });
 
-pptx
-  .command("populate")
-  .description(
-    "create one populated PowerPoint slide for every nonempty Excel data row",
-  )
-  .requiredOption(
-    "--template <path>",
-    "source .pptx file containing {{field_name}} placeholders",
-  )
-  .requiredOption("--data <path>", "source .xlsx workbook containing the data")
-  .option(
-    "--sheet <name>",
-    "exact worksheet name containing the data (default: first worksheet)",
-  )
-  .option(
-    "--template-slide <number>",
-    "template slide number, counted from 1 (default: 1)",
-    positiveInteger,
-  )
-  .requiredOption(
-    "-o, --output <path>",
-    "where to save the new populated .pptx presentation",
-  )
-  .option(
-    "--header-row <number>",
-    "row containing field names, counted from 1",
-    positiveInteger,
-  )
-  .option(
-    "-f, --force",
-    "replace the output presentation if it already exists; use with care",
-  )
+withCsvOptions(
+  pptx
+    .command("populate")
+    .description(
+      "create one populated PowerPoint slide for every nonempty data row of an Excel workbook or CSV file",
+    )
+    .requiredOption(
+      "--template <path>",
+      "source .pptx file containing {{field_name}} placeholders",
+    )
+    .requiredOption(
+      "--data <path>",
+      "source .xlsx workbook or .csv file containing the data",
+    )
+    .option(
+      "--sheet <name>",
+      "exact worksheet name containing the data (default: first worksheet; not for a CSV file)",
+    )
+    .option(
+      "--template-slide <number>",
+      "template slide number, counted from 1 (default: 1)",
+      positiveInteger,
+    )
+    .requiredOption(
+      "-o, --output <path>",
+      "where to save the new populated .pptx presentation",
+    )
+    .option(
+      "--header-row <number>",
+      "row containing field names, counted from 1",
+      positiveInteger,
+    )
+    .option(
+      "-f, --force",
+      "replace the output presentation if it already exists; use with care",
+    ),
+)
   .addHelpText(
     "after",
     `
 Example:
   consultchimps pptx populate --template profile.pptx --data clients.xlsx --output profiles.pptx
+  consultchimps pptx populate --template profile.pptx --data clients.csv --csv-numbers --output profiles.pptx
 
 Put placeholders such as {{client_name}} or Revenue: {{revenue}} in ordinary
 text shapes on the template slide. Each nonempty row below the Excel header
 creates one slide, in worksheet order. The first worksheet and first slide are
 used unless you select them. Empty cells become empty text.
+
+A CSV file is one worksheet, so --sheet is refused for one. Its fields are
+text unless --csv-numbers or --csv-dates asks otherwise; a number then shows
+every digit with a point as its decimal mark, and a date shows as
+yyyy-mm-dd, or yyyy-mm-dd hh:mm:ss when it has a time. Header names stay as
+written.
 
 The output contains only the generated slides. Source files are never changed.
 `,
@@ -931,6 +943,7 @@ The output contains only the generated slides. Source files are never changed.
     const result = await (
       await pptxModule()
     ).populatePowerPointTemplate({
+      csv: csvReadOptions(options),
       headerRow: options.headerRow,
       onProgress: progress.report,
       outputPath: options.output,

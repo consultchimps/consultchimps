@@ -21,7 +21,7 @@ import {
   ensureParentDirectory,
   refuseInputOverwrite,
 } from "@consultchimps/files";
-import { readWorksheetRecords } from "@consultchimps/xlsx";
+import { readWorksheetRecords, type CsvReadOptions } from "@consultchimps/xlsx";
 
 import {
   createOutputPresentation,
@@ -56,6 +56,11 @@ export interface InspectPowerPointTemplateOptions {
 }
 
 export interface PopulatePowerPointTemplateOptions extends OperationControlOptions {
+  /**
+   * How to read `workbookPath` when it is a `.csv` file: its one worksheet,
+   * every field text unless numbers or dates are asked for (ADR 0007).
+   */
+  csv?: CsvReadOptions | undefined;
   headerRow?: number | undefined;
   outputPath: string;
   overwrite?: boolean | undefined;
@@ -111,12 +116,14 @@ function isMissingPathError(error: unknown): boolean {
 
 async function validateInputFile(
   filePath: string,
-  extension: ".pptx" | ".xlsx",
+  extension: ".pptx" | ".xlsx" | ".xlsx or .csv",
   errorCode: PptxErrorCode,
   label: string,
 ): Promise<string> {
   const absolutePath = path.resolve(filePath);
-  if (path.extname(absolutePath).toLocaleLowerCase() !== extension) {
+  const allowed =
+    extension === ".xlsx or .csv" ? [".xlsx", ".csv"] : [extension];
+  if (!allowed.includes(path.extname(absolutePath).toLocaleLowerCase())) {
     throw new ConsultChimpsError(
       errorCode,
       `The ${label} must be a ${extension} file.`,
@@ -254,9 +261,9 @@ async function resolvePopulatePowerPointTemplate(
   );
   const absoluteWorkbook = await validateInputFile(
     options.workbookPath,
-    ".xlsx",
+    ".xlsx or .csv",
     PPTX_ERRORS.XLSX_WORKBOOK_NOT_FOUND,
-    "Excel workbook",
+    "data file",
   );
   const { absoluteOutput, outputExists } = await validateOutputPath(
     options.outputPath,
@@ -277,15 +284,22 @@ async function resolvePopulatePowerPointTemplate(
   validateTemplateInspection(inspection);
 
   const worksheetRecords = await readWorksheetRecords(absoluteWorkbook, {
+    csv: options.csv,
     headerRow: options.headerRow,
     worksheet: options.worksheet,
   });
   const records: PopulationRecords = {
     columns: worksheetRecords.columns,
-    noDataMessage: `Worksheet "${worksheetRecords.worksheet}" does not contain any nonempty data rows below the header.`,
+    noDataMessage: absoluteWorkbook.toLowerCase().endsWith(".csv")
+      ? `CSV file "${worksheetRecords.worksheet}" does not contain any nonempty data rows below the header.`
+      : `Worksheet "${worksheetRecords.worksheet}" does not contain any nonempty data rows below the header.`,
     rows: worksheetRecords.rows,
     skippedEmptyRows: worksheetRecords.skippedEmptyRows,
     uncachedFormulas: worksheetRecords.uncachedFormulas,
+    ...(worksheetRecords.warnings === undefined
+      ? {}
+      : { sourceWarnings: worksheetRecords.warnings }),
+    csvSource: absoluteWorkbook.toLowerCase().endsWith(".csv"),
   };
   validateRecordsForTemplate(records, inspection, {
     headerRow: options.headerRow,
@@ -327,6 +341,7 @@ export async function planPopulatePowerPointTemplate(
     ],
     warnings,
     metrics: {
+      csvInputFiles: resolved.records.csvSource === true ? 1 : 0,
       formulaCellsWithoutCachedValues: resolved.records.uncachedFormulas.length,
       generatedSlides: resolved.records.rows.length,
       inputRows: resolved.records.rows.length,
@@ -374,6 +389,7 @@ export async function populatePowerPointTemplate(
       ],
       warnings,
       metrics: {
+        csvInputFiles: records.csvSource === true ? 1 : 0,
         formulaCellsWithoutCachedValues: records.uncachedFormulas.length,
         generatedSlides: records.rows.length,
         inputRows: records.rows.length,

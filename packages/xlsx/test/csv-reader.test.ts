@@ -510,6 +510,11 @@ describe("CSV typing", () => {
     const reader = new CsvNumberReader(".", "");
     expect(reader.read("1234.5")).toBe(1234.5);
     expect(reader.read("1,234")).toBeUndefined();
+    const grouped = new CsvNumberReader(".", ",");
+    expect(grouped.display("0.0000001")).toBe("0.0000001");
+    expect(grouped.display("+1,234.50")).toBe("1234.50");
+    expect(grouped.display("-0.0")).toBe("0.0");
+    expect(grouped.display("x")).toBeUndefined();
     expect(reader.read(`0.${"0".repeat(400)}1`)).toBeUndefined();
     expect(reader.read("0.000")).toBe(0);
   });
@@ -559,12 +564,13 @@ describe("CSV typing", () => {
       [
         0,
         [
-          { column: 0, value: 1, text: "1" },
-          { column: 1, value: 234, text: "234" },
+          { column: 0, value: 1, text: "1", display: "1" },
+          { column: 1, value: 234, text: "234", display: "234" },
           {
             column: 2,
             value: "2025-01-31T00:00:00.000Z",
             text: "2025-01-31",
+            display: "2025-01-31",
             stored: "2025-01-31",
           },
         ],

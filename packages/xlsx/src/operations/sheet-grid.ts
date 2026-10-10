@@ -10,6 +10,7 @@ import { CellError } from "../package/cell-error.js";
 import { bytesSource } from "../package/index.js";
 import {
   StreamedWorkbook,
+  type SheetBook,
   type CellPosition,
   type CellRectangle,
   type StreamedCell,
@@ -35,6 +36,8 @@ export interface SheetGrid {
    * cell. Only a grid read with `text` holds it; otherwise every cell is "".
    */
   text(row: number, column: number): string;
+  /** The text a data cell shows: a typed value's display, else its text. */
+  display(row: number, column: number): string;
 }
 
 /** A table value for a streamed one: an error cell becomes its text. */
@@ -56,19 +59,22 @@ export function openWorkbookBytes(
  * Excel Table or a named range declares its own rectangle.
  */
 export async function readSheetGrid(
-  workbook: StreamedWorkbook,
+  workbook: SheetBook,
   sheet: StreamedSheet,
   options: { text?: boolean } = {},
 ): Promise<SheetGrid> {
   let rows = new Map<number, Map<number, StreamedValue>>();
   // Display text is kept only for a read that asked for it.
   let texts = new Map<number, Map<number, string>>();
+  // How values read from text are shown, where that differs from the text.
+  let displays = new Map<number, Map<number, string>>();
   const read = await workbook.readWorksheet(
     sheet,
     {
       begin() {
         rows = new Map();
         texts = new Map();
+        displays = new Map();
       },
       row(row: number, cells: readonly StreamedCell[]) {
         rows.set(
@@ -82,6 +88,15 @@ export async function readSheetGrid(
               cells.map((cell) => [cell.column, cell.text ?? ""] as const),
             ),
           );
+          for (const cell of cells) {
+            if (cell.display === undefined) continue;
+            let ofRow = displays.get(row);
+            if (ofRow === undefined) {
+              ofRow = new Map();
+              displays.set(row, ofRow);
+            }
+            ofRow.set(cell.column, cell.display);
+          }
         }
       },
     },
@@ -93,6 +108,8 @@ export async function readSheetGrid(
     uncachedFormulas: read.uncachedFormulas,
     value: (row, column) => tableValue(rows.get(row)?.get(column)),
     text: (row, column) => texts.get(row)?.get(column) ?? "",
+    display: (row, column) =>
+      displays.get(row)?.get(column) ?? texts.get(row)?.get(column) ?? "",
   };
 }
 

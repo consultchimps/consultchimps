@@ -3,6 +3,7 @@
  * operations. This module must stay free of node:fs and node:path imports so
  * the byte entry point can run in browsers.
  */
+import { CsvWorkbook } from "./csv/reader.js";
 import type { CsvReadOptions } from "./csv/options.js";
 import {
   uncachedFormulaHint,
@@ -28,6 +29,7 @@ import { writableCellValue } from "./model/date-cells.js";
 import {
   decodeRange,
   type CellRectangle,
+  type SheetBook,
   type StreamedWorkbook,
 } from "./operations/consolidate/reader.js";
 import {
@@ -372,7 +374,13 @@ export interface ReadWorkbookNamedRangesOptions {
 
 export interface ReadWorksheetRecordsOptions {
   headerRow?: number | undefined;
+  /**
+   * The worksheet to read. A CSV file has one, named after the file, so this
+   * is refused for one (ADR 0007).
+   */
   worksheet?: string | undefined;
+  /** How to read a `.csv` file: its one worksheet, typed as asked. */
+  csv?: CsvReadOptions | undefined;
 }
 
 export interface WorksheetRecords {
@@ -386,6 +394,8 @@ export interface WorksheetRecords {
    */
   uncachedFormulas: string[];
   worksheet: string;
+  /** What opening the file noticed, such as a CSV file's encoding fallback. */
+  warnings?: string[];
 }
 
 export interface WorkbookExcelTable extends Table {
@@ -1046,10 +1056,17 @@ export async function workbookNamedRanges(
 }
 
 export async function workbookWorksheetRecords(
-  workbook: StreamedWorkbook,
+  workbook: SheetBook,
   options: ReadWorksheetRecordsOptions,
 ): Promise<WorksheetRecords> {
   const requestedWorksheet = options.worksheet?.trim();
+  if (workbook instanceof CsvWorkbook && requestedWorksheet) {
+    throw new ConsultChimpsError(
+      XLSX_ERRORS.XLSX_CSV_INVALID_OPTION,
+      `A CSV file has one worksheet, named after the file, so a worksheet cannot be chosen. Leave out the worksheet, "${requestedWorksheet}", and run again.`,
+      { details: { option: "worksheet", worksheet: requestedWorksheet } },
+    );
+  }
   const sheetNames = workbook.sheets.map((sheet) => sheet.name);
   const sheet = requestedWorksheet
     ? workbook.sheets.find(
@@ -1185,7 +1202,7 @@ export async function workbookWorksheetRecords(
     }
     const row: Record<string, string> = {};
     columns.forEach((column, position) => {
-      row[column] = grid.text(
+      row[column] = grid.display(
         rowIndex,
         range.startColumn + keptOffsets[position]!,
       );
@@ -1205,6 +1222,9 @@ export async function workbookWorksheetRecords(
       { ...range, startRow: headerRowIndex },
     ),
     worksheet: worksheetName,
+    ...(workbook.warnings.length > 0
+      ? { warnings: [...workbook.warnings] }
+      : {}),
   };
 }
 

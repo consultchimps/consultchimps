@@ -42,6 +42,25 @@ import {
   type SettledCsvOptions,
 } from "./options.js";
 import { CsvNumberReader, csvDate } from "./typing.js";
+import { calendarIsoParts, serial1900 } from "../model/calendar.js";
+import { formatDisplayText } from "../operations/display-text.js";
+
+/**
+ * The text a typed CSV date shows: the formats the workbook a CSV operation
+ * writes uses. A typed number shows as `CsvNumberReader.display` gives it.
+ */
+function csvDisplayText(value: string): string {
+  const parts = calendarIsoParts(value);
+  const serial = parts === undefined ? undefined : serial1900(parts);
+  if (parts === undefined || serial === undefined) return value;
+  const time =
+    parts.hour !== 0 ||
+    parts.minute !== 0 ||
+    parts.second !== 0 ||
+    parts.millisecond !== 0;
+  const code = time ? "yyyy-mm-dd hh:mm:ss" : "yyyy-mm-dd";
+  return formatDisplayText(code, serial, false) ?? value;
+}
 
 /** How many bytes each read takes. The same everywhere, so reads are identical. */
 export const CSV_PIECE_BYTES: number = 64 * 1024;
@@ -492,20 +511,24 @@ export class CsvWorkbook implements SheetBook {
     const cellOf = (column: number, field: string): StreamedCell => {
       let value: StreamedValue = field;
       let stored: StreamedValue | undefined;
+      let display: string | undefined;
       const number = numbers?.read(field);
       if (number !== undefined) {
         value = number;
+        if (withText) display = numbers!.display(field);
       } else if (dates !== undefined) {
         const date = csvDate(field, dates);
         if (date !== undefined) {
           value = date;
           stored = field;
+          if (withText) display = csvDisplayText(date);
         }
       }
+      const shown = display === undefined ? {} : { display };
       if (withText && occupancy && stored !== undefined) {
-        return { column, value, text: field, stored };
+        return { column, value, text: field, ...shown, stored };
       }
-      if (withText) return { column, value, text: field };
+      if (withText) return { column, value, text: field, ...shown };
       if (occupancy && stored !== undefined) return { column, value, stored };
       return { column, value };
     };

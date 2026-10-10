@@ -488,7 +488,10 @@ export interface MergeWorkbooksBytesOptions extends OperationControlOptions {
 
 export interface ReadWorksheetRecordsBytesOptions {
   headerRow?: number | undefined;
+  /** Refused for a CSV file, which has one worksheet (ADR 0007). */
   worksheet?: string | undefined;
+  /** How to read an input whose name ends in `.csv`. */
+  csv?: CsvReadOptions | undefined;
 }
 
 /**
@@ -1427,7 +1430,19 @@ export async function readWorksheetRecordsBytes(
   input: WorkbookInputBytes,
   options: ReadWorksheetRecordsBytesOptions = {},
 ): Promise<WorksheetRecords> {
-  return workbookWorksheetRecords(await openInputBytes(input), options);
+  settleCsvOptions(options.csv);
+  const book = isCsvName(input.name)
+    ? await openSheetBook(
+        bytesSource(input.name, input.bytes),
+        {
+          file: input.name,
+          source: input.name,
+          details: { source: input.name },
+        },
+        options.csv,
+      )
+    : await openInputBytes(input);
+  return workbookWorksheetRecords(book, options);
 }
 
 /**

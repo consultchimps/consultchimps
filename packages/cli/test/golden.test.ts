@@ -331,6 +331,10 @@ async function writeInputs(directory: string): Promise<void> {
       ],
     ],
   ]);
+  await writeFile(
+    path.join(inputs, "companies.csv"),
+    "company;revenue\nCompany A;12,4\nCompany B;8,7\n",
+  );
   await writePdf(path.join(inputs, "report.pdf"), 3);
   await writePdf(path.join(inputs, "appendix.pdf"), 1);
   await mkdir(path.join(inputs, "chapters"));
@@ -480,6 +484,22 @@ const runCases: RunCase[] = [
       "profiles.pptx",
     ],
   },
+  {
+    name: "pptx.populate.csv",
+    args: [
+      "pptx",
+      "populate",
+      "--template",
+      "inputs/profile.pptx",
+      "--data",
+      "inputs/companies.csv",
+      "--csv-numbers",
+      "--csv-decimal",
+      ",",
+      "-o",
+      "profiles.pptx",
+    ],
+  },
   // pdf
   {
     name: "pdf.split",
@@ -532,6 +552,21 @@ const runCases: RunCase[] = [
       "inputs/companies.xlsx",
       "--template-slide",
       "4",
+      "-o",
+      "profiles.pptx",
+    ],
+  },
+  {
+    name: "refusal.pptx.populate-csv-sheet",
+    args: [
+      "pptx",
+      "populate",
+      "--template",
+      "inputs/profile.pptx",
+      "--data",
+      "inputs/companies.csv",
+      "--sheet",
+      "Companies",
       "-o",
       "profiles.pptx",
     ],

@@ -1,0 +1,39 @@
+$ consultchimps pptx populate --template inputs/profile.pptx --data inputs/companies.csv --csv-numbers --csv-decimal "," -o profiles.pptx
+exit code: 0
+
+--- stdout ---
+SUCCESS: ConsultChimps finished your task.
+
+Your PowerPoint presentation is complete.
+
+What ConsultChimps did:
+  - ConsultChimps read 2 nonempty CSV records and created 2 populated slides in file order.
+  - It replaced 4 placeholder occurrences across the generated slides.
+  - Your source PowerPoint template and CSV file were not changed.
+
+Detailed results:
+  - CSV files read, each as one worksheet: 1
+  - PowerPoint slides generated: 2
+  - Source data rows read: 2
+  - New files created: 1
+  - Distinct placeholder fields: 2
+  - Placeholder occurrences per template slide: 2
+  - Placeholder replacements made: 4
+  - Rows skipped: 0
+  - Warnings reported: 0
+
+Files created:
+  1. <tmp>/profiles.pptx
+     Type: PowerPoint presentation
+
+Warnings:
+  - None. ConsultChimps did not detect any recoverable problems during this task.
+
+What you can do next:
+  - Open the new PowerPoint presentation listed above and review every generated slide.
+  - Check longer replacement values for fit because this version does not shrink or truncate text automatically.
+
+--- stderr ---
+Generating slides 1/2: slide 1
+Generating slides 2/2: slide 2
+Writing output 1/1: profiles.pptx

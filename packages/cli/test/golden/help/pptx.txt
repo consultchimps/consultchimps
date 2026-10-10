@@ -11,7 +11,7 @@ Options:
 
 Commands:
   inspect-template [options] <template>  list text placeholders on one PowerPoint template slide without creating a file
-  populate [options]                     create one populated PowerPoint slide for every nonempty Excel data row
+  populate [options]                     create one populated PowerPoint slide for every nonempty data row of an Excel workbook or CSV file
   help [command]                         display help for command
 
 Examples:
@@ -19,7 +19,7 @@ Examples:
   consultchimps pptx populate --template profile.pptx --data clients.xlsx -o profiles.pptx
 
 Safety:
-  Your source PowerPoint template and Excel workbook are not changed.
+  Your source PowerPoint template and data file are not changed.
   ConsultChimps creates one new presentation and refuses to replace an existing
   output unless you use --force.
 

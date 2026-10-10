@@ -60,6 +60,12 @@ a header.
 The first worksheet is selected by default. Set `--sheet` when the records are
 on another worksheet.
 
+A `.csv` data file is one worksheet, so `--sheet` is refused for it. Its fields
+are text unless `--csv-numbers` or `--csv-dates` asks otherwise; a number read
+that way shows every digit with a point as its decimal mark, and a date shows as
+`yyyy-mm-dd`, or `yyyy-mm-dd hh:mm:ss` when it has a time. See
+[CSV files](/docs/reference/cli#csv-files) for every reading flag.
+
 ## Inspect the template
 
 ```bash
@@ -94,14 +100,15 @@ visible slide list. Existing output files are protected; add `--force` only when
 replacing the named output is intentional.
 
 The [in-browser populator](/tools/pptx-populate) takes the same two inputs, a
-`.pptx` template and an `.xlsx` or `.xlsm` records workbook that is only read
-and never rewritten, and offers the same four choices: worksheet name, header
-row, template slide number, and output filename, mirroring `--sheet`,
-`--header-row`, `--template-slide`, and `--output`. It shows how many slides the
-workbook would generate before you run the populate, then downloads the finished
-deck. Overwrite protection does not apply in the browser: the tool hands the
-file to your downloads, so there is no destination path to protect and no
-`--force` equivalent.
+`.pptx` template and an `.xlsx` or `.xlsm` records workbook or `.csv` file that
+is only read and never rewritten. It offers a header row, template slide number,
+and output filename, mirroring `--header-row`, `--template-slide`, and
+`--output`, plus a worksheet name (`--sheet`) for a workbook or the CSV reading
+choices (`--csv-*`) for a CSV file. It shows how many slides the data would
+generate before you run the populate, then downloads the finished deck.
+Overwrite protection does not apply in the browser: the tool hands the file to
+your downloads, so there is no destination path to protect and no `--force`
+equivalent.
 
 ## Formatting behavior
 

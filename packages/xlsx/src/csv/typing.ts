@@ -39,6 +39,23 @@ export class CsvNumberReader {
     this.#thousands = thousands;
   }
 
+  /**
+   * The number a field holds as plain decimal text, with `.` as its decimal
+   * mark and no grouping or exponent, or undefined when it is not only a
+   * number. It keeps every digit the field was read with.
+   */
+  display(field: string): string | undefined {
+    if (this.read(field) === undefined) return undefined;
+    const matched = this.#pattern.exec(field)!;
+    const whole =
+      this.#thousands === ""
+        ? (matched[2] ?? "")
+        : (matched[2] ?? "").split(this.#thousands).join("");
+    const fraction = matched[3] ?? "";
+    const negative = matched[1] === "-" && /[1-9]/u.test(`${whole}${fraction}`);
+    return `${negative ? "-" : ""}${whole}${fraction === "" ? "" : `.${fraction}`}`;
+  }
+
   /** The number the field holds, or undefined when it is not only a number. */
   read(field: string): number | undefined {
     const matched = this.#pattern.exec(field);

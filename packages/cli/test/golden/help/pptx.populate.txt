@@ -4,28 +4,53 @@ exit code: 0
 --- stdout ---
 Usage: consultchimps pptx populate [options]
 
-create one populated PowerPoint slide for every nonempty Excel data row
+create one populated PowerPoint slide for every nonempty data row of an Excel
+workbook or CSV file
 
 Options:
-  --template <path>          source .pptx file containing {{field_name}}
-                             placeholders
-  --data <path>              source .xlsx workbook containing the data
-  --sheet <name>             exact worksheet name containing the data (default:
-                             first worksheet)
-  --template-slide <number>  template slide number, counted from 1 (default: 1)
-  -o, --output <path>        where to save the new populated .pptx presentation
-  --header-row <number>      row containing field names, counted from 1
-  -f, --force                replace the output presentation if it already
-                             exists; use with care
-  -h, --help                 display help for command
+  --template <path>            source .pptx file containing {{field_name}}
+                               placeholders
+  --data <path>                source .xlsx workbook or .csv file containing the
+                               data
+  --sheet <name>               exact worksheet name containing the data
+                               (default: first worksheet; not for a CSV file)
+  --template-slide <number>    template slide number, counted from 1 (default:
+                               1)
+  -o, --output <path>          where to save the new populated .pptx
+                               presentation
+  --header-row <number>        row containing field names, counted from 1
+  -f, --force                  replace the output presentation if it already
+                               exists; use with care
+  --csv-delimiter <delimiter>  CSV field delimiter: comma, semicolon, tab, pipe,
+                               or one character (default: guessed from the file)
+  --csv-encoding <encoding>    CSV text encoding: utf-8, utf-16le, utf-16be, or
+                               windows-1252 (default: detected from the file; a
+                               byte order mark wins)
+  --csv-numbers                read CSV fields that hold only a number as
+                               numbers; every field is text otherwise
+  --csv-decimal <separator>    decimal separator --csv-numbers reads: "." or ","
+                               (default: ".")
+  --csv-thousands <separator>  thousands separator --csv-numbers reads: ",",
+                               ".", space, apostrophe, or none (default: ",", or
+                               "." when the decimal is ",")
+  --csv-dates <order>          read CSV dates: iso reads yyyy-mm-dd only; dmy,
+                               mdy, or ymd also read dates in that order
+  -h, --help                   display help for command
 
 Example:
   consultchimps pptx populate --template profile.pptx --data clients.xlsx --output profiles.pptx
+  consultchimps pptx populate --template profile.pptx --data clients.csv --csv-numbers --output profiles.pptx
 
 Put placeholders such as {{client_name}} or Revenue: {{revenue}} in ordinary
 text shapes on the template slide. Each nonempty row below the Excel header
 creates one slide, in worksheet order. The first worksheet and first slide are
 used unless you select them. Empty cells become empty text.
+
+A CSV file is one worksheet, so --sheet is refused for one. Its fields are
+text unless --csv-numbers or --csv-dates asks otherwise; a number then shows
+every digit with a point as its decimal mark, and a date shows as
+yyyy-mm-dd, or yyyy-mm-dd hh:mm:ss when it has a time. Header names stay as
+written.
 
 The output contains only the generated slides. Source files are never changed.
 

@@ -76,6 +76,8 @@ export interface FileOperationOutcome<TMetric extends string> {
  * page builds one object and sends it to both.
  */
 export interface PresentationPopulateOptions {
+  /** How to read the records when they are a CSV file (ADR 0007). */
+  readonly csv?: CsvReadOptions | undefined;
   readonly headerRow?: number | undefined;
   readonly outputName?: string | undefined;
   readonly templateSlide?: number | undefined;
