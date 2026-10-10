@@ -324,9 +324,9 @@ export interface SplitWorkbookBytesOptions extends OperationControlOptions {
   csv?: CsvReadOptions | undefined;
   filenamePrefix?: string | undefined;
   headerRow?: number | undefined;
-  /** Only applies to a table, range, or worksheet selection. */
+  /** Applies to a table, range, or worksheet selection, and to a split of every worksheet to CSV files. */
   includeBlank?: boolean | undefined;
-  /** Only applies to a table, range, or worksheet selection. */
+  /** Applies to a table, range, or worksheet selection, and to a split of every worksheet to CSV files. */
   includeHiddenSheets?: boolean | undefined;
   /**
    * Keep the complete source workbook. In the default all-worksheet mode this
