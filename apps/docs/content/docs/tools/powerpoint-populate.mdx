@@ -101,13 +101,14 @@ replacing the named output is intentional.
 
 The [in-browser populator](/tools/pptx-populate) takes the same two inputs, a
 `.pptx` template and an `.xlsx` or `.xlsm` records workbook or `.csv` file that
-is only read and never rewritten, and offers the same four choices: worksheet
-name, header row, template slide number, and output filename, mirroring
-`--sheet`, `--header-row`, `--template-slide`, and `--output`. It shows how many
-slides the workbook would generate before you run the populate, then downloads
-the finished deck. Overwrite protection does not apply in the browser: the tool
-hands the file to your downloads, so there is no destination path to protect and
-no `--force` equivalent.
+is only read and never rewritten. It offers a header row, template slide number,
+and output filename, mirroring `--header-row`, `--template-slide`, and
+`--output`, plus a worksheet name (`--sheet`) for a workbook or the CSV reading
+choices (`--csv-*`) for a CSV file. It shows how many slides the data would
+generate before you run the populate, then downloads the finished deck.
+Overwrite protection does not apply in the browser: the tool hands the file to
+your downloads, so there is no destination path to protect and no `--force`
+equivalent.
 
 ## Formatting behavior
 
