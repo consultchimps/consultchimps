@@ -114,6 +114,8 @@ export interface RegionSplitContext {
 export interface RegionGroup {
   /** The split value, as the table holds it. */
   readonly value: CellValue;
+  /** The value as the split's matching mode compares it. */
+  readonly key: string;
   readonly rows: number;
   /** Per column, the width a compact output gives it. */
   readonly widths: readonly number[];
@@ -613,8 +615,12 @@ export async function resolveRegionSplit(
   const includeBlank = selection.includeBlank ?? true;
   let column: string | undefined;
   let matched = -1;
-  const groups: Array<{ value: CellValue; rows: number; widths: number[] }> =
-    [];
+  const groups: Array<{
+    value: CellValue;
+    key: string;
+    rows: number;
+    widths: number[];
+  }> = [];
   const groupIndex = new Map<string, number>();
   let inputRows = 0;
   let skippedRows = 0;
@@ -701,6 +707,7 @@ export async function resolveRegionSplit(
           groupIndex.set(key, group);
           groups.push({
             value,
+            key,
             rows: 0,
             widths: names!.map((name) => name.length),
           });
@@ -782,6 +789,7 @@ export async function resolveRegionSplit(
     groupOfRow,
     groups: groups.map((group) => ({
       value: group.value,
+      key: group.key,
       rows: group.rows,
       widths: group.widths.map(tableColumnWidth),
     })),

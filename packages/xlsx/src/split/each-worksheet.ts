@@ -184,6 +184,8 @@ export function skippedSheetsWarning(
 /** What a split of one or more region parts reports, summed over the parts. */
 export interface RegionSplitSummary {
   readonly groups: ResolvedRegionSplit["groups"];
+  /** Distinct values across every part, a value on two worksheets once. */
+  readonly distinctGroups: number;
   readonly inputRows: number;
   readonly skippedRows: number;
   readonly uncachedFormulas: readonly string[];
@@ -210,6 +212,7 @@ export function regionSplitSummary(
   }
   return {
     groups,
+    distinctGroups: new Set(groups.map((group) => group.key)).size,
     inputRows,
     skippedRows,
     uncachedFormulas,

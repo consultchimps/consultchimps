@@ -8,13 +8,13 @@ Your split is complete.
 
 What ConsultChimps did:
   - ConsultChimps read 3 data rows from the source file.
-  - It found 3 distinct groups and created 3 separate CSV files.
+  - It found 2 distinct groups and created 3 separate CSV files.
   - 3 data rows were retained across the new files, and 0 rows were skipped.
   - 2 sheets contained the split column and were filtered.
   - Your original file was not changed.
 
 Detailed results:
-  - Distinct groups found: 3
+  - Distinct groups found: 2
   - Input files read: 1
   - Source data rows read: 3
   - New files created: 3

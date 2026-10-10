@@ -426,6 +426,7 @@ describe("splitting every worksheet to CSV", () => {
     expect(text(outcome.outputs[2]!.bytes)).toBe("Region,Units\r\nNorth,5\r\n");
     expect(outcome.result.metrics).toMatchObject({
       outputFiles: 3,
+      groups: 2,
       sheetsFiltered: 2,
       inputRows: 3,
     });
