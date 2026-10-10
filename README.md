@@ -158,11 +158,11 @@ modes.
 
 PowerPoint population reads `{{field_name}}` placeholders from one selected
 template slide and creates one populated slide per nonempty record of an Excel
-worksheet or CSV file. The first slide and first worksheet are used by default,
-and both can be selected explicitly. Placeholders may span adjacent PowerPoint
-text runs, while ordinary text-shape formatting is retained. The output contains
-only generated slides, in record order. Source presentations and data files are
-never modified.
+worksheet or CSV file. The first slide and, for a workbook, the first worksheet
+are used by default, and both can be selected explicitly. Placeholders may span
+adjacent PowerPoint text runs, while ordinary text-shape formatting is retained.
+The output contains only generated slides, in record order. Source presentations
+and data files are never modified.
 
 To preserve every source worksheet as a separate tab, use
 `consultchimps sheets merge "inputs/**/*.xlsx" --output outputs/all-sheets.xlsx`.

@@ -485,7 +485,11 @@ export async function readWorksheetRecords(
       },
       options.csv,
     );
-    return await workbookWorksheetRecords(book, options);
+    const records = await workbookWorksheetRecords(book, options);
+    // A file that grew or changed while it was read is refused rather than
+    // read in part.
+    await opened.verifyUnchanged?.();
+    return records;
   } finally {
     await opened.close();
   }
