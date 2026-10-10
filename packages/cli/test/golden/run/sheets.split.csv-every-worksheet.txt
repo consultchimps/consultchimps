@@ -1,0 +1,47 @@
+$ consultchimps sheets split inputs/regions.xlsx -c Region --output-format csv -o by-region
+exit code: 0
+
+--- stdout ---
+SUCCESS: ConsultChimps finished your task.
+
+Your split is complete.
+
+What ConsultChimps did:
+  - ConsultChimps read 3 data rows from the source file.
+  - It found 3 distinct groups and created 3 separate CSV files.
+  - 3 data rows were retained across the new files, and 0 rows were skipped.
+  - 2 sheets contained the split column and were filtered.
+  - Your original file was not changed.
+
+Detailed results:
+  - Distinct groups found: 3
+  - Input files read: 1
+  - Source data rows read: 3
+  - New files created: 3
+  - Data rows written: 3
+  - Rows removed across the new files: 0
+  - Sheets filtered: 2
+  - Rows skipped: 0
+
+Files created:
+  1. <tmp>/by-region/regions-North - Orders.csv
+     Type: CSV file
+  2. <tmp>/by-region/regions-South - Orders.csv
+     Type: CSV file
+  3. <tmp>/by-region/regions-North - Returns.csv
+     Type: CSV file
+
+Warnings:
+  1. Worksheet "Notes" has no rows under column "Region", so no CSV file was written for it.
+
+What you can do next:
+  - Open the new files listed above and confirm that each file contains the expected group.
+  - If rows were skipped, review the warning section to understand why.
+
+--- stderr ---
+Staging outputs 1/3: regions-North - Orders.csv
+Staging outputs 2/3: regions-South - Orders.csv
+Staging outputs 3/3: regions-North - Returns.csv
+Committing outputs 1/3: regions-North - Orders.csv
+Committing outputs 2/3: regions-South - Orders.csv
+Committing outputs 3/3: regions-North - Returns.csv

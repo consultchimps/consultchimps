@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   consolidateWorkbooksBytes,
   mergeWorkbooksBytes,
+  planSplitWorkbookBytes,
   splitWorkbookBytes,
 } from "../src/bytes.js";
 import { CsvWorkbook } from "../src/csv/reader.js";
@@ -381,5 +382,122 @@ describe("CSV output on the command line surface", () => {
       ),
     );
     expect(error.code).toBe("XLSX_OUTPUT_FORMAT_INVALID");
+  });
+});
+
+describe("splitting every worksheet to CSV", () => {
+  async function book(): Promise<Uint8Array<ArrayBuffer>> {
+    return (await buildWorkbookFixture({
+      sheets: [
+        {
+          name: "Orders",
+          rows: [
+            ["Region", "Amount"],
+            ["North", 1],
+            ["South", 2],
+          ],
+        },
+        { name: "Notes", rows: [["Text"], ["no region here"]] },
+        {
+          name: "Returns",
+          rows: [
+            ["Region", "Units"],
+            ["North", 5],
+          ],
+          state: "hidden",
+        },
+      ],
+    })) as Uint8Array<ArrayBuffer>;
+  }
+
+  it("writes one CSV file per worksheet and value, named for both", async () => {
+    const input = { name: "orders.xlsx", bytes: await book() };
+    const outcome = await splitWorkbookBytes({
+      input,
+      column: "Region",
+      outputFormat: "csv",
+      csvBom: false,
+    });
+    expect(outcome.outputs.map((output) => output.name)).toEqual([
+      "orders-North - Orders.csv",
+      "orders-South - Orders.csv",
+      "orders-North - Returns.csv",
+    ]);
+    expect(text(outcome.outputs[2]!.bytes)).toBe("Region,Units\r\nNorth,5\r\n");
+    expect(outcome.result.metrics).toMatchObject({
+      outputFiles: 3,
+      sheetsFiltered: 2,
+      inputRows: 3,
+    });
+    expect(outcome.result.warnings).toContain(
+      'Worksheet "Notes" has no rows under column "Region", so no CSV file was written for it.',
+    );
+
+    const plan = await planSplitWorkbookBytes({
+      input,
+      column: "Region",
+      outputFormat: "csv",
+    });
+    expect(plan.outputs.map((output) => output.path)).toEqual(
+      outcome.outputs.map((output) => output.name),
+    );
+  });
+
+  it("keeps one-source names when one worksheet carries the column", async () => {
+    const outcome = await splitWorkbookBytes({
+      input: {
+        name: "orders.xlsx",
+        bytes: (await buildWorkbookFixture({
+          sheets: [
+            { name: "Orders", rows: [["Region"], ["North"]] },
+            { name: "Notes", rows: [["Text"], ["x"]] },
+          ],
+        })) as Uint8Array<ArrayBuffer>,
+      },
+      column: "Region",
+      outputFormat: "csv",
+    });
+    expect(outcome.outputs.map((output) => output.name)).toEqual([
+      "orders-North.csv",
+    ]);
+  });
+
+  it("refuses a column no worksheet carries", async () => {
+    const error = await failure(async () =>
+      splitWorkbookBytes({
+        input: { name: "orders.xlsx", bytes: await book() },
+        column: "Country",
+        outputFormat: "csv",
+      }),
+    );
+    expect(error.code).toBe("XLSX_SPLIT_COLUMN_NOT_FOUND");
+  });
+
+  it("writes the same files on the command line surface", async () => {
+    const folder = await mkdtemp(path.join(tmpdir(), "csv-sheets-"));
+    try {
+      const bytes = await book();
+      await writeFile(path.join(folder, "orders.xlsx"), bytes);
+      await splitWorkbookByColumn({
+        input: path.join(folder, "orders.xlsx"),
+        outputDirectory: path.join(folder, "out"),
+        column: "Region",
+        outputFormat: "csv",
+      });
+      const byte = await splitWorkbookBytes({
+        input: { name: "orders.xlsx", bytes },
+        column: "Region",
+        outputFormat: "csv",
+      });
+      for (const output of byte.outputs) {
+        expect(
+          Buffer.from(output.bytes).equals(
+            await readFile(path.join(folder, "out", output.name)),
+          ),
+        ).toBe(true);
+      }
+    } finally {
+      await rm(folder, { recursive: true, force: true });
+    }
   });
 });

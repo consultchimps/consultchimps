@@ -250,8 +250,10 @@ converted date is a real Excel date in the output.
 
 `sheets consolidate` writes CSV when `-o` ends in `.csv` or with
 `--output-format csv`, and `sheets split` writes CSV files for a CSV input, or
-with `--output-format csv`, which splits one source compactly. A CSV output uses
-RFC 4180 quoting, commas and CRLF, is UTF-8 with a byte order mark unless
+with `--output-format csv`, which splits compactly: with no source named, every
+worksheet that carries the column gives one file per value, named
+`<prefix>-<value> - <sheet>.csv` when more than one worksheet does. A CSV output
+uses RFC 4180 quoting, commas and CRLF, is UTF-8 with a byte order mark unless
 `--csv-bom false`, writes dates as ISO text, and prefixes an apostrophe to text
 that would start a formula (`=`, `+`, `-`, `@`), except text that is only a
 signed number. A merge cannot write CSV, since its tabs cannot be one file. A

@@ -15,6 +15,11 @@ import {
 } from "./csv/output.js";
 import { splitOptionsFor } from "./csv/split.js";
 import {
+  regionSplitSummary,
+  resolveEachWorksheetSplit,
+  skippedSheetsWarning,
+} from "./split/each-worksheet.js";
+import {
   csvAsWorkbook,
   memoryCsvScratch,
   type CsvScratch,
@@ -504,6 +509,23 @@ export interface ReadWorksheetRecordsBytesOptions {
  * workbook-preserving split, so the same options mean the same thing whether a
  * caller has a filesystem or only bytes.
  */
+/**
+ * Whether a split writes every worksheet of a workbook to CSV files: CSV
+ * output from a workbook, with no table, range or worksheet named.
+ */
+function splitsEachWorksheet(
+  inputName: string,
+  options: SplitSelectionShape,
+): boolean {
+  return (
+    options.outputFormat === "csv" &&
+    !isCsvName(inputName) &&
+    !options.table &&
+    !options.range &&
+    !options.sheet
+  );
+}
+
 function isAllWorksheetSplit(options: SplitSelectionShape): boolean {
   return (
     !options.table &&
@@ -577,6 +599,13 @@ async function resolveAllWorksheetSplitSource(
 
 interface ResolvedRegionSplitSource {
   resolved: ResolvedRegionSplit;
+  /**
+   * Every region the split writes: the one region, or each worksheet of a
+   * workbook split to CSV files (`resolved` is then the first).
+   */
+  parts: readonly ResolvedRegionSplit[];
+  /** Worksheets a split of every worksheet left out. */
+  skippedSheets: readonly string[];
   preserveWorkbook: boolean;
   /** How each output is written when the workbook is not kept. */
   format: TableOutputFormat;
@@ -594,16 +623,34 @@ async function resolveRegionSplitSource(
     label: input.name,
   };
   const preserveWorkbook = resolvePreserveWorkbook(options);
+  const output = resolveTableOutput(
+    undefined,
+    options.outputFormat,
+    options.csvBom,
+  );
+  if (splitsEachWorksheet(input.name, options)) {
+    const each = await resolveEachWorksheetSplit(
+      input,
+      context,
+      options,
+      splitFilenamePrefix(options, input.name),
+      output.extension,
+    );
+    return {
+      resolved: each.parts[0]!,
+      parts: each.parts,
+      skippedSheets: each.skippedSheets,
+      preserveWorkbook: false,
+      format: output.format,
+      mediaType: output.mediaType,
+      outputNames: [...each.outputNames],
+    };
+  }
   const resolved = await resolveRegionSplit(
     input,
     context,
     options,
     preserveWorkbook,
-  );
-  const output = resolveTableOutput(
-    undefined,
-    options.outputFormat,
-    options.csvBom,
   );
   const preserved = preserveWorkbook
     ? await preservedSplitExtensionOf(input, input.name, context)
@@ -611,6 +658,8 @@ async function resolveRegionSplitSource(
   const extension = preserved ?? output.extension;
   return {
     resolved,
+    parts: [resolved],
+    skippedSheets: [],
     preserveWorkbook,
     format: output.format,
     mediaType:
@@ -674,8 +723,9 @@ export async function planSplitWorkbookSource(
     };
   }
 
-  const { resolved, preserveWorkbook, mediaType, outputNames } =
+  const { parts, skippedSheets, preserveWorkbook, mediaType, outputNames } =
     await resolveRegionSplitSource(input, options);
+  const resolved = regionSplitSummary(parts);
   const uncached = singleSourceUncachedFormulas(
     resolved.uncachedFormulas,
     preserveWorkbook,
@@ -687,6 +737,7 @@ export async function planSplitWorkbookSource(
       : []),
     ...uncached.warnings,
     ...resolved.workbook.warnings,
+    ...skippedSheetsWarning(skippedSheets, resolved.column),
   ];
 
   return {
@@ -711,7 +762,7 @@ export async function planSplitWorkbookSource(
       pivotTablesRemoved: 0,
       rowsDeleted: 0,
       sheetsCopiedUnchanged: 0,
-      sheetsFiltered: 1,
+      sheetsFiltered: resolved.sheets,
       skippedRows: resolved.skippedRows,
       valuesOnly: options.values === true ? 1 : 0,
     },
@@ -793,8 +844,15 @@ async function splitRegionSource(
   open: (name: string, mediaType: string) => Promise<ByteSink>,
 ): Promise<SplitWorkbookSourceOutcome> {
   const { input } = options;
-  const { resolved, preserveWorkbook, mediaType, outputNames, format } =
-    await resolveRegionSplitSource(input, options);
+  const {
+    parts,
+    skippedSheets,
+    preserveWorkbook,
+    mediaType,
+    outputNames,
+    format,
+  } = await resolveRegionSplitSource(input, options);
+  const resolved = regionSplitSummary(parts);
   const splitPackage =
     preserveWorkbook && options.values === true
       ? await openRegionPackage(input)
@@ -812,32 +870,39 @@ async function splitRegionSource(
     await yieldToEventLoop();
     throwIfAborted(options.signal, SPLIT_OPERATION, "memory");
   };
-  const pivotTablesRemoved = await writeRegionGroups(
-    input,
-    resolved,
-    options.values === true,
-    async (index) => {
-      throwIfAborted(options.signal, SPLIT_OPERATION, "memory");
-      const name = outputNames[index]!;
-      const sink = await open(name, mediaType);
-      return {
-        write: (chunk) => sink.write(chunk),
-        close: async () => {
-          await sink.flush();
-          options.onProgress?.({
-            operation: SPLIT_OPERATION,
-            stage: "building-workbooks",
-            completed: index + 1,
-            total: resolved.groups.length,
-            detail: name,
-          });
-        },
-      };
-    },
-    between,
-    splitPackage,
-    format,
-  );
+  let pivotTablesRemoved = 0;
+  let offset = 0;
+  for (const part of parts) {
+    const base = offset;
+    offset += part.groups.length;
+    pivotTablesRemoved += await writeRegionGroups(
+      input,
+      part,
+      options.values === true,
+      async (partIndex) => {
+        const index = base + partIndex;
+        throwIfAborted(options.signal, SPLIT_OPERATION, "memory");
+        const name = outputNames[index]!;
+        const sink = await open(name, mediaType);
+        return {
+          write: (chunk) => sink.write(chunk),
+          close: async () => {
+            await sink.flush();
+            options.onProgress?.({
+              operation: SPLIT_OPERATION,
+              stage: "building-workbooks",
+              completed: index + 1,
+              total: resolved.groups.length,
+              detail: name,
+            });
+          },
+        };
+      },
+      between,
+      splitPackage,
+      format,
+    );
+  }
   throwIfAborted(options.signal, SPLIT_OPERATION, "memory");
 
   return {
@@ -854,6 +919,7 @@ async function splitRegionSource(
           : []),
         ...uncached.warnings,
         ...resolved.workbook.warnings,
+        ...skippedSheetsWarning(skippedSheets, resolved.column),
         ...(pivotTablesRemoved > 0
           ? [
               `Removed ${pivotTablesRemoved} pivot table${pivotTablesRemoved === 1 ? "" : "s"}: their caches contained rows from other groups, and a cache travels inside the workbook whether or not the pivot is opened. Rebuild the pivot in Excel from each output's own rows if it is required.`,
@@ -876,7 +942,7 @@ async function splitRegionSource(
         pivotTablesRemoved,
         rowsDeleted: 0,
         sheetsCopiedUnchanged: 0,
-        sheetsFiltered: 1,
+        sheetsFiltered: resolved.sheets,
         skippedRows: resolved.skippedRows,
         valuesOnly: options.values === true ? 1 : 0,
       },

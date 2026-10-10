@@ -376,8 +376,14 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
       if (Object.hasOwn(result.metrics, "sheetsFiltered")) {
         lines.push(
           `${quantity(metric(result, "sheetsFiltered"), "sheet")} contained the split column and ${metric(result, "sheetsFiltered") === 1 ? "was" : "were"} filtered.`,
-          `${quantity(metric(result, "sheetsCopiedUnchanged"), "sheet")} did not contain the split column and ${metric(result, "sheetsCopiedUnchanged") === 1 ? "was" : "were"} copied unchanged.`,
         );
+        // A CSV file holds rows, so a split that wrote CSV files copies no sheet
+        // unchanged; one it left out is named in a warning instead.
+        if (!writesCsv(result)) {
+          lines.push(
+            `${quantity(metric(result, "sheetsCopiedUnchanged"), "sheet")} did not contain the split column and ${metric(result, "sheetsCopiedUnchanged") === 1 ? "was" : "were"} copied unchanged.`,
+          );
+        }
       }
       // Values-only mode replaces formulas, which only a workbook has, so it is
       // worth a sentence only when it was asked for.
@@ -411,6 +417,7 @@ const operationExplanations: Readonly<Record<string, OperationExplanation>> = {
             "formulaCellsConverted",
             "formulaCellsWithoutCachedValues",
             "pivotTablesRemoved",
+            "sheetsCopiedUnchanged",
             "valuesOnly",
           ]
         : [],

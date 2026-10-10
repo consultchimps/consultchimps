@@ -312,6 +312,24 @@ async function writeInputs(directory: string): Promise<void> {
       ],
     ],
   ]);
+  await writeWorkbook(path.join(inputs, "regions.xlsx"), [
+    [
+      "Orders",
+      [
+        ["Region", "Amount"],
+        ["North", 120],
+        ["South", 80],
+      ],
+    ],
+    [
+      "Returns",
+      [
+        ["Region", "Units"],
+        ["North", 3],
+      ],
+    ],
+    ["Notes", [["Text"], ["no region"]]],
+  ]);
   await writeFile(
     path.join(inputs, "orders.csv"),
     "Region,Product,Amount\nNorth,Widgets,120\nSouth,Gadgets,80\nNorth,Gadgets,45\n",
@@ -442,6 +460,20 @@ const runCases: RunCase[] = [
       "inputs/orders.csv",
       "-c",
       "Region",
+      "-o",
+      "by-region",
+    ],
+  },
+  {
+    name: "sheets.split.csv-every-worksheet",
+    args: [
+      "sheets",
+      "split",
+      "inputs/regions.xlsx",
+      "-c",
+      "Region",
+      "--output-format",
+      "csv",
       "-o",
       "by-region",
     ],
