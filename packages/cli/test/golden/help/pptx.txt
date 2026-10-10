@@ -19,7 +19,7 @@ Examples:
   consultchimps pptx populate --template profile.pptx --data clients.xlsx -o profiles.pptx
 
 Safety:
-  Your source PowerPoint template and Excel workbook are not changed.
+  Your source PowerPoint template and data file are not changed.
   ConsultChimps creates one new presentation and refuses to replace an existing
   output unless you use --force.
 

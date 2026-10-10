@@ -5,12 +5,12 @@
  * `@consultchimps/pptx/bytes`.
  *
  * As with the PDF and workbook pages, the components hold state and render;
- * reading the template package, parsing the records workbook, and rewriting
+ * reading the template package, parsing the records file, and rewriting
  * the presentation all happen in the shared operation worker. A deck with one
  * slide per record is the heaviest thing either tool does, so keeping it off
  * the main thread is what keeps the tab responsive on a long record set.
  *
- * Neither page uploads anything. The template and the records workbook are
+ * Neither page uploads anything. The template and the records file are
  * read with the File API, populated in the worker, and handed back as a
  * download, which is the same operation the `pptx populate` command runs.
  */
@@ -379,7 +379,7 @@ export function PptxPopulateTool() {
 
   return (
     <ToolShell
-      description="Choose a designed template slide and a workbook of records, and get one populated slide per record. Everything runs in this page using the same operation the ConsultChimps command line uses"
+      description="Choose a designed template slide and a workbook or CSV file of records, and get one populated slide per record. Everything runs in this page using the same operation the ConsultChimps command line uses"
       guideHref="/docs/tools/powerpoint-populate"
       guideLabel="Read the PowerPoint guide"
       kicker="Online tool · PowerPoint populate"
@@ -534,8 +534,8 @@ export function PptxPopulateTool() {
         </h2>
         {!template || !workbook ? (
           <p className="mt-3 text-sm text-fd-muted-foreground">
-            Choose a template and a records workbook to see the presentation
-            this task will create
+            Choose a template and a records file to see the presentation this
+            task will create
           </p>
         ) : null}
         {/*

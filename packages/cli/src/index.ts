@@ -818,7 +818,7 @@ Examples:
   consultchimps pptx populate --template profile.pptx --data clients.xlsx -o profiles.pptx
 
 Safety:
-  Your source PowerPoint template and Excel workbook are not changed.
+  Your source PowerPoint template and data file are not changed.
   ConsultChimps creates one new presentation and refuses to replace an existing
   output unless you use --force.
 `,
@@ -929,7 +929,8 @@ used unless you select them. Empty cells become empty text.
 A CSV file is one worksheet, so --sheet is refused for one. Its fields are
 text unless --csv-numbers or --csv-dates asks otherwise; a number then shows
 every digit with a point as its decimal mark, and a date shows as
-yyyy-mm-dd. Header names stay as written.
+yyyy-mm-dd, or yyyy-mm-dd hh:mm:ss when it has a time. Header names stay as
+written.
 
 The output contains only the generated slides. Source files are never changed.
 `,
