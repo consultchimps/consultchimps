@@ -43,12 +43,18 @@ export interface EachWorksheetSplit {
 
 /** The rows a split read in worksheets it left out, counted in its metrics. */
 export interface LeftOutRows {
+  /** Worksheets that held the column but no group, counted as filtered. */
+  readonly sheets: number;
   readonly inputRows: number;
   readonly skippedRows: number;
 }
 
 /** No rows left out, for a split of one region. */
-export const NO_LEFT_OUT_ROWS: LeftOutRows = { inputRows: 0, skippedRows: 0 };
+export const NO_LEFT_OUT_ROWS: LeftOutRows = {
+  sheets: 0,
+  inputRows: 0,
+  skippedRows: 0,
+};
 
 /**
  * Resolve a split of every visible worksheet, hidden ones too when
@@ -82,6 +88,7 @@ export async function resolveEachWorksheetSplit(
   let columnMissing = false;
   let noGroups: ConsultChimpsError | undefined;
   let lastSkip: ConsultChimpsError | undefined;
+  let leftOutSheets = 0;
   let leftOutInputRows = 0;
   let leftOutSkippedRows = 0;
   for (const sheet of book.sheets) {
@@ -122,6 +129,7 @@ export async function resolveEachWorksheetSplit(
           // Its rows were read and skipped as blank, so the metrics count them.
           const counts = error.details as
             { inputRows?: number; skippedRows?: number } | undefined;
+          leftOutSheets += 1;
           leftOutInputRows += counts?.inputRows ?? 0;
           leftOutSkippedRows += counts?.skippedRows ?? 0;
         } else if (error.code !== XLSX_ERRORS.XLSX_SPLIT_NO_TABLE)
@@ -171,6 +179,7 @@ export async function resolveEachWorksheetSplit(
     outputNames,
     skippedSheets,
     leftOutRows: {
+      sheets: leftOutSheets,
       inputRows: leftOutInputRows,
       skippedRows: leftOutSkippedRows,
     },
@@ -229,6 +238,6 @@ export function regionSplitSummary(
     uncachedFormulas,
     column: first.column,
     workbook: first.workbook,
-    sheets: parts.length,
+    sheets: parts.length + leftOutRows.sheets,
   };
 }

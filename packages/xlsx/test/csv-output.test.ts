@@ -509,6 +509,7 @@ describe("splitting every worksheet to CSV", () => {
     expect(outcome.result.metrics).toMatchObject({
       inputRows: 4,
       skippedRows: 1,
+      sheetsFiltered: 3,
     });
   });
 
