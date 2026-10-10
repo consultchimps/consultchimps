@@ -1264,6 +1264,15 @@ export function ExcelConsolidateTool() {
   const [csvOutput, setCsvOutput] = useState(false);
   const [csvBom, setCsvBom] = useState(true);
   const hasCsv = files.some((file) => isCsvFileName(file.name));
+  // The run summary names the kinds of file actually chosen.
+  const csvCount = files.filter((file) => isCsvFileName(file.name)).length;
+  const sheetScope = `every ${includeHiddenSheets ? "" : "visible "}worksheet`;
+  const stackedSources =
+    csvCount === files.length
+      ? `${files.length} CSV ${files.length === 1 ? "file" : "files"}`
+      : csvCount === 0
+        ? `${sheetScope} that holds data in ${files.length} ${files.length === 1 ? "workbook" : "workbooks"}`
+        : `${sheetScope} that holds data in ${files.length - csvCount} ${files.length - csvCount === 1 ? "workbook" : "workbooks"}, and ${csvCount} CSV ${csvCount === 1 ? "file" : "files"}`;
   // Kept as one value per set of choices, so the callbacks below are not
   // rebuilt on every render.
   const csv = useMemo(
@@ -1753,11 +1762,7 @@ export function ExcelConsolidateTool() {
               ? "The column mapping you added is still being read, so Run waits until it is ready"
               : mappingUnusable
                 ? "The column mapping you added could not be read, so nothing will run until you replace it or remove it"
-                : `Rows from every ${
-                    includeHiddenSheets ? "" : "visible "
-                  }worksheet and CSV file that holds data in ${files.length} ${
-                    files.length === 1 ? "file" : "files"
-                  } will be stacked into one table, in the order listed above${
+                : `Rows from ${stackedSources} will be stacked into one table, in the order listed above${
                     mapping
                       ? ", with your column mapping applied and any column it does not claim kept under its own name and named in a warning"
                       : ""
