@@ -92,3 +92,14 @@ test.each([
   expect(text).toContain(code);
   expect(text).toMatch(/batch/i);
 });
+
+test("a browser engine that cannot start points at other tabs and a reload, not at schema options", () => {
+  const text = formatHumanError(
+    "The database engine could not start in this browser.",
+    "DB_BROWSER_ENGINE_UNAVAILABLE",
+  );
+  expect(text).toContain("DB_BROWSER_ENGINE_UNAVAILABLE");
+  expect(text).toMatch(/other tab or window/i);
+  expect(text).toMatch(/reload the page/i);
+  expect(text).not.toMatch(/schema/i);
+});

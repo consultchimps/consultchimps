@@ -54,7 +54,7 @@ function storageManager(): OpfsStorageManager {
     typeof storage.getDirectory !== "function"
   ) {
     throw new Error(
-      "This browser does not provide origin-private file storage. Use a current Chromium browser and try again.",
+      "This browser does not provide origin-private file storage, which the database tool needs. Use a current desktop browser such as Chrome or Edge and try again.",
     );
   }
   return storage as OpfsStorageManager;

@@ -107,21 +107,147 @@ const privatePlanCleanupOwners = new RetryableCleanupOwners();
 const savedPlanCleanupOwners = new RetryableCleanupOwners();
 const IMPORT_ROUTE_PAGE_SIZE = 50;
 
-function runtime(): Promise<BrowserDatabaseRuntime> {
-  const configured =
-    browserRuntime ??
-    configureBrowserDatabaseRuntime({
-      sqlite: {
-        wasmUrl: `${basePath}/database-wasm/sqlite3.wasm`,
-        directory: "/consultchimps-sqlite",
-        initialCapacity: 16,
-      },
-      duckdb: {
-        wasmUrl: `${basePath}/database-wasm/duckdb-eh.wasm`,
-        workerUrl: `${basePath}/database-wasm/duckdb-browser-eh.worker.js`,
-      },
-      opfsDirectory: "consultchimps-databases",
-    });
+/** How long a start keeps retrying while another context holds the files. */
+const ENGINE_BUSY_WAIT_LIMIT_MILLISECONDS = 45_000;
+const ENGINE_BUSY_RETRY_DELAY_MILLISECONDS = 1_000;
+
+interface EngineStart {
+  readonly id: number;
+  readonly signal: AbortSignal;
+}
+
+/**
+ * The SQLite pool acquires exclusive synchronous access handles on its files.
+ * The browser refuses them while another worker (a tab that is still open, or
+ * one that closed moments ago and has not released its handles yet) holds
+ * them. This is the one place that recognizes that refusal.
+ */
+function isFileHandleBusy(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "NoModificationAllowedError"
+  );
+}
+
+function engineUnavailable(
+  error: unknown,
+  waitedMilliseconds: number,
+): ConsultChimpsError {
+  if (isFileHandleBusy(error)) {
+    const seconds = Math.round(waitedMilliseconds / 1_000);
+    return new ConsultChimpsError(
+      "DB_BROWSER_ENGINE_UNAVAILABLE",
+      `Another tab or window of this browser still holds the working database files after waiting ${String(seconds)} seconds. Close the other tab or window, then try again.`,
+      { cause: error, details: { reason: "busy", waitedMilliseconds } },
+    );
+  }
+  const reason =
+    error instanceof Error && error.message !== ""
+      ? error.message
+      : "The browser reported no further detail";
+  return new ConsultChimpsError(
+    "DB_BROWSER_ENGINE_UNAVAILABLE",
+    `The database engine could not start in this browser. Reload the page and try again. If the database tool is open in another tab or window of this browser, close it first. Browser detail: ${reason}`,
+    { cause: error, details: { reason: "start-failed" } },
+  );
+}
+
+function cancelled(): DOMException {
+  return new DOMException("The operation was cancelled", "AbortError");
+}
+
+function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(cancelled());
+  return new Promise((resolve, reject) => {
+    const abort = (): void => {
+      clearTimeout(timer);
+      reject(cancelled());
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, milliseconds);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
+
+function configureRuntime(): Promise<BrowserDatabaseRuntime> {
+  return configureBrowserDatabaseRuntime({
+    sqlite: {
+      wasmUrl: `${basePath}/database-wasm/sqlite3.wasm`,
+      directory: "/consultchimps-sqlite",
+      initialCapacity: 16,
+    },
+    duckdb: {
+      wasmUrl: `${basePath}/database-wasm/duckdb-eh.wasm`,
+      workerUrl: `${basePath}/database-wasm/duckdb-browser-eh.worker.js`,
+    },
+    opfsDirectory: "consultchimps-databases",
+  });
+}
+
+async function startRuntime(
+  start: EngineStart | undefined,
+): Promise<BrowserDatabaseRuntime> {
+  const began = Date.now();
+  let attempt = 0;
+  for (;;) {
+    attempt += 1;
+    start?.signal.throwIfAborted();
+    try {
+      return await configureRuntime();
+    } catch (error) {
+      if (isConsultChimpsError(error)) throw error;
+      const waited = Date.now() - began;
+      if (
+        start === undefined ||
+        !isFileHandleBusy(error) ||
+        waited >= ENGINE_BUSY_WAIT_LIMIT_MILLISECONDS
+      ) {
+        throw engineUnavailable(error, waited);
+      }
+      // A cancellation that landed during the attempt must not report a wait
+      // that is not going to happen.
+      if (start.signal.aborted) throw cancelled();
+      scope.postMessage({
+        type: "progress",
+        id: start.id,
+        progress: {
+          phase: "db.browser.start",
+          completed: attempt,
+          total: null,
+          message:
+            "Waiting for another tab or window to release the working database",
+        },
+      });
+      await delay(ENGINE_BUSY_RETRY_DELAY_MILLISECONDS, start.signal);
+    }
+  }
+}
+
+/**
+ * Start the browser engines once per worker and keep them for every later
+ * command. A failed start is not kept: the promise is dropped so the next
+ * command starts again from scratch. The SQLite pool releases its file handles
+ * when its installation fails, so a retry after the blocking condition clears
+ * (a second tab closed, a network fetch that now succeeds) can acquire them.
+ * Failures that already carry a ConsultChimps code pass through unchanged;
+ * anything else becomes DB_BROWSER_ENGINE_UNAVAILABLE.
+ *
+ * With a start context the busy wait retries on that command's behalf and
+ * reports progress to it. Without one (deferred cleanup retried by a later
+ * command) a busy start fails at once. The client sends one command at a
+ * time, so a start is only ever bound to the command that began it; a caller
+ * that overlaps commands would share that command's cancellation.
+ */
+function runtime(start?: EngineStart): Promise<BrowserDatabaseRuntime> {
+  if (browserRuntime !== null) return browserRuntime;
+  const configured = startRuntime(start).catch((error: unknown) => {
+    if (browserRuntime === configured) browserRuntime = null;
+    throw error;
+  });
   browserRuntime = configured;
   return configured;
 }
@@ -618,7 +744,7 @@ async function handleCreate(
   signal: AbortSignal,
 ): Promise<void> {
   const created = await (
-    await runtime()
+    await runtime({ id, signal })
   ).createDatabase({
     name: command.name,
     format: command.format,
@@ -648,7 +774,7 @@ async function handleOpen(
       ? workspaceWorkingCopyName(command.file.name)
       : command.name;
   const database = await (
-    await runtime()
+    await runtime({ id, signal })
   ).importDatabase({
     name,
     source: new BrowserBlobSource(command.file.name, command.file),
@@ -670,7 +796,7 @@ async function handleReopen(
 ): Promise<void> {
   signal.throwIfAborted();
   const database = await (
-    await runtime()
+    await runtime({ id, signal })
   ).openDatabase({
     name: command.name,
     ...(command.readonly === undefined ? {} : { readonly: command.readonly }),
@@ -735,7 +861,10 @@ async function handleSchema(
   });
 }
 
-async function listSavedImports(id: number): Promise<void> {
+async function listSavedImports(
+  id: number,
+  signal: AbortSignal,
+): Promise<void> {
   await closeImports();
   const retainedCleanupFailure = await cleanupFailureOf(() =>
     savedPlanCleanupOwners.close(),
@@ -747,7 +876,7 @@ async function listSavedImports(id: number): Promise<void> {
     });
   }
   const listing = await (
-    await runtime()
+    await runtime({ id, signal })
   ).listImportBatches({ database: current().database });
   const ignoredPlans = [...listing.ignored];
   const openedImports: {
@@ -760,7 +889,9 @@ async function listSavedImports(id: number): Promise<void> {
     if (entry.databaseId !== current().database.id) continue;
     let prepared: ImportBatch | undefined;
     try {
-      prepared = await (await runtime()).openImportBatch({ name: entry.name });
+      prepared = await (
+        await runtime({ id, signal })
+      ).openImportBatch({ name: entry.name });
       const inspection = await inspectImport({
         database: current().database,
         prepared,
@@ -856,7 +987,7 @@ async function prepareSources(
     });
     const privatePlanName = `.consultchimps-import-${globalThis.crypto.randomUUID()}.sqlite`;
     const prepared = await (
-      await runtime()
+      await runtime({ id, signal })
     ).createImportBatch({
       name: privatePlanName,
       database: current().database,
@@ -932,7 +1063,10 @@ async function prepareSources(
       const cleanupOwner = stagedPrivatePlanCleanup({
         close: () => plan.prepared.close(),
         discard: async () =>
-          (await runtime()).discardImportBatch({ name: plan.name }),
+          // Retried by a later command, so it must not wait on this one.
+          (await runtime()).discardImportBatch({
+            name: plan.name,
+          }),
       });
       planCleanupFailure = await cleanupFailureOf(() => cleanupOwner.close());
       if (planCleanupFailure !== undefined) {
@@ -1271,7 +1405,7 @@ async function exportWorkspace(
     try {
       await current().database.checkpoint();
       await (
-        await runtime()
+        await runtime({ id, signal })
       ).exportDatabase({
         database: current().database,
         name,
@@ -1353,7 +1487,7 @@ async function handle(id: number, command: WorkspaceCommand): Promise<void> {
         await prepareSources(id, command, controller.signal);
         return;
       case "listImports":
-        await listSavedImports(id);
+        await listSavedImports(id, controller.signal);
         return;
       case "inspectImport":
         await inspectImportPage(id, command);
