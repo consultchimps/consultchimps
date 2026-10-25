@@ -1,5 +1,12 @@
 # @consultchimps/pdf
 
+## 0.5.1
+
+### Patch Changes
+
+- Updated dependencies [17b3b5c]
+  - @consultchimps/files@0.6.0
+
 ## 0.5.0
 
 ### Minor Changes
