@@ -606,12 +606,36 @@ Treat the CI gate strictly:
 - When a configured reviewer starts after a draft is marked ready, wait for its
   result before reporting review completion. Assess actionable findings, add
   regressions for accepted fixes, and verify them on the pull request branch.
-- Recheck review activity after pushing fixes. Resolve a thread only after its
-  finding is fixed and verified, or its rejection is supported by evidence.
+- Reconcile existing review activity after pushing fixes without automatically
+  requesting another Companion round. Apply the Companion review workflow below.
+  Resolve a thread only after its finding is fixed and verified, or its
+  rejection is supported by evidence.
 - Merge with failing or incomplete required checks only under a documented
   exception permitted by repository policy and branch protection, after the user
   explicitly authorizes it with the exact non-green checks and rationale
   recorded in the pull request.
+
+## Companion review workflow
+
+Owner decision, 25 October 2026: at most two Companion reviews per logical
+change, including automatic and clean runs. Local reviews remain separate.
+
+- Follow [docs/agents/companion-review.md](docs/agents/companion-review.md) when
+  Companion review is used. Preserve existing risk routing and release gates;
+  the cap does not require two reviews on every PR.
+- Before dispatch, reconcile prior runs and reserve the round in the existing PR
+  description. One principal owns requests; allow only one run in flight.
+  Commits, reopening and replacement PRs do not reset the count.
+- Round one examines the completed change, related callers and producers, and
+  relevant failure paths. Return all substantiated actionable defects together,
+  with scenario, consequence and source evidence; distinguish optional advice.
+- Round two verifies the recorded fixes and regressions caused by them. Do not
+  restart broad improvement discovery, but report serious newly apparent bugs.
+- After round two, fix and verify remaining bugs with regression tests and
+  scoped local audits. Keep release-blocking bugs blocked. Record the final
+  verified SHA and unresolved risks; do not substitute owner code review.
+- Prefer explicit requests when automatic push reviews would bypass the cap.
+  Verify trigger settings; instructions alone do not configure the platform.
 
 ## Security and confidential data
 
