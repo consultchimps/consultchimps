@@ -620,10 +620,11 @@ Treat the CI gate strictly:
 Owner decision, 25 October 2026: at most two Companion reviews per logical
 change, including automatic and clean runs. Local reviews remain separate.
 
-- Follow [docs/agents/companion-review.md](docs/agents/companion-review.md) when Companion review is used. Preserve existing risk
-  routing and release gates; the cap does not require two reviews on every PR.
-- Before dispatch, reconcile prior runs and reserve the round in the existing
-  PR description. One principal owns requests; allow only one run in flight.
+- Follow [docs/agents/companion-review.md](docs/agents/companion-review.md) when
+  Companion review is used. Preserve existing risk routing and release gates;
+  the cap does not require two reviews on every PR.
+- Before dispatch, reconcile prior runs and reserve the round in the existing PR
+  description. One principal owns requests; allow only one run in flight.
   Commits, reopening and replacement PRs do not reset the count.
 - Round one examines the completed change, related callers and producers, and
   relevant failure paths. Return all substantiated actionable defects together,
