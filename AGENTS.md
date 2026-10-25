@@ -617,8 +617,8 @@ Treat the CI gate strictly:
 
 ## Companion review workflow
 
-Owner decision, 25 October 2026: at most two Companion reviews per logical
-change, including automatic and clean runs. Local reviews remain separate.
+Use at most two Companion reviews per logical change, including automatic and
+clean runs. Local reviews remain separate.
 
 - Follow [docs/agents/companion-review.md](docs/agents/companion-review.md) when
   Companion review is used. Preserve existing risk routing and release gates;

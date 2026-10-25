@@ -1,8 +1,8 @@
 # Run Companion review in at most two rounds
 
-Owner decisions, 25 October 2026: Companion has a maximum of two rounds per
-logical change. Local reviews have a separate budget. After round two, fix and
-verify demonstrated bugs locally. Keep release-blocking bugs blocked.
+Companion has a maximum of two rounds per logical change. Local reviews have a
+separate budget. After round two, fix and verify demonstrated bugs locally. Keep
+release-blocking bugs blocked.
 
 ## Prepare the change
 
